@@ -1,0 +1,40 @@
+[project]
+name = "nba-lineup-model"
+version = "0.1.0"
+description = "Direct NBA data ingestion and lineup modeling experiments."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "catboost>=1.2.7",
+    "httpx>=0.27.2",
+    "pandas>=2.2.3",
+    "pydantic>=2.9.2",
+    "pyarrow>=17.0.0",
+    "scikit-learn>=1.5.2",
+]
+
+[project.scripts]
+nba-build-game = "nba_lineup_model.build_game:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.3",
+    "ruff>=0.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nba_lineup_model"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

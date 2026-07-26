@@ -1,0 +1,48 @@
+{
+  "meta": {
+    "version": 1,
+    "code": 200,
+    "request": "http://nba.cloud/games/0022000180/playbyplay?Format=json",
+    "time": "2021-01-15 23:48:58.906160"
+  },
+  "game": {
+    "gameId": "0022000180",
+    "actions": [
+      {
+        "actionNumber": 2,
+        "clock": "PT12M00.00S",
+        "period": 1,
+        "periodType": "REGULAR",
+        "actionType": "period",
+        "subType": "start",
+        "personId": 0,
+        "possession": 0,
+        "scoreHome": "0",
+        "scoreAway": "0",
+        "orderNumber": 20000,
+        "description": "Period Start",
+        "personIdsFilter": []
+      },
+      {
+        "actionNumber": 7,
+        "clock": "PT11M46.00S",
+        "period": 1,
+        "periodType": "REGULAR",
+        "teamId": 1610612738,
+        "teamTricode": "BOS",
+        "actionType": "3pt",
+        "subType": "Jump Shot",
+        "personId": 201952,
+        "possession": 1610612738,
+        "scoreHome": "3",
+        "scoreAway": "0",
+        "orderNumber": 70000,
+        "isFieldGoal": 1,
+        "shotResult": "Made",
+        "pointsTotal": 3,
+        "description": "J. Teague 24' 3PT (3 PTS) (J. Brown 1 AST)",
+        "personIdsFilter": [201952, 1627759]
+      }
+    ]
+  }
+}

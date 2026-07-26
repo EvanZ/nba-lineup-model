@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "version": 1,
+    "code": 200
+  },
+  "game": {
+    "gameId": "0022000180",
+    "gameStatusText": "Final",
+    "homeTeam": {
+      "teamId": 1610612738,
+      "teamTricode": "BOS",
+      "players": [
+        {
+          "status": "ACTIVE",
+          "personId": 1627759,
+          "starter": "1",
+          "played": "1",
+          "statistics": {
+            "minutes": "PT25M01.00S",
+            "plusMinusPoints": 15.0,
+            "points": 21
+          },
+          "name": "Jaylen Brown"
+        }
+      ]
+    },
+    "awayTeam": {
+      "teamId": 1610612753,
+      "teamTricode": "ORL",
+      "players": [
+        {
+          "status": "ACTIVE",
+          "personId": 202696,
+          "starter": "1",
+          "played": "1",
+          "statistics": {
+            "minutes": "PT33M33.00S",
+            "plusMinusPoints": -12.0,
+            "points": 15
+          },
+          "name": "Nikola Vucevic"
+        }
+      ]
+    }
+  }
+}

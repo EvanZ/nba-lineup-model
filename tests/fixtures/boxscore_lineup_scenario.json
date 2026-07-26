@@ -1,0 +1,29 @@
+{
+  "game": {
+    "gameId": "0020000001",
+    "homeTeam": {
+      "teamId": 100,
+      "teamTricode": "HOM",
+      "players": [
+        {"personId": 101, "starter": "1", "statistics": {"minutes": "PT24M00.00S"}},
+        {"personId": 102, "starter": "1", "statistics": {"minutes": "PT24M00.00S"}},
+        {"personId": 103, "starter": "1", "statistics": {"minutes": "PT24M00.00S"}},
+        {"personId": 104, "starter": "1", "statistics": {"minutes": "PT24M00.00S"}},
+        {"personId": 105, "starter": "1", "statistics": {"minutes": "PT14M00.00S"}},
+        {"personId": 106, "starter": "0", "statistics": {"minutes": "PT10M00.00S"}}
+      ]
+    },
+    "awayTeam": {
+      "teamId": 200,
+      "teamTricode": "AWY",
+      "players": [
+        {"personId": 201, "starter": "1", "statistics": {"minutes": "PT24M00.00S"}},
+        {"personId": 202, "starter": "1", "statistics": {"minutes": "PT24M00.00S"}},
+        {"personId": 203, "starter": "1", "statistics": {"minutes": "PT24M00.00S"}},
+        {"personId": 204, "starter": "1", "statistics": {"minutes": "PT24M00.00S"}},
+        {"personId": 205, "starter": "1", "statistics": {"minutes": "PT02M00.00S"}},
+        {"personId": 206, "starter": "0", "statistics": {"minutes": "PT22M00.00S"}}
+      ]
+    }
+  }
+}
