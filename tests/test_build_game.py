@@ -25,12 +25,16 @@ def test_process_game_payloads_writes_parquet_tables(tmp_path: Path):
 
     assert result.event_count == 13
     assert result.stint_count == 3
+    assert result.possession_count == 2
+    assert result.possession_segment_count == 3
     assert result.issue_count == 0
     assert set(result.output_paths) == {
         "events",
         "players",
         "event_lineups",
         "lineup_stints",
+        "possessions",
+        "possession_segments",
     }
     assert all(path.exists() for path in result.output_paths.values())
     events = pd.read_parquet(result.output_paths["events"])
@@ -39,6 +43,12 @@ def test_process_game_payloads_writes_parquet_tables(tmp_path: Path):
     assert events.loc[1, "clock"] == "10:01.00"
     assert events.loc[1, "source_clock"] == "PT10M01.00S"
     assert len(pd.read_parquet(result.output_paths["lineup_stints"])) == 3
+    possessions = pd.read_parquet(result.output_paths["possessions"])
+    segments = pd.read_parquet(result.output_paths["possession_segments"])
+    assert len(possessions) == 2
+    assert possessions.loc[0, "lineup_segment_count"] == 2
+    assert len(segments) == 3
+    assert segments.groupby("possession_index")["points_home"].sum().tolist() == [2, 0]
 
     schema = pq.read_schema(result.output_paths["events"])
     for column in (
@@ -50,3 +60,13 @@ def test_process_game_payloads_writes_parquet_tables(tmp_path: Path):
         "source_possession_team_id",
     ):
         assert schema.field(column).type == pa.int64()
+
+    possession_schema = pq.read_schema(result.output_paths["possessions"])
+    for column in (
+        "possession_index",
+        "offense_team_id",
+        "defense_team_id",
+        "start_order_number",
+        "end_order_number",
+    ):
+        assert possession_schema.field(column).type == pa.int64()

@@ -380,8 +380,9 @@ def _apply_team_changes(
     batch_id: int,
 ) -> tuple[int, ...]:
     current = set(lineup)
-    outgoing = changes["out"]
-    incoming = changes["in"]
+    cancelled = changes["out"] & changes["in"]
+    outgoing = changes["out"] - cancelled
+    incoming = changes["in"] - cancelled
     missing = outgoing - current
     already_on_court = incoming & current
     if missing:
@@ -496,6 +497,8 @@ def _validate_primary_actor(
         "substitution",
         "timeout",
     }:
+        return
+    if event.event_type == "foul" and event.event_subtype == "technical":
         return
 
     if event.team_id == state.home_team_id:

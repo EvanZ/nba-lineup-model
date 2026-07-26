@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "games": [
+    {
+      "game_id": "0021900180",
+      "season": "2019-20",
+      "season_type": "regular",
+      "sample_group": "cross-season-baseline",
+      "expected_overtime": false,
+      "tags": [
+        "same-ordinal",
+        "earliest-confirmed-live-data-season"
+      ],
+      "notes": "Dallas Mavericks vs. Toronto Raptors"
+    },
+    {
+      "game_id": "0022000180",
+      "season": "2020-21",
+      "season_type": "regular",
+      "sample_group": "cross-season-baseline",
+      "expected_overtime": false,
+      "tags": [
+        "same-ordinal"
+      ],
+      "notes": "Boston Celtics vs. Orlando Magic"
+    },
+    {
+      "game_id": "0022100180",
+      "season": "2021-22",
+      "season_type": "regular",
+      "sample_group": "cross-season-baseline",
+      "expected_overtime": false,
+      "tags": [
+        "same-ordinal"
+      ],
+      "notes": "Oklahoma City Thunder vs. Sacramento Kings"
+    },
+    {
+      "game_id": "0022200180",
+      "season": "2022-23",
+      "season_type": "regular",
+      "sample_group": "cross-season-baseline",
+      "expected_overtime": false,
+      "tags": [
+        "same-ordinal"
+      ],
+      "notes": "San Antonio Spurs vs. Milwaukee Bucks"
+    },
+    {
+      "game_id": "0022300180",
+      "season": "2023-24",
+      "season_type": "regular",
+      "sample_group": "cross-season-baseline",
+      "expected_overtime": false,
+      "tags": [
+        "same-ordinal"
+      ],
+      "notes": "Philadelphia 76ers vs. Indiana Pacers"
+    },
+    {
+      "game_id": "0022400180",
+      "season": "2024-25",
+      "season_type": "regular",
+      "sample_group": "cross-season-baseline",
+      "expected_overtime": false,
+      "tags": [
+        "same-ordinal"
+      ],
+      "notes": "Sacramento Kings vs. Toronto Raptors"
+    },
+    {
+      "game_id": "0022500180",
+      "season": "2025-26",
+      "season_type": "regular",
+      "sample_group": "cross-season-baseline",
+      "expected_overtime": false,
+      "tags": [
+        "same-ordinal"
+      ],
+      "notes": "Portland Trail Blazers vs. Oklahoma City Thunder"
+    },
+    {
+      "game_id": "0041900401",
+      "season": "2019-20",
+      "season_type": "playoffs",
+      "sample_group": "cross-season-playoffs",
+      "expected_overtime": false,
+      "tags": [
+        "finals-game-one"
+      ],
+      "notes": "Los Angeles Lakers vs. Miami Heat"
+    },
+    {
+      "game_id": "0042000401",
+      "season": "2020-21",
+      "season_type": "playoffs",
+      "sample_group": "cross-season-playoffs",
+      "expected_overtime": false,
+      "tags": [
+        "finals-game-one"
+      ],
+      "notes": "Phoenix Suns vs. Milwaukee Bucks"
+    },
+    {
+      "game_id": "0042100401",
+      "season": "2021-22",
+      "season_type": "playoffs",
+      "sample_group": "cross-season-playoffs",
+      "expected_overtime": false,
+      "tags": [
+        "finals-game-one"
+      ],
+      "notes": "Golden State Warriors vs. Boston Celtics"
+    },
+    {
+      "game_id": "0042200401",
+      "season": "2022-23",
+      "season_type": "playoffs",
+      "sample_group": "cross-season-playoffs",
+      "expected_overtime": false,
+      "tags": [
+        "finals-game-one"
+      ],
+      "notes": "Denver Nuggets vs. Miami Heat"
+    },
+    {
+      "game_id": "0042300401",
+      "season": "2023-24",
+      "season_type": "playoffs",
+      "sample_group": "cross-season-playoffs",
+      "expected_overtime": false,
+      "tags": [
+        "finals-game-one"
+      ],
+      "notes": "Boston Celtics vs. Dallas Mavericks"
+    },
+    {
+      "game_id": "0042400401",
+      "season": "2024-25",
+      "season_type": "playoffs",
+      "sample_group": "cross-season-playoffs",
+      "expected_overtime": false,
+      "tags": [
+        "finals-game-one"
+      ],
+      "notes": "Oklahoma City Thunder vs. Indiana Pacers"
+    },
+    {
+      "game_id": "0042500401",
+      "season": "2025-26",
+      "season_type": "playoffs",
+      "sample_group": "cross-season-playoffs",
+      "expected_overtime": false,
+      "tags": [
+        "finals-game-one"
+      ],
+      "notes": "San Antonio Spurs vs. New York Knicks"
+    },
+    {
+      "game_id": "0021900001",
+      "season": "2019-20",
+      "season_type": "regular",
+      "sample_group": "cross-season-overtime",
+      "expected_overtime": true,
+      "tags": [
+        "overtime"
+      ],
+      "notes": "Toronto Raptors vs. New Orleans Pelicans"
+    },
+    {
+      "game_id": "0022000019",
+      "season": "2020-21",
+      "season_type": "regular",
+      "sample_group": "cross-season-overtime",
+      "expected_overtime": true,
+      "tags": [
+        "overtime"
+      ],
+      "notes": "Denver Nuggets vs. Sacramento Kings"
+    },
+    {
+      "game_id": "0022100005",
+      "season": "2021-22",
+      "season_type": "regular",
+      "sample_group": "cross-season-overtime",
+      "expected_overtime": true,
+      "tags": [
+        "double-overtime"
+      ],
+      "notes": "New York Knicks vs. Boston Celtics"
+    },
+    {
+      "game_id": "0022200009",
+      "season": "2022-23",
+      "season_type": "regular",
+      "sample_group": "cross-season-overtime",
+      "expected_overtime": true,
+      "tags": [
+        "overtime"
+      ],
+      "notes": "Memphis Grizzlies vs. New York Knicks"
+    },
+    {
+      "game_id": "0022300007",
+      "season": "2023-24",
+      "season_type": "regular",
+      "sample_group": "cross-season-overtime",
+      "expected_overtime": true,
+      "tags": [
+        "overtime"
+      ],
+      "notes": "Portland Trail Blazers vs. Memphis Grizzlies"
+    },
+    {
+      "game_id": "0022400002",
+      "season": "2024-25",
+      "season_type": "regular",
+      "sample_group": "cross-season-overtime",
+      "expected_overtime": true,
+      "tags": [
+        "overtime"
+      ],
+      "notes": "Detroit Pistons vs. Miami Heat"
+    },
+    {
+      "game_id": "0022500001",
+      "season": "2025-26",
+      "season_type": "regular",
+      "sample_group": "cross-season-overtime",
+      "expected_overtime": true,
+      "tags": [
+        "double-overtime"
+      ],
+      "notes": "Oklahoma City Thunder vs. Houston Rockets"
+    }
+  ]
+}

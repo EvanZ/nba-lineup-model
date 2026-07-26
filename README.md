@@ -32,9 +32,45 @@ data/processed/
   players/{game_id}.parquet
   event_lineups/{game_id}.parquet
   lineup_stints/{game_id}.parquet
+  possessions/{game_id}.parquet
+  possession_segments/{game_id}.parquet
 ```
 
 Raw and processed data are intentionally ignored by Git.
+
+`possessions` contains one row per team possession. `possession_segments` splits
+those rows only when a substitution changes either lineup, so a free-throw trip
+can remain one possession while contributing to multiple fixed-lineup samples.
+
+## Audit Across Seasons
+
+Run the committed 21-game, seven-season audit matrix:
+
+```bash
+uv run nba-audit-games config/audit_manifest.json
+```
+
+The command reuses cached raw responses when available and writes compact reports
+to `data/audit/games.parquet` and `data/audit/summary.parquet`. A game fails only
+on reconstruction or exact accounting invariants. Differences from the approximate
+box-score possession formula are reported as warnings.
+
+The committed matrix covers 2019-20 through 2025-26 with three games per season:
+one same-ordinal regular-season game, one Finals opener, and one confirmed overtime
+game. The overtime stratum includes double-overtime games.
+
+To generate a larger deterministic manifest from a Parquet or CSV game catalog:
+
+```bash
+uv run nba-sample-audit data/external/game_catalog.parquet \
+  --games-per-stratum 25 \
+  --seed 7 \
+  --output config/audit_manifest_sample.json
+```
+
+The catalog must contain `game_id`, `season`, and `season_type`. An optional
+`sample_group` column supports strata such as overtime, playoffs, and feed-edge
+cases.
 
 ## Test
 
@@ -51,6 +87,7 @@ src/nba_lineup_model/
   normalize/    Source table normalization
   lineups/      On-court reconstruction
   possessions/  Possession segmentation
+  audit/        Cross-season manifests, sampling, and invariant reports
   models/       Ridge, tree, and later nonlinear models
   evaluation/   Validation and benchmark metrics
 ```

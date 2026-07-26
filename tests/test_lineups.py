@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,78 @@ def test_reconstruction_rejects_subbing_out_player_not_on_court():
 
     with pytest.raises(LineupReconstructionError, match="not on court"):
         reconstruct_lineups(events, boxscore)
+
+
+def test_atomic_batch_cancels_player_subbed_in_and_back_out():
+    payload = deepcopy(load_fixture("playbyplay_lineup_scenario.json"))
+    actions = payload["game"]["actions"]
+    actions[6:6] = [
+        {
+            "actionNumber": 14,
+            "orderNumber": 65000,
+            "period": 1,
+            "periodType": "REGULAR",
+            "clock": "PT10M00.00S",
+            "actionType": "substitution",
+            "subType": "out",
+            "teamId": 100,
+            "teamTricode": "HOM",
+            "personId": 106,
+            "possession": 100,
+            "scoreHome": "1",
+            "scoreAway": "0",
+        },
+        {
+            "actionNumber": 15,
+            "orderNumber": 66000,
+            "period": 1,
+            "periodType": "REGULAR",
+            "clock": "PT10M00.00S",
+            "actionType": "substitution",
+            "subType": "in",
+            "teamId": 100,
+            "teamTricode": "HOM",
+            "personId": 105,
+            "possession": 100,
+            "scoreHome": "1",
+            "scoreAway": "0",
+        },
+    ]
+    payload["game"]["actions"] = [
+        action
+        for action in actions
+        if action["orderNumber"] not in {90000, 100000}
+    ]
+
+    result = reconstruct_lineups(
+        canonical_events(payload),
+        load_fixture("boxscore_lineup_scenario.json"),
+        validate_boxscore_minutes=False,
+    )
+
+    assignment = next(
+        assignment
+        for assignment in result.event_lineups
+        if assignment.source_order_number == 70000
+    )
+    assert assignment.lineup_before.home_player_ids == (101, 102, 103, 104, 105)
+    assert assignment.lineup_before.away_player_ids == (201, 202, 203, 204, 206)
+
+
+def test_technical_foul_actor_need_not_be_on_court():
+    events = canonical_events(load_fixture("playbyplay_lineup_scenario.json"))
+    boxscore = load_fixture("boxscore_lineup_scenario.json")
+    events[1] = events[1].model_copy(
+        update={
+            "event_type": "foul",
+            "event_subtype": "technical",
+            "player_id": 999,
+        }
+    )
+
+    result = reconstruct_lineups(events, boxscore)
+
+    assert result.issues == []
 
 
 def test_reconstruction_handles_overtime_period():
