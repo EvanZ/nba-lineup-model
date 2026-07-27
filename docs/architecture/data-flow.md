@@ -2,6 +2,7 @@
 
 ```mermaid
 flowchart LR
+    CAT["Game catalog"] --> CDN["NBA CDN JSON"]
     CDN["NBA CDN JSON"] --> RAW["Byte-preserving raw cache"]
     RAW --> EVT["Canonical events"]
     RAW --> BOX["Boxscore player table"]
@@ -15,7 +16,14 @@ flowchart LR
     LUP --> AUDIT
     POSS --> AUDIT
     SEG --> AUDIT
-    SEG --> MODEL["Modeling datasets"]
+    EVT --> CURATED["Curated season datasets"]
+    BOX --> CURATED
+    LUP --> CURATED
+    STINT --> CURATED
+    POSS --> CURATED
+    SEG --> CURATED
+    CURATED --> MODEL["Modeling datasets"]
+    AUDIT --> LEDGER["Build ledger"]
 ```
 
 ## Persisted layers
@@ -44,6 +52,21 @@ Audit runs write compact reports:
 data/audit/
   games.parquet
   summary.parquet
+```
+
+Season-scale runs add:
+
+```text
+data/catalog/
+  games.parquet
+
+data/manifests/
+  builds.parquet
+
+data/curated/{table}/
+  season=2025-26/
+    season_type=regular/
+      part-00000.parquet
 ```
 
 Raw and derived datasets are intentionally excluded from Git. Schemas,

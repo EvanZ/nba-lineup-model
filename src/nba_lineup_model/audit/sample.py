@@ -56,6 +56,8 @@ def sample_audit_manifest(
     games = []
     for row in sampled.to_dict(orient="records"):
         expected_overtime = row.get("expected_overtime")
+        if pd.isna(expected_overtime) and "is_overtime" in row:
+            expected_overtime = row["is_overtime"]
         if pd.isna(expected_overtime):
             expected_overtime = None
         elif expected_overtime is not None:

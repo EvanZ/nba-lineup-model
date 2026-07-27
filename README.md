@@ -72,6 +72,20 @@ The catalog must contain `game_id`, `season`, and `season_type`. An optional
 `sample_group` column supports strata such as overtime, playoffs, and feed-edge
 cases.
 
+## Season Data Contracts
+
+Validate and normalize an already canonical CSV or Parquet game catalog:
+
+```bash
+uv run nba-import-catalog source_games.csv \
+  --output data/catalog/games.parquet
+```
+
+Season operations retain per-game raw and processed artifacts for retries, while
+validated outputs compact into `data/curated/{table}/season=.../season_type=.../`
+partitions. Terminal build attempts are represented by a typed Parquet ledger.
+Direct NBA schedule discovery and batch execution will consume these contracts.
+
 ## Documentation
 
 Install the documentation dependencies and start the Zensical preview server:
@@ -103,6 +117,7 @@ src/nba_lineup_model/
   lineups/      On-court reconstruction
   possessions/  Possession segmentation
   audit/        Cross-season manifests, sampling, and invariant reports
+  season/       Game catalogs, build ledgers, and curated dataset layout
   models/       Ridge, tree, and later nonlinear models
   evaluation/   Validation and benchmark metrics
 ```

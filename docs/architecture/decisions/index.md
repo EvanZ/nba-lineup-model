@@ -8,6 +8,7 @@ modeling. They explain why a rule exists and which alternatives were rejected.
 | [ADR-0001](0001-direct-nba-source.md) | Accepted | Fetch direct NBA JSON and preserve raw bytes. |
 | [ADR-0002](0002-possession-segments.md) | Accepted | Separate basketball possessions from fixed-lineup segments. |
 | [ADR-0003](0003-validation-first.md) | Accepted | Require exact invariant audits before modeling. |
+| [ADR-0004](0004-hybrid-season-storage.md) | Accepted | Separate game build artifacts from curated season partitions. |
 
 New decisions should be added as numbered Markdown files. Existing decisions
 should be superseded by a new record rather than rewritten after their context

@@ -45,6 +45,17 @@ both source documents again.
 uv run nba-audit-games config/audit_manifest.json
 ```
 
+## Import a canonical game catalog
+
+```bash
+uv run nba-import-catalog source_games.csv \
+  --output data/catalog/games.parquet
+```
+
+The input must follow the canonical fields documented in
+[Season catalog and storage](data/season-storage.md). Direct NBA schedule
+discovery will generate this contract in the next ingestion slice.
+
 ## Preview documentation
 
 ```bash

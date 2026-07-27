@@ -17,6 +17,7 @@ nav = [
       {"Direct NBA source data" = "architecture/decisions/0001-direct-nba-source.md"},
       {"Possessions and lineup segments" = "architecture/decisions/0002-possession-segments.md"},
       {"Validation-first processing" = "architecture/decisions/0003-validation-first.md"},
+      {"Hybrid season storage" = "architecture/decisions/0004-hybrid-season-storage.md"},
     ]},
   ]},
   {"Data contracts" = [
@@ -24,6 +25,7 @@ nav = [
     {"Events" = "data/events.md"},
     {"Lineups" = "data/lineups.md"},
     {"Possessions" = "data/possessions.md"},
+    {"Season catalog and storage" = "data/season-storage.md"},
     {"Cross-season audit" = "data/audit.md"},
   ]},
   {"Guides" = [
@@ -36,6 +38,7 @@ nav = [
     {"Events" = "reference/events.md"},
     {"Lineups" = "reference/lineups.md"},
     {"Possessions" = "reference/possessions.md"},
+    {"Season data" = "reference/season.md"},
     {"Audit" = "reference/audit.md"},
   ]},
 ]
