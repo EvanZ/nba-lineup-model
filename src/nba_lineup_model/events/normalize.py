@@ -74,6 +74,7 @@ def canonical_events(payload: Mapping[str, Any]) -> list[Event]:
     events: list[Event] = []
     previous_home_score = 0
     previous_away_score = 0
+    previous_elapsed_game_seconds: float | None = None
 
     for event_index, action in enumerate(actions):
         period = _required_int(action, "period")
@@ -91,6 +92,17 @@ def canonical_events(payload: Mapping[str, Any]) -> list[Event]:
         if home_delta < 0 or away_delta < 0:
             flags.append("negative_score_delta")
 
+        elapsed_game_seconds = completed_period_seconds(period) + max(
+            duration - seconds_remaining,
+            0,
+        )
+        if (
+            previous_elapsed_game_seconds is not None
+            and elapsed_game_seconds < previous_elapsed_game_seconds
+        ):
+            flags.append("nonmonotonic_source_clock")
+            elapsed_game_seconds = previous_elapsed_game_seconds
+
         order_number = _required_int(action, "orderNumber")
         event = Event(
             game_id=game_id,
@@ -103,8 +115,7 @@ def canonical_events(payload: Mapping[str, Any]) -> list[Event]:
             source_clock=source_clock,
             clock=format_game_clock(seconds_remaining),
             seconds_remaining_period=seconds_remaining,
-            elapsed_game_seconds=completed_period_seconds(period)
-            + max(duration - seconds_remaining, 0),
+            elapsed_game_seconds=elapsed_game_seconds,
             event_type=_required_str(action, "actionType"),
             event_subtype=_optional_str(action.get("subType")),
             descriptor=_optional_str(action.get("descriptor")),
@@ -126,6 +137,7 @@ def canonical_events(payload: Mapping[str, Any]) -> list[Event]:
         events.append(event)
         previous_home_score = home_score
         previous_away_score = away_score
+        previous_elapsed_game_seconds = elapsed_game_seconds
 
     return events
 

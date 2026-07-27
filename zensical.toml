@@ -1,6 +1,8 @@
 [project]
 site_name = "NBA Lineup Model"
 site_description = "Data contracts, reconstruction algorithms, and modeling guides."
+site_url = "https://evanz.github.io/nba-lineup-model/"
+repo_url = "https://github.com/EvanZ/nba-lineup-model"
 docs_dir = "docs"
 site_dir = "site"
 dev_addr = "127.0.0.1:8000"
@@ -34,6 +36,8 @@ nav = [
     {"Use the Prefect UI" = "guides/prefect-ui.md"},
     {"Build one game" = "guides/build-game.md"},
     {"Fetch a season" = "guides/fetch-season.md"},
+    {"Process a season" = "guides/process-season.md"},
+    {"Compact a season" = "guides/compact-season.md"},
     {"Run cross-season audits" = "guides/cross-season-audit.md"},
   ]},
   {"API reference" = [

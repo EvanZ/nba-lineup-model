@@ -87,36 +87,54 @@ def process_game_payloads(
 ) -> ProcessedGame:
     """Build and persist canonical event, lineup, and possession tables for one game."""
 
-    game = reconstruct_game_payloads(play_by_play_payload, boxscore_payload)
-    root = Path(output_root)
+    reconstruction = reconstruct_game_payloads(play_by_play_payload, boxscore_payload)
+    return persist_game_reconstruction(
+        reconstruction,
+        boxscore_payload,
+        output_root=output_root,
+    )
 
+
+def persist_game_reconstruction(
+    reconstruction: GameReconstruction,
+    boxscore_payload: Mapping[str, Any],
+    *,
+    output_root: Path | str = Path("data/processed"),
+) -> ProcessedGame:
+    """Persist all canonical tables for one reconstructed game."""
+
+    root = Path(output_root)
     frames = {
-        "events": event_records_frame(game.events),
+        "events": event_records_frame(reconstruction.events),
         "players": boxscore_players_frame(boxscore_payload),
-        "event_lineups": event_lineups_frame(game.lineups),
-        "lineup_stints": lineup_stints_frame(game.lineups),
+        "event_lineups": event_lineups_frame(reconstruction.lineups),
+        "lineup_stints": lineup_stints_frame(reconstruction.lineups),
         "possessions": possessions_frame(
-            game.possessions,
-            lineup_segment_counts=lineup_segment_counts(game.possession_segments),
+            reconstruction.possessions,
+            lineup_segment_counts=lineup_segment_counts(
+                reconstruction.possession_segments
+            ),
         ),
-        "possession_segments": possession_segments_frame(game.possession_segments),
+        "possession_segments": possession_segments_frame(
+            reconstruction.possession_segments
+        ),
     }
     output_paths: dict[str, Path] = {}
     for table_name, frame in frames.items():
-        path = root / table_name / f"{game.game_id}.parquet"
+        path = root / table_name / f"{reconstruction.game_id}.parquet"
         _write_parquet(frame, path)
         output_paths[table_name] = path
 
     return ProcessedGame(
-        game_id=game.game_id,
-        event_count=len(game.events),
-        stint_count=len(game.lineups.stints),
-        possession_count=len(game.possessions.possessions),
-        possession_segment_count=len(game.possession_segments.segments),
+        game_id=reconstruction.game_id,
+        event_count=len(reconstruction.events),
+        stint_count=len(reconstruction.lineups.stints),
+        possession_count=len(reconstruction.possessions.possessions),
+        possession_segment_count=len(reconstruction.possession_segments.segments),
         issue_count=(
-            len(game.lineups.issues)
-            + len(game.possessions.issues)
-            + len(game.possession_segments.issues)
+            len(reconstruction.lineups.issues)
+            + len(reconstruction.possessions.issues)
+            + len(reconstruction.possession_segments.issues)
         ),
         output_paths=output_paths,
     )

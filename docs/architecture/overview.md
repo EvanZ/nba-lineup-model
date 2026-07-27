@@ -46,7 +46,8 @@ diagnostic warnings.
 selection, fetching, validation, and storage functions. Prefect supplies local
 concurrency, retries, and observable task state. Raw JSON and Parquet manifests
 remain authoritative so orchestration can be changed without changing the data
-contracts.
+contracts. Season compaction uses one task per table and season-type partition;
+the underlying compactor remains independently callable and testable.
 
 ### Modeling
 
@@ -56,9 +57,11 @@ and tree baselines before nonlinear lineup architectures are introduced.
 
 ## Core orchestration
 
-`reconstruct_game_payloads` is the shared in-memory pipeline. The single-game
-builder persists its outputs, while the audit runner evaluates the same objects
-without writing every intermediate table.
+`reconstruct_game_payloads` is the shared in-memory pipeline. The season
+processor reconstructs once, evaluates the audit invariants, and only then
+persists the six game tables. The single-game builder persists directly, while
+the audit runner evaluates the same objects without writing every intermediate
+table.
 
 This separation prevents the validation path from drifting away from production
 processing.
@@ -72,5 +75,9 @@ processing.
   a multi-season run.
 - Season fetching retries only transient network and source failures, then
   records every terminal game outcome.
+- Season processing isolates deterministic reconstruction and quality failures
+  by game and checkpoints terminal metadata through a single writer.
+- Season compaction rejects missing or mismatched build and quality provenance,
+  then atomically publishes only row-conserving partitions.
 - Exact score and duration failures make an audit game fail.
 - Approximate boxscore possession estimates remain diagnostics.

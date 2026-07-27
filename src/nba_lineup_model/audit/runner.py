@@ -51,6 +51,16 @@ def audit_game_payloads(
         play_by_play_payload,
         boxscore_payload,
     )
+    return audit_reconstruction(spec, reconstruction, boxscore_payload)
+
+
+def audit_reconstruction(
+    spec: AuditGameSpec,
+    reconstruction: GameReconstruction,
+    boxscore_payload: Mapping[str, Any],
+) -> AuditGameResult:
+    """Apply audit invariants to an already reconstructed game."""
+
     return _audit_reconstruction(spec, reconstruction, boxscore_payload)
 
 
@@ -86,7 +96,7 @@ def run_audit_manifest(
 
         try:
             results.append(
-                _audit_reconstruction(
+                audit_reconstruction(
                     spec,
                     reconstruction,
                     boxscore.payload,
@@ -194,11 +204,17 @@ def _audit_reconstruction(
     )
     segment_score_conserved = _segment_scores_conserved(reconstruction)
     segment_duration_conserved = _segment_durations_conserved(reconstruction)
-    balanced_possession_counts = _period_possession_counts_balanced(
+    unbalanced_possession_periods = _unbalanced_possession_periods(
         possessions,
         home_team_id=home_team_id,
         away_team_id=away_team_id,
     )
+    balanced_possession_counts = not unbalanced_possession_periods
+    nonmonotonic_clock_periods = {
+        event.period
+        for event in events
+        if "nonmonotonic_source_clock" in event.validation_flags
+    }
     period_count = max(event.period for event in events)
     is_overtime = period_count > 4
 
@@ -210,7 +226,13 @@ def _audit_reconstruction(
     lineup_counts = _severity_counts(reconstruction.lineups.issues)
     possession_counts = _severity_counts(reconstruction.possessions.issues)
     segment_issue_counts = _severity_counts(reconstruction.possession_segments.issues)
+    event_warning_count = sum(len(event.validation_flags) for event in events)
     issue_codes = {
+        *(
+            f"event:{validation_flag}"
+            for event in events
+            for validation_flag in event.validation_flags
+        ),
         *(f"lineup:{issue.code}" for issue in reconstruction.lineups.issues),
         *(f"possession:{issue.code}" for issue in reconstruction.possessions.issues),
         *(
@@ -232,7 +254,12 @@ def _audit_reconstruction(
     if not segment_duration_conserved:
         failure_codes.add("audit:segment_duration_conservation_failed")
     if not balanced_possession_counts:
-        failure_codes.add("audit:unbalanced_period_possession_counts")
+        if unbalanced_possession_periods <= nonmonotonic_clock_periods:
+            warning_codes.add(
+                "audit:unbalanced_period_possession_counts_with_clock_anomaly"
+            )
+        else:
+            failure_codes.add("audit:unbalanced_period_possession_counts")
     if spec.expected_overtime is not None and spec.expected_overtime != is_overtime:
         failure_codes.add("audit:overtime_expectation_mismatch")
     if (
@@ -247,7 +274,8 @@ def _audit_reconstruction(
         + segment_issue_counts["error"]
     )
     pipeline_warning_count = (
-        lineup_counts["warning"]
+        event_warning_count
+        + lineup_counts["warning"]
         + possession_counts["warning"]
         + segment_issue_counts["warning"]
     )
@@ -306,6 +334,7 @@ def _audit_reconstruction(
         possession_error_count=possession_counts["error"],
         segment_warning_count=segment_issue_counts["warning"],
         segment_error_count=segment_issue_counts["error"],
+        event_warning_count=event_warning_count,
         issue_codes=tuple(sorted(issue_codes)),
     )
 
@@ -338,19 +367,20 @@ def _segment_durations_conserved(reconstruction: GameReconstruction) -> bool:
     )
 
 
-def _period_possession_counts_balanced(
+def _unbalanced_possession_periods(
     possessions: Sequence[Possession],
     *,
     home_team_id: int,
     away_team_id: int,
-) -> bool:
+) -> set[int]:
     period_counts: dict[int, Counter[int]] = {}
     for possession in possessions:
         period_counts.setdefault(possession.period, Counter())[possession.offense_team_id] += 1
-    return all(
-        abs(counts[home_team_id] - counts[away_team_id]) <= 1
-        for counts in period_counts.values()
-    )
+    return {
+        period
+        for period, counts in period_counts.items()
+        if abs(counts[home_team_id] - counts[away_team_id]) > 1
+    }
 
 
 def _estimated_possessions(team: Mapping[str, Any]) -> float:

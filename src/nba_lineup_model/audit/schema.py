@@ -98,7 +98,15 @@ class AuditGameResult(BaseModel):
     possession_error_count: int = Field(default=0, ge=0)
     segment_warning_count: int = Field(default=0, ge=0)
     segment_error_count: int = Field(default=0, ge=0)
+    event_warning_count: int = Field(default=0, ge=0)
     issue_codes: tuple[str, ...] = ()
-    error_stage: Literal["fetch", "reconstruct", "audit"] | None = None
+    error_stage: Literal[
+        "fetch",
+        "preflight",
+        "reconstruct",
+        "audit",
+        "persist",
+        "validate",
+    ] | None = None
     error_type: str | None = None
     error_message: str | None = None

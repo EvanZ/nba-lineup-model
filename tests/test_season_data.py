@@ -191,8 +191,12 @@ def test_curated_layout_is_deterministic_and_rejects_invalid_partitions():
     )
 
     assert layout.part_path(partition, 3) == Path(
-        "warehouse/possession_segments/season=2025-26/"
-        "season_type=playoffs/part-00003.parquet"
+        "warehouse/possession_segments/2025-26/"
+        "playoffs/part-00003.parquet"
+    )
+    assert layout.manifest_path(partition) == Path(
+        "warehouse/possession_segments/2025-26/"
+        "playoffs/_manifest.json"
     )
 
     with pytest.raises(ValidationError):

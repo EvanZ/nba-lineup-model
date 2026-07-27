@@ -96,6 +96,35 @@ files, retries transient source failures, and appends terminal outcomes to
 `data/manifests/fetches.parquet`. Use `--limit 1 --max-workers 1` for a smoke
 test.
 
+Process a representative, validation-gated pilot entirely from local raw data:
+
+```bash
+uv run nba-process-season 2025-26 \
+  --sample-per-stratum 3 \
+  --seed 7
+```
+
+Process every final catalog game with:
+
+```bash
+uv run nba-process-season 2025-26 --max-workers 4
+```
+
+The Prefect flow writes six per-game Parquet tables, checkpoints terminal
+attempts in `data/manifests/builds.parquet`, and maintains canonical game and
+aggregate quality reports under `data/quality/`.
+
+Compact every quality-gated game into season-level analytical datasets:
+
+```bash
+uv run nba-compact-season 2025-26 --max-workers 4
+```
+
+This lossless Prefect flow writes self-contained Parquet shards under
+`data/curated/{table}/{season}/{season_type}/`. Each partition has a hashed
+manifest, uses deterministic 100-game shards by default, and carries catalog,
+quality, build, processing-code, and source-hash provenance on every row.
+
 Validate and normalize an already canonical CSV or Parquet game catalog:
 
 ```bash
@@ -104,9 +133,8 @@ uv run nba-import-catalog source_games.csv \
 ```
 
 Season operations retain per-game raw and processed artifacts for retries, while
-validated outputs compact into `data/curated/{table}/season=.../season_type=.../`
+validated outputs compact into `data/curated/{table}/{season}/{season_type}/`
 partitions. Terminal build attempts are represented by a typed Parquet ledger.
-Batch execution will consume these contracts.
 
 ## Documentation
 

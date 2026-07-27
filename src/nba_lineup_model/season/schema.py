@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from nba_lineup_model.audit.schema import AuditGameResult
 from nba_lineup_model.ingest.nba_cdn import validate_game_id
 
 SEASON_PATTERN = r"^\d{4}-\d{2}$"
@@ -235,6 +236,8 @@ class GameBuildRecord(BaseModel):
     schema_version: Literal[1] = 1
     run_id: str = Field(min_length=1)
     attempt_id: str = Field(min_length=1)
+    prefect_flow_run_id: str | None = None
+    prefect_task_run_id: str | None = None
     attempt_number: int = Field(ge=1)
     game_id: str
     season: str = Field(pattern=SEASON_PATTERN)
@@ -337,4 +340,59 @@ class BuildLedger(BaseModel):
         ]
         if len(attempt_keys) != len(set(attempt_keys)):
             raise ValueError("Build ledger contains duplicate game attempt numbers")
+        return self
+
+
+class GameQualityRecord(AuditGameResult):
+    """Latest validation result for one game-processing attempt."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    schema_version: Literal[1] = 1
+    run_id: str = Field(min_length=1)
+    prefect_flow_run_id: str | None = None
+    prefect_task_run_id: str | None = None
+    attempt_number: int = Field(ge=1)
+    code_version: str = Field(min_length=1)
+    play_by_play_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    boxscore_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    recorded_at: datetime
+
+    @field_validator("game_id")
+    @classmethod
+    def validate_id(cls, game_id: str) -> str:
+        return validate_game_id(game_id)
+
+    @field_validator("season")
+    @classmethod
+    def validate_season_value(cls, season: str) -> str:
+        return validate_season(season)
+
+    @field_validator("recorded_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_source_evidence(self) -> GameQualityRecord:
+        if self.status in {"pass", "warning"} and (
+            self.play_by_play_sha256 is None or self.boxscore_sha256 is None
+        ):
+            raise ValueError("Passing quality records require both source hashes")
+        return self
+
+
+class QualityReport(BaseModel):
+    """Canonical latest quality result for each processed game."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    version: Literal[1] = 1
+    records: list[GameQualityRecord] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_games(self) -> QualityReport:
+        game_ids = [record.game_id for record in self.records]
+        if len(game_ids) != len(set(game_ids)):
+            raise ValueError("Quality report contains duplicate game IDs")
         return self

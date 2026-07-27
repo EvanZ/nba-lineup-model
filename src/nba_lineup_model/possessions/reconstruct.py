@@ -27,6 +27,14 @@ _ADMINISTRATIVE_EVENT_TYPES = {
     "substitution",
     "timeout",
 }
+_POSSESSION_RETAINING_FREE_THROW_DESCRIPTORS = {
+    "away-from-play",
+    "awayfromplay",
+    "clear-path",
+    "flagrant",
+    "technical",
+    "transition take",
+}
 
 
 @dataclass
@@ -68,6 +76,7 @@ def reconstruct_possessions(
     period_counts: dict[int, int] = {}
     open_possession: _OpenPossession | None = None
     period_active = False
+    inferred_period_start: tuple[int, float] | None = None
 
     def other_team(team_id: int) -> int:
         return away_team_id if team_id == home_team_id else home_team_id
@@ -104,8 +113,12 @@ def reconstruct_possessions(
         event_possessions.extend(assignments)
         period_counts[current.start_event.period] = period_possession_index + 1
 
-    for event in ordered_events:
+    for event_index, event in enumerate(ordered_events):
         if event.event_type == "period" and event.event_subtype == "start":
+            marker = (event.period, event.elapsed_game_seconds)
+            if period_active and inferred_period_start == marker:
+                inferred_period_start = None
+                continue
             if open_possession is not None and open_possession.events:
                 close_current(
                     open_possession,
@@ -114,6 +127,7 @@ def reconstruct_possessions(
                 )
             open_possession = None
             period_active = True
+            inferred_period_start = None
             continue
 
         if event.event_type == "period" and event.event_subtype == "end":
@@ -126,23 +140,74 @@ def reconstruct_possessions(
                 close_current(open_possession, end_event, terminal_reason)
             open_possession = None
             period_active = False
+            inferred_period_start = None
             continue
 
         if event.event_type in _ADMINISTRATIVE_EVENT_TYPES:
             continue
 
         if not period_active:
-            issues.append(
-                PossessionIssue(
-                    code="event_outside_active_period",
-                    severity="error",
-                    detail="A substantive event occurred outside an active period.",
-                    event_id=event.event_id,
+            if _has_delayed_period_start_marker(
+                ordered_events,
+                event_index,
+            ):
+                period_active = True
+                inferred_period_start = (event.period, event.elapsed_game_seconds)
+                issues.append(
+                    PossessionIssue(
+                        code="delayed_period_start_marker",
+                        severity="warning",
+                        detail=(
+                            "Boundary events preceded the source period-start "
+                            "marker at the same game time."
+                        ),
+                        event_id=event.event_id,
+                    )
                 )
+            else:
+                issues.append(
+                    PossessionIssue(
+                        code="event_outside_active_period",
+                        severity="error",
+                        detail="A substantive event occurred outside an active period.",
+                        event_id=event.event_id,
+                    )
+                )
+                continue
+
+        if (
+            inferred_period_start is not None
+            and _is_non_scoring_technical_foul(event)
+        ):
+            continue
+
+        if (
+            open_possession is not None
+            and open_possession.pending_terminal is not None
+            and open_possession.pending_terminal[1]
+            in {
+                PossessionTerminalReason.MADE_FIELD_GOAL,
+                PossessionTerminalReason.MADE_FINAL_FREE_THROW,
+            }
+            and (
+                event.elapsed_game_seconds
+                > open_possession.pending_terminal[0].elapsed_game_seconds
             )
+            and not _continues_pending_score_event(event, open_possession)
+        ):
+            terminal_event, terminal_reason = open_possession.pending_terminal
+            close_current(open_possession, terminal_event, terminal_reason)
+            open_possession = None
+
+        if open_possession is None and _is_non_scoring_technical_foul(event):
             continue
 
         hint = _offense_hint(event, open_possession)
+        if open_possession is None and _is_technical_free_throw(event):
+            hint = (
+                _next_live_possession_team(ordered_events, event_index, team_ids)
+                or hint
+            )
         if hint is not None and hint not in team_ids:
             issues.append(
                 PossessionIssue(
@@ -168,6 +233,23 @@ def reconstruct_possessions(
             open_possession = open_new(event, hint, _start_reason(event))
 
         if _is_defensive_rebound(event, open_possession.offense_team_id):
+            if _rebound_precedes_same_clock_shooting_foul(
+                ordered_events,
+                event_index,
+                open_possession.offense_team_id,
+            ):
+                issues.append(
+                    PossessionIssue(
+                        code="rebound_overridden_by_same_clock_foul",
+                        severity="warning",
+                        detail=(
+                            "A defensive rebound was superseded by a same-clock "
+                            "shooting foul in source order."
+                        ),
+                        event_id=event.event_id,
+                    )
+                )
+                continue
             _append_event(open_possession, event)
             close_current(
                 open_possession,
@@ -181,7 +263,7 @@ def reconstruct_possessions(
             )
             continue
 
-        if _is_opponent_held_ball_recovery(event, open_possession.offense_team_id):
+        if _is_opponent_jump_ball_recovery(event, open_possession.offense_team_id):
             _append_event(open_possession, event)
             open_possession.pending_terminal = (
                 event,
@@ -222,6 +304,9 @@ def reconstruct_possessions(
         ):
             open_possession.pending_terminal = None
 
+        if _continues_pending_scoring_trip_free_throw(event, open_possession):
+            open_possession.pending_terminal = None
+
         _append_event(open_possession, event)
 
         if _is_turnover(event):
@@ -237,7 +322,10 @@ def reconstruct_possessions(
                 event,
                 PossessionTerminalReason.MADE_FIELD_GOAL,
             )
-        elif _is_made_final_nontechnical_free_throw(event):
+        elif (
+            _is_made_final_nontechnical_free_throw(event)
+            and not _free_throw_trip_retains_possession(open_possession, event)
+        ):
             open_possession.pending_terminal = (
                 event,
                 PossessionTerminalReason.MADE_FINAL_FREE_THROW,
@@ -275,6 +363,30 @@ def reconstruct_possessions(
         possessions=possessions,
         event_possessions=event_possessions,
         issues=issues,
+    )
+
+
+def _has_delayed_period_start_marker(
+    events: Sequence[Event],
+    index: int,
+) -> bool:
+    event = events[index]
+    for later in events[index + 1 :]:
+        if later.period != event.period:
+            return False
+        if later.elapsed_game_seconds != event.elapsed_game_seconds:
+            return False
+        if later.event_type == "period" and later.event_subtype == "start":
+            return True
+    return False
+
+
+def _is_non_scoring_technical_foul(event: Event) -> bool:
+    return (
+        event.event_type == "foul"
+        and event.event_subtype == "technical"
+        and event.score_home_delta == 0
+        and event.score_away_delta == 0
     )
 
 
@@ -399,6 +511,8 @@ def _offense_hint(
 ) -> int | None:
     if _is_post_score_loose_ball_foul(event, possession):
         return possession.offense_team_id
+    if event.event_type == "jumpball" and event.event_subtype == "recovered":
+        return event.source_possession_team_id or event.team_id
     if event.event_type in {"2pt", "3pt", "rebound", "steal", "turnover", "jumpball"}:
         return event.team_id or event.source_possession_team_id
     if event.event_type == "freethrow":
@@ -406,7 +520,7 @@ def _offense_hint(
             return (
                 possession.offense_team_id
                 if possession is not None
-                else event.source_possession_team_id
+                else event.source_possession_team_id or event.team_id
             )
         return event.team_id or event.source_possession_team_id
     if event.event_type == "foul" and event.event_subtype == "offensive":
@@ -463,10 +577,32 @@ def _is_defensive_rebound(event: Event, offense_team_id: int) -> bool:
     )
 
 
-def _is_opponent_held_ball_recovery(event: Event, offense_team_id: int) -> bool:
+def _rebound_precedes_same_clock_shooting_foul(
+    events: Sequence[Event],
+    index: int,
+    offense_team_id: int,
+) -> bool:
+    rebound = events[index]
+    for later in events[index + 1 :]:
+        if later.period != rebound.period:
+            return False
+        if later.elapsed_game_seconds != rebound.elapsed_game_seconds:
+            return False
+        if later.event_type in _ADMINISTRATIVE_EVENT_TYPES:
+            continue
+        return (
+            later.event_type == "foul"
+            and later.descriptor == "shooting"
+            and later.team_id == rebound.team_id
+            and later.source_possession_team_id == offense_team_id
+        )
+    return False
+
+
+def _is_opponent_jump_ball_recovery(event: Event, offense_team_id: int) -> bool:
     return (
         event.event_type == "jumpball"
-        and event.descriptor == "heldball"
+        and event.event_subtype == "recovered"
         and event.team_id is not None
         and event.team_id != offense_team_id
     )
@@ -483,7 +619,7 @@ def _is_made_final_nontechnical_free_throw(event: Event) -> bool:
     if (
         event.event_type != "freethrow"
         or event.shot_result != "Made"
-        or event.descriptor == "technical"
+        or event.descriptor in _POSSESSION_RETAINING_FREE_THROW_DESCRIPTORS
         or event.event_subtype is None
     ):
         return False
@@ -491,8 +627,95 @@ def _is_made_final_nontechnical_free_throw(event: Event) -> bool:
     return match is not None and match.group("attempt") == match.group("total")
 
 
+def _continues_pending_score_event(
+    event: Event,
+    possession: _OpenPossession,
+) -> bool:
+    if (
+        possession.pending_terminal is None
+        or (
+            possession.pending_terminal[1]
+            is not PossessionTerminalReason.MADE_FIELD_GOAL
+        )
+        or event.source_possession_team_id != possession.offense_team_id
+    ):
+        return False
+    terminal_event = possession.pending_terminal[0]
+    elapsed_difference = (
+        event.elapsed_game_seconds - terminal_event.elapsed_game_seconds
+    )
+    if not 0 <= elapsed_difference <= 1.0:
+        return False
+    return (
+        event.event_type == "foul" and event.descriptor == "shooting"
+    ) or (
+        event.event_type == "freethrow" and event.descriptor != "technical"
+    )
+
+
+def _continues_pending_scoring_trip_free_throw(
+    event: Event,
+    possession: _OpenPossession,
+) -> bool:
+    if (
+        event.event_type != "freethrow"
+        or event.descriptor == "technical"
+        or possession.pending_terminal is None
+        or (
+            possession.pending_terminal[1]
+            not in {
+                PossessionTerminalReason.MADE_FIELD_GOAL,
+                PossessionTerminalReason.MADE_FINAL_FREE_THROW,
+            }
+        )
+    ):
+        return False
+    terminal_event = possession.pending_terminal[0]
+    elapsed_difference = (
+        event.elapsed_game_seconds - terminal_event.elapsed_game_seconds
+    )
+    return 0 <= elapsed_difference <= 1.0
+
+
+def _free_throw_trip_retains_possession(
+    possession: _OpenPossession,
+    event: Event,
+) -> bool:
+    if event.descriptor in _POSSESSION_RETAINING_FREE_THROW_DESCRIPTORS:
+        return True
+    return any(
+        prior.event_type == "foul"
+        and prior.elapsed_game_seconds == event.elapsed_game_seconds
+        and (
+            prior.descriptor in _POSSESSION_RETAINING_FREE_THROW_DESCRIPTORS
+            or (prior.descriptor or "").startswith("flagrant")
+        )
+        for prior in possession.events[:-1]
+    )
+
+
 def _is_technical_free_throw(event: Event) -> bool:
     return event.event_type == "freethrow" and event.descriptor == "technical"
+
+
+def _next_live_possession_team(
+    events: Sequence[Event],
+    index: int,
+    team_ids: set[int],
+) -> int | None:
+    event = events[index]
+    for later in events[index + 1 :]:
+        if later.period != event.period:
+            return None
+        if later.event_type in _ADMINISTRATIVE_EVENT_TYPES:
+            continue
+        if _is_non_scoring_technical_foul(later) or _is_technical_free_throw(later):
+            continue
+        if later.source_possession_team_id in team_ids:
+            return later.source_possession_team_id
+        if later.team_id in team_ids:
+            return later.team_id
+    return None
 
 
 def _validation_issues(

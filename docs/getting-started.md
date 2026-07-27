@@ -85,6 +85,39 @@ Open `http://127.0.0.1:4200`. See
 [Use the Prefect web UI](guides/prefect-ui.md) to connect future runs to the
 persistent server instead of the automatic temporary API.
 
+## Process a season
+
+Run a representative local-data pilot:
+
+```bash
+uv run nba-process-season 2025-26 \
+  --sample-per-stratum 3 \
+  --seed 7
+```
+
+Then process every final catalog game:
+
+```bash
+uv run nba-process-season 2025-26 --max-workers 4
+```
+
+See [Process a season](guides/process-season.md) for quality gates, outputs,
+checkpointing, and resume semantics.
+
+## Compact a season
+
+After every final game has a successful build and a passing or warning quality
+record, create the season-level analytical datasets:
+
+```bash
+uv run nba-compact-season 2025-26 --max-workers 4
+```
+
+The flow writes deterministic Parquet shards and partition manifests under
+`data/curated/`. Re-running the command validates and skips unchanged
+partitions. See [Compact a season](guides/compact-season.md) for the row-level
+provenance contract, analytical reads, and resume behavior.
+
 ## Import a canonical game catalog
 
 ```bash

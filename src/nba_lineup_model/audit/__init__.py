@@ -3,6 +3,7 @@
 from nba_lineup_model.audit.runner import (
     AuditRun,
     audit_game_payloads,
+    audit_reconstruction,
     audit_results_frame,
     audit_summary_frame,
     run_audit_manifest,
@@ -20,6 +21,7 @@ __all__ = [
     "AuditManifest",
     "AuditRun",
     "audit_game_payloads",
+    "audit_reconstruction",
     "audit_results_frame",
     "audit_summary_frame",
     "run_audit_manifest",

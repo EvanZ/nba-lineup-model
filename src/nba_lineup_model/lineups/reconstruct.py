@@ -161,6 +161,7 @@ def reconstruct_lineups(
     issues: list[LineupIssue] = []
     open_stint: _OpenStint | None = None
     period_active = False
+    inferred_period_start: tuple[int, float] | None = None
     substitution_batch_id = 0
     index = 0
 
@@ -171,20 +172,64 @@ def reconstruct_lineups(
             while (
                 batch_end < len(ordered_events)
                 and ordered_events[batch_end].event_type == "substitution"
+                and ordered_events[batch_end].period == event.period
+                and (
+                    ordered_events[batch_end].elapsed_game_seconds
+                    == event.elapsed_game_seconds
+                )
             ):
                 batch_end += 1
             batch = ordered_events[index:batch_end]
             if len({batch_event.period for batch_event in batch}) != 1:
                 raise LineupReconstructionError(
                     f"Substitution batch {substitution_batch_id} crosses a period boundary"
-                )
+            )
 
             before = state
-            after = _apply_substitution_batch(before, batch, substitution_batch_id)
+            duplicate_team_ids = _idempotent_substitution_team_ids(before, batch)
+            try:
+                after = _apply_substitution_batch(
+                    before,
+                    batch,
+                    substitution_batch_id,
+                )
+            except LineupReconstructionError:
+                if period_active or not _is_full_clock_period_boundary(batch):
+                    raise
+                after = _reconcile_period_start_lineup(
+                    before,
+                    batch,
+                    ordered_events[batch_end:],
+                    substitution_batch_id,
+                )
+                issues.append(
+                    LineupIssue(
+                        code="period_start_lineup_reconciled",
+                        severity="warning",
+                        detail=(
+                            "An impossible full-clock substitution batch was "
+                            "reconciled from declared entrants and early period actors."
+                        ),
+                        event_id=batch[0].event_id,
+                    )
+                )
+            if duplicate_team_ids:
+                issues.append(
+                    LineupIssue(
+                        code="duplicate_substitution_state",
+                        severity="warning",
+                        detail=(
+                            "A substitution team change was already reflected in "
+                            f"the active lineup for teams {sorted(duplicate_team_ids)}."
+                        ),
+                        event_id=batch[0].event_id,
+                    )
+                )
             boundary_start = batch[0]
             boundary_end = batch[-1]
+            lineup_changed = after != before
 
-            if open_stint is not None:
+            if open_stint is not None and lineup_changed:
                 stints.append(
                     _close_stint(
                         open_stint,
@@ -206,7 +251,7 @@ def reconstruct_lineups(
                 )
 
             state = after
-            if period_active:
+            if period_active and lineup_changed:
                 open_stint = _open_stint(
                     boundary_end,
                     state,
@@ -222,11 +267,33 @@ def reconstruct_lineups(
 
         if event.event_type == "period" and event.event_subtype == "start":
             if period_active:
-                raise LineupReconstructionError(
-                    f"Period {event.period} started while period state was already active"
-                )
+                marker = (event.period, event.elapsed_game_seconds)
+                if inferred_period_start != marker:
+                    raise LineupReconstructionError(
+                        f"Period {event.period} started while period state was already active"
+                    )
+                inferred_period_start = None
+            else:
+                period_active = True
+                open_stint = _open_stint(event, state, start_reason="period_start")
+        elif not period_active and _has_delayed_period_start_marker(
+            ordered_events,
+            index,
+        ):
             period_active = True
+            inferred_period_start = (event.period, event.elapsed_game_seconds)
             open_stint = _open_stint(event, state, start_reason="period_start")
+            issues.append(
+                LineupIssue(
+                    code="delayed_period_start_marker",
+                    severity="warning",
+                    detail=(
+                        "Boundary events preceded the source period-start marker "
+                        "at the same game time."
+                    ),
+                    event_id=event.event_id,
+                )
+            )
         elif not period_active and event.event_type not in {
             "game",
             "instantreplay",
@@ -249,6 +316,7 @@ def reconstruct_lineups(
             )
             open_stint = None
             period_active = False
+            inferred_period_start = None
 
         index += 1
 
@@ -279,6 +347,21 @@ def reconstruct_lineups(
         stints=stints,
         issues=issues,
     )
+
+
+def _has_delayed_period_start_marker(
+    events: Sequence[Event],
+    index: int,
+) -> bool:
+    event = events[index]
+    for later in events[index + 1 :]:
+        if later.period != event.period:
+            return False
+        if later.elapsed_game_seconds != event.elapsed_game_seconds:
+            return False
+        if later.event_type == "period" and later.event_subtype == "start":
+            return True
+    return False
 
 
 def event_lineups_frame(reconstruction: LineupReconstruction) -> pd.DataFrame:
@@ -373,6 +456,133 @@ def _apply_substitution_batch(
     )
 
 
+def _idempotent_substitution_team_ids(
+    state: LineupState,
+    batch: Sequence[Event],
+) -> set[int]:
+    changes: dict[int, dict[str, set[int]]] = {}
+    for event in batch:
+        if (
+            event.team_id is None
+            or event.player_id is None
+            or event.event_subtype not in {"in", "out"}
+        ):
+            continue
+        changes.setdefault(event.team_id, {"in": set(), "out": set()})[
+            event.event_subtype
+        ].add(event.player_id)
+
+    lineups = {
+        state.home_team_id: set(state.home_player_ids),
+        state.away_team_id: set(state.away_player_ids),
+    }
+    return {
+        team_id
+        for team_id, team_changes in changes.items()
+        if team_id in lineups
+        and team_changes["in"]
+        and team_changes["out"]
+        and team_changes["out"].isdisjoint(lineups[team_id])
+        and team_changes["in"] <= lineups[team_id]
+    }
+
+
+def _is_full_clock_period_boundary(batch: Sequence[Event]) -> bool:
+    event = batch[0]
+    period_seconds = 720.0 if event.period <= 4 else 300.0
+    return all(
+        batch_event.period == event.period
+        and batch_event.seconds_remaining_period == period_seconds
+        for batch_event in batch
+    )
+
+
+def _reconcile_period_start_lineup(
+    state: LineupState,
+    batch: Sequence[Event],
+    later_events: Sequence[Event],
+    batch_id: int,
+) -> LineupState:
+    team_ids = {state.home_team_id, state.away_team_id}
+    incoming: dict[int, set[int]] = {}
+    changed_team_ids: set[int] = set()
+    for event in batch:
+        if event.team_id not in team_ids or event.player_id is None:
+            raise LineupReconstructionError(
+                f"Cannot reconcile substitution batch {batch_id} with missing team data"
+            )
+        changed_team_ids.add(event.team_id)
+        if event.event_subtype == "in":
+            incoming.setdefault(event.team_id, set()).add(event.player_id)
+
+    inferred: dict[int, set[int]] = {
+        team_id: set(incoming.get(team_id, set()))
+        for team_id in changed_team_ids
+    }
+    if any(len(players) > 5 for players in inferred.values()):
+        raise LineupReconstructionError(
+            f"Substitution batch {batch_id} declares more than five incoming players"
+        )
+
+    period = batch[0].period
+    for event in later_events:
+        if event.period != period:
+            break
+        if event.team_id not in inferred or event.player_id is None:
+            continue
+        players = inferred[event.team_id]
+        if len(players) == 5:
+            continue
+        if event.event_type == "substitution":
+            if event.event_subtype == "out":
+                players.add(event.player_id)
+        elif _primary_actor_must_be_on_court(event):
+            players.add(event.player_id)
+        if all(len(players) == 5 for players in inferred.values()):
+            break
+
+    incomplete = {
+        team_id: len(players)
+        for team_id, players in inferred.items()
+        if len(players) != 5
+    }
+    if incomplete:
+        raise LineupReconstructionError(
+            f"Could not infer five-player period-start lineups for batch "
+            f"{batch_id}: {incomplete}"
+        )
+
+    return LineupState(
+        home_team_id=state.home_team_id,
+        away_team_id=state.away_team_id,
+        home_player_ids=(
+            tuple(inferred[state.home_team_id])
+            if state.home_team_id in inferred
+            else state.home_player_ids
+        ),
+        away_player_ids=(
+            tuple(inferred[state.away_team_id])
+            if state.away_team_id in inferred
+            else state.away_player_ids
+        ),
+    )
+
+
+def _primary_actor_must_be_on_court(event: Event) -> bool:
+    if event.event_type in {
+        "game",
+        "instantreplay",
+        "period",
+        "stoppage",
+        "substitution",
+        "timeout",
+    }:
+        return False
+    return not (
+        event.event_type == "foul" and event.event_subtype == "technical"
+    )
+
+
 def _apply_team_changes(
     lineup: tuple[int, ...],
     changes: dict[str, set[int]],
@@ -383,6 +593,13 @@ def _apply_team_changes(
     cancelled = changes["out"] & changes["in"]
     outgoing = changes["out"] - cancelled
     incoming = changes["in"] - cancelled
+    if (
+        outgoing
+        and incoming
+        and outgoing.isdisjoint(current)
+        and incoming <= current
+    ):
+        return normalize_lineup(tuple(current))
     missing = outgoing - current
     already_on_court = incoming & current
     if missing:
@@ -489,16 +706,7 @@ def _validate_primary_actor(
 ) -> None:
     if event.player_id is None or event.team_id is None:
         return
-    if event.event_type in {
-        "game",
-        "instantreplay",
-        "period",
-        "stoppage",
-        "substitution",
-        "timeout",
-    }:
-        return
-    if event.event_type == "foul" and event.event_subtype == "technical":
+    if not _primary_actor_must_be_on_court(event):
         return
 
     if event.team_id == state.home_team_id:

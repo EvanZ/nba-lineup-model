@@ -51,13 +51,23 @@ flowchart LR
     <strong>Fetch a season</strong>
     <span>Run resumable, bounded-concurrency acquisition from the game catalog.</span>
   </a>
-  <a href="architecture/overview/">
+  <a href="guides/process-season/">
     <span class="path-index">04</span>
+    <strong>Process a season</strong>
+    <span>Reconstruct and quality-gate cached games through Prefect.</span>
+  </a>
+  <a href="guides/compact-season/">
+    <span class="path-index">05</span>
+    <strong>Compact a season</strong>
+    <span>Publish lossless, provenance-rich analytical Parquet datasets.</span>
+  </a>
+  <a href="architecture/overview/">
+    <span class="path-index">06</span>
     <strong>Understand the pipeline</strong>
     <span>Review ownership boundaries, decisions, and failure policy.</span>
   </a>
   <a href="data/raw-responses/">
-    <span class="path-index">05</span>
+    <span class="path-index">07</span>
     <strong>Inspect data contracts</strong>
     <span>Trace raw source documents through modeling-ready segments.</span>
   </a>
@@ -71,6 +81,8 @@ flowchart LR
 - Preserve raw response bytes with fetch metadata and SHA-256 digests.
 - Discover historical season schedules directly into a canonical game catalog.
 - Fetch complete seasons through a resumable local Prefect flow.
+- Process cached seasons through validation-gated Prefect tasks.
+- Compact quality-gated games into resumable season-level Parquet datasets.
 - Normalize source actions into typed canonical events.
 - Reconstruct event-level lineups and stable lineup stints.
 - Reconstruct basketball possessions with explicit terminal reasons.

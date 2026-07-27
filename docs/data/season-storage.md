@@ -86,8 +86,9 @@ data/manifests/builds.parquet
 ```
 
 Each record identifies its run, attempt, game, season partition, timestamps,
-cache policy, terminal status and stage, source hashes, processing counts, and
-failure or skip details.
+cache policy, Prefect flow and task IDs, terminal status and stage, source
+hashes, processing-code fingerprint, reconstruction counts, and failure or skip
+details.
 
 Statuses are:
 
@@ -108,19 +109,95 @@ records to that writer rather than modifying the ledger themselves.
     Parquet fetch manifest and build ledger remain the portable project-owned
     history and can be inspected independently of the orchestration database.
 
+## Quality reports
+
+Season processing maintains:
+
+```text
+data/quality/games.parquet
+data/quality/summary.parquet
+```
+
+`games.parquet` contains the latest quality result for each game, tied to exact
+source hashes and a processing-code fingerprint. It records hard invariant
+results, event, lineup, possession, and segment diagnostic counts, issue codes,
+and Prefect run IDs. `event_warning_count` includes source-level normalization
+flags such as a nonmonotonic source clock; the matching named flags remain in
+`issue_codes`.
+
+`summary.parquet` aggregates pass, warning, failure, and error counts by season
+and season type. Quality records are checkpointed before matching build-ledger
+records so an interrupted run cannot skip work based on incomplete validation
+metadata.
+
+Warnings are accepted outputs, not silent corrections. Consumers can filter
+them by `status` or specific `issue_codes` when constructing stricter modeling
+datasets.
+
 ## Curated layout
 
-Validated game artifacts compact into Hive-style partitions:
+The season compaction flow losslessly combines validated per-game artifacts
+into plain-directory partitions with self-contained Parquet files:
 
 ```text
 data/curated/
-  events/season=2025-26/season_type=regular/part-00000.parquet
-  possessions/season=2025-26/season_type=regular/part-00000.parquet
-  possession_segments/season=2025-26/season_type=playoffs/part-00000.parquet
+  events/
+    2025-26/
+      regular/
+        _manifest.json
+        part-00000.parquet
+        part-00001.parquet
+  possessions/
+    2025-26/
+      regular/
+        _manifest.json
 ```
 
 The same layout applies to `players`, `event_lineups`, and `lineup_stints`.
-Every curated row retains `game_id`, `season`, and `season_type`.
+The default shard size is 100 source games, not a target byte size, so part
+boundaries are deterministic across tables and repeated builds.
 
-Consumers must read the partition directory as a Parquet dataset. A partition
-may contain one or several part files.
+Each Parquet row retains its source `game_id` and adds:
+
+| Metadata | Meaning |
+| --- | --- |
+| `game_date`, `game_time_utc` | Canonical schedule time |
+| `catalog_home_*`, `catalog_away_*` | Canonical team IDs and tricodes |
+| `quality_status` | `pass` or `warning` |
+| `quality_issue_codes_json` | Canonical JSON array of named quality issues |
+| `quality_recorded_at`, `quality_run_id` | Quality-report provenance |
+| `source_build_run_id`, `source_build_attempt_id` | Successful build provenance |
+| `processing_code_version` | Fingerprint of processing Python sources |
+| `play_by_play_sha256`, `boxscore_sha256` | Exact raw-source identities |
+
+`season` and `season_type` are stored as strings in every part file. The plain
+directory names organize files for people and targeted reads, but no analytical
+identity depends on path-derived virtual columns. A copied shard remains
+self-describing.
+
+Read a specific partition directly:
+
+```python
+import pandas as pd
+
+segments = pd.read_parquet(
+    "data/curated/possession_segments/2025-26/regular",
+    filters=[
+        ("season", "==", "2025-26"),
+        ("season_type", "==", "regular"),
+    ],
+)
+```
+
+Reading the table root also works across multiple seasons because every shard
+has the same self-contained schema.
+
+Each `_manifest.json` records exact source metadata and file fingerprints,
+ordered game IDs, per-game row counts, part hashes and sizes, quality counts,
+and input/output row totals. Publication uses a complete temporary directory
+and an atomic directory swap. A partition is resumable only when its selected
+inputs, curation code, shard policy, files, hashes, schemas, and row counts all
+still agree.
+
+Warnings remain in the canonical curated layer with their issue codes. Modeling
+marts can impose stricter filters without deleting accepted source evidence.

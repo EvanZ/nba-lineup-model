@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 
+from nba_lineup_model.audit.runner import audit_summary_frame
 from nba_lineup_model.season.schema import (
     BuildLedger,
     CatalogGame,
@@ -14,6 +15,8 @@ from nba_lineup_model.season.schema import (
     GameBuildRecord,
     GameCatalog,
     GameFetchRecord,
+    GameQualityRecord,
+    QualityReport,
 )
 
 CATALOG_COLUMNS = (
@@ -39,6 +42,8 @@ BUILD_LEDGER_COLUMNS = (
     "schema_version",
     "run_id",
     "attempt_id",
+    "prefect_flow_run_id",
+    "prefect_task_run_id",
     "attempt_number",
     "game_id",
     "season",
@@ -86,6 +91,7 @@ FETCH_MANIFEST_COLUMNS = (
     "error_message",
     "skip_reason",
 )
+QUALITY_RECORD_COLUMNS = tuple(GameQualityRecord.model_fields)
 
 _CATALOG_STRING_COLUMNS = (
     "game_id",
@@ -107,6 +113,8 @@ _CATALOG_INTEGER_COLUMNS = (
 _LEDGER_STRING_COLUMNS = (
     "run_id",
     "attempt_id",
+    "prefect_flow_run_id",
+    "prefect_task_run_id",
     "game_id",
     "season",
     "season_type",
@@ -148,6 +156,66 @@ _FETCH_INTEGER_COLUMNS = (
     "attempt_number",
     "play_by_play_bytes",
     "boxscore_bytes",
+)
+_QUALITY_STRING_COLUMNS = (
+    "run_id",
+    "prefect_flow_run_id",
+    "prefect_task_run_id",
+    "code_version",
+    "play_by_play_sha256",
+    "boxscore_sha256",
+    "game_id",
+    "season",
+    "season_type",
+    "sample_group",
+    "status",
+    "game_time_utc",
+    "home_tricode",
+    "away_tricode",
+    "error_stage",
+    "error_type",
+    "error_message",
+)
+_QUALITY_INTEGER_COLUMNS = (
+    "schema_version",
+    "attempt_number",
+    "home_team_id",
+    "away_team_id",
+    "score_home",
+    "score_away",
+    "period_count",
+    "event_count",
+    "lineup_stint_count",
+    "possession_count",
+    "home_possession_count",
+    "away_possession_count",
+    "possession_count_difference",
+    "possession_segment_count",
+    "multi_segment_possession_count",
+    "source_possession_override_count",
+    "source_change_terminal_count",
+    "opponent_technical_free_throw_possession_count",
+    "lineup_warning_count",
+    "lineup_error_count",
+    "possession_warning_count",
+    "possession_error_count",
+    "segment_warning_count",
+    "segment_error_count",
+    "event_warning_count",
+)
+_QUALITY_FLOAT_COLUMNS = (
+    "estimated_home_possessions",
+    "estimated_away_possessions",
+    "home_possession_estimate_difference",
+    "away_possession_estimate_difference",
+)
+_QUALITY_BOOLEAN_COLUMNS = (
+    "is_overtime",
+    "score_matches_boxscore",
+    "possession_score_conserved",
+    "segment_score_conserved",
+    "segment_duration_conserved",
+    "balanced_possession_counts",
 )
 
 
@@ -317,10 +385,117 @@ def append_build_record(
 ) -> BuildLedger:
     """Append one terminal record using an atomic single-writer rewrite."""
 
+    return append_build_records([record], path)
+
+
+def append_build_records(
+    records: Sequence[GameBuildRecord],
+    path: Path | str,
+) -> BuildLedger:
+    """Append terminal build records using one atomic single-writer rewrite."""
+
     ledger = read_build_ledger(path)
-    updated = BuildLedger(records=[*ledger.records, record])
+    updated = BuildLedger(records=[*ledger.records, *records])
     write_build_ledger(updated, path)
     return updated
+
+
+def quality_report_frame(
+    report: QualityReport | Sequence[GameQualityRecord],
+) -> pd.DataFrame:
+    """Return a typed canonical game-quality frame."""
+
+    records = report.records if isinstance(report, QualityReport) else list(report)
+    validated = QualityReport(records=records)
+    rows = [record.model_dump(mode="python") for record in validated.records]
+    frame = pd.DataFrame(rows, columns=QUALITY_RECORD_COLUMNS)
+    if not frame.empty:
+        frame = frame.sort_values(
+            ["season", "season_type", "game_id"],
+            kind="stable",
+        ).reset_index(drop=True)
+    for column in _QUALITY_STRING_COLUMNS:
+        frame[column] = frame[column].astype("string")
+    for column in _QUALITY_INTEGER_COLUMNS:
+        frame[column] = frame[column].astype("Int64")
+    for column in _QUALITY_FLOAT_COLUMNS:
+        frame[column] = frame[column].astype("Float64")
+    for column in _QUALITY_BOOLEAN_COLUMNS:
+        frame[column] = frame[column].astype("boolean")
+    frame["recorded_at"] = pd.to_datetime(frame["recorded_at"], utc=True)
+    frame["issue_codes"] = frame["issue_codes"].map(list)
+    return frame
+
+
+def quality_report_from_frame(frame: pd.DataFrame) -> QualityReport:
+    """Validate a canonical game-quality frame."""
+
+    records = []
+    for row in frame.to_dict(orient="records"):
+        record = _python_record(row)
+        issue_codes = record.get("issue_codes")
+        if issue_codes is None:
+            record["issue_codes"] = ()
+        else:
+            tolist = getattr(issue_codes, "tolist", None)
+            if callable(tolist):
+                issue_codes = tolist()
+            record["issue_codes"] = tuple(issue_codes)
+        records.append(GameQualityRecord.model_validate(record))
+    return QualityReport(records=records)
+
+
+def write_quality_report(
+    report: QualityReport | Sequence[GameQualityRecord],
+    games_path: Path | str,
+    *,
+    summary_path: Path | str | None = None,
+) -> QualityReport:
+    """Atomically write canonical game quality and its aggregate summary."""
+
+    validated = report if isinstance(report, QualityReport) else QualityReport(records=report)
+    _atomic_write_parquet(quality_report_frame(validated), Path(games_path))
+    if summary_path is not None:
+        _atomic_write_parquet(
+            audit_summary_frame(validated.records),
+            Path(summary_path),
+        )
+    return validated
+
+
+def read_quality_report(path: Path | str) -> QualityReport:
+    """Read canonical game quality, returning an empty report when absent."""
+
+    input_path = Path(path)
+    if not input_path.exists():
+        return QualityReport()
+    return quality_report_from_frame(pd.read_parquet(input_path))
+
+
+def merge_quality_records(
+    records: Sequence[GameQualityRecord],
+    games_path: Path | str,
+    *,
+    summary_path: Path | str | None = None,
+) -> QualityReport:
+    """Replace canonical quality rows by game ID and write the merged report."""
+
+    incoming = QualityReport(records=list(records))
+    by_game_id = {
+        record.game_id: record for record in read_quality_report(games_path).records
+    }
+    by_game_id.update({record.game_id: record for record in incoming.records})
+    merged = QualityReport(
+        records=sorted(
+            by_game_id.values(),
+            key=lambda record: (record.season, record.season_type, record.game_id),
+        )
+    )
+    return write_quality_report(
+        merged,
+        games_path,
+        summary_path=summary_path,
+    )
 
 
 def _python_record(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -336,6 +511,9 @@ def _python_value(value: Any) -> Any:
         return value.to_pydatetime()
     if isinstance(value, datetime | date | str | int | float | bool):
         return value
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        return tolist()
     item = getattr(value, "item", None)
     return item() if callable(item) else value
 

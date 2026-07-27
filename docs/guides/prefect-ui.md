@@ -32,6 +32,19 @@ PREFECT_API_URL=http://127.0.0.1:4200/api \
 
 The flow and its game tasks appear in the UI while they execute.
 
+The same connection applies to processing and compaction:
+
+```bash
+PREFECT_API_URL=http://127.0.0.1:4200/api \
+  uv run nba-process-season 2025-26 --max-workers 4
+
+PREFECT_API_URL=http://127.0.0.1:4200/api \
+  uv run nba-compact-season 2025-26 --max-workers 4
+```
+
+Season compaction appears as one flow with one task for each table and
+season-type partition.
+
 ## Save the connection
 
 Store the local API URL in the active Prefect profile:

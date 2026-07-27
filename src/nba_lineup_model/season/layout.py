@@ -47,7 +47,7 @@ class CuratedPartition(BaseModel):
 
 @dataclass(frozen=True)
 class CuratedDatasetLayout:
-    """Construct deterministic Hive-style paths for curated Parquet datasets."""
+    """Construct deterministic plain-directory curated Parquet paths."""
 
     root: Path = Path("data/curated")
 
@@ -55,11 +55,14 @@ class CuratedDatasetLayout:
         return (
             self.root
             / partition.table
-            / f"season={partition.season}"
-            / f"season_type={partition.season_type}"
+            / partition.season
+            / partition.season_type
         )
 
     def part_path(self, partition: CuratedPartition, part_number: int = 0) -> Path:
         if part_number < 0:
             raise ValueError("part_number must be non-negative")
         return self.partition_dir(partition) / f"part-{part_number:05d}.parquet"
+
+    def manifest_path(self, partition: CuratedPartition) -> Path:
+        return self.partition_dir(partition) / "_manifest.json"

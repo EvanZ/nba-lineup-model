@@ -17,9 +17,11 @@ dependencies = [
 [project.scripts]
 nba-audit-games = "nba_lineup_model.audit.runner:main"
 nba-build-game = "nba_lineup_model.build_game:main"
+nba-compact-season = "nba_lineup_model.flows.compact_season:main"
 nba-discover-season = "nba_lineup_model.season.discover:main"
 nba-fetch-season = "nba_lineup_model.flows.fetch_season:main"
 nba-import-catalog = "nba_lineup_model.season.catalog:main"
+nba-process-season = "nba_lineup_model.flows.process_season:main"
 nba-sample-audit = "nba_lineup_model.audit.sample:main"
 
 [dependency-groups]

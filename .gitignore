@@ -11,6 +11,8 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+data/curated/*
+!data/curated/.gitkeep
 data/external/*
 !data/external/.gitkeep
 

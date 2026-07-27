@@ -70,6 +70,45 @@ def test_overtime_elapsed_time_uses_five_minute_periods():
     assert format_game_clock(299.2) == "04:59.20"
 
 
+def test_nonmonotonic_source_clock_clamps_derived_elapsed_time():
+    payload = {
+        "game": {
+            "gameId": "0020000003",
+            "actions": [
+                {
+                    "actionNumber": 1,
+                    "orderNumber": 10000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT10M00.00S",
+                    "actionType": "2pt",
+                    "subType": "Jump Shot",
+                    "scoreHome": "2",
+                    "scoreAway": "0",
+                },
+                {
+                    "actionNumber": 2,
+                    "orderNumber": 20000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT10M05.00S",
+                    "actionType": "2pt",
+                    "subType": "Jump Shot",
+                    "scoreHome": "2",
+                    "scoreAway": "2",
+                },
+            ],
+        }
+    }
+
+    events = canonical_events(payload)
+
+    assert events[0].elapsed_game_seconds == 120
+    assert events[1].source_clock == "PT10M05.00S"
+    assert events[1].elapsed_game_seconds == 120
+    assert events[1].validation_flags == ("nonmonotonic_source_clock",)
+
+
 def test_event_identifier_columns_use_nullable_integer_dtype():
     frame = events_frame(load_fixture("playbyplay_minimal.json"))
 

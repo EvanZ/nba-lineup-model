@@ -53,12 +53,27 @@ def build_possession_segments(
     issues: list[PossessionIssue] = []
 
     for possession in possession_reconstruction.possessions:
+        assigned_event_indexes = {
+            assignment.event_index
+            for assignment in possession_reconstruction.event_possessions
+            if assignment.possession_index == possession.possession_index
+        }
+        nominal_end_event = event_by_index[possession.end_event_index]
+        assigned_end_event = max(
+            (event_by_index[event_index] for event_index in assigned_event_indexes),
+            key=lambda event: event.source_order_number,
+        )
+        segment_end_event = max(
+            nominal_end_event,
+            assigned_end_event,
+            key=lambda event: event.source_order_number,
+        )
         possession_events = [
             event
             for event in events
             if possession.start_order_number
             <= event.source_order_number
-            <= possession.end_order_number
+            <= segment_end_event.source_order_number
         ]
         if not possession_events:
             issues.append(
@@ -127,12 +142,11 @@ def build_possession_segments(
                 open_segment.event_count += 1
             index += 1
 
-        end_event = event_by_index[possession.end_event_index]
         possession_segments.append(
             _close_segment(
                 possession,
                 open_segment,
-                end_event,
+                segment_end_event,
                 segment_index=len(segments) + len(possession_segments),
                 possession_segment_index=len(possession_segments),
                 end_reason="possession_end",

@@ -8,8 +8,11 @@ flowchart LR
     FLOW --> CDN["NBA CDN game JSON"]
     CDN["NBA CDN game JSON"] --> RAW["Byte-preserving raw cache"]
     FLOW --> FMAN["Fetch manifest"]
-    RAW --> EVT["Canonical events"]
+    RAW --> PFLOW["Prefect season processing"]
+    PFLOW --> EVT["Canonical events"]
     RAW --> BOX["Boxscore player table"]
+    PFLOW --> QUALITY["Quality reports"]
+    PFLOW --> LEDGER["Build ledger"]
     EVT --> LUP["Event lineups"]
     BOX --> LUP
     LUP --> STINT["Lineup stints"]
@@ -20,14 +23,17 @@ flowchart LR
     LUP --> AUDIT
     POSS --> AUDIT
     SEG --> AUDIT
-    EVT --> CURATED["Curated season datasets"]
-    BOX --> CURATED
-    LUP --> CURATED
-    STINT --> CURATED
-    POSS --> CURATED
-    SEG --> CURATED
+    QUALITY --> CFLOW["Prefect season compaction"]
+    LEDGER --> CFLOW
+    EVT --> CFLOW
+    BOX --> CFLOW
+    LUP --> CFLOW
+    STINT --> CFLOW
+    POSS --> CFLOW
+    SEG --> CFLOW
+    CFLOW --> CURATED["Curated season datasets"]
     CURATED --> MODEL["Modeling datasets"]
-    AUDIT --> LEDGER["Build ledger"]
+    AUDIT --> QUALITY
 ```
 
 ## Persisted layers
@@ -70,10 +76,19 @@ data/manifests/
   fetches.parquet
   builds.parquet
 
+data/quality/
+  games.parquet
+  summary.parquet
+
 data/curated/{table}/
-  season=2025-26/
-    season_type=regular/
+  2025-26/
+    regular/
+      _manifest.json
       part-00000.parquet
+
+data/curated/_manifests/
+  2025-26/
+    compact-2025-26-....json
 ```
 
 Raw and derived datasets are intentionally excluded from Git. Schemas,
@@ -83,6 +98,11 @@ Raw responses remain one JSON file per endpoint and game. Retryable processed
 artifacts also remain per-game files. Validated analytical tables compact into
 season and season-type Parquet partitions; orchestration does not change those
 storage boundaries.
+
+Compaction is lossless. It preserves every accepted source row, adds catalog and
+provenance metadata, and verifies per-game and partition row conservation.
+Canonical curated data includes warning games; later modeling datasets can
+filter `quality_status` and decoded issue codes for a specific experiment.
 
 ## Ordering guarantees
 
