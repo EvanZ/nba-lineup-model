@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +33,21 @@ from nba_lineup_model.season.schema import (
     CatalogGame,
     GameBuildRecord,
     GameQualityRecord,
+)
+
+_PROCESSING_SOURCE_ENTRIES = (
+    "audit/runner.py",
+    "audit/schema.py",
+    "build_game.py",
+    "events",
+    "ingest/nba_cdn.py",
+    "lineups",
+    "normalize",
+    "possessions",
+    "season/fetch.py",
+    "season/layout.py",
+    "season/process.py",
+    "season/schema.py",
 )
 
 
@@ -335,15 +351,37 @@ def failed_process_outcome(
     )
 
 
-def processing_code_fingerprint(package_root: Path | str | None = None) -> str:
-    """Hash project Python sources so algorithm changes invalidate resume."""
+def processing_code_fingerprint(
+    package_root: Path | str | None = None,
+    *,
+    source_entries: Sequence[Path | str] | None = None,
+) -> str:
+    """Hash processing-owned Python sources so algorithm changes invalidate resume."""
 
     root = (
         Path(package_root)
         if package_root is not None
         else Path(__file__).resolve().parents[1]
     )
-    paths = sorted(path for path in root.rglob("*.py") if path.is_file())
+    entries = (
+        tuple(Path(entry) for entry in source_entries)
+        if source_entries is not None
+        else (
+            tuple(Path(entry) for entry in _PROCESSING_SOURCE_ENTRIES)
+            if package_root is None
+            else ()
+        )
+    )
+    if entries:
+        paths = sorted(
+            {
+                path
+                for entry in entries
+                for path in _python_paths_for_entry(root, entry)
+            }
+        )
+    else:
+        paths = sorted(path for path in root.rglob("*.py") if path.is_file())
     if not paths:
         raise ValueError(f"No Python source files found under {root}")
     digest = hashlib.sha256()
@@ -353,6 +391,15 @@ def processing_code_fingerprint(package_root: Path | str | None = None) -> str:
         digest.update(path.read_bytes())
         digest.update(b"\0")
     return f"sha256:{digest.hexdigest()}"
+
+
+def _python_paths_for_entry(root: Path, entry: Path) -> list[Path]:
+    path = root / entry
+    if path.is_file():
+        return [path] if path.suffix == ".py" else []
+    if path.is_dir():
+        return [candidate for candidate in path.rglob("*.py") if candidate.is_file()]
+    raise ValueError(f"Processing source entry does not exist: {path}")
 
 
 def latest_successful_builds(ledger: BuildLedger) -> dict[str, GameBuildRecord]:

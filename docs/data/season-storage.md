@@ -13,6 +13,8 @@ and analytical data.
 | Fetch manifest | One row per game and fetch run | Durable raw acquisition outcomes |
 | Build ledger | One row per attempt | Durable reconstruction outcomes |
 | Curated | Season and season type | Compact analytical datasets |
+| Player catalog | One row per player | Historical identity and listed attributes |
+| Player seasons | Player and season type | Physical and background priors |
 
 The catalog and ledger are operational metadata. They do not replace raw source
 provenance or reconstruction audit reports.
@@ -89,6 +91,10 @@ Each record identifies its run, attempt, game, season partition, timestamps,
 cache policy, Prefect flow and task IDs, terminal status and stage, source
 hashes, processing-code fingerprint, reconstruction counts, and failure or skip
 details.
+
+The fingerprint is scoped to raw-game validation, reconstruction, auditing,
+and processed-table contract modules. Player reference and modeling code do not
+invalidate completed game reconstructions.
 
 Statuses are:
 
@@ -201,3 +207,22 @@ still agree.
 
 Warnings remain in the canonical curated layer with their issue codes. Modeling
 marts can impose stricter filters without deleting accepted source evidence.
+
+## Player reference data
+
+Player reference collection writes:
+
+```text
+data/catalog/players.parquet
+data/curated/player_seasons/2025-26/regular/part-00000.parquet
+```
+
+The catalog is the historical identity universe returned by `PlayerIndex`.
+Player-season rows come from `LeagueDashPlayerBioStats` and retain explicit
+season, season type, team, age, height, weight, position, college, country, and
+draft fields.
+
+The NBA season bio response also contains aggregate performance statistics.
+Those remain in byte-preserved raw JSON but are deliberately absent from the
+bio table so a full-season value cannot leak into predictions for earlier
+games. See [Player bios](player-bios.md) for normalization and provenance.

@@ -83,6 +83,7 @@ flowchart LR
 - Fetch complete seasons through a resumable local Prefect flow.
 - Process cached seasons through validation-gated Prefect tasks.
 - Compact quality-gated games into resumable season-level Parquet datasets.
+- Collect historical player identities and leakage-safe season bios.
 - Normalize source actions into typed canonical events.
 - Reconstruct event-level lineups and stable lineup stints.
 - Reconstruct basketball possessions with explicit terminal reasons.

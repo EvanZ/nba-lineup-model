@@ -32,7 +32,13 @@ flowchart LR
     POSS --> CFLOW
     SEG --> CFLOW
     CFLOW --> CURATED["Curated season datasets"]
+    PINDEX["NBA historical player index"] --> PRAW["Player raw cache"]
+    PBIO["NBA season player bios"] --> PRAW
+    PRAW --> PCAT["Player identity catalog"]
+    PRAW --> PSEASON["Player-season bios"]
     CURATED --> MODEL["Modeling datasets"]
+    PCAT --> MODEL
+    PSEASON --> MODEL
     AUDIT --> QUALITY
 ```
 
@@ -89,6 +95,19 @@ data/curated/{table}/
 data/curated/_manifests/
   2025-26/
     compact-2025-26-....json
+
+data/raw/
+  playerindex/2025-26.json
+  leaguedashplayerbiostats/2025-26/regular.json
+
+data/catalog/
+  players.parquet
+
+data/curated/player_seasons/
+  2025-26/
+    regular/
+      _manifest.json
+      part-00000.parquet
 ```
 
 Raw and derived datasets are intentionally excluded from Git. Schemas,

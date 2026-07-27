@@ -14,7 +14,8 @@ documents to progressively stronger basketball semantics.
 
 `nba_lineup_model.ingest` owns direct game-feed access.
 `nba_lineup_model.season.schedule` owns the season-addressable schedule client.
-Both preserve raw response bytes before source-specific normalization.
+`nba_lineup_model.players` owns bulk historical player identity and season bio
+access. All preserve raw response bytes before source-specific normalization.
 
 ### Canonical events
 

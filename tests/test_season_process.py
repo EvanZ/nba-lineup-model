@@ -250,6 +250,38 @@ def test_processing_code_fingerprint_changes_with_source(tmp_path: Path):
     assert processing_code_fingerprint(tmp_path) != first
 
 
+def test_processing_code_fingerprint_can_exclude_unowned_sources(tmp_path: Path):
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    pipeline_source = owned / "pipeline.py"
+    unrelated_source = tmp_path / "unrelated.py"
+    pipeline_source.write_text("VALUE = 1\n")
+    unrelated_source.write_text("VALUE = 1\n")
+    first = processing_code_fingerprint(
+        tmp_path,
+        source_entries=("owned",),
+    )
+    unrelated_source.write_text("VALUE = 2\n")
+
+    assert (
+        processing_code_fingerprint(
+            tmp_path,
+            source_entries=("owned",),
+        )
+        == first
+    )
+
+    pipeline_source.write_text("VALUE = 2\n")
+
+    assert (
+        processing_code_fingerprint(
+            tmp_path,
+            source_entries=("owned",),
+        )
+        != first
+    )
+
+
 def test_processing_sample_covers_season_type_and_overtime_strata():
     games = [
         processing_game(game_id="0020000001"),

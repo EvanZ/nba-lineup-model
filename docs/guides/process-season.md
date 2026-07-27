@@ -102,7 +102,7 @@ season type.
 A game is skipped only when all of the following agree:
 
 - play-by-play and boxscore SHA-256 digests;
-- a fingerprint of the project Python source;
+- a fingerprint of processing-owned reconstruction and quality source;
 - a prior successful build-ledger record;
 - a prior passing or warning quality record;
 - six readable, non-empty Parquet outputs containing the expected lexical

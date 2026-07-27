@@ -125,6 +125,17 @@ This lossless Prefect flow writes self-contained Parquet shards under
 manifest, uses deterministic 100-game shards by default, and carries catalog,
 quality, build, processing-code, and source-hash provenance on every row.
 
+Collect the historical player universe and season-specific physical and
+background fields directly from NBA Stats:
+
+```bash
+uv run nba-fetch-player-bios 2025-26
+```
+
+The command makes two bulk requests, preserves both response bodies under
+`data/raw/`, writes `data/catalog/players.parquet`, and publishes leakage-safe
+season rows under `data/curated/player_seasons/2025-26/regular/`.
+
 Validate and normalize an already canonical CSV or Parquet game catalog:
 
 ```bash
@@ -171,6 +182,7 @@ src/nba_lineup_model/
   lineups/      On-court reconstruction
   possessions/  Possession segmentation
   audit/        Cross-season manifests, sampling, and invariant reports
+  players/      Historical identities and season-specific player bios
   season/       Game catalogs, build ledgers, and curated dataset layout
   flows/        Thin Prefect orchestration around project-owned operations
   models/       Ridge, tree, and later nonlinear models

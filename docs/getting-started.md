@@ -118,6 +118,20 @@ The flow writes deterministic Parquet shards and partition manifests under
 partitions. See [Compact a season](guides/compact-season.md) for the row-level
 provenance contract, analytical reads, and resume behavior.
 
+## Collect player bios
+
+Fetch the historical player index and regular-season bio table:
+
+```bash
+uv run nba-fetch-player-bios 2025-26
+```
+
+This uses two direct NBA Stats requests rather than one request per player. It
+writes a historical player catalog plus a season-specific bio partition without
+including same-season performance columns. See
+[Collect player bios](guides/collect-player-bios.md) for fields, cache behavior,
+and leakage policy.
+
 ## Import a canonical game catalog
 
 ```bash

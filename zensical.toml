@@ -28,6 +28,7 @@ nav = [
     {"Events" = "data/events.md"},
     {"Lineups" = "data/lineups.md"},
     {"Possessions" = "data/possessions.md"},
+    {"Player bios" = "data/player-bios.md"},
     {"Season catalog and storage" = "data/season-storage.md"},
     {"Cross-season audit" = "data/audit.md"},
   ]},
@@ -38,6 +39,7 @@ nav = [
     {"Fetch a season" = "guides/fetch-season.md"},
     {"Process a season" = "guides/process-season.md"},
     {"Compact a season" = "guides/compact-season.md"},
+    {"Collect player bios" = "guides/collect-player-bios.md"},
     {"Run cross-season audits" = "guides/cross-season-audit.md"},
   ]},
   {"API reference" = [
@@ -46,6 +48,7 @@ nav = [
     {"Events" = "reference/events.md"},
     {"Lineups" = "reference/lineups.md"},
     {"Possessions" = "reference/possessions.md"},
+    {"Player data" = "reference/players.md"},
     {"Season data" = "reference/season.md"},
     {"Orchestration" = "reference/orchestration.md"},
     {"Audit" = "reference/audit.md"},
