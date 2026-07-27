@@ -11,7 +11,10 @@ including differences across seasons.
 
 ## Decision
 
-Use a small internal client for NBA CDN live-data endpoints.
+Use small internal clients for NBA-owned source endpoints. Game feeds come from
+NBA CDN live-data endpoints. Historical season discovery comes from the
+season-parameterized NBA Stats `scheduleleaguev2` endpoint because the regional
+CDN schedule file is not season-addressable.
 
 - Store response bodies byte-for-byte.
 - Store URL, fetch time, endpoint, game ID, and SHA-256 in a sidecar.

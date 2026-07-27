@@ -11,7 +11,7 @@ the longer horizon is nonlinear lineup modeling with interpretable context.
 <div class="signal-strip">
   <div>
     <strong>Direct source</strong>
-    <span>Byte-preserved NBA CDN responses</span>
+    <span>Byte-preserved NBA source responses</span>
   </div>
   <div>
     <strong>Exact context</strong>
@@ -25,7 +25,7 @@ the longer horizon is nonlinear lineup modeling with interpretable context.
 
 ```mermaid
 flowchart LR
-    RAW["NBA CDN"] --> EVT["Typed events"]
+    RAW["NBA source data"] --> EVT["Typed events"]
     EVT --> LUP["Lineups"]
     EVT --> POSS["Possessions"]
     LUP --> SEG["Fixed-lineup segments"]
@@ -64,6 +64,7 @@ flowchart LR
 
 - Fetch play-by-play and boxscore JSON directly from NBA CDN endpoints.
 - Preserve raw response bytes with fetch metadata and SHA-256 digests.
+- Discover historical season schedules directly into a canonical game catalog.
 - Normalize source actions into typed canonical events.
 - Reconstruct event-level lineups and stable lineup stints.
 - Reconstruct basketball possessions with explicit terminal reasons.

@@ -45,6 +45,17 @@ both source documents again.
 uv run nba-audit-games config/audit_manifest.json
 ```
 
+## Discover a season
+
+```bash
+uv run nba-discover-season 2025-26
+```
+
+The command reads the season-parameterized NBA Stats schedule endpoint directly,
+preserves the raw response, and updates `data/catalog/games.parquet`. Existing
+rows from other seasons are retained. Pass `--refresh` to bypass the schedule
+cache.
+
 ## Import a canonical game catalog
 
 ```bash
@@ -53,8 +64,7 @@ uv run nba-import-catalog source_games.csv \
 ```
 
 The input must follow the canonical fields documented in
-[Season catalog and storage](data/season-storage.md). Direct NBA schedule
-discovery will generate this contract in the next ingestion slice.
+[Season catalog and storage](data/season-storage.md).
 
 ## Preview documentation
 

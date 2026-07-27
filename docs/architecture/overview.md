@@ -10,10 +10,11 @@ documents to progressively stronger basketball semantics.
 
 ## Boundaries
 
-### Ingestion
+### Source access
 
-`nba_lineup_model.ingest` owns direct HTTP access and the byte-preserving raw
-cache. It does not interpret basketball actions.
+`nba_lineup_model.ingest` owns direct game-feed access.
+`nba_lineup_model.season.schedule` owns the season-addressable schedule client.
+Both preserve raw response bytes before source-specific normalization.
 
 ### Canonical events
 

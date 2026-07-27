@@ -36,6 +36,16 @@ Season values use `YYYY-YY` and the suffix must be the immediately following
 year. Schedule dates must fall within one of those two calendar years. Team IDs
 are integer fields; game IDs remain strings.
 
+Discover and normalize a season directly from the NBA Stats schedule endpoint:
+
+```bash
+uv run nba-discover-season 2025-26
+```
+
+The command replaces that season in the catalog while preserving rows from
+other seasons. See [Season discovery](season-discovery.md) for source mapping,
+cache behavior, and overtime semantics.
+
 Import an already canonical CSV or Parquet catalog with:
 
 ```bash
@@ -44,8 +54,8 @@ uv run nba-import-catalog source_games.csv \
 ```
 
 The importer validates every row, rejects duplicate game IDs, orders games by
-date and ID, and writes atomically. Source-specific schedule normalization will
-produce the same contract in the season-discovery slice.
+date and ID, and writes atomically. It remains useful for project-owned or
+manually audited canonical inventories.
 
 ## Build ledger
 

@@ -1,0 +1,117 @@
+{
+  "meta": {
+    "version": 1,
+    "request": "https://stats.nba.com/stats/scheduleleaguev2?LeagueID=00&Season=2025-26",
+    "time": "2026-07-27 17:22:31.0000"
+  },
+  "leagueSchedule": {
+    "seasonYear": "2025-26",
+    "leagueId": "00",
+    "gameDates": [
+      {
+        "gameDate": "10/21/2025 00:00:00",
+        "games": [
+          {
+            "gameId": "0022500001",
+            "gameStatus": 3,
+            "gameStatusText": "Final",
+            "gameDateEst": "2025-10-21T00:00:00",
+            "gameDateTimeUTC": "2025-10-22T00:00:00Z",
+            "gameLabel": "",
+            "gameSubLabel": "",
+            "seriesText": "",
+            "gameSubtype": "",
+            "homeTeam": {
+              "teamId": 1610612745,
+              "teamTricode": "HOU"
+            },
+            "awayTeam": {
+              "teamId": 1610612760,
+              "teamTricode": "OKC"
+            }
+          }
+        ]
+      },
+      {
+        "gameDate": "10/22/2025 00:00:00",
+        "games": [
+          {
+            "gameId": "0022500002",
+            "gameStatus": 3,
+            "gameStatusText": "Final/OT2",
+            "gameDateEst": "2025-10-22T00:00:00",
+            "gameDateTimeUTC": "2025-10-23T02:30:00Z",
+            "gameLabel": "",
+            "gameSubLabel": "",
+            "seriesText": "",
+            "gameSubtype": "",
+            "homeTeam": {
+              "teamId": 1610612747,
+              "teamTricode": "LAL"
+            },
+            "awayTeam": {
+              "teamId": 1610612744,
+              "teamTricode": "GSW"
+            }
+          }
+        ]
+      },
+      {
+        "gameDate": "04/14/2026 00:00:00",
+        "games": [
+          {
+            "gameId": "0052500101",
+            "gameStatus": 3,
+            "gameStatusText": "Final",
+            "gameDateEst": "2026-04-14T00:00:00",
+            "gameDateTimeUTC": "2026-04-15T01:30:00Z",
+            "gameLabel": "SoFi NBA Play-In Tournament",
+            "gameSubLabel": "East 7/8 Game",
+            "seriesText": "",
+            "gameSubtype": "",
+            "homeTeam": {
+              "teamId": 1610612738,
+              "teamTricode": "BOS"
+            },
+            "awayTeam": {
+              "teamId": 1610612753,
+              "teamTricode": "ORL"
+            }
+          }
+        ]
+      },
+      {
+        "gameDate": "06/03/2026 00:00:00",
+        "games": [
+          {
+            "gameId": "0042500401",
+            "gameStatus": 3,
+            "gameStatusText": "Final",
+            "gameDateEst": "2026-06-03T00:00:00",
+            "gameDateTimeUTC": "2026-06-04T01:00:00Z",
+            "gameLabel": "NBA Finals",
+            "gameSubLabel": "Game 1",
+            "seriesText": "Game 1",
+            "gameSubtype": "",
+            "homeTeam": {
+              "teamId": 1610612743,
+              "teamTricode": "DEN"
+            },
+            "awayTeam": {
+              "teamId": 1610612752,
+              "teamTricode": "NYK"
+            }
+          }
+        ]
+      }
+    ],
+    "weeks": [
+      {
+        "weekNumber": 1,
+        "weekName": "Week 1",
+        "startDate": "2025-10-20T00:00:00",
+        "endDate": "2025-10-26T00:00:00"
+      }
+    ]
+  }
+}

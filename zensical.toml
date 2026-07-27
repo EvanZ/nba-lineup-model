@@ -22,6 +22,7 @@ nav = [
   ]},
   {"Data contracts" = [
     {"Raw responses" = "data/raw-responses.md"},
+    {"Season discovery" = "data/season-discovery.md"},
     {"Events" = "data/events.md"},
     {"Lineups" = "data/lineups.md"},
     {"Possessions" = "data/possessions.md"},

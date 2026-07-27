@@ -74,6 +74,17 @@ cases.
 
 ## Season Data Contracts
 
+Discover a season directly from the NBA Stats schedule endpoint:
+
+```bash
+uv run nba-discover-season 2025-26
+```
+
+The exact response is cached at
+`data/raw/scheduleleaguev2/2025-26.json`; the normalized multi-season inventory
+is written to `data/catalog/games.parquet`. Re-running discovery replaces that
+season while preserving other catalog seasons.
+
 Validate and normalize an already canonical CSV or Parquet game catalog:
 
 ```bash
@@ -84,7 +95,7 @@ uv run nba-import-catalog source_games.csv \
 Season operations retain per-game raw and processed artifacts for retries, while
 validated outputs compact into `data/curated/{table}/season=.../season_type=.../`
 partitions. Terminal build attempts are represented by a typed Parquet ledger.
-Direct NBA schedule discovery and batch execution will consume these contracts.
+Batch execution will consume these contracts.
 
 ## Documentation
 

@@ -2,8 +2,10 @@
 
 ```mermaid
 flowchart LR
-    CAT["Game catalog"] --> CDN["NBA CDN JSON"]
-    CDN["NBA CDN JSON"] --> RAW["Byte-preserving raw cache"]
+    SCHED["NBA season schedule"] --> SRAW["Schedule raw cache"]
+    SRAW --> CAT["Game catalog"]
+    CAT --> CDN["NBA CDN game JSON"]
+    CDN["NBA CDN game JSON"] --> RAW["Byte-preserving raw cache"]
     RAW --> EVT["Canonical events"]
     RAW --> BOX["Boxscore player table"]
     EVT --> LUP["Event lineups"]
@@ -32,6 +34,8 @@ For a game ID such as `0022000180`, the primary builder writes:
 
 ```text
 data/raw/
+  scheduleleaguev2/2025-26.json
+  scheduleleaguev2/2025-26.meta.json
   playbyplay/0022000180.json
   playbyplay/0022000180.meta.json
   boxscore/0022000180.json

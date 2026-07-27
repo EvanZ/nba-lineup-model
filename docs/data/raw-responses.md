@@ -12,14 +12,15 @@ The direct client currently supports:
 | Play-by-play | `data/raw/playbyplay/{game_id}.json` |
 | Boxscore | `data/raw/boxscore/{game_id}.json` |
 | Today's scoreboard | `data/raw/scoreboard/todays_scoreboard_00.json` |
+| Historical season schedule | `data/raw/scheduleleaguev2/{season}.json` |
 
 Game IDs must be ten-digit strings. Keeping them as strings preserves leading
 zeros.
 
 ## Byte preservation
 
-The `.json` file contains the exact response body returned by the NBA CDN. The
-cache does not reserialize successful network responses.
+The `.json` file contains the exact response body returned by the NBA source.
+The cache does not reserialize successful network responses.
 
 Each response has a `.meta.json` sidecar:
 
@@ -33,6 +34,9 @@ Each response has a `.meta.json` sidecar:
 
 On cache read, the digest and path metadata are validated before the payload is
 returned.
+
+Schedule sidecars use `season` instead of endpoint and game ID fields. They
+retain the same URL, UTC fetch time, and exact-byte digest guarantees.
 
 ## Refresh behavior
 
