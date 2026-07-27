@@ -72,6 +72,21 @@ The catalog must contain `game_id`, `season`, and `season_type`. An optional
 `sample_group` column supports strata such as overtime, playoffs, and feed-edge
 cases.
 
+## Documentation
+
+Install the documentation dependencies and start the Zensical preview server:
+
+```bash
+uv sync --group docs
+uv run --group docs zensical serve
+```
+
+Build the documentation with strict validation:
+
+```bash
+uv run --group docs zensical build --strict
+```
+
 ## Test
 
 ```bash

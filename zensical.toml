@@ -1,0 +1,87 @@
+[project]
+site_name = "NBA Lineup Model"
+site_description = "Data contracts, reconstruction algorithms, and modeling guides."
+docs_dir = "docs"
+site_dir = "site"
+dev_addr = "127.0.0.1:8000"
+watch = ["src/nba_lineup_model"]
+extra_css = ["stylesheets/extra.css"]
+nav = [
+  {"Home" = "index.md"},
+  {"Getting started" = "getting-started.md"},
+  {"Architecture" = [
+    {"Overview" = "architecture/overview.md"},
+    {"Data flow" = "architecture/data-flow.md"},
+    {"Decisions" = [
+      {"Decision log" = "architecture/decisions/index.md"},
+      {"Direct NBA source data" = "architecture/decisions/0001-direct-nba-source.md"},
+      {"Possessions and lineup segments" = "architecture/decisions/0002-possession-segments.md"},
+      {"Validation-first processing" = "architecture/decisions/0003-validation-first.md"},
+    ]},
+  ]},
+  {"Data contracts" = [
+    {"Raw responses" = "data/raw-responses.md"},
+    {"Events" = "data/events.md"},
+    {"Lineups" = "data/lineups.md"},
+    {"Possessions" = "data/possessions.md"},
+    {"Cross-season audit" = "data/audit.md"},
+  ]},
+  {"Guides" = [
+    {"Build one game" = "guides/build-game.md"},
+    {"Run cross-season audits" = "guides/cross-season-audit.md"},
+  ]},
+  {"API reference" = [
+    {"Build pipeline" = "reference/build-game.md"},
+    {"Ingestion" = "reference/ingestion.md"},
+    {"Events" = "reference/events.md"},
+    {"Lineups" = "reference/lineups.md"},
+    {"Possessions" = "reference/possessions.md"},
+    {"Audit" = "reference/audit.md"},
+  ]},
+]
+
+[project.theme]
+variant = "modern"
+features = [
+  "navigation.path",
+  "navigation.sections",
+  "navigation.top",
+  "toc.follow",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.theme.icon]
+logo = "fontawesome/solid/basketball"
+
+[project.markdown_extensions.admonition]
+
+[project.markdown_extensions.md_in_html]
+
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+  {name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format"},
+]
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "google"
+inherited_members = true
+members_order = "source"
+show_source = false
