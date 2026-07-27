@@ -56,6 +56,35 @@ preserves the raw response, and updates `data/catalog/games.parquet`. Existing
 rows from other seasons are retained. Pass `--refresh` to bypass the schedule
 cache.
 
+## Fetch a season
+
+Start with one game:
+
+```bash
+uv run nba-fetch-season 2025-26 --limit 1 --max-workers 1
+```
+
+Then fetch every final catalog game:
+
+```bash
+uv run nba-fetch-season 2025-26 --max-workers 4
+```
+
+The Prefect flow runs locally, validates cached documents before skipping work,
+and writes a durable Parquet fetch manifest. See
+[Fetch a season](guides/fetch-season.md) for filters, retries, and resume
+semantics.
+
+Inspect orchestration history in the local Prefect UI:
+
+```bash
+uv run prefect server start
+```
+
+Open `http://127.0.0.1:4200`. See
+[Use the Prefect web UI](guides/prefect-ui.md) to connect future runs to the
+persistent server instead of the automatic temporary API.
+
 ## Import a canonical game catalog
 
 ```bash
@@ -81,3 +110,6 @@ uv run --group docs zensical build --strict
 ```
 
 Rendered files are written to `site/` and are not tracked by Git.
+
+See [Build and serve the documentation](guides/documentation.md) for live
+preview options, clean builds, and the documentation layout.

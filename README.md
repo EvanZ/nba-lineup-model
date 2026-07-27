@@ -85,6 +85,17 @@ The exact response is cached at
 is written to `data/catalog/games.parquet`. Re-running discovery replaces that
 season while preserving other catalog seasons.
 
+Fetch play-by-play and boxscore responses for every final catalog game with:
+
+```bash
+uv run nba-fetch-season 2025-26 --max-workers 4
+```
+
+The local Prefect flow uses one task per game, resumes from validated raw cache
+files, retries transient source failures, and appends terminal outcomes to
+`data/manifests/fetches.parquet`. Use `--limit 1 --max-workers 1` for a smoke
+test.
+
 Validate and normalize an already canonical CSV or Parquet game catalog:
 
 ```bash
@@ -112,6 +123,10 @@ Build the documentation with strict validation:
 uv run --group docs zensical build --strict
 ```
 
+See the
+[documentation workflow](docs/guides/documentation.md) for preview options,
+clean builds, configuration, and output locations.
+
 ## Test
 
 ```bash
@@ -129,6 +144,7 @@ src/nba_lineup_model/
   possessions/  Possession segmentation
   audit/        Cross-season manifests, sampling, and invariant reports
   season/       Game catalogs, build ledgers, and curated dataset layout
+  flows/        Thin Prefect orchestration around project-owned operations
   models/       Ridge, tree, and later nonlinear models
   evaluation/   Validation and benchmark metrics
 ```

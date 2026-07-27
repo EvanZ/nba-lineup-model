@@ -10,8 +10,10 @@ import pandas as pd
 from nba_lineup_model.season.schema import (
     BuildLedger,
     CatalogGame,
+    FetchManifest,
     GameBuildRecord,
     GameCatalog,
+    GameFetchRecord,
 )
 
 CATALOG_COLUMNS = (
@@ -60,6 +62,30 @@ BUILD_LEDGER_COLUMNS = (
     "error_message",
     "skip_reason",
 )
+FETCH_MANIFEST_COLUMNS = (
+    "schema_version",
+    "run_id",
+    "prefect_flow_run_id",
+    "prefect_task_run_id",
+    "attempt_number",
+    "game_id",
+    "season",
+    "season_type",
+    "started_at",
+    "finished_at",
+    "duration_seconds",
+    "status",
+    "refresh",
+    "play_by_play_cache_hit",
+    "boxscore_cache_hit",
+    "play_by_play_sha256",
+    "boxscore_sha256",
+    "play_by_play_bytes",
+    "boxscore_bytes",
+    "error_type",
+    "error_message",
+    "skip_reason",
+)
 
 _CATALOG_STRING_COLUMNS = (
     "game_id",
@@ -103,6 +129,26 @@ _LEDGER_INTEGER_COLUMNS = (
     "validation_issue_count",
     "output_table_count",
 )
+_FETCH_STRING_COLUMNS = (
+    "run_id",
+    "prefect_flow_run_id",
+    "prefect_task_run_id",
+    "game_id",
+    "season",
+    "season_type",
+    "status",
+    "play_by_play_sha256",
+    "boxscore_sha256",
+    "error_type",
+    "error_message",
+    "skip_reason",
+)
+_FETCH_INTEGER_COLUMNS = (
+    "schema_version",
+    "attempt_number",
+    "play_by_play_bytes",
+    "boxscore_bytes",
+)
 
 
 def catalog_frame(catalog: GameCatalog | Sequence[CatalogGame]) -> pd.DataFrame:
@@ -142,6 +188,73 @@ def read_game_catalog(path: Path | str) -> GameCatalog:
     """Read and validate a canonical game catalog from Parquet."""
 
     return catalog_from_frame(pd.read_parquet(Path(path)))
+
+
+def fetch_manifest_frame(
+    manifest: FetchManifest | Sequence[GameFetchRecord],
+) -> pd.DataFrame:
+    """Return a typed fetch manifest ordered by run and game."""
+
+    records = manifest.records if isinstance(manifest, FetchManifest) else list(manifest)
+    validated = FetchManifest(records=records)
+    rows = [record.model_dump(mode="python") for record in validated.records]
+    frame = pd.DataFrame(rows, columns=FETCH_MANIFEST_COLUMNS)
+    if not frame.empty:
+        frame = frame.sort_values(
+            ["started_at", "run_id", "game_id"],
+            kind="stable",
+        ).reset_index(drop=True)
+    for column in _FETCH_STRING_COLUMNS:
+        frame[column] = frame[column].astype("string")
+    for column in _FETCH_INTEGER_COLUMNS:
+        frame[column] = frame[column].astype("Int64")
+    for column in ("refresh", "play_by_play_cache_hit", "boxscore_cache_hit"):
+        frame[column] = frame[column].astype("boolean")
+    frame["duration_seconds"] = frame["duration_seconds"].astype("Float64")
+    frame["started_at"] = pd.to_datetime(frame["started_at"], utc=True)
+    frame["finished_at"] = pd.to_datetime(frame["finished_at"], utc=True)
+    return frame
+
+
+def fetch_manifest_from_frame(frame: pd.DataFrame) -> FetchManifest:
+    """Validate a raw fetch manifest frame."""
+
+    records = [_python_record(row) for row in frame.to_dict(orient="records")]
+    return FetchManifest(
+        records=[GameFetchRecord.model_validate(record) for record in records]
+    )
+
+
+def write_fetch_manifest(
+    manifest: FetchManifest | Sequence[GameFetchRecord],
+    path: Path | str,
+) -> Path:
+    """Atomically write the append-oriented raw fetch manifest."""
+
+    output_path = Path(path)
+    _atomic_write_parquet(fetch_manifest_frame(manifest), output_path)
+    return output_path
+
+
+def read_fetch_manifest(path: Path | str) -> FetchManifest:
+    """Read a raw fetch manifest, returning an empty manifest when absent."""
+
+    input_path = Path(path)
+    if not input_path.exists():
+        return FetchManifest()
+    return fetch_manifest_from_frame(pd.read_parquet(input_path))
+
+
+def append_fetch_records(
+    records: Sequence[GameFetchRecord],
+    path: Path | str,
+) -> FetchManifest:
+    """Append a batch of terminal fetch records through one atomic writer."""
+
+    manifest = read_fetch_manifest(path)
+    updated = FetchManifest(records=[*manifest.records, *records])
+    write_fetch_manifest(updated, path)
+    return updated
 
 
 def build_ledger_frame(

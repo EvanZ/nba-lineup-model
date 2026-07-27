@@ -43,6 +43,11 @@ retain the same URL, UTC fetch time, and exact-byte digest guarantees.
 Commands use valid cached documents by default. `--refresh` ignores existing
 responses and fetches new play-by-play and boxscore documents.
 
+The season fetch flow validates the JSON document, path metadata, and exact-byte
+digest before counting a cache hit. If only one game document is valid, it is
+retained while the other endpoint is fetched. An invalid cache document is
+replaced rather than treated as completed work.
+
 Refreshing changes external state and can expose feed corrections. The sidecar
 timestamp and digest make that change observable, but raw files are not retained
 as a built-in version history.

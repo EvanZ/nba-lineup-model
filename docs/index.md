@@ -46,13 +46,18 @@ flowchart LR
     <strong>Audit across seasons</strong>
     <span>Exercise reconstruction against regulation, playoff, and overtime feeds.</span>
   </a>
-  <a href="architecture/overview/">
+  <a href="guides/fetch-season/">
     <span class="path-index">03</span>
+    <strong>Fetch a season</strong>
+    <span>Run resumable, bounded-concurrency acquisition from the game catalog.</span>
+  </a>
+  <a href="architecture/overview/">
+    <span class="path-index">04</span>
     <strong>Understand the pipeline</strong>
     <span>Review ownership boundaries, decisions, and failure policy.</span>
   </a>
   <a href="data/raw-responses/">
-    <span class="path-index">04</span>
+    <span class="path-index">05</span>
     <strong>Inspect data contracts</strong>
     <span>Trace raw source documents through modeling-ready segments.</span>
   </a>
@@ -65,6 +70,7 @@ flowchart LR
 - Fetch play-by-play and boxscore JSON directly from NBA CDN endpoints.
 - Preserve raw response bytes with fetch metadata and SHA-256 digests.
 - Discover historical season schedules directly into a canonical game catalog.
+- Fetch complete seasons through a resumable local Prefect flow.
 - Normalize source actions into typed canonical events.
 - Reconstruct event-level lineups and stable lineup stints.
 - Reconstruct basketball possessions with explicit terminal reasons.

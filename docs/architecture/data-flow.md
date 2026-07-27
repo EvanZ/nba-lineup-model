@@ -4,8 +4,10 @@
 flowchart LR
     SCHED["NBA season schedule"] --> SRAW["Schedule raw cache"]
     SRAW --> CAT["Game catalog"]
-    CAT --> CDN["NBA CDN game JSON"]
+    CAT --> FLOW["Prefect season fetch"]
+    FLOW --> CDN["NBA CDN game JSON"]
     CDN["NBA CDN game JSON"] --> RAW["Byte-preserving raw cache"]
+    FLOW --> FMAN["Fetch manifest"]
     RAW --> EVT["Canonical events"]
     RAW --> BOX["Boxscore player table"]
     EVT --> LUP["Event lineups"]
@@ -65,6 +67,7 @@ data/catalog/
   games.parquet
 
 data/manifests/
+  fetches.parquet
   builds.parquet
 
 data/curated/{table}/
@@ -75,6 +78,11 @@ data/curated/{table}/
 
 Raw and derived datasets are intentionally excluded from Git. Schemas,
 algorithms, manifests, fixtures, and documentation are version controlled.
+
+Raw responses remain one JSON file per endpoint and game. Retryable processed
+artifacts also remain per-game files. Validated analytical tables compact into
+season and season-type Parquet partitions; orchestration does not change those
+storage boundaries.
 
 ## Ordering guarantees
 

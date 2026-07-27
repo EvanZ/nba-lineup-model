@@ -2,6 +2,8 @@
 
 ::: nba_lineup_model.season.schedule
 
+::: nba_lineup_model.season.fetch
+
 ::: nba_lineup_model.season.discover
 
 ::: nba_lineup_model.season.schema

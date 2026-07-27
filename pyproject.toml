@@ -8,6 +8,7 @@ dependencies = [
     "catboost>=1.2.7",
     "httpx>=0.27.2",
     "pandas>=2.2.3",
+    "prefect>=3.4,<4",
     "pydantic>=2.9.2",
     "pyarrow>=17.0.0",
     "scikit-learn>=1.5.2",
@@ -17,6 +18,7 @@ dependencies = [
 nba-audit-games = "nba_lineup_model.audit.runner:main"
 nba-build-game = "nba_lineup_model.build_game:main"
 nba-discover-season = "nba_lineup_model.season.discover:main"
+nba-fetch-season = "nba_lineup_model.flows.fetch_season:main"
 nba-import-catalog = "nba_lineup_model.season.catalog:main"
 nba-sample-audit = "nba_lineup_model.audit.sample:main"
 

@@ -30,7 +30,10 @@ nav = [
     {"Cross-season audit" = "data/audit.md"},
   ]},
   {"Guides" = [
+    {"Build and serve the docs" = "guides/documentation.md"},
+    {"Use the Prefect UI" = "guides/prefect-ui.md"},
     {"Build one game" = "guides/build-game.md"},
+    {"Fetch a season" = "guides/fetch-season.md"},
     {"Run cross-season audits" = "guides/cross-season-audit.md"},
   ]},
   {"API reference" = [
@@ -40,6 +43,7 @@ nav = [
     {"Lineups" = "reference/lineups.md"},
     {"Possessions" = "reference/possessions.md"},
     {"Season data" = "reference/season.md"},
+    {"Orchestration" = "reference/orchestration.md"},
     {"Audit" = "reference/audit.md"},
   ]},
 ]

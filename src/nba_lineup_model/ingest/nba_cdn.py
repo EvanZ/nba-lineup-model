@@ -23,6 +23,19 @@ class NbaCdnEndpoint(StrEnum):
 class NbaCdnError(RuntimeError):
     """Raised when the NBA CDN returns an unusable response."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        url: str | None = None,
+        transient: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.url = url
+        self.transient = transient
+
 
 class CachedResponse(BaseModel):
     endpoint: NbaCdnEndpoint
@@ -144,7 +157,12 @@ class NbaCdnClient:
     ) -> None:
         self.cache = cache or RawJsonCache()
         self.base_url = base_url.rstrip("/")
-        self._client = http_client or httpx.Client(
+        self._owns_http_client = http_client is None
+        self._client = http_client or self._new_http_client(timeout)
+
+    @staticmethod
+    def _new_http_client(timeout: float) -> httpx.Client:
+        return httpx.Client(
             timeout=timeout,
             headers={
                 "Accept": "application/json, text/plain, */*",
@@ -158,6 +176,16 @@ class NbaCdnClient:
             },
             follow_redirects=True,
         )
+
+    def close(self) -> None:
+        if self._owns_http_client:
+            self._client.close()
+
+    def __enter__(self) -> NbaCdnClient:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
     def fetch_play_by_play(self, game_id: str, *, use_cache: bool = True) -> CachedResponse:
         return self._fetch_game_endpoint(NbaCdnEndpoint.PLAY_BY_PLAY, game_id, use_cache=use_cache)
@@ -212,11 +240,19 @@ class NbaCdnClient:
             http_response = self._client.get(url)
             http_response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
             raise NbaCdnError(
-                f"NBA CDN returned HTTP {exc.response.status_code} for {url}"
+                f"NBA CDN returned HTTP {status_code} for {url}",
+                status_code=status_code,
+                url=url,
+                transient=status_code in {408, 425, 429} or status_code >= 500,
             ) from exc
         except httpx.HTTPError as exc:
-            raise NbaCdnError(f"NBA CDN request failed for {url}") from exc
+            raise NbaCdnError(
+                f"NBA CDN request failed for {url}",
+                url=url,
+                transient=True,
+            ) from exc
 
         raw_body = http_response.content
         try:

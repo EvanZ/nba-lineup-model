@@ -40,6 +40,14 @@ explicit outcomes such as turnovers and defensive rebounds to override it.
 versioned game manifest. It records exact invariant failures separately from
 diagnostic warnings.
 
+### Orchestration
+
+`nba_lineup_model.flows` contains thin Prefect wrappers around project-owned
+selection, fetching, validation, and storage functions. Prefect supplies local
+concurrency, retries, and observable task state. Raw JSON and Parquet manifests
+remain authoritative so orchestration can be changed without changing the data
+contracts.
+
 ### Modeling
 
 `nba_lineup_model.models` and `nba_lineup_model.evaluation` are deliberately
@@ -62,5 +70,7 @@ processing.
 - Recoverable feed anomalies become structured warning or error records.
 - Audit execution isolates failures by game so one bad endpoint does not abort
   a multi-season run.
+- Season fetching retries only transient network and source failures, then
+  records every terminal game outcome.
 - Exact score and duration failures make an audit game fail.
 - Approximate boxscore possession estimates remain diagnostics.

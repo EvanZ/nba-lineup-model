@@ -20,6 +20,7 @@ GameStatus = Literal[
     "unknown",
 ]
 BuildStatus = Literal["succeeded", "failed", "skipped"]
+FetchStatus = Literal["succeeded", "failed", "skipped"]
 BuildStage = Literal[
     "preflight",
     "fetch",
@@ -115,6 +116,114 @@ class GameCatalog(BaseModel):
         game_ids = [game.game_id for game in self.games]
         if len(game_ids) != len(set(game_ids)):
             raise ValueError("Game catalog contains duplicate game IDs")
+        return self
+
+
+class GameFetchRecord(BaseModel):
+    """Terminal outcome of fetching both raw source documents for one game."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    schema_version: Literal[1] = 1
+    run_id: str = Field(min_length=1)
+    prefect_flow_run_id: str | None = None
+    prefect_task_run_id: str | None = None
+    attempt_number: int = Field(ge=1)
+    game_id: str
+    season: str = Field(pattern=SEASON_PATTERN)
+    season_type: str = Field(pattern=PARTITION_VALUE_PATTERN)
+    started_at: datetime
+    finished_at: datetime
+    duration_seconds: float = Field(ge=0)
+    status: FetchStatus
+    refresh: bool
+    play_by_play_cache_hit: bool | None = None
+    boxscore_cache_hit: bool | None = None
+    play_by_play_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    boxscore_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    play_by_play_bytes: int | None = Field(default=None, gt=0)
+    boxscore_bytes: int | None = Field(default=None, gt=0)
+    error_type: str | None = None
+    error_message: str | None = None
+    skip_reason: str | None = None
+
+    @field_validator("game_id")
+    @classmethod
+    def validate_id(cls, game_id: str) -> str:
+        return validate_game_id(game_id)
+
+    @field_validator("season")
+    @classmethod
+    def validate_season_value(cls, season: str) -> str:
+        return validate_season(season)
+
+    @field_validator("started_at", "finished_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> GameFetchRecord:
+        elapsed = (self.finished_at - self.started_at).total_seconds()
+        if elapsed < 0:
+            raise ValueError("Fetch finish time precedes its start time")
+        if abs(elapsed - self.duration_seconds) > 0.01:
+            raise ValueError("Fetch duration does not match its timestamps")
+
+        for endpoint, digest, byte_count in (
+            ("play-by-play", self.play_by_play_sha256, self.play_by_play_bytes),
+            ("boxscore", self.boxscore_sha256, self.boxscore_bytes),
+        ):
+            if (digest is None) != (byte_count is None):
+                raise ValueError(f"{endpoint} hash and byte count must be recorded together")
+
+        artifacts_complete = (
+            self.play_by_play_sha256 is not None
+            and self.boxscore_sha256 is not None
+            and self.play_by_play_bytes is not None
+            and self.boxscore_bytes is not None
+        )
+        if self.status == "succeeded":
+            if not artifacts_complete:
+                raise ValueError("Successful fetches require both raw artifacts")
+            if self.play_by_play_cache_hit is None or self.boxscore_cache_hit is None:
+                raise ValueError("Successful fetches require cache provenance")
+            if self.error_type is not None or self.error_message is not None:
+                raise ValueError("Successful fetches cannot contain error details")
+            if self.skip_reason is not None:
+                raise ValueError("Successful fetches cannot contain a skip reason")
+        elif self.status == "skipped":
+            if not artifacts_complete:
+                raise ValueError("Skipped fetches require both raw artifacts")
+            if not self.play_by_play_cache_hit or not self.boxscore_cache_hit:
+                raise ValueError("Skipped fetches require two validated cache hits")
+            if self.refresh:
+                raise ValueError("Refresh fetches cannot be skipped")
+            if not self.skip_reason:
+                raise ValueError("Skipped fetches require a reason")
+            if self.error_type is not None or self.error_message is not None:
+                raise ValueError("Skipped fetches cannot contain error details")
+        else:
+            if not self.error_type or not self.error_message:
+                raise ValueError("Failed fetches require error type and message")
+            if self.skip_reason is not None:
+                raise ValueError("Failed fetches cannot contain a skip reason")
+        return self
+
+
+class FetchManifest(BaseModel):
+    """Append-oriented history of terminal raw game fetch outcomes."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    version: Literal[1] = 1
+    records: list[GameFetchRecord] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_games_per_run(self) -> FetchManifest:
+        keys = [(record.run_id, record.game_id) for record in self.records]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Fetch manifest contains duplicate games within a run")
         return self
 
 

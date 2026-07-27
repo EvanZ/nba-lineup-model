@@ -10,7 +10,8 @@ and analytical data.
 | Raw cache | Endpoint and game | Byte-preserved NBA responses and provenance |
 | Processed | Contract and game | Retryable reconstruction artifacts |
 | Catalog | One row per game | Canonical season inventory |
-| Build ledger | One row per attempt | Durable terminal execution outcomes |
+| Fetch manifest | One row per game and fetch run | Durable raw acquisition outcomes |
+| Build ledger | One row per attempt | Durable reconstruction outcomes |
 | Curated | Season and season type | Compact analytical datasets |
 
 The catalog and ledger are operational metadata. They do not replace raw source
@@ -57,6 +58,24 @@ The importer validates every row, rejects duplicate game IDs, orders games by
 date and ID, and writes atomically. It remains useful for project-owned or
 manually audited canonical inventories.
 
+## Fetch manifest
+
+The Prefect season fetch flow appends terminal task outcomes to:
+
+```text
+data/manifests/fetches.parquet
+```
+
+The record contract includes project and Prefect run IDs, game partition keys,
+UTC timing, cache provenance, exact-byte hashes and sizes, plus failure or skip
+details. A successful or skipped record requires both validated raw artifacts.
+A failed record retains evidence for either endpoint that completed before the
+failure.
+
+Records are unique by project run ID and game ID. The flow collects task results
+and performs one atomic manifest write after the batch settles, avoiding
+concurrent Parquet writers.
+
 ## Build ledger
 
 The build ledger is an append-oriented history of terminal game attempts. A
@@ -85,9 +104,9 @@ records to that writer rather than modifying the ledger themselves.
 
 !!! note "Orchestration boundary"
 
-    Prefect or another orchestrator may track task state and retries. The Parquet
-    ledger remains the portable project-owned history and can be regenerated or
-    compared independently of the orchestration database.
+    Prefect tracks live flow state, task state, concurrency, and retries. The
+    Parquet fetch manifest and build ledger remain the portable project-owned
+    history and can be inspected independently of the orchestration database.
 
 ## Curated layout
 
