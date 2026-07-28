@@ -136,6 +136,19 @@ The command makes two bulk requests, preserves both response bodies under
 `data/raw/`, writes `data/catalog/players.parquet`, and publishes leakage-safe
 season rows under `data/curated/player_seasons/2025-26/regular/`.
 
+Build the canonical regular-season modeling stints and train the mean, team,
+and one-number RAPM baselines:
+
+```bash
+uv run nba-train-rapm 2025-26
+```
+
+The command selects ridge regularization with expanding chronological game
+folds, evaluates once on the final 15% of games, and then refits the rankings
+on the complete regular season. Modeling tables are written under
+`data/analytical/`; reproducible run artifacts are written under
+`artifacts/models/rapm/`.
+
 Validate and normalize an already canonical CSV or Parquet game catalog:
 
 ```bash
@@ -185,6 +198,7 @@ src/nba_lineup_model/
   players/      Historical identities and season-specific player bios
   season/       Game catalogs, build ledgers, and curated dataset layout
   flows/        Thin Prefect orchestration around project-owned operations
+  modeling/     Modeling marts, chronological splits, and training runs
   models/       Ridge, tree, and later nonlinear models
   evaluation/   Validation and benchmark metrics
 ```

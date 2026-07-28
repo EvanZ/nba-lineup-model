@@ -36,9 +36,13 @@ flowchart LR
     PBIO["NBA season player bios"] --> PRAW
     PRAW --> PCAT["Player identity catalog"]
     PRAW --> PSEASON["Player-season bios"]
-    CURATED --> MODEL["Modeling datasets"]
+    CURATED --> MART["RAPM stint dataset"]
+    MART --> BASE["Mean and team baselines"]
+    MART --> RAPM["One-number RAPM"]
     PCAT --> MODEL
     PSEASON --> MODEL
+    BASE --> MODEL["Model artifacts"]
+    RAPM --> MODEL
     AUDIT --> QUALITY
 ```
 
@@ -108,6 +112,20 @@ data/curated/player_seasons/
     regular/
       _manifest.json
       part-00000.parquet
+
+data/analytical/rapm_stints/
+  2025-26/
+    regular/
+      _manifest.json
+      part-00000.parquet
+
+artifacts/models/rapm/
+  2025-26/
+    latest.json
+    baseline-2025-26-.../
+      manifest.json
+      player_rankings.parquet
+      test_metrics.parquet
 ```
 
 Raw and derived datasets are intentionally excluded from Git. Schemas,

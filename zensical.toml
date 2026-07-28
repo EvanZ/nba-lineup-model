@@ -8,6 +8,10 @@ site_dir = "site"
 dev_addr = "127.0.0.1:8000"
 watch = ["src/nba_lineup_model"]
 extra_css = ["stylesheets/extra.css"]
+extra_javascript = [
+  "javascripts/mathjax.js",
+  "https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js",
+]
 nav = [
   {"Home" = "index.md"},
   {"Getting started" = "getting-started.md"},
@@ -29,6 +33,7 @@ nav = [
     {"Lineups" = "data/lineups.md"},
     {"Possessions" = "data/possessions.md"},
     {"Player bios" = "data/player-bios.md"},
+    {"RAPM modeling stints" = "data/modeling-stints.md"},
     {"Season catalog and storage" = "data/season-storage.md"},
     {"Cross-season audit" = "data/audit.md"},
   ]},
@@ -40,7 +45,13 @@ nav = [
     {"Process a season" = "guides/process-season.md"},
     {"Compact a season" = "guides/compact-season.md"},
     {"Collect player bios" = "guides/collect-player-bios.md"},
+    {"Train RAPM baselines" = "guides/train-rapm.md"},
     {"Run cross-season audits" = "guides/cross-season-audit.md"},
+  ]},
+  {"Models" = [
+    {"Overview" = "models/index.md"},
+    {"Baseline methodology" = "models/baselines.md"},
+    {"Promoted rankings" = "models/rankings.md"},
   ]},
   {"API reference" = [
     {"Build pipeline" = "reference/build-game.md"},
@@ -49,6 +60,7 @@ nav = [
     {"Lineups" = "reference/lineups.md"},
     {"Possessions" = "reference/possessions.md"},
     {"Player data" = "reference/players.md"},
+    {"Modeling" = "reference/modeling.md"},
     {"Season data" = "reference/season.md"},
     {"Orchestration" = "reference/orchestration.md"},
     {"Audit" = "reference/audit.md"},
@@ -86,6 +98,9 @@ logo = "fontawesome/solid/basketball"
 [project.markdown_extensions.admonition]
 
 [project.markdown_extensions.md_in_html]
+
+[project.markdown_extensions.pymdownx.arithmatex]
+generic = true
 
 [project.markdown_extensions.pymdownx.superfences]
 custom_fences = [

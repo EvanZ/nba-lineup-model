@@ -13,6 +13,7 @@ and analytical data.
 | Fetch manifest | One row per game and fetch run | Durable raw acquisition outcomes |
 | Build ledger | One row per attempt | Durable reconstruction outcomes |
 | Curated | Season and season type | Compact analytical datasets |
+| Analytical | Model, season, and season type | Experiment-specific modeling marts |
 | Player catalog | One row per player | Historical identity and listed attributes |
 | Player seasons | Player and season type | Physical and background priors |
 
@@ -226,3 +227,19 @@ The NBA season bio response also contains aggregate performance statistics.
 Those remain in byte-preserved raw JSON but are deliberately absent from the
 bio table so a full-season value cannot leak into predictions for earlier
 games. See [Player bios](player-bios.md) for normalization and provenance.
+
+## Analytical modeling data
+
+The initial RAPM mart is stored separately from canonical curated data:
+
+```text
+data/analytical/rapm_stints/2025-26/regular/
+  _manifest.json
+  part-00000.parquet
+```
+
+This layer is allowed to make experiment-specific choices. The first contract
+restricts games to the regular season, removes zero-exposure stints, allocates
+multi-lineup possessions across their fixed-lineup segments, and derives a
+possession-weighted home net-rating target. The manifest ties the mart to exact
+curated partition manifests and modeling code.

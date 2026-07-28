@@ -71,6 +71,11 @@ flowchart LR
     <strong>Inspect data contracts</strong>
     <span>Trace raw source documents through modeling-ready segments.</span>
   </a>
+  <a href="guides/train-rapm/">
+    <span class="path-index">08</span>
+    <strong>Train the baselines</strong>
+    <span>Compare mean, team, and one-number RAPM predictions chronologically.</span>
+  </a>
 </div>
 
 ## Current system
@@ -89,6 +94,7 @@ flowchart LR
 - Reconstruct basketball possessions with explicit terminal reasons.
 - Split possessions when substitutions change either lineup.
 - Audit exact invariants across regular-season, playoff, and overtime games.
+- Train sparse mean, team, and one-number RAPM baselines on regular-season stints.
 
 </div>
 

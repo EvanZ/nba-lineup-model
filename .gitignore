@@ -13,6 +13,8 @@ data/processed/*
 !data/processed/.gitkeep
 data/curated/*
 !data/curated/.gitkeep
+data/analytical/*
+!data/analytical/.gitkeep
 data/external/*
 !data/external/.gitkeep
 

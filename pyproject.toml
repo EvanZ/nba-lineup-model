@@ -24,6 +24,7 @@ nba-fetch-season = "nba_lineup_model.flows.fetch_season:main"
 nba-import-catalog = "nba_lineup_model.season.catalog:main"
 nba-process-season = "nba_lineup_model.flows.process_season:main"
 nba-sample-audit = "nba_lineup_model.audit.sample:main"
+nba-train-rapm = "nba_lineup_model.modeling.train:main"
 
 [dependency-groups]
 dev = [

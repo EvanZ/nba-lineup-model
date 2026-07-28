@@ -52,9 +52,15 @@ the underlying compactor remains independently callable and testable.
 
 ### Modeling
 
-`nba_lineup_model.models` and `nba_lineup_model.evaluation` are deliberately
-thin until the data contracts are stable. Initial models will establish ridge
-and tree baselines before nonlinear lineup architectures are introduced.
+`nba_lineup_model.modeling` owns modeling-table construction, chronological
+splits, run manifests, and artifact publication. `nba_lineup_model.models`
+owns estimators and sparse signed encodings; `nba_lineup_model.evaluation`
+owns weighted and game-aggregated metrics.
+
+The first boundary is a regular-season one-number RAPM benchmark. It compares
+an intercept-only mean, schedule-adjusted team strengths, and signed player
+ridge coefficients before any offensive/defensive split, player prior, or
+nonlinear interaction is introduced.
 
 ## Core orchestration
 
