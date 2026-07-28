@@ -170,3 +170,71 @@ class BaselineRunManifest(BaseModel):
         if len(filenames) != len(set(filenames)):
             raise ValueError("Model artifact filenames must be unique")
         return self
+
+
+class RapmDiagnosticsManifest(BaseModel):
+    """Reproducibility contract for one RAPM stability diagnostic run."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
+
+    schema_version: Literal[1] = 1
+    run_id: str = Field(min_length=1)
+    created_at: datetime
+    season: str = Field(pattern=SEASON_PATTERN)
+    season_type: Literal["regular"] = "regular"
+    diagnostics_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
+    source_model_run_id: str = Field(min_length=1)
+    source_model_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    dataset_part_sha256: str = Field(pattern=SHA256_PATTERN)
+    selected_rapm_lambda: float = Field(gt=0)
+    sensitivity_lambdas: tuple[float, ...] = Field(min_length=3)
+    bootstrap_samples: int = Field(ge=1)
+    bootstrap_seed: int = Field(ge=0)
+    minimum_ranking_possessions: float = Field(ge=0)
+    influence_player_count: int = Field(ge=1)
+    influence_stints_per_player: int = Field(ge=1)
+    delete_games_per_player: int = Field(ge=1)
+    allocation_policies: tuple[
+        Literal[
+            "equal_segments",
+            "starting_lineup",
+            "terminal_lineup",
+            "boundary_split",
+            "exclude_multi_lineup",
+        ],
+        ...,
+    ] = Field(min_length=2)
+    player_count: int = Field(ge=10)
+    game_count: int = Field(ge=1)
+    stint_count: int = Field(ge=1)
+    artifacts: tuple[ArtifactRecord, ...] = Field(min_length=1)
+
+    @field_validator("season")
+    @classmethod
+    def validate_season_value(cls, value: str) -> str:
+        return validate_season(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @field_validator("sensitivity_lambdas")
+    @classmethod
+    def validate_lambdas(cls, values: tuple[float, ...]) -> tuple[float, ...]:
+        if any(value <= 0 for value in values):
+            raise ValueError("Sensitivity lambdas must be positive")
+        if len(set(values)) != len(values):
+            raise ValueError("Sensitivity lambdas must be unique")
+        return values
+
+    @model_validator(mode="after")
+    def validate_diagnostics(self) -> RapmDiagnosticsManifest:
+        if self.selected_rapm_lambda not in self.sensitivity_lambdas:
+            raise ValueError("Sensitivity lambdas must include the selected lambda")
+        if len(set(self.allocation_policies)) != len(self.allocation_policies):
+            raise ValueError("Allocation policies must be unique")
+        filenames = [artifact.filename for artifact in self.artifacts]
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("Diagnostic artifact filenames must be unique")
+        return self

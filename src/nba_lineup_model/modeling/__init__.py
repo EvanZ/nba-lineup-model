@@ -4,6 +4,7 @@ from nba_lineup_model.modeling.schema import (
     BaselineRunManifest,
     ChronologicalFold,
     ChronologicalSplitConfig,
+    RapmDiagnosticsManifest,
     RapmStintManifest,
 )
 from nba_lineup_model.modeling.stints import (
@@ -19,6 +20,7 @@ __all__ = [
     "ChronologicalFold",
     "ChronologicalSplitConfig",
     "RapmStintManifest",
+    "RapmDiagnosticsManifest",
     "build_rapm_stint_dataset",
     "modeling_code_fingerprint",
     "rapm_stints_frame",

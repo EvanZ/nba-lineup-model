@@ -149,6 +149,24 @@ on the complete regular season. Modeling tables are written under
 `data/analytical/`; reproducible run artifacts are written under
 `artifacts/models/rapm/`.
 
+Run stability, context, influence, and possession-allocation diagnostics
+against the latest validated RAPM run:
+
+```bash
+uv run nba-diagnose-rapm 2025-26
+```
+
+Immutable diagnostic reports are written under `artifacts/reports/rapm/`.
+See the [RAPM guide](docs/guides/train-rapm.md) for interpretation and output
+contracts.
+
+Generate the reproducible one-season diagnostic case study for the
+documentation:
+
+```bash
+uv run --group docs nba-build-rapm-case-study 2025-26
+```
+
 Validate and normalize an already canonical CSV or Parquet game catalog:
 
 ```bash

@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 nba-audit-games = "nba_lineup_model.audit.runner:main"
 nba-build-game = "nba_lineup_model.build_game:main"
+nba-build-rapm-case-study = "nba_lineup_model.modeling.case_study:main"
 nba-compact-season = "nba_lineup_model.flows.compact_season:main"
 nba-discover-season = "nba_lineup_model.season.discover:main"
 nba-fetch-player-bios = "nba_lineup_model.players.collect:main"
@@ -24,6 +25,7 @@ nba-fetch-season = "nba_lineup_model.flows.fetch_season:main"
 nba-import-catalog = "nba_lineup_model.season.catalog:main"
 nba-process-season = "nba_lineup_model.flows.process_season:main"
 nba-sample-audit = "nba_lineup_model.audit.sample:main"
+nba-diagnose-rapm = "nba_lineup_model.modeling.diagnostics:main"
 nba-train-rapm = "nba_lineup_model.modeling.train:main"
 
 [dependency-groups]
@@ -32,6 +34,7 @@ dev = [
     "ruff>=0.7.0",
 ]
 docs = [
+    "matplotlib>=3.9",
     "mkdocstrings-python>=2.0.5",
     "zensical>=0.0.51",
 ]

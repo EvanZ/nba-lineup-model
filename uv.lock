@@ -1491,6 +1491,7 @@ dev = [
     { name = "ruff" },
 ]
 docs = [
+    { name = "matplotlib" },
     { name = "mkdocstrings-python" },
     { name = "zensical" },
 ]
@@ -1512,6 +1513,7 @@ dev = [
     { name = "ruff", specifier = ">=0.7.0" },
 ]
 docs = [
+    { name = "matplotlib", specifier = ">=3.9" },
     { name = "mkdocstrings-python", specifier = ">=2.0.5" },
     { name = "zensical", specifier = ">=0.0.51" },
 ]
