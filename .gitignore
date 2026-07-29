@@ -22,6 +22,8 @@ artifacts/models/*
 !artifacts/models/.gitkeep
 artifacts/reports/*
 !artifacts/reports/.gitkeep
+artifacts/mlflow/*
+!artifacts/mlflow/.gitkeep
 
 *.parquet
 *.duckdb

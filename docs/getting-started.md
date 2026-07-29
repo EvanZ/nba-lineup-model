@@ -23,6 +23,24 @@ uv sync --group dev --group docs
 Activation of `.venv` is optional. Commands prefixed with `uv run` use the
 project environment automatically.
 
+## Start the MLflow UI
+
+Completed model-training and Leaderboard commands are indexed automatically in
+the project-local MLflow store. Start the UI when needed:
+
+```bash
+uv run mlflow server \
+  --backend-store-uri "sqlite:///$(pwd)/artifacts/mlflow/mlflow.db" \
+  --default-artifact-root "file://$(pwd)/artifacts/mlflow/artifacts" \
+  --no-serve-artifacts \
+  --host 127.0.0.1 \
+  --port 5000
+```
+
+Open `http://127.0.0.1:5000`. The server does not need to be running during
+training. See [Track experiments with MLflow](guides/mlflow.md) for backfills,
+storage, environment variables, and the run contract.
+
 ## Verify the repository
 
 ```bash

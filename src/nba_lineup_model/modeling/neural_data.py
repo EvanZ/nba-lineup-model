@@ -132,6 +132,7 @@ def neural_code_fingerprint(
         package_root = Path(__file__).parents[1]
         candidates = (
             package_root / "evaluation" / "metrics.py",
+            package_root / "modeling" / "deep_sets.py",
             package_root / "modeling" / "neural.py",
             package_root / "modeling" / "neural_data.py",
             package_root / "modeling" / "schema.py",

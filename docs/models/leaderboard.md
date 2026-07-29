@@ -6,7 +6,7 @@ after the cohort's training cutoff. Training objectives remain model-specific.
 **Bold values are best at the displayed precision.** Lower error is better;
 higher skill is better.
 
-Last generated: **2026-07-29 17:46 UTC** from `evaluation-2025-26-20260729T174625Z-e8d05e8e`.
+Last generated: **2026-07-29 23:05 UTC** from `evaluation-2025-26-20260729T230510Z-dde81f3c`.
 
 ## Evaluation cohorts
 
@@ -153,6 +153,8 @@ eligible-possession game-margin RMSE
 | One-year ridge RAPM | 1.199460 | **1.141670** | 0.2542% | **14.7107** | **29.1594%** |
 | One-year Bayesian RAPM | 1.199460 | **1.141670** | 0.2542% | **14.7107** | **29.1594%** |
 | One-year additive neural | **1.199453** | 1.141746 | **0.2555%** | 14.7181 | 29.0884% |
+| One-year Deep Sets | 1.199759 | 1.142093 | 0.2046% | 15.1073 | 25.2890% |
+| One-year categorical CatBoost | 1.199911 | 1.141991 | 0.1792% | 15.8389 | 17.8770% |
 
 ## Playoffs
 
@@ -166,6 +168,8 @@ eligible-possession game-margin RMSE
 | One-year ridge RAPM | **1.191688** | **1.135678** | **0.1462%** | **15.2254** | **17.4097%** |
 | One-year Bayesian RAPM | **1.191688** | **1.135678** | **0.1462%** | **15.2254** | **17.4097%** |
 | One-year additive neural | 1.191717 | 1.135770 | 0.1413% | 15.2386 | 17.2667% |
+| One-year Deep Sets | 1.191919 | 1.136305 | 0.1074% | 15.2321 | 17.3372% |
+| One-year categorical CatBoost | 1.192320 | 1.136179 | 0.0402% | 15.9439 | 9.4310% |
 
 ## Interpretation
 
@@ -174,11 +178,41 @@ so its posterior mean is the ridge point estimate. Equal point-prediction
 metrics are expected. Bayesian value appears in uncertainty, interval
 calibration, and rank probabilities rather than lower posterior-mean RMSE.
 
-The additive neural exemplar selects learning rate and AdamW weight decay by
-validation-possession-weighted MSE across expanding regular-season folds.
-Regular holdout and playoff outcomes remain outside that selection process.
-Deep Sets and Transformer models will be added as new rows without changing
-these cohorts or metric definitions.
+The additive neural and Deep Sets exemplars select learning rate and AdamW
+weight decay by validation-possession-weighted MSE across expanding
+regular-season folds. CatBoost uses its resolved defaults and chooses its tree
+count from the latest chronological validation fold, subject to the recorded
+iteration ceiling. Regular holdout and playoff outcomes remain outside every
+selection process. Transformer models will be added without changing these
+cohorts or metric definitions.
+
+## Paired model comparisons
+
+To preserve correlation among possessions from the same game, uncertainty is
+estimated by resampling complete games with replacement. Each row reports a
+candidate-minus-additive-neural difference. For bootstrap draw \(b\),
+
+\[
+\Delta_b =
+\operatorname{RMSE}_{candidate,b}
+-
+\operatorname{RMSE}_{Additive,b}.
+\]
+
+Negative differences favor the candidate. The interval is the 2.5th through
+97.5th percentile of 2,000 paired game-cluster bootstrap draws. The final
+column is the share of draws where \(\Delta_b < 0\).
+
+| Cohort | Candidate | Reference | Metric | Difference | 95% interval | P(candidate better) |
+| --- | --- | --- | --- | ---: | ---: | ---: |
+| Regular-season holdout | One-year Deep Sets | One-year additive neural | Possession RMSE | 0.000306 | [0.000170, 0.000452] | 0.0% |
+| Regular-season holdout | One-year Deep Sets | One-year additive neural | Eligible-possession game-margin RMSE | 0.389153 | [0.173284, 0.637469] | 0.1% |
+| Playoffs | One-year Deep Sets | One-year additive neural | Possession RMSE | 0.000203 | [0.000009, 0.000388] | 2.1% |
+| Playoffs | One-year Deep Sets | One-year additive neural | Eligible-possession game-margin RMSE | -0.006494 | [-0.317953, 0.326210] | 52.1% |
+| Regular-season holdout | One-year categorical CatBoost | One-year additive neural | Possession RMSE | 0.000459 | [0.000065, 0.000881] | 1.4% |
+| Regular-season holdout | One-year categorical CatBoost | One-year additive neural | Eligible-possession game-margin RMSE | 1.120823 | [0.729666, 1.529960] | 0.0% |
+| Playoffs | One-year categorical CatBoost | One-year additive neural | Possession RMSE | 0.000603 | [0.000015, 0.001194] | 2.2% |
+| Playoffs | One-year categorical CatBoost | One-year additive neural | Eligible-possession game-margin RMSE | 0.705302 | [0.198476, 1.204177] | 0.4% |
 
 ## Correctness checks
 
@@ -189,8 +223,9 @@ requires:
 
 - validated source model manifests and exact artifact hashes;
 - a Bayesian run derived from the selected ridge run;
-- matching ridge and neural regular-holdout game IDs;
-- current analytical datasets matching the source model runs;
+- matching regular-holdout game IDs across every model;
+- matching possession, game, and player counts across neural-model sources;
+- exact held-out possession keys for every stored prediction set;
 - Bayesian and ridge posterior-mean equivalence within tolerance.
 
 Run the focused checks with:
@@ -205,27 +240,34 @@ uv run pytest -q tests/test_model_evaluation.py
 uv run nba-evaluate-models 2025-26 \
   --ridge-run-id baseline-2025-26-20260727T230533Z-72eac627 \
   --bayesian-run-id bayesian-2025-26-20260729T043953Z-b50cc2f7 \
-  --neural-run-id neural-2025-26-20260729T173539Z-51bc0264
+  --neural-run-id neural-2025-26-20260729T173539Z-51bc0264 \
+  --deep-sets-run-id deep-sets-2025-26-20260729T215128Z-dc12dd11 \
+  --catboost-run-id catboost-2025-26-20260729T225755Z-9d5251ad
 ```
 
 | Provenance | Value |
 | --- | --- |
-| Evaluation run | `evaluation-2025-26-20260729T174625Z-e8d05e8e` |
+| Evaluation run | `evaluation-2025-26-20260729T230510Z-dde81f3c` |
 | Ridge run | `baseline-2025-26-20260727T230533Z-72eac627` |
 | Bayesian run | `bayesian-2025-26-20260729T043953Z-b50cc2f7` |
 | Neural run | `neural-2025-26-20260729T173539Z-51bc0264` |
 | Neural selection | `learning_rate=0.0003`, `weight_decay=0.001`, `epochs=3` |
-| Evaluation code | `sha256:e3404b2cb37f74af09c5123363e00c21957aa723172893fd76ecfa63eba04539` |
-| Evaluation manifest SHA-256 | `4b49dd226e445f889bec7e706dd2e2f2c42d9c2b8df93929d75dee8e49f77750` |
+| Deep Sets run | `deep-sets-2025-26-20260729T215128Z-dc12dd11` |
+| Deep Sets selection | `learning_rate=0.001`, `weight_decay=0`, `epochs=1`, `seed=17` |
+| CatBoost run | `catboost-2025-26-20260729T225755Z-9d5251ad` |
+| CatBoost selection | `max_iterations=1000`, `best_iteration=117`, `trees=118`, `learning_rate=0.113375` |
+| Evaluation code | `sha256:9e4fad40450730948813d7d0f4748c4c22406ecddc8ddbe937ea73616298e0a7` |
+| Evaluation manifest SHA-256 | `c6b90e2983d4345d53d147e092f9566b7522c069ddae10fec7475ba505269b93` |
 
 The underlying `metrics.parquet`, possession predictions, cohort summary, and
 source metadata are stored under
-`artifacts/reports/model_evaluation/2025-26/evaluation-2025-26-20260729T174625Z-e8d05e8e/`.
+`artifacts/reports/model_evaluation/2025-26/evaluation-2025-26-20260729T230510Z-dde81f3c/`.
 
 | Artifact | Contents |
 | --- | --- |
 | `metrics.parquet` | One row per cohort and model |
 | `predictions.parquet` | Every model prediction on every eligible possession |
 | `cohorts.parquet` | Inclusion counts, dates, and training cutoffs |
+| `comparisons.parquet` | Paired game-cluster bootstrap intervals |
 | `model_sources.json` | Model states, translation, means, and unknown exposures |
 | `manifest.json` | Source hashes, code fingerprint, and artifact integrity |

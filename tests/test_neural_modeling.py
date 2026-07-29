@@ -6,6 +6,10 @@ import pandas as pd
 import pytest
 import torch
 
+from nba_lineup_model.modeling.deep_sets import (
+    DeepSetsArchitectureConfig,
+    fit_deep_sets_experiment,
+)
 from nba_lineup_model.modeling.neural import (
     NeuralTrainingConfig,
     fit_additive_neural_experiment,
@@ -16,7 +20,7 @@ from nba_lineup_model.modeling.neural_data import (
     player_vocabulary,
 )
 from nba_lineup_model.modeling.schema import ChronologicalSplitConfig
-from nba_lineup_model.models.neural import AdditivePlayerModel
+from nba_lineup_model.models.neural import AdditivePlayerModel, DeepSetsPlayerModel
 
 
 def test_neural_possessions_exclude_multi_segment_and_orient_lineups() -> None:
@@ -74,6 +78,32 @@ def test_additive_model_is_permutation_invariant_and_role_swap_symmetric() -> No
     assert model.centered_player_values().mean().item() == pytest.approx(0.0, abs=1e-7)
 
 
+def test_deep_sets_concatenates_roles_and_is_permutation_invariant() -> None:
+    torch.manual_seed(4)
+    model = DeepSetsPlayerModel(player_count=10)
+    with torch.no_grad():
+        model.lineup_mlp[-1].weight.fill_(0.1)
+    offense = torch.tensor([[1, 2, 3, 4, 5]])
+    defense = torch.tensor([[6, 7, 8, 9, 10]])
+    sign = torch.tensor([1.0])
+
+    prediction = model(offense, defense, sign)
+    shuffled = model(
+        torch.tensor([[5, 3, 1, 4, 2]]),
+        torch.tensor([[9, 6, 10, 8, 7]]),
+        sign,
+    )
+    additive, nonlinear = model.components(offense, defense, sign)
+
+    assert model.player_mlp[0].in_features == 40
+    assert model.lineup_mlp[0].in_features == 129
+    assert shuffled.item() == pytest.approx(prediction.item(), abs=1e-7)
+    assert prediction.item() == pytest.approx(
+        additive.item() + nonlinear.item(),
+        abs=1e-7,
+    )
+
+
 def test_additive_neural_experiment_writes_checkpoints_and_rankings(
     tmp_path,
 ) -> None:
@@ -121,6 +151,64 @@ def test_additive_neural_experiment_writes_checkpoints_and_rankings(
     assert (tmp_path / "selection_model.ckpt").is_file()
     assert (tmp_path / "test_model.ckpt").is_file()
     assert (tmp_path / "model.ckpt").is_file()
+
+
+def test_deep_sets_experiment_tracks_fixed_seeds_and_interactions(tmp_path) -> None:
+    possessions = _modeling_possessions(game_count=20)
+    split = ChronologicalSplitConfig(
+        cv_folds=2,
+        validation_fraction=0.15,
+        test_fraction=0.15,
+    )
+    training = NeuralTrainingConfig(
+        random_seed=7,
+        batch_size=32,
+        max_epochs=1,
+        early_stopping_patience=0,
+        learning_rates=(0.001,),
+        weight_decays=(0.01,),
+        accelerator="cpu",
+    )
+    architecture = DeepSetsArchitectureConfig(
+        player_embedding_dim=4,
+        role_embedding_dim=2,
+        player_hidden_dim=8,
+        pooled_dim=8,
+        lineup_hidden_dims=(16, 8),
+    )
+
+    experiment = fit_deep_sets_experiment(
+        possessions,
+        checkpoint_dir=tmp_path,
+        split_config=split,
+        training_config=training,
+        architecture_config=architecture,
+        refit_seeds=(7, 8, 9),
+        minimum_ranking_possessions=1.0,
+    )
+
+    assert experiment.refit_seeds == (7, 8, 9)
+    assert experiment.leaderboard_seed == 7
+    assert experiment.parameter_count > 0
+    assert experiment.seed_metrics["seed"].tolist() == [7, 8, 9]
+    assert set(experiment.test_metrics["model"]) == {"mean", "deep_sets"}
+    assert experiment.test_predictions["leaderboard_seed"].unique().tolist() == [7]
+    assert (
+        experiment.test_predictions["prediction_deep_sets"]
+        - experiment.test_predictions["prediction_additive_path"]
+    ).to_numpy() == pytest.approx(
+        experiment.test_predictions["prediction_nonlinear_residual"].to_numpy(),
+        abs=1e-6,
+    )
+    assert not experiment.lineup_interactions.empty
+    assert len(experiment.additive_player_components) == 20
+    assert (tmp_path / "selection_model.ckpt").is_file()
+    assert (tmp_path / "test_model.ckpt").is_file()
+    assert (tmp_path / "test_model_seed_8.ckpt").is_file()
+    assert (tmp_path / "test_model_seed_9.ckpt").is_file()
+    assert (tmp_path / "model.ckpt").is_file()
+    assert (tmp_path / "model_seed_8.ckpt").is_file()
+    assert (tmp_path / "model_seed_9.ckpt").is_file()
 
 
 def _source_segments() -> pd.DataFrame:

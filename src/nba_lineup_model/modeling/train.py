@@ -964,13 +964,19 @@ def main() -> None:
         split_config=split_config,
         minimum_ranking_possessions=args.minimum_ranking_possessions,
     )
+    from nba_lineup_model.tracking import track_completed_run
+
+    tracking = track_completed_run(run_dir)
+    tracking_text = (
+        f"; mlflow_run_id={tracking.mlflow_run_id}" if tracking is not None else ""
+    )
     print(
         f"{manifest.season} regular baselines: "
         f"stints={manifest.stint_count}, games={manifest.game_count}, "
         f"players={manifest.player_count}, "
         f"team_lambda={manifest.selected_team_lambda:g}, "
         f"rapm_lambda={manifest.selected_rapm_lambda:g}; "
-        f"run={run_dir}"
+        f"run={run_dir}{tracking_text}"
     )
 
 

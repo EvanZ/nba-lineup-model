@@ -24,6 +24,7 @@ nav = [
       {"Possessions and lineup segments" = "architecture/decisions/0002-possession-segments.md"},
       {"Validation-first processing" = "architecture/decisions/0003-validation-first.md"},
       {"Hybrid season storage" = "architecture/decisions/0004-hybrid-season-storage.md"},
+      {"MLflow experiment index" = "architecture/decisions/0005-mlflow-experiment-index.md"},
     ]},
   ]},
   {"Data contracts" = [
@@ -40,6 +41,7 @@ nav = [
   {"Guides" = [
     {"Build and serve the docs" = "guides/documentation.md"},
     {"Use the Prefect UI" = "guides/prefect-ui.md"},
+    {"Track experiments with MLflow" = "guides/mlflow.md"},
     {"Build one game" = "guides/build-game.md"},
     {"Fetch a season" = "guides/fetch-season.md"},
     {"Process a season" = "guides/process-season.md"},
@@ -47,6 +49,7 @@ nav = [
     {"Collect player bios" = "guides/collect-player-bios.md"},
     {"Train RAPM baselines" = "guides/train-rapm.md"},
     {"Train neural models" = "guides/train-neural.md"},
+    {"Train CatBoost" = "guides/train-catboost.md"},
     {"Run cross-season audits" = "guides/cross-season-audit.md"},
   ]},
   {"Models" = [
@@ -54,6 +57,7 @@ nav = [
     {"Baseline methodology" = "models/baselines.md"},
     {"Bayesian RAPM methodology" = "models/bayesian-rapm.md"},
     {"Neural Networks" = "models/neural-networks.md"},
+    {"Tree Models" = "models/tree-models.md"},
     {"Leaderboard" = "models/leaderboard.md"},
     {"2025-26 RAPM case study" = "models/2025-26-rapm-case-study.md"},
     {"2025-26 Bayesian RAPM case study" = "models/2025-26-bayesian-rapm-case-study.md"},
@@ -69,6 +73,7 @@ nav = [
     {"Modeling" = "reference/modeling.md"},
     {"Season data" = "reference/season.md"},
     {"Orchestration" = "reference/orchestration.md"},
+    {"Experiment tracking" = "reference/tracking.md"},
     {"Audit" = "reference/audit.md"},
   ]},
 ]

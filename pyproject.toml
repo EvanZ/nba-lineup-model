@@ -5,7 +5,7 @@ description = "Direct NBA data ingestion and lineup modeling experiments."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "catboost>=1.2.7",
+    "catboost>=1.2.7,<2",
     "httpx>=0.27.2",
     "pandas>=2.2.3",
     "prefect>=3.4,<4",
@@ -15,6 +15,7 @@ dependencies = [
     "scipy>=1.14.1",
     "torch>=2.6",
     "lightning>=2.5,<3",
+    "mlflow>=3.5,<4",
 ]
 
 [project.scripts]
@@ -30,8 +31,11 @@ nba-import-catalog = "nba_lineup_model.season.catalog:main"
 nba-evaluate-models = "nba_lineup_model.modeling.leaderboard:main"
 nba-process-season = "nba_lineup_model.flows.process_season:main"
 nba-sample-audit = "nba_lineup_model.audit.sample:main"
+nba-sync-mlflow = "nba_lineup_model.tracking:main"
 nba-diagnose-rapm = "nba_lineup_model.modeling.diagnostics:main"
 nba-train-bayesian-rapm = "nba_lineup_model.modeling.bayesian:main"
+nba-train-catboost = "nba_lineup_model.modeling.catboost:main"
+nba-train-deep-sets = "nba_lineup_model.modeling.deep_sets:main"
 nba-train-neural-rapm = "nba_lineup_model.modeling.neural:main"
 nba-train-rapm = "nba_lineup_model.modeling.train:main"
 

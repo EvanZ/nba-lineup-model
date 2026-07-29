@@ -14,6 +14,7 @@ from uuid import uuid4
 import numpy as np
 import pandas as pd
 import torch
+from catboost import CatBoostRegressor
 from torch.utils.data import DataLoader
 
 from nba_lineup_model.evaluation.metrics import (
@@ -24,6 +25,11 @@ from nba_lineup_model.evaluation.metrics import (
     skill_score,
 )
 from nba_lineup_model.modeling.bayesian import validate_bayesian_rapm_run
+from nba_lineup_model.modeling.catboost import (
+    catboost_predictions,
+    validate_catboost_run,
+)
+from nba_lineup_model.modeling.deep_sets import validate_deep_sets_run
 from nba_lineup_model.modeling.neural import validate_neural_rapm_run
 from nba_lineup_model.modeling.neural_data import (
     PossessionTensorDataset,
@@ -35,6 +41,7 @@ from nba_lineup_model.modeling.schema import (
     ArtifactRecord,
     BaselineRunManifest,
     BayesianRapmRunManifest,
+    CatBoostRunManifest,
     ModelEvaluationManifest,
     NeuralRapmRunManifest,
 )
@@ -43,7 +50,7 @@ from nba_lineup_model.modeling.stints import (
     validate_rapm_stint_partition,
 )
 from nba_lineup_model.modeling.train import validate_baseline_run
-from nba_lineup_model.models.neural import AdditiveRapmModule
+from nba_lineup_model.models.neural import AdditiveRapmModule, DeepSetsRapmModule
 from nba_lineup_model.season.compact import (
     CuratedPartitionManifest,
     read_curated_partition_manifest,
@@ -51,11 +58,19 @@ from nba_lineup_model.season.compact import (
 )
 from nba_lineup_model.season.layout import CuratedDatasetLayout, CuratedPartition
 
-MODEL_ORDER = ("ridge_rapm", "bayesian_rapm", "additive_neural")
+MODEL_ORDER = (
+    "ridge_rapm",
+    "bayesian_rapm",
+    "additive_neural",
+    "deep_sets",
+    "catboost",
+)
 MODEL_NAMES = {
     "ridge_rapm": "One-year ridge RAPM",
     "bayesian_rapm": "One-year Bayesian RAPM",
     "additive_neural": "One-year additive neural",
+    "deep_sets": "One-year Deep Sets",
+    "catboost": "One-year categorical CatBoost",
 }
 COHORT_NAMES = {
     "regular_holdout": "Regular-season holdout",
@@ -71,6 +86,10 @@ class EvaluationSources:
     bayesian_manifest: BayesianRapmRunManifest
     neural_dir: Path
     neural_manifest: NeuralRapmRunManifest
+    deep_sets_dir: Path
+    deep_sets_manifest: NeuralRapmRunManifest
+    catboost_dir: Path
+    catboost_manifest: CatBoostRunManifest
 
 
 @dataclass(frozen=True)
@@ -78,6 +97,7 @@ class ModelEvaluation:
     metrics: pd.DataFrame
     predictions: pd.DataFrame
     cohorts: pd.DataFrame
+    comparisons: pd.DataFrame
     model_sources: dict[str, Any]
 
 
@@ -90,6 +110,7 @@ def evaluation_code_fingerprint(
         package_root = Path(__file__).parents[1]
         paths = (
             package_root / "evaluation" / "metrics.py",
+            package_root / "modeling" / "catboost.py",
             package_root / "modeling" / "leaderboard.py",
             package_root / "modeling" / "neural_data.py",
             package_root / "modeling" / "schema.py",
@@ -117,6 +138,8 @@ def build_model_evaluation(
     ridge_run_id: str | None = None,
     bayesian_run_id: str | None = None,
     neural_run_id: str | None = None,
+    deep_sets_run_id: str | None = None,
+    catboost_run_id: str | None = None,
     curated_dir: Path | str = Path("data/curated"),
     analytical_dir: Path | str = Path("data/analytical"),
     model_artifacts_dir: Path | str = Path("artifacts/models"),
@@ -132,6 +155,8 @@ def build_model_evaluation(
         ridge_run_id,
         bayesian_run_id,
         neural_run_id,
+        deep_sets_run_id,
+        catboost_run_id,
     )
     _validate_source_relationships(sources, season, analytical_dir)
     regular_segments_manifest, regular_segments, regular_segments_dir = (
@@ -184,6 +209,7 @@ def build_model_evaluation(
             evaluation.metrics,
             evaluation.cohorts,
             Path(docs_path),
+            comparisons=evaluation.comparisons,
         )
     return manifest, run_dir
 
@@ -202,8 +228,18 @@ def evaluate_fitted_models(
     regular_possessions = read_neural_possessions(season, analytical_dir)
     ridge_splits = pd.read_parquet(sources.ridge_dir / "game_splits.parquet")
     neural_splits = pd.read_parquet(sources.neural_dir / "game_splits.parquet")
+    deep_sets_splits = pd.read_parquet(
+        sources.deep_sets_dir / "game_splits.parquet"
+    )
+    catboost_splits = pd.read_parquet(
+        sources.catboost_dir / "game_splits.parquet"
+    )
     final_ridge = ridge_splits.loc[ridge_splits["split"].eq("final")]
     final_neural = neural_splits.loc[neural_splits["split"].eq("final")]
+    final_deep_sets = deep_sets_splits.loc[
+        deep_sets_splits["split"].eq("final")
+    ]
+    final_catboost = catboost_splits.loc[catboost_splits["split"].eq("final")]
     train_game_ids = set(
         final_ridge.loc[final_ridge["role"].eq("train"), "game_id"].astype(str)
     )
@@ -213,8 +249,24 @@ def evaluate_fitted_models(
     neural_test_ids = set(
         final_neural.loc[final_neural["role"].eq("test"), "game_id"].astype(str)
     )
-    if test_game_ids != neural_test_ids:
-        raise ValueError("Ridge and neural final test games do not match")
+    deep_sets_test_ids = set(
+        final_deep_sets.loc[
+            final_deep_sets["role"].eq("test"),
+            "game_id",
+        ].astype(str)
+    )
+    catboost_test_ids = set(
+        final_catboost.loc[
+            final_catboost["role"].eq("test"),
+            "game_id",
+        ].astype(str)
+    )
+    if (
+        test_game_ids != neural_test_ids
+        or test_game_ids != deep_sets_test_ids
+        or test_game_ids != catboost_test_ids
+    ):
+        raise ValueError("Leaderboard model final test games do not match")
     regular_holdout = regular_possessions.loc[
         regular_possessions["game_id"].astype(str).isin(test_game_ids)
     ].reset_index(drop=True)
@@ -248,6 +300,16 @@ def evaluate_fitted_models(
         pd.read_parquet(sources.neural_dir / "test_predictions.parquet"),
         "prediction_additive_neural",
     )
+    deep_sets_regular = _mapped_possession_predictions(
+        regular_holdout,
+        pd.read_parquet(sources.deep_sets_dir / "test_predictions.parquet"),
+        "prediction_deep_sets",
+    )
+    catboost_regular = _mapped_possession_predictions(
+        regular_holdout,
+        pd.read_parquet(sources.catboost_dir / "test_predictions.parquet"),
+        "prediction_catboost",
+    )
 
     playoff_possessions = neural_possessions_frame(playoff_segments)
     full_regular_mean = float(regular_possessions["target_offense_margin"].mean())
@@ -265,16 +327,28 @@ def evaluate_fitted_models(
         playoff_possessions,
         sources.neural_dir,
     )
+    deep_sets_playoffs, deep_sets_unknown = _deep_sets_playoff_predictions(
+        playoff_possessions,
+        sources.deep_sets_dir,
+    )
+    catboost_playoffs, catboost_unknown = _catboost_playoff_predictions(
+        playoff_possessions,
+        sources.catboost_dir,
+    )
 
     regular_predictions = {
         "ridge_rapm": ridge_regular,
         "bayesian_rapm": bayesian_regular,
         "additive_neural": neural_regular,
+        "deep_sets": deep_sets_regular,
+        "catboost": catboost_regular,
     }
     playoff_predictions = {
         "ridge_rapm": ridge_playoffs,
         "bayesian_rapm": bayesian_playoffs,
         "additive_neural": neural_playoffs,
+        "deep_sets": deep_sets_playoffs,
+        "catboost": catboost_playoffs,
     }
     regular_metrics, regular_prediction_rows = score_prediction_cohort(
         regular_holdout,
@@ -289,6 +363,43 @@ def evaluate_fitted_models(
         cohort="playoffs",
         training_window="full_1230_game_regular_season",
         mean_prediction=full_regular_mean,
+    )
+    comparisons = pd.concat(
+        [
+            paired_game_cluster_bootstrap(
+                regular_holdout,
+                neural_regular,
+                deep_sets_regular,
+                cohort="regular_holdout",
+                reference_model="additive_neural",
+                candidate_model="deep_sets",
+            ),
+            paired_game_cluster_bootstrap(
+                playoff_possessions,
+                neural_playoffs,
+                deep_sets_playoffs,
+                cohort="playoffs",
+                reference_model="additive_neural",
+                candidate_model="deep_sets",
+            ),
+            paired_game_cluster_bootstrap(
+                regular_holdout,
+                neural_regular,
+                catboost_regular,
+                cohort="regular_holdout",
+                reference_model="additive_neural",
+                candidate_model="catboost",
+            ),
+            paired_game_cluster_bootstrap(
+                playoff_possessions,
+                neural_playoffs,
+                catboost_playoffs,
+                cohort="playoffs",
+                reference_model="additive_neural",
+                candidate_model="catboost",
+            ),
+        ],
+        ignore_index=True,
     )
     regular_source = regular_segments.loc[
         regular_segments["game_id"].astype(str).isin(test_game_ids)
@@ -336,6 +447,27 @@ def evaluate_fitted_models(
             "regular_holdout_state": "stored test_model predictions",
             "playoff_state": "stored all-regular-season model checkpoint",
         },
+        "deep_sets": {
+            "run_id": sources.deep_sets_manifest.run_id,
+            "learning_rate": sources.deep_sets_manifest.learning_rate,
+            "weight_decay": sources.deep_sets_manifest.weight_decay,
+            "selected_epochs": sources.deep_sets_manifest.selected_epochs,
+            "leaderboard_seed": sources.deep_sets_manifest.leaderboard_seed,
+            "refit_seeds": list(sources.deep_sets_manifest.refit_seeds),
+            "regular_holdout_state": "stored canonical-seed test_model predictions",
+            "playoff_state": "stored canonical-seed all-regular-season checkpoint",
+        },
+        "catboost": {
+            "run_id": sources.catboost_manifest.run_id,
+            "max_iterations": sources.catboost_manifest.max_iterations,
+            "best_iteration": sources.catboost_manifest.best_iteration,
+            "selected_tree_count": sources.catboost_manifest.selected_tree_count,
+            "resolved_learning_rate": (
+                sources.catboost_manifest.resolved_learning_rate
+            ),
+            "regular_holdout_state": "stored final-training model predictions",
+            "playoff_state": "stored all-regular-season CatBoost model",
+        },
         "translation": (
             "RAPM home net rating becomes offense margin as regular-training mean "
             "+ home_offense_sign * predicted_home_net_rating / 200"
@@ -351,6 +483,8 @@ def evaluate_fitted_models(
             "ridge_rapm": ridge_unknown,
             "bayesian_rapm": bayesian_unknown,
             "additive_neural": neural_unknown,
+            "deep_sets": deep_sets_unknown,
+            "catboost": catboost_unknown,
         },
     }
     return ModelEvaluation(
@@ -360,6 +494,7 @@ def evaluate_fitted_models(
             ignore_index=True,
         ),
         cohorts=cohorts,
+        comparisons=comparisons,
         model_sources=model_sources,
     )
 
@@ -443,11 +578,121 @@ def score_prediction_cohort(
     return pd.DataFrame(metric_rows), pd.concat(prediction_frames, ignore_index=True)
 
 
+def paired_game_cluster_bootstrap(
+    possessions: pd.DataFrame,
+    reference_predictions: np.ndarray,
+    candidate_predictions: np.ndarray,
+    *,
+    cohort: str,
+    reference_model: str = "additive_neural",
+    candidate_model: str = "deep_sets",
+    draws: int = 2_000,
+    random_seed: int = 20_260_729,
+) -> pd.DataFrame:
+    """Bootstrap paired candidate-minus-reference RMSE differences by game."""
+
+    if draws < 1:
+        raise ValueError("Bootstrap draws must be positive")
+    if reference_model == candidate_model:
+        raise ValueError("Bootstrap models must be distinct")
+    actual = possessions["target_offense_margin"].to_numpy(dtype=float)
+    reference = np.asarray(reference_predictions, dtype=float)
+    candidate = np.asarray(candidate_predictions, dtype=float)
+    if reference.shape != actual.shape or candidate.shape != actual.shape:
+        raise ValueError("Bootstrap predictions must match possession rows")
+    game_codes, game_ids = pd.factorize(
+        possessions["game_id"].astype(str),
+        sort=False,
+    )
+    game_count = len(game_ids)
+    if game_count < 2:
+        raise ValueError("Bootstrap requires at least two games")
+    possession_counts = np.bincount(game_codes, minlength=game_count).astype(float)
+    reference_sse = np.bincount(
+        game_codes,
+        weights=np.square(actual - reference),
+        minlength=game_count,
+    )
+    candidate_sse = np.bincount(
+        game_codes,
+        weights=np.square(actual - candidate),
+        minlength=game_count,
+    )
+    signs = possessions["home_offense_sign"].to_numpy(dtype=float)
+    actual_game = np.bincount(
+        game_codes,
+        weights=actual * signs,
+        minlength=game_count,
+    )
+    reference_game = np.bincount(
+        game_codes,
+        weights=reference * signs,
+        minlength=game_count,
+    )
+    candidate_game = np.bincount(
+        game_codes,
+        weights=candidate * signs,
+        minlength=game_count,
+    )
+    reference_game_se = np.square(actual_game - reference_game)
+    candidate_game_se = np.square(actual_game - candidate_game)
+
+    generator = np.random.default_rng(random_seed)
+    samples = generator.integers(0, game_count, size=(draws, game_count))
+    sampled_possessions = possession_counts[samples].sum(axis=1)
+    reference_possession_rmse = np.sqrt(
+        reference_sse[samples].sum(axis=1) / sampled_possessions
+    )
+    candidate_possession_rmse = np.sqrt(
+        candidate_sse[samples].sum(axis=1) / sampled_possessions
+    )
+    reference_game_rmse = np.sqrt(reference_game_se[samples].mean(axis=1))
+    candidate_game_rmse = np.sqrt(candidate_game_se[samples].mean(axis=1))
+
+    rows = []
+    for metric, point, differences in (
+        (
+            "possession_rmse",
+            float(
+                np.sqrt(candidate_sse.sum() / possession_counts.sum())
+                - np.sqrt(reference_sse.sum() / possession_counts.sum())
+            ),
+            candidate_possession_rmse - reference_possession_rmse,
+        ),
+        (
+            "eligible_possession_game_margin_rmse",
+            float(
+                np.sqrt(candidate_game_se.mean())
+                - np.sqrt(reference_game_se.mean())
+            ),
+            candidate_game_rmse - reference_game_rmse,
+        ),
+    ):
+        rows.append(
+            {
+                "cohort": cohort,
+                "comparison": f"{candidate_model}_minus_{reference_model}",
+                "reference_model": reference_model,
+                "candidate_model": candidate_model,
+                "metric": metric,
+                "difference": point,
+                "ci_lower": float(np.quantile(differences, 0.025)),
+                "ci_upper": float(np.quantile(differences, 0.975)),
+                "probability_candidate_better": float(np.mean(differences < 0)),
+                "bootstrap_unit": "game",
+                "bootstrap_draws": draws,
+                "random_seed": random_seed,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def render_evaluation_page(
     manifest: ModelEvaluationManifest,
     metrics: pd.DataFrame,
     cohorts: pd.DataFrame,
     output_path: Path | str,
+    comparisons: pd.DataFrame | None = None,
 ) -> Path:
     """Render the canonical equations and current model comparison tables."""
 
@@ -466,6 +711,11 @@ def render_evaluation_page(
         metrics.loc[metrics["cohort"].eq("regular_holdout")]
     )
     playoff_table = _render_metric_table(metrics.loc[metrics["cohort"].eq("playoffs")])
+    comparison_table = (
+        _render_comparison_table(comparisons)
+        if comparisons is not None and not comparisons.empty
+        else "No paired comparison is available for this report."
+    )
     regular_reference = metrics.loc[metrics["cohort"].eq("regular_holdout")].iloc[0]
     playoff_reference = metrics.loc[metrics["cohort"].eq("playoffs")].iloc[0]
     created = manifest.created_at.strftime("%Y-%m-%d %H:%M UTC")
@@ -479,6 +729,32 @@ def render_evaluation_page(
             f"`learning_rate={manifest.neural_learning_rate:g}`, "
             f"`weight_decay={manifest.neural_weight_decay:g}`, "
             f"`epochs={manifest.neural_selected_epochs}`"
+        )
+    deep_sets_selection = "not recorded"
+    if (
+        manifest.deep_sets_learning_rate is not None
+        and manifest.deep_sets_weight_decay is not None
+        and manifest.deep_sets_selected_epochs is not None
+        and manifest.deep_sets_leaderboard_seed is not None
+    ):
+        deep_sets_selection = (
+            f"`learning_rate={manifest.deep_sets_learning_rate:g}`, "
+            f"`weight_decay={manifest.deep_sets_weight_decay:g}`, "
+            f"`epochs={manifest.deep_sets_selected_epochs}`, "
+            f"`seed={manifest.deep_sets_leaderboard_seed}`"
+        )
+    catboost_selection = "not recorded"
+    if (
+        manifest.catboost_max_iterations is not None
+        and manifest.catboost_best_iteration is not None
+        and manifest.catboost_selected_tree_count is not None
+        and manifest.catboost_resolved_learning_rate is not None
+    ):
+        catboost_selection = (
+            f"`max_iterations={manifest.catboost_max_iterations}`, "
+            f"`best_iteration={manifest.catboost_best_iteration}`, "
+            f"`trees={manifest.catboost_selected_tree_count}`, "
+            f"`learning_rate={manifest.catboost_resolved_learning_rate:g}`"
         )
     cohort_header = (
         "| Cohort | Games | Source possessions | Eligible possessions | "
@@ -651,11 +927,32 @@ so its posterior mean is the ridge point estimate. Equal point-prediction
 metrics are expected. Bayesian value appears in uncertainty, interval
 calibration, and rank probabilities rather than lower posterior-mean RMSE.
 
-The additive neural exemplar selects learning rate and AdamW weight decay by
-validation-possession-weighted MSE across expanding regular-season folds.
-Regular holdout and playoff outcomes remain outside that selection process.
-Deep Sets and Transformer models will be added as new rows without changing
-these cohorts or metric definitions.
+The additive neural and Deep Sets exemplars select learning rate and AdamW
+weight decay by validation-possession-weighted MSE across expanding
+regular-season folds. CatBoost uses its resolved defaults and chooses its tree
+count from the latest chronological validation fold, subject to the recorded
+iteration ceiling. Regular holdout and playoff outcomes remain outside every
+selection process. Transformer models will be added without changing these
+cohorts or metric definitions.
+
+## Paired model comparisons
+
+To preserve correlation among possessions from the same game, uncertainty is
+estimated by resampling complete games with replacement. Each row reports a
+candidate-minus-additive-neural difference. For bootstrap draw \(b\),
+
+\[
+\Delta_b =
+\operatorname{{RMSE}}_{{candidate,b}}
+-
+\operatorname{{RMSE}}_{{Additive,b}}.
+\]
+
+Negative differences favor the candidate. The interval is the 2.5th through
+97.5th percentile of 2,000 paired game-cluster bootstrap draws. The final
+column is the share of draws where \(\Delta_b < 0\).
+
+{comparison_table}
 
 ## Correctness checks
 
@@ -666,8 +963,9 @@ requires:
 
 - validated source model manifests and exact artifact hashes;
 - a Bayesian run derived from the selected ridge run;
-- matching ridge and neural regular-holdout game IDs;
-- current analytical datasets matching the source model runs;
+- matching regular-holdout game IDs across every model;
+- matching possession, game, and player counts across neural-model sources;
+- exact held-out possession keys for every stored prediction set;
 - Bayesian and ridge posterior-mean equivalence within tolerance.
 
 Run the focused checks with:
@@ -682,7 +980,9 @@ uv run pytest -q tests/test_model_evaluation.py
 uv run nba-evaluate-models {manifest.season} \
   --ridge-run-id {manifest.ridge_run_id} \
   --bayesian-run-id {manifest.bayesian_run_id} \
-  --neural-run-id {manifest.neural_run_id}
+  --neural-run-id {manifest.neural_run_id} \
+  --deep-sets-run-id {manifest.deep_sets_run_id} \
+  --catboost-run-id {manifest.catboost_run_id}
 ```
 
 | Provenance | Value |
@@ -692,6 +992,10 @@ uv run nba-evaluate-models {manifest.season} \
 | Bayesian run | `{manifest.bayesian_run_id}` |
 | Neural run | `{manifest.neural_run_id}` |
 | Neural selection | {neural_selection} |
+| Deep Sets run | `{manifest.deep_sets_run_id}` |
+| Deep Sets selection | {deep_sets_selection} |
+| CatBoost run | `{manifest.catboost_run_id}` |
+| CatBoost selection | {catboost_selection} |
 | Evaluation code | `{manifest.evaluation_code_version}` |
 | Evaluation manifest SHA-256 | `{_sha256_file_for_display(manifest)}` |
 
@@ -704,6 +1008,7 @@ source metadata are stored under
 | `metrics.parquet` | One row per cohort and model |
 | `predictions.parquet` | Every model prediction on every eligible possession |
 | `cohorts.parquet` | Inclusion counts, dates, and training cutoffs |
+| `comparisons.parquet` | Paired game-cluster bootstrap intervals |
 | `model_sources.json` | Model states, translation, means, and unknown exposures |
 | `manifest.json` | Source hashes, code fingerprint, and artifact integrity |
 """
@@ -745,6 +1050,8 @@ def _resolve_sources(
     ridge_run_id: str | None,
     bayesian_run_id: str | None,
     neural_run_id: str | None,
+    deep_sets_run_id: str | None,
+    catboost_run_id: str | None,
 ) -> EvaluationSources:
     ridge_dir = _resolve_run(model_root / "rapm" / season, ridge_run_id)
     bayesian_dir = _resolve_run(
@@ -752,6 +1059,14 @@ def _resolve_sources(
         bayesian_run_id,
     )
     neural_dir = _resolve_run(model_root / "neural_rapm" / season, neural_run_id)
+    deep_sets_dir = _resolve_run(
+        model_root / "deep_sets" / season,
+        deep_sets_run_id,
+    )
+    catboost_dir = _resolve_run(
+        model_root / "catboost" / season,
+        catboost_run_id,
+    )
     return EvaluationSources(
         ridge_dir=ridge_dir,
         ridge_manifest=validate_baseline_run(ridge_dir),
@@ -759,6 +1074,10 @@ def _resolve_sources(
         bayesian_manifest=validate_bayesian_rapm_run(bayesian_dir),
         neural_dir=neural_dir,
         neural_manifest=validate_neural_rapm_run(neural_dir),
+        deep_sets_dir=deep_sets_dir,
+        deep_sets_manifest=validate_deep_sets_run(deep_sets_dir),
+        catboost_dir=catboost_dir,
+        catboost_manifest=validate_catboost_run(catboost_dir),
     )
 
 
@@ -783,6 +1102,8 @@ def _validate_source_relationships(
         sources.ridge_manifest,
         sources.bayesian_manifest,
         sources.neural_manifest,
+        sources.deep_sets_manifest,
+        sources.catboost_manifest,
     )
     if any(manifest.season != season for manifest in manifests):
         raise ValueError("Evaluation source seasons do not match")
@@ -796,8 +1117,20 @@ def _validate_source_relationships(
     )
     if rapm_data.part_sha256 != sources.ridge_manifest.dataset_part_sha256:
         raise ValueError("Current RAPM stints do not match the ridge source run")
-    if neural_data.part_sha256 != sources.neural_manifest.dataset_part_sha256:
-        raise ValueError("Current neural possessions do not match the neural source run")
+    neural_manifests = (
+        sources.neural_manifest,
+        sources.deep_sets_manifest,
+        sources.catboost_manifest,
+    )
+    for manifest in neural_manifests:
+        if (
+            manifest.possession_count != neural_data.included_possession_count
+            or manifest.game_count != neural_data.source_game_count
+            or manifest.player_count != neural_data.player_count
+        ):
+            raise ValueError(
+                f"Current neural possession structure does not match {manifest.run_id}"
+            )
     comparison = pd.read_parquet(sources.bayesian_dir / "comparison_metrics.parquet").iloc[0]
     if float(comparison["max_absolute_test_prediction_difference"]) > 1e-4:
         raise ValueError("Bayesian posterior mean no longer matches ridge test predictions")
@@ -976,6 +1309,44 @@ def _neural_playoff_predictions(
     possessions: pd.DataFrame,
     run_dir: Path,
 ) -> tuple[np.ndarray, int]:
+    return _torch_model_playoff_predictions(
+        possessions,
+        run_dir,
+        AdditiveRapmModule,
+    )
+
+
+def _deep_sets_playoff_predictions(
+    possessions: pd.DataFrame,
+    run_dir: Path,
+) -> tuple[np.ndarray, int]:
+    return _torch_model_playoff_predictions(
+        possessions,
+        run_dir,
+        DeepSetsRapmModule,
+    )
+
+
+def _catboost_playoff_predictions(
+    possessions: pd.DataFrame,
+    run_dir: Path,
+) -> tuple[np.ndarray, int]:
+    player_columns = {
+        int(player_id): int(column)
+        for player_id, column in json.loads(
+            (run_dir / "player_columns.json").read_text()
+        ).items()
+    }
+    model = CatBoostRegressor()
+    model.load_model(run_dir / "model.cbm")
+    return catboost_predictions(model, possessions, player_columns)
+
+
+def _torch_model_playoff_predictions(
+    possessions: pd.DataFrame,
+    run_dir: Path,
+    module_class: type[AdditiveRapmModule] | type[DeepSetsRapmModule],
+) -> tuple[np.ndarray, int]:
     player_columns = {
         int(player_id): int(column)
         for player_id, column in json.loads(
@@ -984,7 +1355,7 @@ def _neural_playoff_predictions(
     }
     dataset = PossessionTensorDataset(possessions, player_columns)
     loader = DataLoader(dataset, batch_size=2_048, shuffle=False, num_workers=0)
-    module = AdditiveRapmModule.load_from_checkpoint(
+    module = module_class.load_from_checkpoint(
         run_dir / "model.ckpt",
         map_location="cpu",
     )
@@ -1060,6 +1431,7 @@ def _write_evaluation(
             "metrics.parquet": evaluation.metrics,
             "predictions.parquet": evaluation.predictions,
             "cohorts.parquet": evaluation.cohorts,
+            "comparisons.parquet": evaluation.comparisons,
         }
         for filename, frame in parquet_outputs.items():
             frame.to_parquet(temporary_dir / filename, index=False)
@@ -1081,6 +1453,7 @@ def _write_evaluation(
         regular = evaluation.cohorts.set_index("cohort").loc["regular_holdout"]
         playoffs = evaluation.cohorts.set_index("cohort").loc["playoffs"]
         manifest = ModelEvaluationManifest(
+            schema_version=2,
             run_id=run_id,
             created_at=now,
             season=season,
@@ -1096,6 +1469,28 @@ def _write_evaluation(
             neural_learning_rate=sources.neural_manifest.learning_rate,
             neural_weight_decay=sources.neural_manifest.weight_decay,
             neural_selected_epochs=sources.neural_manifest.selected_epochs,
+            deep_sets_run_id=sources.deep_sets_manifest.run_id,
+            deep_sets_manifest_sha256=_sha256_file(
+                sources.deep_sets_dir / "manifest.json"
+            ),
+            deep_sets_learning_rate=sources.deep_sets_manifest.learning_rate,
+            deep_sets_weight_decay=sources.deep_sets_manifest.weight_decay,
+            deep_sets_selected_epochs=sources.deep_sets_manifest.selected_epochs,
+            deep_sets_leaderboard_seed=(
+                sources.deep_sets_manifest.leaderboard_seed
+            ),
+            catboost_run_id=sources.catboost_manifest.run_id,
+            catboost_manifest_sha256=_sha256_file(
+                sources.catboost_dir / "manifest.json"
+            ),
+            catboost_max_iterations=sources.catboost_manifest.max_iterations,
+            catboost_best_iteration=sources.catboost_manifest.best_iteration,
+            catboost_selected_tree_count=(
+                sources.catboost_manifest.selected_tree_count
+            ),
+            catboost_resolved_learning_rate=(
+                sources.catboost_manifest.resolved_learning_rate
+            ),
             regular_segments_manifest_sha256=_sha256_file(
                 regular_segments_dir / "_manifest.json"
             ),
@@ -1144,6 +1539,30 @@ def _validate_curated_manifest_arguments(
         raise ValueError("Regular segment and lineup manifests have different games")
     if playoff_segments.partition.season_type != "playoffs":
         raise ValueError("Playoff evaluation source is not a playoff partition")
+
+
+def _render_comparison_table(comparisons: pd.DataFrame) -> str:
+    metric_names = {
+        "possession_rmse": "Possession RMSE",
+        "eligible_possession_game_margin_rmse": (
+            "Eligible-possession game-margin RMSE"
+        ),
+    }
+    lines = [
+        "| Cohort | Candidate | Reference | Metric | Difference | "
+        "95% interval | P(candidate better) |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: |",
+    ]
+    for row in comparisons.itertuples(index=False):
+        lines.append(
+            f"| {COHORT_NAMES[str(row.cohort)]} | "
+            f"{MODEL_NAMES[str(row.candidate_model)]} | "
+            f"{MODEL_NAMES[str(row.reference_model)]} | "
+            f"{metric_names[str(row.metric)]} | {float(row.difference):.6f} | "
+            f"[{float(row.ci_lower):.6f}, {float(row.ci_upper):.6f}] | "
+            f"{float(row.probability_candidate_better):.1%} |"
+        )
+    return "\n".join(lines)
 
 
 def _render_metric_table(metrics: pd.DataFrame) -> str:
@@ -1203,14 +1622,16 @@ def _sha256_file_for_display(manifest: ModelEvaluationManifest) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate frozen ridge, Bayesian, and neural models on the regular "
-            "holdout and playoffs."
+            "Evaluate frozen ridge, Bayesian, neural, and CatBoost models on "
+            "the regular holdout and playoffs."
         )
     )
     parser.add_argument("season", help="NBA season in YYYY-YY format")
     parser.add_argument("--ridge-run-id")
     parser.add_argument("--bayesian-run-id")
     parser.add_argument("--neural-run-id")
+    parser.add_argument("--deep-sets-run-id")
+    parser.add_argument("--catboost-run-id")
     parser.add_argument("--curated-dir", default="data/curated")
     parser.add_argument("--analytical-dir", default="data/analytical")
     parser.add_argument("--model-artifacts-dir", default="artifacts/models")
@@ -1231,18 +1652,27 @@ def main() -> None:
         ridge_run_id=args.ridge_run_id,
         bayesian_run_id=args.bayesian_run_id,
         neural_run_id=args.neural_run_id,
+        deep_sets_run_id=args.deep_sets_run_id,
+        catboost_run_id=args.catboost_run_id,
         curated_dir=args.curated_dir,
         analytical_dir=args.analytical_dir,
         model_artifacts_dir=args.model_artifacts_dir,
         reports_dir=args.reports_dir,
         docs_path=None if args.no_docs else args.docs_path,
     )
+    from nba_lineup_model.tracking import track_completed_run
+
+    tracking = track_completed_run(run_dir)
+    tracking_text = (
+        f"; mlflow_run_id={tracking.mlflow_run_id}" if tracking is not None else ""
+    )
     print(
         f"{manifest.season} model evaluation: "
         f"regular_games={manifest.regular_holdout_game_count}, "
         f"regular_possessions={manifest.regular_holdout_possession_count}, "
         f"playoff_games={manifest.playoff_game_count}, "
-        f"playoff_possessions={manifest.playoff_possession_count}; run={run_dir}"
+        f"playoff_possessions={manifest.playoff_possession_count}; "
+        f"run={run_dir}{tracking_text}"
     )
 
 

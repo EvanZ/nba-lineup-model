@@ -9,6 +9,7 @@ import pytest
 from nba_lineup_model.evaluation.metrics import possession_game_margin_rmse
 from nba_lineup_model.modeling.leaderboard import (
     MODEL_ORDER,
+    paired_game_cluster_bootstrap,
     render_evaluation_page,
     score_prediction_cohort,
 )
@@ -41,6 +42,8 @@ def test_score_prediction_cohort_uses_identical_rows_for_every_model() -> None:
         "ridge_rapm": np.array([1.0, 0.0, 0.0, 2.0]),
         "bayesian_rapm": np.array([1.0, 0.0, 0.0, 2.0]),
         "additive_neural": actual.copy(),
+        "deep_sets": actual.copy(),
+        "catboost": actual.copy(),
     }
 
     metrics, prediction_rows = score_prediction_cohort(
@@ -65,6 +68,25 @@ def test_score_prediction_cohort_uses_identical_rows_for_every_model() -> None:
     ].item() > 0
 
 
+def test_paired_game_cluster_bootstrap_preserves_paired_games() -> None:
+    possessions = _possessions()
+    result = paired_game_cluster_bootstrap(
+        possessions,
+        np.array([1.0, 0.0, 0.0, 2.0]),
+        possessions["target_offense_margin"].to_numpy(dtype=float),
+        cohort="playoffs",
+        draws=200,
+        random_seed=9,
+    )
+
+    assert len(result) == 2
+    assert result["difference"].lt(0).all()
+    assert result["ci_upper"].lt(0).all()
+    assert result["candidate_model"].eq("deep_sets").all()
+    assert result["reference_model"].eq("additive_neural").all()
+    assert result["probability_candidate_better"].eq(1.0).all()
+
+
 def test_generated_evaluation_page_defines_metrics_and_bolds_winner(
     tmp_path,
 ) -> None:
@@ -76,6 +98,8 @@ def test_generated_evaluation_page_defines_metrics_and_bolds_winner(
             "ridge_rapm": np.array([1.0, 0.0, 0.0, 2.0]),
             "bayesian_rapm": np.array([1.0, 0.0, 0.0, 2.0]),
             "additive_neural": actual.copy(),
+            "deep_sets": actual.copy(),
+            "catboost": actual.copy(),
         },
         cohort="regular_holdout",
         training_window="regular",
@@ -157,6 +181,7 @@ def _cohort_row(cohort: str) -> dict[str, object]:
 def _manifest() -> ModelEvaluationManifest:
     digest = "a" * 64
     return ModelEvaluationManifest(
+        schema_version=2,
         run_id="evaluation-2025-26-test",
         created_at=datetime(2026, 7, 29, tzinfo=UTC),
         season="2025-26",
@@ -167,6 +192,12 @@ def _manifest() -> ModelEvaluationManifest:
         bayesian_manifest_sha256=digest,
         neural_run_id="neural",
         neural_manifest_sha256=digest,
+        catboost_run_id="catboost",
+        catboost_manifest_sha256=digest,
+        catboost_max_iterations=100,
+        catboost_best_iteration=6,
+        catboost_selected_tree_count=7,
+        catboost_resolved_learning_rate=0.1,
         regular_segments_manifest_sha256=digest,
         regular_lineup_stints_manifest_sha256=digest,
         playoff_segments_manifest_sha256=digest,

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import product
@@ -52,6 +53,7 @@ DEFAULT_MAX_EPOCHS = 30
 DEFAULT_EARLY_STOPPING_PATIENCE = 5
 DEFAULT_LEARNING_RATES = (0.0001, 0.0003, 0.001, 0.003)
 DEFAULT_WEIGHT_DECAYS = (0.0, 0.001, 0.01, 0.1, 1.0)
+NeuralModuleFactory = Callable[[int, float, float, float], L.LightningModule]
 
 
 @dataclass(frozen=True)
@@ -305,6 +307,7 @@ def fit_additive_neural_experiment(
         split_plan.folds,
         config,
         output_dir,
+        _new_additive_module,
         enable_progress_bar,
     )
 
@@ -317,6 +320,7 @@ def fit_additive_neural_experiment(
         output_dir / "test_model.ckpt",
         learning_rate=search.selected_learning_rate,
         weight_decay=search.selected_weight_decay,
+        module_factory=_new_additive_module,
         stage="test_refit",
         seed_offset=1,
         enable_progress_bar=enable_progress_bar,
@@ -354,6 +358,7 @@ def fit_additive_neural_experiment(
         output_dir / "model.ckpt",
         learning_rate=search.selected_learning_rate,
         weight_decay=search.selected_weight_decay,
+        module_factory=_new_additive_module,
         stage="all_season_refit",
         seed_offset=2,
         enable_progress_bar=enable_progress_bar,
@@ -451,6 +456,7 @@ def _search_hyperparameters(
     folds: tuple[GameFold, ...],
     config: NeuralTrainingConfig,
     output_dir: Path,
+    module_factory: NeuralModuleFactory,
     enable_progress_bar: bool,
 ) -> _HyperparameterSearch:
     search_dir = output_dir / "hyperparameter_checkpoints"
@@ -479,6 +485,7 @@ def _search_hyperparameters(
                 checkpoint_path,
                 learning_rate=learning_rate,
                 weight_decay=weight_decay,
+                module_factory=module_factory,
                 enable_progress_bar=enable_progress_bar,
             )
             accelerators.add(resolved_accelerator)
@@ -576,6 +583,7 @@ def _fit_selection_model(
     *,
     learning_rate: float,
     weight_decay: float,
+    module_factory: NeuralModuleFactory,
     enable_progress_bar: bool,
 ) -> tuple[pd.DataFrame, int, str]:
     L.seed_everything(config.random_seed, workers=True, verbose=False)
@@ -594,11 +602,11 @@ def _fit_selection_model(
             "target_offense_margin",
         ].mean()
     )
-    module = _new_module(
+    module = module_factory(
         len(player_columns),
+        learning_rate,
+        weight_decay,
         train_mean,
-        learning_rate=learning_rate,
-        weight_decay=weight_decay,
     )
     history = _MetricHistory("hyperparameter_search")
     checkpoint = ModelCheckpoint(
@@ -648,10 +656,11 @@ def _fit_fixed_epoch_model(
     *,
     learning_rate: float,
     weight_decay: float,
+    module_factory: NeuralModuleFactory,
     stage: str,
     seed_offset: int,
     enable_progress_bar: bool,
-) -> tuple[AdditiveRapmModule, pd.DataFrame, str]:
+) -> tuple[L.LightningModule, pd.DataFrame, str]:
     seed = config.random_seed + seed_offset
     L.seed_everything(seed, workers=True, verbose=False)
     data = PossessionDataModule(
@@ -668,11 +677,11 @@ def _fit_fixed_epoch_model(
             "target_offense_margin",
         ].mean()
     )
-    module = _new_module(
+    module = module_factory(
         len(player_columns),
+        learning_rate,
+        weight_decay,
         train_mean,
-        learning_rate=learning_rate,
-        weight_decay=weight_decay,
     )
     history = _MetricHistory(stage)
     trainer = _trainer(
@@ -688,13 +697,12 @@ def _fit_fixed_epoch_model(
     return module, pd.DataFrame(history.rows), trainer.strategy.root_device.type
 
 
-def _new_module(
+def _new_additive_module(
     player_count: int,
-    target_mean: float,
-    *,
     learning_rate: float,
     weight_decay: float,
-) -> AdditiveRapmModule:
+    target_mean: float,
+) -> L.LightningModule:
     module = AdditiveRapmModule(
         player_count,
         learning_rate=learning_rate,
@@ -729,7 +737,7 @@ def _trainer(
 
 
 def _predict(
-    module: AdditiveRapmModule,
+    module: L.LightningModule,
     possessions: pd.DataFrame,
     player_columns: dict[int, int],
     config: NeuralTrainingConfig,
@@ -1259,13 +1267,20 @@ def main() -> None:
         minimum_ranking_possessions=args.minimum_ranking_possessions,
         enable_progress_bar=not args.no_progress_bar,
     )
+    from nba_lineup_model.tracking import track_completed_run
+
+    tracking = track_completed_run(run_dir)
+    tracking_text = (
+        f"; mlflow_run_id={tracking.mlflow_run_id}" if tracking is not None else ""
+    )
     print(
         f"{manifest.season} additive neural RAPM: "
         f"possessions={manifest.possession_count}, games={manifest.game_count}, "
         f"players={manifest.player_count}, lr={manifest.learning_rate:g}, "
         f"weight_decay={manifest.weight_decay:g}, "
         f"epochs={manifest.selected_epochs}, "
-        f"accelerator={manifest.resolved_accelerator}; run={run_dir}"
+        f"accelerator={manifest.resolved_accelerator}; "
+        f"run={run_dir}{tracking_text}"
     )
 
 

@@ -32,6 +32,14 @@
 
 ::: nba_lineup_model.modeling.neural
 
+## Deep Sets training
+
+::: nba_lineup_model.modeling.deep_sets
+
+## CatBoost training
+
+::: nba_lineup_model.modeling.catboost
+
 ## Leaderboard
 
 ::: nba_lineup_model.modeling.leaderboard

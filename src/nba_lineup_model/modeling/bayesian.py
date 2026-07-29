@@ -758,11 +758,17 @@ def main() -> None:
         posterior_seed=args.posterior_seed,
         credible_interval_probability=args.credible_interval,
     )
+    from nba_lineup_model.tracking import track_completed_run
+
+    tracking = track_completed_run(run_dir)
+    tracking_text = (
+        f"; mlflow_run_id={tracking.mlflow_run_id}" if tracking is not None else ""
+    )
     print(
         f"{manifest.season} Bayesian RAPM: "
         f"stints={manifest.stint_count}, players={manifest.player_count}, "
         f"lambda={manifest.selected_rapm_lambda:g}, draws={manifest.posterior_draws}; "
-        f"run={run_dir}"
+        f"run={run_dir}{tracking_text}"
     )
 
 

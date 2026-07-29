@@ -197,6 +197,41 @@ See the
 [documentation workflow](docs/guides/documentation.md) for preview options,
 clean builds, configuration, and output locations.
 
+## Experiment Tracking
+
+Model and evaluation CLIs index completed immutable runs in a project-local
+MLflow SQLite store. Backfill the latest run from every model and report family:
+
+```bash
+uv run nba-sync-mlflow
+```
+
+Start the local UI:
+
+```bash
+uv run mlflow server \
+  --backend-store-uri "sqlite:///$(pwd)/artifacts/mlflow/mlflow.db" \
+  --default-artifact-root "file://$(pwd)/artifacts/mlflow/artifacts" \
+  --no-serve-artifacts \
+  --host 127.0.0.1 \
+  --port 5000
+```
+
+Open `http://127.0.0.1:5000`. See the
+[MLflow guide](docs/guides/mlflow.md) for the storage and synchronization
+contract.
+
+Train the categorical CatBoost lineup baseline and refresh the common
+Leaderboard with:
+
+```bash
+uv run nba-train-catboost 2025-26
+uv run nba-evaluate-models 2025-26
+```
+
+See [Tree Models](docs/models/tree-models.md) for the feature contract and
+[Train CatBoost](docs/guides/train-catboost.md) for artifacts and controls.
+
 ## Test
 
 ```bash

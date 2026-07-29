@@ -276,12 +276,12 @@ class NeuralRapmRunManifest(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
 
-    schema_version: Literal[1, 2] = 1
+    schema_version: Literal[1, 2, 3] = 1
     run_id: str = Field(min_length=1)
     created_at: datetime
     season: str = Field(pattern=SEASON_PATTERN)
     season_type: Literal["regular"] = "regular"
-    architecture: Literal["additive"]
+    architecture: Literal["additive", "deep_sets"]
     neural_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
     dataset_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     dataset_part_sha256: str = Field(pattern=SHA256_PATTERN)
@@ -306,6 +306,14 @@ class NeuralRapmRunManifest(BaseModel):
     hyperparameter_selection_metric: Literal[
         "validation_possession_weighted_mse"
     ] = "validation_possession_weighted_mse"
+    player_embedding_dim: int | None = Field(default=None, ge=1)
+    role_embedding_dim: int | None = Field(default=None, ge=1)
+    player_hidden_dim: int | None = Field(default=None, ge=1)
+    pooled_dim: int | None = Field(default=None, ge=1)
+    lineup_hidden_dims: tuple[int, int] | None = None
+    parameter_count: int | None = Field(default=None, ge=1)
+    refit_seeds: tuple[int, ...] = ()
+    leaderboard_seed: int | None = Field(default=None, ge=0)
     requested_accelerator: Literal["cpu", "mps", "auto"]
     resolved_accelerator: str = Field(min_length=1)
     target: Literal["offense_points_minus_defense_points"]
@@ -351,9 +359,95 @@ class NeuralRapmRunManifest(BaseModel):
                 raise ValueError("Selected learning rate is absent from its grid")
             if self.weight_decay not in self.weight_decay_candidates:
                 raise ValueError("Selected weight decay is absent from its grid")
+        if self.schema_version >= 3:
+            if self.architecture != "deep_sets":
+                raise ValueError("Schema version 3 is reserved for Deep Sets")
+            dimensions = (
+                self.player_embedding_dim,
+                self.role_embedding_dim,
+                self.player_hidden_dim,
+                self.pooled_dim,
+                self.parameter_count,
+            )
+            if any(value is None for value in dimensions):
+                raise ValueError("Deep Sets manifests require architecture dimensions")
+            if self.lineup_hidden_dims is None or any(
+                value < 1 for value in self.lineup_hidden_dims
+            ):
+                raise ValueError("Deep Sets manifests require lineup hidden dimensions")
+            if len(self.refit_seeds) < 3 or len(set(self.refit_seeds)) != len(
+                self.refit_seeds
+            ):
+                raise ValueError("Deep Sets requires at least three unique refit seeds")
+            if self.leaderboard_seed not in self.refit_seeds:
+                raise ValueError("Leaderboard seed must be one of the refit seeds")
         filenames = [artifact.filename for artifact in self.artifacts]
         if len(filenames) != len(set(filenames)):
             raise ValueError("Neural RAPM artifact filenames must be unique")
+        return self
+
+
+class CatBoostRunManifest(BaseModel):
+    """Reproducibility contract for one categorical CatBoost lineup run."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
+
+    schema_version: Literal[1] = 1
+    run_id: str = Field(min_length=1)
+    created_at: datetime
+    season: str = Field(pattern=SEASON_PATTERN)
+    season_type: Literal["regular"] = "regular"
+    architecture: Literal["categorical_player_state"] = "categorical_player_state"
+    catboost_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
+    dataset_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    dataset_part_sha256: str = Field(pattern=SHA256_PATTERN)
+    possession_count: int = Field(ge=1)
+    game_count: int = Field(ge=1)
+    player_count: int = Field(ge=10)
+    feature_count: int = Field(ge=11)
+    split_config: ChronologicalSplitConfig
+    folds: tuple[ChronologicalFold, ...] = Field(min_length=1)
+    selection_train_game_count: int = Field(ge=1)
+    selection_validation_game_count: int = Field(ge=1)
+    final_train_game_count: int = Field(ge=1)
+    final_test_game_count: int = Field(ge=1)
+    max_iterations: int = Field(ge=1)
+    best_iteration: int = Field(ge=0)
+    selected_tree_count: int = Field(ge=1)
+    one_hot_max_size: Literal[3] = 3
+    has_time: Literal[True] = True
+    use_best_model: Literal[True] = True
+    random_seed: int = Field(ge=0)
+    resolved_learning_rate: float = Field(gt=0)
+    target: Literal["offense_points_minus_defense_points"]
+    catboost_version: str = Field(min_length=1)
+    artifacts: tuple[ArtifactRecord, ...] = Field(min_length=1)
+
+    @field_validator("season")
+    @classmethod
+    def validate_season_value(cls, value: str) -> str:
+        return validate_season(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_run(self) -> CatBoostRunManifest:
+        if len(self.folds) != self.split_config.cv_folds:
+            raise ValueError("Fold records must match the split configuration")
+        if self.final_train_game_count + self.final_test_game_count != self.game_count:
+            raise ValueError("Final train and test games must conserve all games")
+        if self.feature_count != self.player_count + 1:
+            raise ValueError("CatBoost features must be one per player plus home offense")
+        if self.best_iteration + 1 != self.selected_tree_count:
+            raise ValueError("Best iteration and selected tree count do not match")
+        if self.selected_tree_count > self.max_iterations:
+            raise ValueError("Selected trees cannot exceed the iteration ceiling")
+        filenames = [artifact.filename for artifact in self.artifacts]
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("CatBoost artifact filenames must be unique")
         return self
 
 
@@ -362,7 +456,7 @@ class ModelEvaluationManifest(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     run_id: str = Field(min_length=1)
     created_at: datetime
     season: str = Field(pattern=SEASON_PATTERN)
@@ -376,11 +470,35 @@ class ModelEvaluationManifest(BaseModel):
     neural_learning_rate: float | None = Field(default=None, gt=0)
     neural_weight_decay: float | None = Field(default=None, ge=0)
     neural_selected_epochs: int | None = Field(default=None, ge=1)
+    deep_sets_run_id: str | None = None
+    deep_sets_manifest_sha256: str | None = Field(
+        default=None,
+        pattern=SHA256_PATTERN,
+    )
+    deep_sets_learning_rate: float | None = Field(default=None, gt=0)
+    deep_sets_weight_decay: float | None = Field(default=None, ge=0)
+    deep_sets_selected_epochs: int | None = Field(default=None, ge=1)
+    deep_sets_leaderboard_seed: int | None = Field(default=None, ge=0)
+    catboost_run_id: str | None = None
+    catboost_manifest_sha256: str | None = Field(
+        default=None,
+        pattern=SHA256_PATTERN,
+    )
+    catboost_max_iterations: int | None = Field(default=None, ge=1)
+    catboost_best_iteration: int | None = Field(default=None, ge=0)
+    catboost_selected_tree_count: int | None = Field(default=None, ge=1)
+    catboost_resolved_learning_rate: float | None = Field(default=None, gt=0)
     regular_segments_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     regular_lineup_stints_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     playoff_segments_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     models: tuple[
-        Literal["ridge_rapm", "bayesian_rapm", "additive_neural"],
+        Literal[
+            "ridge_rapm",
+            "bayesian_rapm",
+            "additive_neural",
+            "deep_sets",
+            "catboost",
+        ],
         ...,
     ] = Field(min_length=3)
     regular_holdout_game_count: int = Field(ge=1)
@@ -403,6 +521,31 @@ class ModelEvaluationManifest(BaseModel):
     def validate_run(self) -> ModelEvaluationManifest:
         if len(set(self.models)) != len(self.models):
             raise ValueError("Evaluation model names must be unique")
+        if "catboost" in self.models:
+            catboost_values = (
+                self.catboost_run_id,
+                self.catboost_manifest_sha256,
+                self.catboost_max_iterations,
+                self.catboost_best_iteration,
+                self.catboost_selected_tree_count,
+                self.catboost_resolved_learning_rate,
+            )
+            if self.schema_version < 2 or any(
+                value is None for value in catboost_values
+            ):
+                raise ValueError(
+                    "CatBoost evaluation manifests require schema version 2 "
+                    "and complete source parameters"
+                )
+            if (
+                self.catboost_best_iteration is not None
+                and self.catboost_selected_tree_count is not None
+                and self.catboost_best_iteration + 1
+                != self.catboost_selected_tree_count
+            ):
+                raise ValueError(
+                    "CatBoost best iteration and selected tree count do not match"
+                )
         filenames = [artifact.filename for artifact in self.artifacts]
         if len(filenames) != len(set(filenames)):
             raise ValueError("Evaluation artifact filenames must be unique")

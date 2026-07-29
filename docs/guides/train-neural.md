@@ -156,3 +156,47 @@ uv run nba-evaluate-models 2025-26
 
 See the [Leaderboard](../models/leaderboard.md) for the frozen cohort and
 metric definitions.
+
+## Train Deep Sets
+
+Train the nonlinear pooled-set model with:
+
+```bash
+uv run nba-train-deep-sets 2025-26
+```
+
+The CPU defaults differ from the scalar additive model:
+
+| Option | Deep Sets default |
+| --- | ---: |
+| `--batch-size` | 8,192 |
+| `--max-epochs` | 15 |
+| `--patience` | 5 |
+| `--learning-rate` | `0.0003`, `0.001`, `0.003` |
+| `--weight-decay` | `0`, `0.001`, `0.01`, `0.1` |
+| Leaderboard seed | 17 |
+| Stability seeds | 17, 18, 19 |
+
+Learning-rate and weight-decay flags remain repeatable. The same weighted
+expanding-fold selection rule applies. A three-seed refit occurs only after
+the candidate pair and epoch count are frozen.
+
+Deep Sets runs are stored under:
+
+```text
+artifacts/models/deep_sets/<season>/<run-id>/
+```
+
+In addition to the common checkpoints and search tables, each run contains:
+
+| Artifact | Purpose |
+| --- | --- |
+| `seed_metrics.parquet` | Untouched holdout metrics for all fixed seeds |
+| `seed_predictions.parquet` | Holdout predictions for seed-stability analysis |
+| `lineup_interactions.parquet` | Operational additive/nonlinear decomposition by observed lineup pair |
+| `additive_player_components.parquet` | Scalar skip-path values, not full Deep Sets ratings |
+| `test_model_seed_<seed>.ckpt` | Alternate final-training seed checkpoint |
+| `model_seed_<seed>.ckpt` | Alternate full-season seed checkpoint |
+
+`test_model.ckpt` and `model.ckpt` always correspond to the predetermined
+Leaderboard seed. Alternate seeds are never promoted based on holdout results.
