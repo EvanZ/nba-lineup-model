@@ -172,6 +172,7 @@ policies are defined by this project.
 | `delete_game_influence.parquet` | Exact delete-one-game coefficient changes |
 | `allocation_coefficients.parquet` | Player sensitivity to allocation policy |
 | `allocation_metrics.parquet` | Mean and RAPM test metrics within each policy |
+| `allocation_summary.parquet` | Possessions and exposure changed by each allocation policy |
 | `manifest.json` | Configuration, source hashes, row counts, and artifact hashes |
 
 Defaults use 200 bootstrap samples with seed `7`, five lambda values, exact
@@ -206,6 +207,57 @@ from the model. They summarize the initial eligible top 25 as a stable core,
 qualified estimates, or fragile rank positions without changing RAPM
 coefficients or claiming causal player value.
 
+## Train the exact Bayesian baseline
+
+After selecting and reviewing a positive ridge lambda, fit its conjugate
+Bayesian counterpart:
+
+```bash
+uv run nba-train-bayesian-rapm 2025-26
+```
+
+By default, the command validates and uses the latest immutable ridge run. Pin
+the source and posterior simulation explicitly for a published analysis:
+
+```bash
+uv run nba-train-bayesian-rapm 2025-26 \
+  --source-run-id baseline-2025-26-20260727T230533Z-72eac627 \
+  --posterior-draws 4000 \
+  --posterior-seed 17 \
+  --credible-interval 0.90
+```
+
+The Gaussian likelihood and prior are conjugate, so SciPy computes the exact
+posterior location, covariance, marginal intervals, and independent joint
+draws. PyMC and Pyro are intentionally not dependencies of this baseline.
+
+Each immutable run is written under:
+
+```text
+artifacts/models/bayesian_rapm/{season}/{run_id}/
+```
+
+It contains:
+
+- posterior coefficient and rank summaries for every player;
+- ridge-equivalence and held-out point-prediction checks;
+- held-out posterior predictive calibration;
+- stint-level held-out predictive intervals;
+- the player-column mapping and model parameters;
+- a compressed posterior location and precision Cholesky factor;
+- a hash-validated manifest linked to the exact source ridge run.
+
+Generate the comparison case study from validated Bayesian and diagnostics
+runs:
+
+```bash
+uv run --group docs nba-build-bayesian-rapm-case-study 2025-26
+```
+
+See [Bayesian RAPM methodology](../models/bayesian-rapm.md) for the equations
+and [What Bayesian RAPM Adds to the Same Ridge Ranking](../models/2025-26-bayesian-rapm-case-study.md)
+for the 2025-26 analysis.
+
 ## Automated test coverage
 
 Run the focused diagnostics tests with:
@@ -213,6 +265,8 @@ Run the focused diagnostics tests with:
 ```bash
 uv run pytest tests/test_rapm_diagnostics.py
 uv run pytest tests/test_rapm_case_study.py
+uv run pytest tests/test_bayesian_rapm.py
+uv run pytest tests/test_bayesian_case_study.py
 ```
 
 The tests verify the point and exposure semantics of every allocation policy;
@@ -220,7 +274,10 @@ the selected-lambda identity and expanding-window output contracts;
 deterministic game-block bootstrap results; context, raw-adjustment, leverage,
 and exact game-deletion invariants; and the one-row-per-player consolidated
 report. Case-study tests cover review-band classification, provenance
-rendering, and deterministic chart output. The full test suite remains:
+rendering, and deterministic chart output. Bayesian tests require exact
+ridge-posterior location agreement, deterministic joint draws, predictive
+coverage artifacts, provenance rendering, and deterministic comparison charts.
+The full test suite remains:
 
 ```bash
 uv run pytest

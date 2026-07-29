@@ -2,6 +2,7 @@
 
 from nba_lineup_model.modeling.schema import (
     BaselineRunManifest,
+    BayesianRapmRunManifest,
     ChronologicalFold,
     ChronologicalSplitConfig,
     RapmDiagnosticsManifest,
@@ -17,6 +18,7 @@ from nba_lineup_model.modeling.stints import (
 
 __all__ = [
     "BaselineRunManifest",
+    "BayesianRapmRunManifest",
     "ChronologicalFold",
     "ChronologicalSplitConfig",
     "RapmStintManifest",

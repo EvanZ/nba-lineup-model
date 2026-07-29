@@ -6,7 +6,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from nba_lineup_model.modeling.allocation import allocation_policy_stints
+from nba_lineup_model.modeling.allocation import (
+    allocation_policy_stints,
+    possession_allocation_summary,
+)
 from nba_lineup_model.modeling.diagnostics import (
     bootstrap_stability,
     chronological_stability,
@@ -49,6 +52,33 @@ def test_possession_allocation_policies(
     assert result["points_home"].tolist() == pytest.approx(points_home)
     assert result["points_away"].tolist() == pytest.approx(points_away)
     assert result["allocation_policy"].eq(policy).all()
+
+
+def test_possession_allocation_summary_compares_lineup_exposure_vectors() -> None:
+    result = possession_allocation_summary(_allocation_summary_segments()).set_index(
+        "allocation_policy"
+    )
+
+    assert result["total_possessions"].eq(3).all()
+    assert result["allocation_sensitive_possessions"].eq(2).all()
+    assert result["allocation_sensitive_percentage"].eq(200.0 / 3.0).all()
+    assert result.loc["equal_segments", "changed_possessions"] == 0
+    assert result.loc["starting_lineup", "changed_possessions"] == 2
+    assert result.loc["terminal_lineup", "changed_possessions"] == 2
+    assert result.loc["boundary_split", "changed_possessions"] == 1
+    assert result.loc["exclude_multi_lineup", "changed_possessions"] == 2
+    assert result.loc[
+        "starting_lineup",
+        "reassigned_or_removed_percentage",
+    ] == pytest.approx(100.0 * (0.5 + 2.0 / 3.0) / 3.0)
+    assert result.loc[
+        "boundary_split",
+        "reassigned_or_removed_percentage",
+    ] == pytest.approx(100.0 / 9.0)
+    assert result.loc[
+        "exclude_multi_lineup",
+        "reassigned_or_removed_percentage",
+    ] == pytest.approx(200.0 / 3.0)
 
 
 def test_lambda_and_chronological_stability_outputs() -> None:
@@ -317,6 +347,28 @@ def _source_segments() -> pd.DataFrame:
             },
         ]
     )
+
+
+def _allocation_summary_segments() -> pd.DataFrame:
+    lineups = (
+        ([1, 2, 3, 4, 5], [6, 7, 8, 9, 10]),
+        ([1, 2, 3, 4, 5], [6, 7, 8, 9, 11]),
+        ([1, 2, 3, 4, 12], [6, 7, 8, 9, 11]),
+    )
+    rows = []
+    for possession_index, segment_count in enumerate((1, 2, 3)):
+        for segment_index in range(segment_count):
+            home, away = lineups[segment_index]
+            rows.append(
+                {
+                    "game_id": "0022500001",
+                    "possession_id": f"0022500001:{possession_index:04d}",
+                    "possession_segment_index": segment_index,
+                    "home_player_ids": home,
+                    "away_player_ids": away,
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def _diagnostic_inputs() -> tuple[

@@ -12,11 +12,13 @@ dependencies = [
     "pydantic>=2.9.2",
     "pyarrow>=17.0.0",
     "scikit-learn>=1.5.2",
+    "scipy>=1.14.1",
 ]
 
 [project.scripts]
 nba-audit-games = "nba_lineup_model.audit.runner:main"
 nba-build-game = "nba_lineup_model.build_game:main"
+nba-build-bayesian-rapm-case-study = "nba_lineup_model.modeling.bayesian_case_study:main"
 nba-build-rapm-case-study = "nba_lineup_model.modeling.case_study:main"
 nba-compact-season = "nba_lineup_model.flows.compact_season:main"
 nba-discover-season = "nba_lineup_model.season.discover:main"
@@ -26,6 +28,7 @@ nba-import-catalog = "nba_lineup_model.season.catalog:main"
 nba-process-season = "nba_lineup_model.flows.process_season:main"
 nba-sample-audit = "nba_lineup_model.audit.sample:main"
 nba-diagnose-rapm = "nba_lineup_model.modeling.diagnostics:main"
+nba-train-bayesian-rapm = "nba_lineup_model.modeling.bayesian:main"
 nba-train-rapm = "nba_lineup_model.modeling.train:main"
 
 [dependency-groups]

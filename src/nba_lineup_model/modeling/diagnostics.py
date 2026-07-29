@@ -26,6 +26,7 @@ from nba_lineup_model.modeling.allocation import (
     POSSESSION_ALLOCATION_POLICIES,
     PossessionAllocationPolicy,
     allocation_policy_stints,
+    possession_allocation_summary,
 )
 from nba_lineup_model.modeling.schema import (
     ArtifactRecord,
@@ -1069,6 +1070,7 @@ def run_rapm_diagnostics(
         selected_lambda,
         allocation_policies,
     )
+    allocation_summary = possession_allocation_summary(possession_segments)
     player_diagnostics = player_diagnostics_summary(
         rankings,
         lambda_coefficients,
@@ -1094,6 +1096,7 @@ def run_rapm_diagnostics(
         "delete_game_influence.parquet": delete_game,
         "allocation_coefficients.parquet": allocation_coefficients,
         "allocation_metrics.parquet": allocation_metrics,
+        "allocation_summary.parquet": allocation_summary,
     }
     return _write_diagnostics(
         season,

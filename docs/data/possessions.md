@@ -88,3 +88,60 @@ exactly to the possession totals.
 
     For every possession, segment points and elapsed duration must sum exactly
     to the parent row. A mismatch is an audit failure, not a warning.
+
+## Allocation-policy incidence
+
+RAPM requires a rule for possessions that cross a substitution boundary. The
+canonical `equal_segments` policy divides one possession equally across all of
+its fixed-lineup segments. Sensitivity tests also assign the possession to its
+starting lineup, terminal lineup, first and last lineups, or exclude it.
+
+Two related rates quantify how much those choices affect the modeling data:
+
+- **Changed possessions** have a policy-specific exposure vector over distinct
+  ten-player lineups that differs from `equal_segments`.
+- **Reassigned or removed possession-equivalents** measure how much lineup
+  exposure moves. This is total-variation distance with an additional removed
+  bucket, so excluding one possession counts as one full possession rather
+  than one half.
+
+For example, a two-segment possession has canonical shares `(0.5, 0.5)`.
+Assigning it to the starting lineup changes one possession but reassigns only
+`0.5` possession-equivalents. `boundary_split` leaves it unchanged.
+
+### 2025-26 regular season
+
+The curated regular season contains **245,772 possessions**. Of those,
+**26,962 (10.970%)** cross at least one distinct-lineup boundary and can
+therefore depend on allocation policy. There are 25,803 two-segment
+possessions and 1,159 possessions with three or more segments.
+
+| Policy | Changed possessions | Percent of all possessions | Reassigned or removed equivalents | Percent of all exposure |
+| --- | ---: | ---: | ---: | ---: |
+| `equal_segments` | 0 | 0.000% | 0.00 | 0.000% |
+| `starting_lineup` | 26,962 | 10.970% | 13,665.98 | 5.560% |
+| `terminal_lineup` | 26,962 | 10.970% | 13,666.52 | 5.561% |
+| `boundary_split` | 1,158 | 0.471% | 392.67 | 0.160% |
+| `exclude_multi_lineup` | 26,962 | 10.970% | 26,962.00 | 10.970% |
+
+`boundary_split` and `equal_segments` agree for ordinary two-segment
+possessions: each assigns one half to the first and last lineup. They diverge
+only for possessions with additional segments or repeated lineups. Starting
+and terminal assignment affect every cross-lineup possession, but they
+reassign approximately half as much total exposure as outright exclusion.
+
+Reproduce the summary from the curated possession-segment partition:
+
+```python
+import pandas as pd
+
+from nba_lineup_model.modeling.allocation import possession_allocation_summary
+
+segments = pd.read_parquet(
+    "data/curated/possession_segments/2025-26/regular"
+)
+summary = possession_allocation_summary(segments)
+```
+
+Future RAPM diagnostic runs persist the same table as
+`allocation_summary.parquet`.

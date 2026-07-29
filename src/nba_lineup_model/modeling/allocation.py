@@ -127,6 +127,117 @@ def allocation_policy_stints(
     ).reset_index(drop=True)
 
 
+def possession_allocation_summary(
+    possession_segments: pd.DataFrame,
+    *,
+    reference_policy: PossessionAllocationPolicy = "equal_segments",
+) -> pd.DataFrame:
+    """Quantify how each policy changes possession-to-lineup attribution.
+
+    A possession is changed when a policy's exposure vector over distinct
+    ten-player lineups differs from the reference vector. Reassigned exposure
+    is total-variation distance with an additional removed-possession bucket,
+    so excluded exposure counts fully rather than as half a possession.
+    """
+
+    if reference_policy not in POSSESSION_ALLOCATION_POLICIES:
+        raise ValueError(f"Unknown reference allocation policy: {reference_policy}")
+    required = {
+        "game_id",
+        "possession_id",
+        "home_player_ids",
+        "away_player_ids",
+    }
+    missing = required - set(possession_segments.columns)
+    if missing:
+        raise ValueError(f"Possession segments missing allocation columns: {sorted(missing)}")
+    if possession_segments.empty:
+        raise ValueError("Possession segments cannot be empty")
+
+    segments = possession_segments.copy()
+    sort_columns = ["game_id", "possession_id"]
+    for candidate in (
+        "possession_segment_index",
+        "start_event_index",
+        "segment_index",
+    ):
+        if candidate in segments.columns:
+            sort_columns.append(candidate)
+            break
+    segments = segments.sort_values(sort_columns, kind="stable").reset_index(drop=True)
+    group_keys = ["game_id", "possession_id"]
+    groups = segments.groupby(group_keys, sort=False)
+    segments["_segment_count"] = groups["possession_id"].transform("size")
+    segments["_segment_position"] = groups.cumcount()
+    segments["_lineup_key"] = [
+        (
+            tuple(sorted(int(player_id) for player_id in home)),
+            tuple(sorted(int(player_id) for player_id in away)),
+        )
+        for home, away in zip(
+            segments["home_player_ids"],
+            segments["away_player_ids"],
+            strict=True,
+        )
+    ]
+    lineup_counts = groups["_lineup_key"].nunique()
+    allocation_sensitive = lineup_counts.gt(1)
+    total_possessions = len(lineup_counts)
+    sensitive_count = int(allocation_sensitive.sum())
+    reference_share = _allocation_share(segments, reference_policy)
+
+    rows: list[dict[str, float | int | str]] = []
+    for policy in POSSESSION_ALLOCATION_POLICIES:
+        policy_share = _allocation_share(segments, policy)
+        lineup_allocations = (
+            segments.loc[:, [*group_keys, "_lineup_key"]]
+            .assign(
+                _reference_share=reference_share.to_numpy(),
+                _policy_share=policy_share.to_numpy(),
+            )
+            .groupby([*group_keys, "_lineup_key"], sort=False, as_index=False)[
+                ["_reference_share", "_policy_share"]
+            ]
+            .sum()
+        )
+        lineup_allocations["_absolute_difference"] = (
+            lineup_allocations["_policy_share"]
+            - lineup_allocations["_reference_share"]
+        ).abs()
+        by_possession = lineup_allocations.groupby(group_keys, sort=False).agg(
+            lineup_l1_distance=("_absolute_difference", "sum"),
+            reference_total=("_reference_share", "sum"),
+            policy_total=("_policy_share", "sum"),
+        )
+        by_possession["reassigned_or_removed"] = 0.5 * (
+            by_possession["lineup_l1_distance"]
+            + (by_possession["reference_total"] - by_possession["policy_total"]).abs()
+        )
+        changed = by_possession["reassigned_or_removed"].gt(1e-12)
+        changed_count = int(changed.sum())
+        changed_exposure = float(by_possession["reassigned_or_removed"].sum())
+        rows.append(
+            {
+                "allocation_policy": policy,
+                "reference_policy": reference_policy,
+                "total_possessions": total_possessions,
+                "allocation_sensitive_possessions": sensitive_count,
+                "allocation_sensitive_percentage": 100.0
+                * sensitive_count
+                / total_possessions,
+                "changed_possessions": changed_count,
+                "changed_possession_percentage": 100.0
+                * changed_count
+                / total_possessions,
+                "reassigned_or_removed_possession_equivalents": changed_exposure,
+                "reassigned_or_removed_percentage": 100.0
+                * changed_exposure
+                / total_possessions,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _allocation_share(
     segments: pd.DataFrame,
     policy: PossessionAllocationPolicy,

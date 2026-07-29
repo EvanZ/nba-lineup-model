@@ -172,6 +172,52 @@ class BaselineRunManifest(BaseModel):
         return self
 
 
+class BayesianRapmRunManifest(BaseModel):
+    """Reproducibility contract for one exact Bayesian RAPM run."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
+
+    schema_version: Literal[1] = 1
+    run_id: str = Field(min_length=1)
+    created_at: datetime
+    season: str = Field(pattern=SEASON_PATTERN)
+    season_type: Literal["regular"] = "regular"
+    bayesian_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
+    source_model_run_id: str = Field(min_length=1)
+    source_model_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    dataset_part_sha256: str = Field(pattern=SHA256_PATTERN)
+    selected_rapm_lambda: float = Field(gt=0)
+    posterior_draws: int = Field(ge=1)
+    posterior_seed: int = Field(ge=0)
+    credible_interval_probability: float = Field(gt=0, lt=1)
+    minimum_ranking_possessions: float = Field(ge=0)
+    stint_count: int = Field(ge=1)
+    game_count: int = Field(ge=1)
+    player_count: int = Field(ge=10)
+    final_train_game_count: int = Field(ge=1)
+    final_test_game_count: int = Field(ge=1)
+    artifacts: tuple[ArtifactRecord, ...] = Field(min_length=1)
+
+    @field_validator("season")
+    @classmethod
+    def validate_season_value(cls, value: str) -> str:
+        return validate_season(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_run(self) -> BayesianRapmRunManifest:
+        if self.final_train_game_count + self.final_test_game_count != self.game_count:
+            raise ValueError("Final train and test games must conserve all games")
+        filenames = [artifact.filename for artifact in self.artifacts]
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("Bayesian RAPM artifact filenames must be unique")
+        return self
+
+
 class RapmDiagnosticsManifest(BaseModel):
     """Reproducibility contract for one RAPM stability diagnostic run."""
 

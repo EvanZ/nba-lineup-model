@@ -51,7 +51,9 @@ nav = [
   {"Models" = [
     {"Overview" = "models/index.md"},
     {"Baseline methodology" = "models/baselines.md"},
+    {"Bayesian RAPM methodology" = "models/bayesian-rapm.md"},
     {"2025-26 RAPM case study" = "models/2025-26-rapm-case-study.md"},
+    {"2025-26 Bayesian RAPM case study" = "models/2025-26-bayesian-rapm-case-study.md"},
     {"Promoted rankings" = "models/rankings.md"},
   ]},
   {"API reference" = [
