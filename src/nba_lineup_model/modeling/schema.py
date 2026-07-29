@@ -103,6 +103,59 @@ class ChronologicalFold(BaseModel):
     validation_last_game_id: str
 
 
+class NeuralPossessionManifest(BaseModel):
+    """Integrity and source evidence for the neural possession dataset."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
+
+    schema_version: Literal[1] = 1
+    season: str = Field(pattern=SEASON_PATTERN)
+    season_type: Literal["regular"] = "regular"
+    created_at: datetime
+    builder_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
+    possession_segments_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    possession_segments_input_fingerprint: str = Field(pattern=CODE_VERSION_PATTERN)
+    source_game_count: int = Field(ge=1)
+    source_segment_count: int = Field(ge=1)
+    source_possession_count: int = Field(ge=1)
+    included_possession_count: int = Field(ge=1)
+    excluded_multi_segment_possession_count: int = Field(ge=0)
+    player_count: int = Field(ge=10)
+    home_offense_possession_count: int = Field(ge=1)
+    away_offense_possession_count: int = Field(ge=1)
+    part_filename: Literal["part-00000.parquet"] = "part-00000.parquet"
+    row_count: int = Field(ge=1)
+    byte_count: int = Field(gt=0)
+    part_sha256: str = Field(pattern=SHA256_PATTERN)
+
+    @field_validator("season")
+    @classmethod
+    def validate_season_value(cls, value: str) -> str:
+        return validate_season(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> NeuralPossessionManifest:
+        if (
+            self.included_possession_count
+            + self.excluded_multi_segment_possession_count
+            != self.source_possession_count
+        ):
+            raise ValueError("Included and excluded neural possessions must conserve sources")
+        if self.row_count != self.included_possession_count:
+            raise ValueError("Neural possession part rows must match included possessions")
+        if (
+            self.home_offense_possession_count + self.away_offense_possession_count
+            != self.included_possession_count
+        ):
+            raise ValueError("Home and away offense counts must conserve neural possessions")
+        return self
+
+
 class ArtifactRecord(BaseModel):
     """Integrity metadata for one model-run artifact."""
 
@@ -215,6 +268,144 @@ class BayesianRapmRunManifest(BaseModel):
         filenames = [artifact.filename for artifact in self.artifacts]
         if len(filenames) != len(set(filenames)):
             raise ValueError("Bayesian RAPM artifact filenames must be unique")
+        return self
+
+
+class NeuralRapmRunManifest(BaseModel):
+    """Reproducibility contract for one additive neural RAPM run."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
+
+    schema_version: Literal[1, 2] = 1
+    run_id: str = Field(min_length=1)
+    created_at: datetime
+    season: str = Field(pattern=SEASON_PATTERN)
+    season_type: Literal["regular"] = "regular"
+    architecture: Literal["additive"]
+    neural_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
+    dataset_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    dataset_part_sha256: str = Field(pattern=SHA256_PATTERN)
+    possession_count: int = Field(ge=1)
+    game_count: int = Field(ge=1)
+    player_count: int = Field(ge=10)
+    split_config: ChronologicalSplitConfig
+    folds: tuple[ChronologicalFold, ...] = Field(min_length=1)
+    selection_train_game_count: int = Field(ge=1)
+    selection_validation_game_count: int = Field(ge=1)
+    final_train_game_count: int = Field(ge=1)
+    final_test_game_count: int = Field(ge=1)
+    random_seed: int = Field(ge=0)
+    batch_size: int = Field(ge=1)
+    max_epochs: int = Field(ge=1)
+    early_stopping_patience: int = Field(ge=0)
+    selected_epochs: int = Field(ge=1)
+    learning_rate: float = Field(gt=0)
+    weight_decay: float = Field(ge=0)
+    learning_rate_candidates: tuple[float, ...] = ()
+    weight_decay_candidates: tuple[float, ...] = ()
+    hyperparameter_selection_metric: Literal[
+        "validation_possession_weighted_mse"
+    ] = "validation_possession_weighted_mse"
+    requested_accelerator: Literal["cpu", "mps", "auto"]
+    resolved_accelerator: str = Field(min_length=1)
+    target: Literal["offense_points_minus_defense_points"]
+    minimum_ranking_possessions: float = Field(ge=0)
+    torch_version: str = Field(min_length=1)
+    lightning_version: str = Field(min_length=1)
+    artifacts: tuple[ArtifactRecord, ...] = Field(min_length=1)
+
+    @field_validator("season")
+    @classmethod
+    def validate_season_value(cls, value: str) -> str:
+        return validate_season(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_run(self) -> NeuralRapmRunManifest:
+        if len(self.folds) != self.split_config.cv_folds:
+            raise ValueError("Fold records must match the split configuration")
+        if self.final_train_game_count + self.final_test_game_count != self.game_count:
+            raise ValueError("Final train and test games must conserve all games")
+        if self.selected_epochs > self.max_epochs:
+            raise ValueError("Selected epochs cannot exceed the training limit")
+        if self.schema_version >= 2:
+            if not self.learning_rate_candidates or not self.weight_decay_candidates:
+                raise ValueError("Grid-search manifests require candidate values")
+            if any(value <= 0 for value in self.learning_rate_candidates):
+                raise ValueError("Learning-rate candidates must be positive")
+            if any(value < 0 for value in self.weight_decay_candidates):
+                raise ValueError("Weight-decay candidates must be nonnegative")
+            if len(set(self.learning_rate_candidates)) != len(
+                self.learning_rate_candidates
+            ):
+                raise ValueError("Learning-rate candidates must be unique")
+            if len(set(self.weight_decay_candidates)) != len(
+                self.weight_decay_candidates
+            ):
+                raise ValueError("Weight-decay candidates must be unique")
+            if self.learning_rate not in self.learning_rate_candidates:
+                raise ValueError("Selected learning rate is absent from its grid")
+            if self.weight_decay not in self.weight_decay_candidates:
+                raise ValueError("Selected weight decay is absent from its grid")
+        filenames = [artifact.filename for artifact in self.artifacts]
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("Neural RAPM artifact filenames must be unique")
+        return self
+
+
+class ModelEvaluationManifest(BaseModel):
+    """Reproducibility contract for one cross-model evaluation report."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
+
+    schema_version: Literal[1] = 1
+    run_id: str = Field(min_length=1)
+    created_at: datetime
+    season: str = Field(pattern=SEASON_PATTERN)
+    evaluation_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
+    ridge_run_id: str = Field(min_length=1)
+    ridge_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    bayesian_run_id: str = Field(min_length=1)
+    bayesian_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    neural_run_id: str = Field(min_length=1)
+    neural_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    neural_learning_rate: float | None = Field(default=None, gt=0)
+    neural_weight_decay: float | None = Field(default=None, ge=0)
+    neural_selected_epochs: int | None = Field(default=None, ge=1)
+    regular_segments_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    regular_lineup_stints_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    playoff_segments_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    models: tuple[
+        Literal["ridge_rapm", "bayesian_rapm", "additive_neural"],
+        ...,
+    ] = Field(min_length=3)
+    regular_holdout_game_count: int = Field(ge=1)
+    regular_holdout_possession_count: int = Field(ge=1)
+    playoff_game_count: int = Field(ge=1)
+    playoff_possession_count: int = Field(ge=1)
+    artifacts: tuple[ArtifactRecord, ...] = Field(min_length=1)
+
+    @field_validator("season")
+    @classmethod
+    def validate_season_value(cls, value: str) -> str:
+        return validate_season(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_run(self) -> ModelEvaluationManifest:
+        if len(set(self.models)) != len(self.models):
+            raise ValueError("Evaluation model names must be unique")
+        filenames = [artifact.filename for artifact in self.artifacts]
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("Evaluation artifact filenames must be unique")
         return self
 
 

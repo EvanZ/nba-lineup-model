@@ -20,4 +20,20 @@
 
 ::: nba_lineup_model.models.bayesian
 
+## Neural possession data
+
+::: nba_lineup_model.modeling.neural_data
+
+## Neural models
+
+::: nba_lineup_model.models.neural
+
+## Neural training
+
+::: nba_lineup_model.modeling.neural
+
+## Leaderboard
+
+::: nba_lineup_model.modeling.leaderboard
+
 ::: nba_lineup_model.evaluation.metrics

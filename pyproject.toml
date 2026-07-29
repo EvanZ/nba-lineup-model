@@ -13,6 +13,8 @@ dependencies = [
     "pyarrow>=17.0.0",
     "scikit-learn>=1.5.2",
     "scipy>=1.14.1",
+    "torch>=2.6",
+    "lightning>=2.5,<3",
 ]
 
 [project.scripts]
@@ -25,10 +27,12 @@ nba-discover-season = "nba_lineup_model.season.discover:main"
 nba-fetch-player-bios = "nba_lineup_model.players.collect:main"
 nba-fetch-season = "nba_lineup_model.flows.fetch_season:main"
 nba-import-catalog = "nba_lineup_model.season.catalog:main"
+nba-evaluate-models = "nba_lineup_model.modeling.leaderboard:main"
 nba-process-season = "nba_lineup_model.flows.process_season:main"
 nba-sample-audit = "nba_lineup_model.audit.sample:main"
 nba-diagnose-rapm = "nba_lineup_model.modeling.diagnostics:main"
 nba-train-bayesian-rapm = "nba_lineup_model.modeling.bayesian:main"
+nba-train-neural-rapm = "nba_lineup_model.modeling.neural:main"
 nba-train-rapm = "nba_lineup_model.modeling.train:main"
 
 [dependency-groups]

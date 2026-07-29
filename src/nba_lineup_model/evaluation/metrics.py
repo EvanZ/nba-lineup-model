@@ -66,6 +66,39 @@ def game_margin_rmse(
     )
 
 
+def possession_game_margin_rmse(
+    game_ids: np.ndarray | pd.Series,
+    actual_offense_margin: np.ndarray,
+    predicted_offense_margin: np.ndarray,
+    home_offense_sign: np.ndarray,
+) -> float:
+    """Aggregate offense-oriented possessions into eligible home game margins."""
+
+    identifiers = np.asarray(game_ids, dtype=str)
+    actual = np.asarray(actual_offense_margin, dtype=float)
+    predicted = np.asarray(predicted_offense_margin, dtype=float)
+    signs = np.asarray(home_offense_sign, dtype=float)
+    if len(identifiers) != len(actual):
+        raise ValueError("Game IDs must match possession metric rows")
+    if signs.shape != actual.shape or not np.isin(signs, (-1.0, 1.0)).all():
+        raise ValueError("Home-offense signs must match rows and equal negative or positive one")
+    _residual(actual, predicted)
+    frame = pd.DataFrame(
+        {
+            "game_id": identifiers,
+            "actual_home_margin": actual * signs,
+            "predicted_home_margin": predicted * signs,
+        }
+    )
+    games = frame.groupby("game_id", sort=False)[
+        ["actual_home_margin", "predicted_home_margin"]
+    ].sum()
+    return rmse(
+        games["actual_home_margin"].to_numpy(),
+        games["predicted_home_margin"].to_numpy(),
+    )
+
+
 def skill_score(model_mse: float, baseline_mse: float) -> float:
     """Return out-of-sample skill relative to a baseline MSE."""
 
