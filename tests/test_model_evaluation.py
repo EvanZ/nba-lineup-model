@@ -44,6 +44,7 @@ def test_score_prediction_cohort_uses_identical_rows_for_every_model() -> None:
         "additive_neural": actual.copy(),
         "deep_sets": actual.copy(),
         "catboost": actual.copy(),
+        "rapm_transformer": actual.copy(),
     }
 
     metrics, prediction_rows = score_prediction_cohort(
@@ -100,6 +101,7 @@ def test_generated_evaluation_page_defines_metrics_and_bolds_winner(
             "additive_neural": actual.copy(),
             "deep_sets": actual.copy(),
             "catboost": actual.copy(),
+            "rapm_transformer": actual.copy(),
         },
         cohort="regular_holdout",
         training_window="regular",
@@ -181,7 +183,7 @@ def _cohort_row(cohort: str) -> dict[str, object]:
 def _manifest() -> ModelEvaluationManifest:
     digest = "a" * 64
     return ModelEvaluationManifest(
-        schema_version=2,
+        schema_version=3,
         run_id="evaluation-2025-26-test",
         created_at=datetime(2026, 7, 29, tzinfo=UTC),
         season="2025-26",
@@ -198,6 +200,13 @@ def _manifest() -> ModelEvaluationManifest:
         catboost_best_iteration=6,
         catboost_selected_tree_count=7,
         catboost_resolved_learning_rate=0.1,
+        rapm_transformer_run_id="rapm-transformer",
+        rapm_transformer_manifest_sha256=digest,
+        rapm_transformer_source_rapm_run_id="ridge",
+        rapm_transformer_learning_rate=0.001,
+        rapm_transformer_weight_decay=0.01,
+        rapm_transformer_selected_epochs=3,
+        rapm_transformer_leaderboard_seed=17,
         regular_segments_manifest_sha256=digest,
         regular_lineup_stints_manifest_sha256=digest,
         playoff_segments_manifest_sha256=digest,

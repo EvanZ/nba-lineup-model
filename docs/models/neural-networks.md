@@ -22,12 +22,12 @@ training loop.
 | --- | --- | --- | --- |
 | Additive neural RAPM | Signed sum | Validates tensors, optimization, and artifacts | Implemented |
 | Deep Sets | Nonlinear pooled sets | Nonlinear lineup strength without pairwise attention | Implemented |
-| Transformer | Self-attention | Player-player and context-dependent interactions | Planned |
+| RAPM + Transformer | Self-attention residual | Player-player and role-dependent interactions around frozen RAPM | Implemented |
 
-Deep Sets is an important ablation. If it matches the Transformer, the benefit
-comes from nonlinear aggregation rather than attention specifically. This
+Deep Sets is an important ablation. If it matches RAPM + Transformer, the
+benefit comes from nonlinear aggregation rather than attention specifically. This
 follows the permutation-invariant construction in
-[Deep Sets](https://arxiv.org/abs/1703.06114). The later attention model follows
+[Deep Sets](https://arxiv.org/abs/1703.06114). The attention model follows
 the encoder mechanism introduced in
 [Attention Is All You Need](https://arxiv.org/abs/1706.03762).
 
@@ -249,31 +249,213 @@ zero. This is still a useful architectural ablation: nonlinear pooled sets did
 not earn predictive support under the current one-season, player-ID-only
 protocol.
 
-## Transformer token contract
+## RAPM + Transformer architecture
 
-The intended first attention sequence has 13 tokens:
+The first attention model treats canonical one-year ridge RAPM as a frozen
+base learner and asks the Transformer to learn only an offense-oriented
+possession residual:
 
-| Token | Contents |
+\[
+\widehat y_i
+=
+\widehat y_i^{RAPM}
++
+f_\theta(O_i,D_i,s_i).
+\]
+
+The base prediction comes from the stint-weighted ridge model, converted to
+the possession target as described in
+[RAPM Base Predictions](../data/rapm-base-predictions.md). The Transformer
+cannot change RAPM's coefficients or intercept. Its final linear layer is
+initialized to zero, so before optimization
+\(f_\theta(\cdot)=0\) and the combined prediction equals RAPM exactly.
+
+### Token sequence
+
+Every possession is encoded as 13 width-32 tokens:
+
+| Position | Token contents |
+| ---: | --- |
+| 0 | Learned `[STATE]` token plus projected home-offense sign |
+| 1 | Learned `[OFFENSE]` marker |
+| 2-6 | Shared player embedding plus offense-role embedding |
+| 7 | Learned `[DEFENSE]` marker |
+| 8-12 | Shared player embedding plus defense-role embedding |
+
+Player and role embeddings are **added**, so every token remains
+32-dimensional. The same player table is used on both sides of the ball;
+offense and defense role embeddings tell the encoder which role that player
+currently occupies.
+
+No positional encoding is added. A Transformer encoder without positional
+information is permutation equivariant, and the model reads only the
+`[STATE]` output. Consequently, shuffling the five offense players or five
+defense players leaves the prediction unchanged. The two groups remain
+distinguishable through their role embeddings and role-marker tokens.
+
+#### Literal width-two example
+
+For illustration, reduce the learned width from 32 to two. Let the role
+embeddings be
+
+\[
+R_O=[1,0], \qquad R_D=[0,1].
+\]
+
+Suppose A-E are on offense and F-J are on defense, with toy player embeddings
+
+```text
+A=[0.1,0.1]  B=[0.2,0.1]  C=[0.3,0.1]  D=[0.4,0.1]  E=[0.5,0.1]
+F=[0.1,0.2]  G=[0.2,0.2]  H=[0.3,0.2]  I=[0.4,0.2]  J=[0.5,0.2]
+```
+
+Let the learned special tokens be
+
+```text
+STATE=[0.1,0.2]  OFFENSE=[0.8,0.0]  DEFENSE=[0.0,0.8]
+```
+
+and let the state projection of a \(+1\) home-offense sign be
+\([0.3,-0.1]\). The exact Transformer input is then:
+
+| Row | Identity | Calculation | Token |
+| ---: | --- | --- | --- |
+| 0 | `[STATE]` | `[0.1,0.2] + [0.3,-0.1]` | `[0.4,0.1]` |
+| 1 | `[OFFENSE]` | learned marker | `[0.8,0.0]` |
+| 2 | A offense | `[0.1,0.1] + [1,0]` | `[1.1,0.1]` |
+| 3 | B offense | `[0.2,0.1] + [1,0]` | `[1.2,0.1]` |
+| 4 | C offense | `[0.3,0.1] + [1,0]` | `[1.3,0.1]` |
+| 5 | D offense | `[0.4,0.1] + [1,0]` | `[1.4,0.1]` |
+| 6 | E offense | `[0.5,0.1] + [1,0]` | `[1.5,0.1]` |
+| 7 | `[DEFENSE]` | learned marker | `[0.0,0.8]` |
+| 8 | F defense | `[0.1,0.2] + [0,1]` | `[0.1,1.2]` |
+| 9 | G defense | `[0.2,0.2] + [0,1]` | `[0.2,1.2]` |
+| 10 | H defense | `[0.3,0.2] + [0,1]` | `[0.3,1.2]` |
+| 11 | I defense | `[0.4,0.2] + [0,1]` | `[0.4,1.2]` |
+| 12 | J defense | `[0.5,0.2] + [0,1]` | `[0.5,1.2]` |
+
+The role vectors are learned rather than fixed to these illustrative values.
+They act as token-type labels: the same player moved from offense to defense
+changes by \(R_D-R_O\). The frozen RAPM prediction remains outside this
+matrix on the additive skip path.
+
+The first specification uses:
+
+| Component | Configuration |
 | --- | --- |
-| `[STATE]` | Pre-possession game context |
-| `[OFFENSE]` | Offense role marker |
-| Five player tokens | Shared player embeddings plus offense-role embeddings |
-| `[DEFENSE]` | Defense role marker |
-| Five player tokens | Shared player embeddings plus defense-role embeddings |
+| Player and role width | 32 |
+| Attention heads | 4 |
+| Encoder layers | 2 |
+| Feedforward width | 128 |
+| Activation | GELU |
+| Dropout | `0.1` |
+| Readout | LayerNorm, `32 -> 32 -> 1` residual MLP |
 
-There will be no position encoding within either five-player set. Shuffling
-players within offense or defense must leave the prediction unchanged. Stable
-player identity and player-season or bio features remain separate inputs so
-the model can eventually represent new or low-exposure players.
+Only the home-offense sign enters the state token in this slice. Score
+differential, period, remaining time, playoff status, player bios, and
+player-season features are intentionally deferred. Every future state feature
+must be known before the possession starts.
 
-Initial state features may include home role, score differential, period,
-remaining time, and postseason status. Every state value must be available
-before the possession begins.
+### Leakage-safe RAPM base
+
+Each model-selection stage receives its own RAPM state:
+
+1. `cv_0`, `cv_1`, and `cv_2` fit RAPM on that fold's training games.
+2. Validation predictions use only the corresponding earlier training games.
+3. `final` fits RAPM on 1,044 games and predicts the untouched 186-game
+   regular-season holdout.
+4. `all_season` fits RAPM on all 1,230 regular-season games for frozen playoff
+   inference.
+
+Training rows use residuals from the RAPM fit on the same training window.
+Validation, regular-holdout, and playoff base predictions are out of sample.
+The validation and test games never contribute to their own RAPM base state.
+
+### Optimization protocol
+
+The initial CPU search is deliberately bounded:
+
+- learning rates `0.0003` and `0.001`;
+- AdamW weight decays `0` and `0.01`;
+- batch size 8,192;
+- at most 10 epochs with patience three;
+- validation-possession-weighted MSE across the same three expanding folds
+  used by the other models.
+
+After selection, seeds 17, 18, and 19 are refit independently on both the
+final-training and all-season samples. Seed 17 is the predetermined
+Leaderboard model; holdout results are not used to choose among seeds.
+
+Detailed commands, tensor settings, and artifacts are in
+[Train RAPM + Transformer](../guides/train-transformer.md).
+
+### 2025-26 result
+
+Run `rapm-transformer-2025-26-20260729T233233Z-e316a73e` contains 45,409
+trainable parameters. The four-candidate search selected learning rate
+`0.0003`, weight decay `0.01`, and one refit epoch. Zero and `0.01` weight
+decay differed by only \(4.0\times10^{-8}\) weighted validation MSE at the
+selected learning rate, so the precise decay winner is not substantive.
+
+The untouched regular-season holdout produced:
+
+| Model or seed | Possession RMSE | Game-margin RMSE | Residual mean | Residual SD |
+| --- | ---: | ---: | ---: | ---: |
+| Frozen ridge RAPM | 1.199460 | 14.7107 | - | - |
+| **17 (Leaderboard)** | 1.199526 | 14.7182 | -0.002883 | 0.001312 |
+| 18 | 1.199451 | 14.7183 | 0.000495 | 0.000676 |
+| 19 | 1.199391 | 14.6934 | 0.002149 | 0.001639 |
+
+Seed 17 was fixed before holdout evaluation. Seed 19 is retained as stability
+evidence and is not substituted after observing its better result.
+
+For the canonical seed, paired game-cluster bootstrap differences relative to
+frozen ridge RAPM were:
+
+| Cohort | Metric | Transformer - RAPM | 95% interval |
+| --- | --- | ---: | ---: |
+| Regular holdout | Possession RMSE | +0.000065 | [+0.000031, +0.000099] |
+| Regular holdout | Game-margin RMSE | +0.007408 | [-0.002541, +0.016340] |
+| Playoffs | Possession RMSE | +0.000169 | [+0.000051, +0.000285] |
+| Playoffs | Game-margin RMSE | -0.009226 | [-0.042714, +0.026947] |
+
+The model is worse than RAPM at possession level in both cohorts. Its
+game-margin differences are too small to distinguish from zero. The canonical
+holdout residual is also mostly a small global downward adjustment rather
+than strong lineup-specific variation. This first specification therefore
+does not provide predictive evidence for useful attention interactions.
+
+### Architectural status
+
+The 13-token run remains a reproducible ablation, but its special tokens are
+not the cleanest test of attention:
+
+- role embeddings are necessary because they label every player as offense or
+  defense;
+- `[OFFENSE]` and `[DEFENSE]` contain no observed information and act only as
+  optional learned processing slots;
+- `[STATE]` carries the home-offense sign and serves as a learned pooling
+  query, but neither function requires a state token.
+
+The next recommended ablation removes all three special tokens. It applies
+self-attention to ten role-tagged player tokens, mean-pools the five encoded
+offense and five encoded defense players separately, and predicts the
+residual from
+
+\[
+u_i=[z_O;z_D;s_i].
+\]
+
+This makes the comparison with Deep Sets precise: Deep Sets transforms each
+player independently before role-wise pooling, while the Transformer permits
+player-player interaction before the same pooling boundary.
 
 ## Interpretation
 
-Attention weights will not be treated as player attribution. Planned
-interpretation outputs include:
+Attention weights are not treated as player attribution. The first run stores
+the frozen RAPM prediction, Transformer residual, combined prediction, and
+observed-lineup residual summaries separately. Future interpretation outputs
+include:
 
 - role-swapped lineup predictions;
 - one-player replacement counterfactuals;
@@ -298,13 +480,29 @@ interpretation outputs include:
 - the miniature Deep Sets experiment emits three predetermined final-test and
   all-season seed checkpoints plus search, stability, and interaction evidence.
 
+`tests/test_transformer_modeling.py` additionally verifies:
+
+- changing validation outcomes cannot change their fold-specific RAPM base
+  predictions;
+- every validation and test base prediction is marked out of sample;
+- the zero-initialized Transformer exactly reproduces RAPM;
+- shuffling players within either lineup leaves predictions unchanged;
+- stored combined predictions exactly equal RAPM plus Transformer residual;
+- the miniature experiment emits all three predetermined holdout and
+  all-season checkpoints;
+- unseen players use the reserved embedding row and are counted during
+  inference.
+
 Run the focused checks with:
 
 ```bash
-uv run pytest -q tests/test_neural_modeling.py
+uv run pytest -q \
+  tests/test_neural_modeling.py \
+  tests/test_transformer_modeling.py
 ```
 
 Training commands and artifact descriptions are in
-[Train neural models](../guides/train-neural.md). The current regular-holdout
-and playoff results are tracked on the shared
+[Train neural models](../guides/train-neural.md) and
+[Train RAPM + Transformer](../guides/train-transformer.md). The current
+regular-holdout and playoff results are tracked on the shared
 [Leaderboard](leaderboard.md) scoreboard.

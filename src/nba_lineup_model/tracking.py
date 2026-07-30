@@ -27,6 +27,7 @@ _MODEL_RUN_PREFIXES = (
     "catboost-",
     "deep-sets-",
     "neural-",
+    "rapm-transformer-",
 )
 _METRIC_FILES = (
     "test_metrics.parquet",
@@ -533,6 +534,8 @@ def _run_kind(project_run_id: str, manifest: Mapping[str, Any]) -> str:
         return "deep_sets"
     if project_run_id.startswith("catboost-"):
         return "catboost"
+    if project_run_id.startswith("rapm-transformer-"):
+        return "rapm_transformer"
     if project_run_id.startswith("evaluation-"):
         return "model_evaluation"
     if project_run_id.startswith("diagnostics-"):

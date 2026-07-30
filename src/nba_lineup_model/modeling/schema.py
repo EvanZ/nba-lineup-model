@@ -451,12 +451,168 @@ class CatBoostRunManifest(BaseModel):
         return self
 
 
+class RapmBasePredictionManifest(BaseModel):
+    """Integrity contract for stage-specific possession RAPM predictions."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
+
+    schema_version: Literal[1] = 1
+    season: str = Field(pattern=SEASON_PATTERN)
+    season_type: Literal["regular"] = "regular"
+    created_at: datetime
+    builder_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
+    source_rapm_run_id: str = Field(min_length=1)
+    source_rapm_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    rapm_stints_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    rapm_stints_part_sha256: str = Field(pattern=SHA256_PATTERN)
+    neural_possessions_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    neural_possessions_part_sha256: str = Field(pattern=SHA256_PATTERN)
+    selected_rapm_lambda: float = Field(ge=0)
+    possession_count: int = Field(ge=1)
+    game_count: int = Field(ge=1)
+    player_count: int = Field(ge=10)
+    split_config: ChronologicalSplitConfig
+    folds: tuple[ChronologicalFold, ...] = Field(min_length=1)
+    stage_count: int = Field(ge=3)
+    prediction_row_count: int = Field(ge=1)
+    in_sample_prediction_count: int = Field(ge=1)
+    out_of_sample_prediction_count: int = Field(ge=1)
+    player_coefficient_row_count: int = Field(ge=1)
+    artifacts: tuple[ArtifactRecord, ...] = Field(min_length=3)
+
+    @field_validator("season")
+    @classmethod
+    def validate_season_value(cls, value: str) -> str:
+        return validate_season(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_dataset(self) -> RapmBasePredictionManifest:
+        if len(self.folds) != self.split_config.cv_folds:
+            raise ValueError("Base-prediction folds must match the split configuration")
+        if self.stage_count != self.split_config.cv_folds + 2:
+            raise ValueError("Base-prediction stages must be CV folds plus final and all-season")
+        if (
+            self.in_sample_prediction_count
+            + self.out_of_sample_prediction_count
+            != self.prediction_row_count
+        ):
+            raise ValueError("Base-prediction sample roles must conserve rows")
+        if self.player_coefficient_row_count != self.stage_count * self.player_count:
+            raise ValueError("Every base-prediction stage must retain all player coefficients")
+        filenames = [artifact.filename for artifact in self.artifacts]
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("Base-prediction artifact filenames must be unique")
+        return self
+
+
+class RapmTransformerRunManifest(BaseModel):
+    """Reproducibility contract for one frozen-RAPM Transformer residual run."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
+
+    schema_version: Literal[1] = 1
+    run_id: str = Field(min_length=1)
+    created_at: datetime
+    season: str = Field(pattern=SEASON_PATTERN)
+    season_type: Literal["regular"] = "regular"
+    architecture: Literal["rapm_transformer"] = "rapm_transformer"
+    transformer_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
+    source_rapm_run_id: str = Field(min_length=1)
+    source_rapm_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    selected_rapm_lambda: float = Field(ge=0)
+    dataset_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    dataset_part_sha256: str = Field(pattern=SHA256_PATTERN)
+    base_predictions_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    base_predictions_part_sha256: str = Field(pattern=SHA256_PATTERN)
+    possession_count: int = Field(ge=1)
+    game_count: int = Field(ge=1)
+    player_count: int = Field(ge=10)
+    split_config: ChronologicalSplitConfig
+    folds: tuple[ChronologicalFold, ...] = Field(min_length=1)
+    selection_train_game_count: int = Field(ge=1)
+    selection_validation_game_count: int = Field(ge=1)
+    final_train_game_count: int = Field(ge=1)
+    final_test_game_count: int = Field(ge=1)
+    random_seed: int = Field(ge=0)
+    batch_size: int = Field(ge=1)
+    max_epochs: int = Field(ge=1)
+    early_stopping_patience: int = Field(ge=0)
+    selected_epochs: int = Field(ge=1)
+    learning_rate: float = Field(gt=0)
+    weight_decay: float = Field(ge=0)
+    learning_rate_candidates: tuple[float, ...] = Field(min_length=1)
+    weight_decay_candidates: tuple[float, ...] = Field(min_length=1)
+    hyperparameter_selection_metric: Literal[
+        "validation_possession_weighted_mse"
+    ]
+    d_model: int = Field(ge=1)
+    attention_heads: int = Field(ge=1)
+    transformer_layers: int = Field(ge=1)
+    feedforward_dim: int = Field(ge=1)
+    dropout: float = Field(ge=0, lt=1)
+    parameter_count: int = Field(ge=1)
+    refit_seeds: tuple[int, ...] = Field(min_length=3)
+    leaderboard_seed: int = Field(ge=0)
+    requested_accelerator: Literal["cpu", "mps", "auto"]
+    resolved_accelerator: str = Field(min_length=1)
+    target: Literal["offense_points_minus_defense_points"]
+    torch_version: str = Field(min_length=1)
+    lightning_version: str = Field(min_length=1)
+    artifacts: tuple[ArtifactRecord, ...] = Field(min_length=1)
+
+    @field_validator("season")
+    @classmethod
+    def validate_season_value(cls, value: str) -> str:
+        return validate_season(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_run(self) -> RapmTransformerRunManifest:
+        if len(self.folds) != self.split_config.cv_folds:
+            raise ValueError("Transformer folds must match the split configuration")
+        if self.final_train_game_count + self.final_test_game_count != self.game_count:
+            raise ValueError("Transformer final train and test games must conserve games")
+        if self.selected_epochs > self.max_epochs:
+            raise ValueError("Transformer selected epochs cannot exceed the training limit")
+        if self.d_model % self.attention_heads != 0:
+            raise ValueError("Transformer width must be divisible by attention heads")
+        if len(set(self.learning_rate_candidates)) != len(
+            self.learning_rate_candidates
+        ):
+            raise ValueError("Transformer learning-rate candidates must be unique")
+        if len(set(self.weight_decay_candidates)) != len(
+            self.weight_decay_candidates
+        ):
+            raise ValueError("Transformer weight-decay candidates must be unique")
+        if self.learning_rate not in self.learning_rate_candidates:
+            raise ValueError("Selected Transformer learning rate is absent from its grid")
+        if self.weight_decay not in self.weight_decay_candidates:
+            raise ValueError("Selected Transformer weight decay is absent from its grid")
+        if len(set(self.refit_seeds)) != len(self.refit_seeds):
+            raise ValueError("Transformer refit seeds must be unique")
+        if self.leaderboard_seed not in self.refit_seeds:
+            raise ValueError("Transformer leaderboard seed must be a refit seed")
+        filenames = [artifact.filename for artifact in self.artifacts]
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("Transformer artifact filenames must be unique")
+        return self
+
+
 class ModelEvaluationManifest(BaseModel):
     """Reproducibility contract for one cross-model evaluation report."""
 
     model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
 
-    schema_version: Literal[1, 2] = 1
+    schema_version: Literal[1, 2, 3] = 1
     run_id: str = Field(min_length=1)
     created_at: datetime
     season: str = Field(pattern=SEASON_PATTERN)
@@ -488,6 +644,16 @@ class ModelEvaluationManifest(BaseModel):
     catboost_best_iteration: int | None = Field(default=None, ge=0)
     catboost_selected_tree_count: int | None = Field(default=None, ge=1)
     catboost_resolved_learning_rate: float | None = Field(default=None, gt=0)
+    rapm_transformer_run_id: str | None = None
+    rapm_transformer_manifest_sha256: str | None = Field(
+        default=None,
+        pattern=SHA256_PATTERN,
+    )
+    rapm_transformer_source_rapm_run_id: str | None = None
+    rapm_transformer_learning_rate: float | None = Field(default=None, gt=0)
+    rapm_transformer_weight_decay: float | None = Field(default=None, ge=0)
+    rapm_transformer_selected_epochs: int | None = Field(default=None, ge=1)
+    rapm_transformer_leaderboard_seed: int | None = Field(default=None, ge=0)
     regular_segments_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     regular_lineup_stints_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     playoff_segments_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
@@ -498,6 +664,7 @@ class ModelEvaluationManifest(BaseModel):
             "additive_neural",
             "deep_sets",
             "catboost",
+            "rapm_transformer",
         ],
         ...,
     ] = Field(min_length=3)
@@ -545,6 +712,23 @@ class ModelEvaluationManifest(BaseModel):
             ):
                 raise ValueError(
                     "CatBoost best iteration and selected tree count do not match"
+                )
+        if "rapm_transformer" in self.models:
+            transformer_values = (
+                self.rapm_transformer_run_id,
+                self.rapm_transformer_manifest_sha256,
+                self.rapm_transformer_source_rapm_run_id,
+                self.rapm_transformer_learning_rate,
+                self.rapm_transformer_weight_decay,
+                self.rapm_transformer_selected_epochs,
+                self.rapm_transformer_leaderboard_seed,
+            )
+            if self.schema_version < 3 or any(
+                value is None for value in transformer_values
+            ):
+                raise ValueError(
+                    "RAPM Transformer evaluation manifests require schema "
+                    "version 3 and complete source parameters"
                 )
         filenames = [artifact.filename for artifact in self.artifacts]
         if len(filenames) != len(set(filenames)):

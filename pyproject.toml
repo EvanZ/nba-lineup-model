@@ -38,6 +38,7 @@ nba-train-catboost = "nba_lineup_model.modeling.catboost:main"
 nba-train-deep-sets = "nba_lineup_model.modeling.deep_sets:main"
 nba-train-neural-rapm = "nba_lineup_model.modeling.neural:main"
 nba-train-rapm = "nba_lineup_model.modeling.train:main"
+nba-train-rapm-transformer = "nba_lineup_model.modeling.transformer:main"
 
 [dependency-groups]
 dev = [

@@ -36,6 +36,14 @@
 
 ::: nba_lineup_model.modeling.deep_sets
 
+## RAPM base predictions
+
+::: nba_lineup_model.modeling.residual_data
+
+## RAPM + Transformer training
+
+::: nba_lineup_model.modeling.transformer
+
 ## CatBoost training
 
 ::: nba_lineup_model.modeling.catboost

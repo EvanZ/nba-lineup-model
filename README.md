@@ -232,6 +232,17 @@ uv run nba-evaluate-models 2025-26
 See [Tree Models](docs/models/tree-models.md) for the feature contract and
 [Train CatBoost](docs/guides/train-catboost.md) for artifacts and controls.
 
+Train the frozen-RAPM plus Transformer residual with:
+
+```bash
+uv run nba-train-rapm-transformer 2025-26
+```
+
+The command builds stage-specific RAPM base predictions before training the
+position-free lineup attention residual. See the
+[Transformer guide](docs/guides/train-transformer.md) for the leakage and
+artifact contracts.
+
 ## Test
 
 ```bash

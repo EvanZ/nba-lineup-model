@@ -44,13 +44,23 @@ from nba_lineup_model.modeling.schema import (
     CatBoostRunManifest,
     ModelEvaluationManifest,
     NeuralRapmRunManifest,
+    RapmTransformerRunManifest,
 )
 from nba_lineup_model.modeling.stints import (
     _assign_segments_to_stints,
     validate_rapm_stint_partition,
 )
 from nba_lineup_model.modeling.train import validate_baseline_run
-from nba_lineup_model.models.neural import AdditiveRapmModule, DeepSetsRapmModule
+from nba_lineup_model.modeling.transformer import (
+    frozen_rapm_predictions,
+    rapm_transformer_predictions,
+    validate_rapm_transformer_run,
+)
+from nba_lineup_model.models.neural import (
+    AdditiveRapmModule,
+    DeepSetsRapmModule,
+    RapmTransformerModule,
+)
 from nba_lineup_model.season.compact import (
     CuratedPartitionManifest,
     read_curated_partition_manifest,
@@ -64,6 +74,7 @@ MODEL_ORDER = (
     "additive_neural",
     "deep_sets",
     "catboost",
+    "rapm_transformer",
 )
 MODEL_NAMES = {
     "ridge_rapm": "One-year ridge RAPM",
@@ -71,6 +82,7 @@ MODEL_NAMES = {
     "additive_neural": "One-year additive neural",
     "deep_sets": "One-year Deep Sets",
     "catboost": "One-year categorical CatBoost",
+    "rapm_transformer": "One-year RAPM + Transformer",
 }
 COHORT_NAMES = {
     "regular_holdout": "Regular-season holdout",
@@ -90,6 +102,8 @@ class EvaluationSources:
     deep_sets_manifest: NeuralRapmRunManifest
     catboost_dir: Path
     catboost_manifest: CatBoostRunManifest
+    transformer_dir: Path
+    transformer_manifest: RapmTransformerRunManifest
 
 
 @dataclass(frozen=True)
@@ -114,6 +128,7 @@ def evaluation_code_fingerprint(
             package_root / "modeling" / "leaderboard.py",
             package_root / "modeling" / "neural_data.py",
             package_root / "modeling" / "schema.py",
+            package_root / "modeling" / "transformer.py",
             package_root / "models" / "neural.py",
         )
     else:
@@ -140,6 +155,7 @@ def build_model_evaluation(
     neural_run_id: str | None = None,
     deep_sets_run_id: str | None = None,
     catboost_run_id: str | None = None,
+    rapm_transformer_run_id: str | None = None,
     curated_dir: Path | str = Path("data/curated"),
     analytical_dir: Path | str = Path("data/analytical"),
     model_artifacts_dir: Path | str = Path("artifacts/models"),
@@ -157,6 +173,7 @@ def build_model_evaluation(
         neural_run_id,
         deep_sets_run_id,
         catboost_run_id,
+        rapm_transformer_run_id,
     )
     _validate_source_relationships(sources, season, analytical_dir)
     regular_segments_manifest, regular_segments, regular_segments_dir = (
@@ -234,12 +251,18 @@ def evaluate_fitted_models(
     catboost_splits = pd.read_parquet(
         sources.catboost_dir / "game_splits.parquet"
     )
+    transformer_splits = pd.read_parquet(
+        sources.transformer_dir / "game_splits.parquet"
+    )
     final_ridge = ridge_splits.loc[ridge_splits["split"].eq("final")]
     final_neural = neural_splits.loc[neural_splits["split"].eq("final")]
     final_deep_sets = deep_sets_splits.loc[
         deep_sets_splits["split"].eq("final")
     ]
     final_catboost = catboost_splits.loc[catboost_splits["split"].eq("final")]
+    final_transformer = transformer_splits.loc[
+        transformer_splits["split"].eq("final")
+    ]
     train_game_ids = set(
         final_ridge.loc[final_ridge["role"].eq("train"), "game_id"].astype(str)
     )
@@ -261,10 +284,17 @@ def evaluate_fitted_models(
             "game_id",
         ].astype(str)
     )
+    transformer_test_ids = set(
+        final_transformer.loc[
+            final_transformer["role"].eq("test"),
+            "game_id",
+        ].astype(str)
+    )
     if (
         test_game_ids != neural_test_ids
         or test_game_ids != deep_sets_test_ids
         or test_game_ids != catboost_test_ids
+        or test_game_ids != transformer_test_ids
     ):
         raise ValueError("Leaderboard model final test games do not match")
     regular_holdout = regular_possessions.loc[
@@ -310,6 +340,13 @@ def evaluate_fitted_models(
         pd.read_parquet(sources.catboost_dir / "test_predictions.parquet"),
         "prediction_catboost",
     )
+    transformer_regular = _mapped_possession_predictions(
+        regular_holdout,
+        pd.read_parquet(
+            sources.transformer_dir / "test_predictions.parquet"
+        ),
+        "prediction_rapm_transformer",
+    )
 
     playoff_possessions = neural_possessions_frame(playoff_segments)
     full_regular_mean = float(regular_possessions["target_offense_margin"].mean())
@@ -335,6 +372,12 @@ def evaluate_fitted_models(
         playoff_possessions,
         sources.catboost_dir,
     )
+    transformer_playoffs, transformer_unknown = (
+        _transformer_playoff_predictions(
+            playoff_possessions,
+            sources.transformer_dir,
+        )
+    )
 
     regular_predictions = {
         "ridge_rapm": ridge_regular,
@@ -342,6 +385,7 @@ def evaluate_fitted_models(
         "additive_neural": neural_regular,
         "deep_sets": deep_sets_regular,
         "catboost": catboost_regular,
+        "rapm_transformer": transformer_regular,
     }
     playoff_predictions = {
         "ridge_rapm": ridge_playoffs,
@@ -349,6 +393,7 @@ def evaluate_fitted_models(
         "additive_neural": neural_playoffs,
         "deep_sets": deep_sets_playoffs,
         "catboost": catboost_playoffs,
+        "rapm_transformer": transformer_playoffs,
     }
     regular_metrics, regular_prediction_rows = score_prediction_cohort(
         regular_holdout,
@@ -397,6 +442,22 @@ def evaluate_fitted_models(
                 cohort="playoffs",
                 reference_model="additive_neural",
                 candidate_model="catboost",
+            ),
+            paired_game_cluster_bootstrap(
+                regular_holdout,
+                ridge_regular,
+                transformer_regular,
+                cohort="regular_holdout",
+                reference_model="ridge_rapm",
+                candidate_model="rapm_transformer",
+            ),
+            paired_game_cluster_bootstrap(
+                playoff_possessions,
+                ridge_playoffs,
+                transformer_playoffs,
+                cohort="playoffs",
+                reference_model="ridge_rapm",
+                candidate_model="rapm_transformer",
             ),
         ],
         ignore_index=True,
@@ -468,6 +529,25 @@ def evaluate_fitted_models(
             "regular_holdout_state": "stored final-training model predictions",
             "playoff_state": "stored all-regular-season CatBoost model",
         },
+        "rapm_transformer": {
+            "run_id": sources.transformer_manifest.run_id,
+            "source_rapm_run_id": (
+                sources.transformer_manifest.source_rapm_run_id
+            ),
+            "learning_rate": sources.transformer_manifest.learning_rate,
+            "weight_decay": sources.transformer_manifest.weight_decay,
+            "selected_epochs": sources.transformer_manifest.selected_epochs,
+            "leaderboard_seed": (
+                sources.transformer_manifest.leaderboard_seed
+            ),
+            "refit_seeds": list(sources.transformer_manifest.refit_seeds),
+            "regular_holdout_state": (
+                "stored frozen-RAPM plus canonical-seed test predictions"
+            ),
+            "playoff_state": (
+                "stored all-regular-season RAPM state and Transformer checkpoint"
+            ),
+        },
         "translation": (
             "RAPM home net rating becomes offense margin as regular-training mean "
             "+ home_offense_sign * predicted_home_net_rating / 200"
@@ -485,6 +565,7 @@ def evaluate_fitted_models(
             "additive_neural": neural_unknown,
             "deep_sets": deep_sets_unknown,
             "catboost": catboost_unknown,
+            "rapm_transformer": transformer_unknown,
         },
     }
     return ModelEvaluation(
@@ -756,6 +837,19 @@ def render_evaluation_page(
             f"`trees={manifest.catboost_selected_tree_count}`, "
             f"`learning_rate={manifest.catboost_resolved_learning_rate:g}`"
         )
+    transformer_selection = "not recorded"
+    if (
+        manifest.rapm_transformer_learning_rate is not None
+        and manifest.rapm_transformer_weight_decay is not None
+        and manifest.rapm_transformer_selected_epochs is not None
+        and manifest.rapm_transformer_leaderboard_seed is not None
+    ):
+        transformer_selection = (
+            f"`learning_rate={manifest.rapm_transformer_learning_rate:g}`, "
+            f"`weight_decay={manifest.rapm_transformer_weight_decay:g}`, "
+            f"`epochs={manifest.rapm_transformer_selected_epochs}`, "
+            f"`seed={manifest.rapm_transformer_leaderboard_seed}`"
+        )
     cohort_header = (
         "| Cohort | Games | Source possessions | Eligible possessions | "
         "Excluded multi-lineup | Eligible share |"
@@ -930,22 +1024,23 @@ calibration, and rank probabilities rather than lower posterior-mean RMSE.
 The additive neural and Deep Sets exemplars select learning rate and AdamW
 weight decay by validation-possession-weighted MSE across expanding
 regular-season folds. CatBoost uses its resolved defaults and chooses its tree
-count from the latest chronological validation fold, subject to the recorded
-iteration ceiling. Regular holdout and playoff outcomes remain outside every
-selection process. Transformer models will be added without changing these
-cohorts or metric definitions.
+count from the latest chronological validation fold. RAPM + Transformer keeps
+the ridge prediction frozen and learns only a position-free attention
+residual, using a RAPM fit that excludes every validation or test game it
+predicts. Regular holdout and playoff outcomes remain outside every selection
+process.
 
 ## Paired model comparisons
 
 To preserve correlation among possessions from the same game, uncertainty is
-estimated by resampling complete games with replacement. Each row reports a
-candidate-minus-additive-neural difference. For bootstrap draw \(b\),
+estimated by resampling complete games with replacement. Each row identifies
+its candidate and reference model. For bootstrap draw \(b\),
 
 \[
 \Delta_b =
 \operatorname{{RMSE}}_{{candidate,b}}
 -
-\operatorname{{RMSE}}_{{Additive,b}}.
+\operatorname{{RMSE}}_{{reference,b}}.
 \]
 
 Negative differences favor the candidate. The interval is the 2.5th through
@@ -962,7 +1057,7 @@ metric calculations, and bolded-winner rendering. The evaluator additionally
 requires:
 
 - validated source model manifests and exact artifact hashes;
-- a Bayesian run derived from the selected ridge run;
+- Bayesian and Transformer runs derived from the selected ridge run;
 - matching regular-holdout game IDs across every model;
 - matching possession, game, and player counts across neural-model sources;
 - exact held-out possession keys for every stored prediction set;
@@ -982,7 +1077,8 @@ uv run nba-evaluate-models {manifest.season} \
   --bayesian-run-id {manifest.bayesian_run_id} \
   --neural-run-id {manifest.neural_run_id} \
   --deep-sets-run-id {manifest.deep_sets_run_id} \
-  --catboost-run-id {manifest.catboost_run_id}
+  --catboost-run-id {manifest.catboost_run_id} \
+  --rapm-transformer-run-id {manifest.rapm_transformer_run_id}
 ```
 
 | Provenance | Value |
@@ -996,6 +1092,8 @@ uv run nba-evaluate-models {manifest.season} \
 | Deep Sets selection | {deep_sets_selection} |
 | CatBoost run | `{manifest.catboost_run_id}` |
 | CatBoost selection | {catboost_selection} |
+| RAPM + Transformer run | `{manifest.rapm_transformer_run_id}` |
+| RAPM + Transformer selection | {transformer_selection} |
 | Evaluation code | `{manifest.evaluation_code_version}` |
 | Evaluation manifest SHA-256 | `{_sha256_file_for_display(manifest)}` |
 
@@ -1052,6 +1150,7 @@ def _resolve_sources(
     neural_run_id: str | None,
     deep_sets_run_id: str | None,
     catboost_run_id: str | None,
+    rapm_transformer_run_id: str | None,
 ) -> EvaluationSources:
     ridge_dir = _resolve_run(model_root / "rapm" / season, ridge_run_id)
     bayesian_dir = _resolve_run(
@@ -1067,6 +1166,10 @@ def _resolve_sources(
         model_root / "catboost" / season,
         catboost_run_id,
     )
+    transformer_dir = _resolve_run(
+        model_root / "rapm_transformer" / season,
+        rapm_transformer_run_id,
+    )
     return EvaluationSources(
         ridge_dir=ridge_dir,
         ridge_manifest=validate_baseline_run(ridge_dir),
@@ -1078,6 +1181,8 @@ def _resolve_sources(
         deep_sets_manifest=validate_deep_sets_run(deep_sets_dir),
         catboost_dir=catboost_dir,
         catboost_manifest=validate_catboost_run(catboost_dir),
+        transformer_dir=transformer_dir,
+        transformer_manifest=validate_rapm_transformer_run(transformer_dir),
     )
 
 
@@ -1104,23 +1209,34 @@ def _validate_source_relationships(
         sources.neural_manifest,
         sources.deep_sets_manifest,
         sources.catboost_manifest,
+        sources.transformer_manifest,
     )
     if any(manifest.season != season for manifest in manifests):
         raise ValueError("Evaluation source seasons do not match")
     if sources.bayesian_manifest.source_model_run_id != sources.ridge_manifest.run_id:
         raise ValueError("Bayesian evaluation source does not derive from ridge source")
+    if (
+        sources.transformer_manifest.source_rapm_run_id
+        != sources.ridge_manifest.run_id
+    ):
+        raise ValueError("Transformer evaluation source does not derive from ridge source")
     rapm_data = validate_rapm_stint_partition(
         Path(analytical_dir) / "rapm_stints" / season / "regular"
     )
     neural_data = validate_neural_possession_partition(
         Path(analytical_dir) / "neural_possessions" / season / "regular"
     )
-    if rapm_data.part_sha256 != sources.ridge_manifest.dataset_part_sha256:
-        raise ValueError("Current RAPM stints do not match the ridge source run")
+    if (
+        rapm_data.included_stint_count != sources.ridge_manifest.stint_count
+        or rapm_data.source_game_count != sources.ridge_manifest.game_count
+        or rapm_data.player_count != sources.ridge_manifest.player_count
+    ):
+        raise ValueError("Current RAPM stint structure does not match the ridge run")
     neural_manifests = (
         sources.neural_manifest,
         sources.deep_sets_manifest,
         sources.catboost_manifest,
+        sources.transformer_manifest,
     )
     for manifest in neural_manifests:
         if (
@@ -1342,6 +1458,59 @@ def _catboost_playoff_predictions(
     return catboost_predictions(model, possessions, player_columns)
 
 
+def _transformer_playoff_predictions(
+    possessions: pd.DataFrame,
+    run_dir: Path,
+) -> tuple[np.ndarray, int]:
+    player_columns = {
+        int(player_id): int(column)
+        for player_id, column in json.loads(
+            (run_dir / "player_columns.json").read_text()
+        ).items()
+    }
+    coefficient_rows = pd.read_parquet(
+        run_dir / "rapm_player_coefficients.parquet"
+    )
+    coefficients = dict(
+        zip(
+            coefficient_rows["player_id"].astype(int),
+            coefficient_rows["rapm"].astype(float),
+            strict=True,
+        )
+    )
+    state = json.loads((run_dir / "rapm_state.json").read_text())
+    base, base_unknown = frozen_rapm_predictions(
+        possessions,
+        coefficients,
+        intercept_home_net_rating=float(
+            state["intercept_home_net_rating"]
+        ),
+        mean_offense_margin=float(state["mean_offense_margin"]),
+    )
+    module = RapmTransformerModule.load_from_checkpoint(
+        run_dir / "model.ckpt",
+        map_location="cpu",
+    )
+    module.eval()
+    total, _ = rapm_transformer_predictions(
+        module,
+        possessions,
+        player_columns,
+        base,
+    )
+    player_exposures = pd.concat(
+        [
+            possessions["offense_player_ids"].explode(),
+            possessions["defense_player_ids"].explode(),
+        ],
+        ignore_index=True,
+    ).astype(int)
+    transformer_unknown = int((~player_exposures.isin(player_columns)).sum())
+    if transformer_unknown != base_unknown:
+        raise ValueError("Transformer and frozen RAPM unknown exposures differ")
+    return total, transformer_unknown
+
+
 def _torch_model_playoff_predictions(
     possessions: pd.DataFrame,
     run_dir: Path,
@@ -1453,7 +1622,7 @@ def _write_evaluation(
         regular = evaluation.cohorts.set_index("cohort").loc["regular_holdout"]
         playoffs = evaluation.cohorts.set_index("cohort").loc["playoffs"]
         manifest = ModelEvaluationManifest(
-            schema_version=2,
+            schema_version=3,
             run_id=run_id,
             created_at=now,
             season=season,
@@ -1490,6 +1659,25 @@ def _write_evaluation(
             ),
             catboost_resolved_learning_rate=(
                 sources.catboost_manifest.resolved_learning_rate
+            ),
+            rapm_transformer_run_id=sources.transformer_manifest.run_id,
+            rapm_transformer_manifest_sha256=_sha256_file(
+                sources.transformer_dir / "manifest.json"
+            ),
+            rapm_transformer_source_rapm_run_id=(
+                sources.transformer_manifest.source_rapm_run_id
+            ),
+            rapm_transformer_learning_rate=(
+                sources.transformer_manifest.learning_rate
+            ),
+            rapm_transformer_weight_decay=(
+                sources.transformer_manifest.weight_decay
+            ),
+            rapm_transformer_selected_epochs=(
+                sources.transformer_manifest.selected_epochs
+            ),
+            rapm_transformer_leaderboard_seed=(
+                sources.transformer_manifest.leaderboard_seed
             ),
             regular_segments_manifest_sha256=_sha256_file(
                 regular_segments_dir / "_manifest.json"
@@ -1622,8 +1810,8 @@ def _sha256_file_for_display(manifest: ModelEvaluationManifest) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate frozen ridge, Bayesian, neural, and CatBoost models on "
-            "the regular holdout and playoffs."
+            "Evaluate frozen ridge, Bayesian, neural, CatBoost, and Transformer "
+            "models on the regular holdout and playoffs."
         )
     )
     parser.add_argument("season", help="NBA season in YYYY-YY format")
@@ -1632,6 +1820,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--neural-run-id")
     parser.add_argument("--deep-sets-run-id")
     parser.add_argument("--catboost-run-id")
+    parser.add_argument("--rapm-transformer-run-id")
     parser.add_argument("--curated-dir", default="data/curated")
     parser.add_argument("--analytical-dir", default="data/analytical")
     parser.add_argument("--model-artifacts-dir", default="artifacts/models")
@@ -1654,6 +1843,7 @@ def main() -> None:
         neural_run_id=args.neural_run_id,
         deep_sets_run_id=args.deep_sets_run_id,
         catboost_run_id=args.catboost_run_id,
+        rapm_transformer_run_id=args.rapm_transformer_run_id,
         curated_dir=args.curated_dir,
         analytical_dir=args.analytical_dir,
         model_artifacts_dir=args.model_artifacts_dir,
