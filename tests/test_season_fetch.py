@@ -13,6 +13,7 @@ from nba_lineup_model.ingest.nba_cdn import (
     NbaCdnClient,
     NbaCdnEndpoint,
     NbaCdnError,
+    NbaCdnRequestGate,
     RawJsonCache,
 )
 from nba_lineup_model.season.fetch import (
@@ -78,7 +79,11 @@ def mock_nba_client(
 
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
     return (
-        NbaCdnClient(cache=RawJsonCache(raw_dir), http_client=http_client),
+        NbaCdnClient(
+            cache=RawJsonCache(raw_dir),
+            http_client=http_client,
+            request_gate=NbaCdnRequestGate(),
+        ),
         http_client,
     )
 
@@ -153,6 +158,80 @@ def test_fetch_game_raw_rejects_mismatched_source_game(tmp_path: Path):
             )
     finally:
         http_client.close()
+
+
+def test_access_denial_surfaces_response_context_and_opens_circuit(tmp_path: Path):
+    request_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return httpx.Response(
+            403,
+            content=b"<html><body>Access Denied by edge</body></html>",
+            headers={"Content-Type": "text/html", "Retry-After": "1200"},
+            request=request,
+        )
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = NbaCdnClient(
+        cache=RawJsonCache(tmp_path),
+        http_client=http_client,
+        access_denial_cooldown_seconds=900,
+        request_gate=NbaCdnRequestGate(),
+    )
+    try:
+        with pytest.raises(NbaCdnError) as first_error:
+            client.fetch_play_by_play("0022000180", use_cache=False)
+        with pytest.raises(NbaCdnError) as circuit_error:
+            client.fetch_boxscore("0022000180", use_cache=False)
+    finally:
+        http_client.close()
+
+    assert request_count == 1
+    assert first_error.value.status_code == 403
+    assert first_error.value.transient is False
+    assert first_error.value.circuit_open is True
+    assert first_error.value.retry_after_seconds == pytest.approx(1200, abs=0.1)
+    assert first_error.value.content_type == "text/html"
+    assert (
+        first_error.value.response_body_preview == "<html><body>Access Denied by edge</body></html>"
+    )
+    assert "reason=access_denied" in str(first_error.value)
+    assert "body_preview=" in str(first_error.value)
+    assert circuit_error.value.circuit_open is True
+    assert circuit_error.value.status_code is None
+    assert is_transient_fetch_error(first_error.value) is False
+    assert is_transient_fetch_error(circuit_error.value) is False
+
+
+def test_request_gate_applies_interval_and_jitter_without_holding_worker_lock():
+    now = [100.0]
+    sleeps: list[float] = []
+
+    def monotonic_clock() -> float:
+        return now[0]
+
+    def sleeper(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    gate = NbaCdnRequestGate(
+        monotonic_clock=monotonic_clock,
+        sleeper=sleeper,
+        jitter_source=lambda _lower, upper: upper,
+    )
+
+    gate.wait_for_request_slot(
+        minimum_interval_seconds=1.0,
+        interval_jitter_seconds=0.25,
+    )
+    gate.wait_for_request_slot(
+        minimum_interval_seconds=1.0,
+        interval_jitter_seconds=0.25,
+    )
+
+    assert sleeps == [pytest.approx(1.25)]
 
 
 def test_failed_fetch_record_retains_partial_artifact(tmp_path: Path):

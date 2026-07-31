@@ -2228,6 +2228,7 @@ source = { editable = "." }
 dependencies = [
     { name = "catboost" },
     { name = "httpx" },
+    { name = "joblib" },
     { name = "lightning" },
     { name = "mlflow" },
     { name = "pandas" },
@@ -2255,6 +2256,7 @@ docs = [
 requires-dist = [
     { name = "catboost", specifier = ">=1.2.7,<2" },
     { name = "httpx", specifier = ">=0.27.2" },
+    { name = "joblib", specifier = ">=1.4" },
     { name = "lightning", specifier = ">=2.5,<3" },
     { name = "mlflow", specifier = ">=3.5,<4" },
     { name = "pandas", specifier = ">=2.2.3" },

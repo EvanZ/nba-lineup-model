@@ -4,6 +4,8 @@
 
 ::: nba_lineup_model.season.fetch
 
+::: nba_lineup_model.season.stats
+
 ::: nba_lineup_model.season.process
 
 ::: nba_lineup_model.season.discover

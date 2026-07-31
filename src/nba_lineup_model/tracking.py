@@ -22,6 +22,7 @@ TRACKING_ENABLED_ENV = "NBA_MLFLOW_TRACKING_ENABLED"
 TRACKING_ROOT_ENV = "NBA_MLFLOW_ROOT"
 
 _MODEL_RUN_PREFIXES = (
+    "aging-",
     "baseline-",
     "bayesian-",
     "catboost-",
@@ -30,6 +31,7 @@ _MODEL_RUN_PREFIXES = (
     "rapm-transformer-",
 )
 _METRIC_FILES = (
+    "holdout_metrics.parquet",
     "test_metrics.parquet",
     "metrics.parquet",
     "seed_metrics.parquet",
@@ -147,8 +149,7 @@ def track_immutable_run(
         recorded_hash = existing.data.tags.get("project.manifest_sha256")
         if recorded_hash != manifest_sha256:
             raise ValueError(
-                "Existing MLflow run has a different immutable manifest hash: "
-                f"{project_run_id}"
+                f"Existing MLflow run has a different immutable manifest hash: {project_run_id}"
             )
         _ensure_candidate_runs(
             client,
@@ -174,8 +175,7 @@ def track_immutable_run(
         "project.run_directory": str(root),
         "project.created_at": str(manifest.get("created_at", "")),
         "mlflow.note.content": (
-            "Secondary experiment index for the immutable project artifact run "
-            f"`{project_run_id}`."
+            f"Secondary experiment index for the immutable project artifact run `{project_run_id}`."
         ),
     }
     run = client.create_run(
@@ -327,11 +327,7 @@ def _find_primary_run(
         filter_string=f"tags.`project.run_id` = '{escaped}'",
         max_results=1_000,
     )
-    primary = [
-        run
-        for run in matches
-        if run.data.tags.get("project.run_role") == "primary"
-    ]
+    primary = [run for run in matches if run.data.tags.get("project.run_role") == "primary"]
     if len(primary) > 1:
         raise ValueError(f"Multiple MLflow primary runs exist for {project_run_id}")
     return primary[0] if primary else None
@@ -384,6 +380,7 @@ def _ensure_candidate_runs(
             parameter_columns = {
                 "candidate_index",
                 "learning_rate",
+                "regularization",
                 "weight_decay",
                 "fold_count",
                 "selected",
@@ -515,17 +512,15 @@ def _run_metrics(run_dir: Path) -> dict[str, float]:
 
 
 def _experiment_name(project_run_id: str, season: str) -> str:
-    group = (
-        "models"
-        if project_run_id.startswith(_MODEL_RUN_PREFIXES)
-        else "reports"
-    )
+    group = "models" if project_run_id.startswith(_MODEL_RUN_PREFIXES) else "reports"
     return f"nba-lineup-model-{season}-{group}"
 
 
 def _run_kind(project_run_id: str, manifest: Mapping[str, Any]) -> str:
     if project_run_id.startswith("baseline-"):
         return "ridge_rapm"
+    if project_run_id.startswith("aging-"):
+        return "forward_aging"
     if project_run_id.startswith("bayesian-"):
         return "bayesian_rapm"
     if project_run_id.startswith("neural-"):
@@ -591,9 +586,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Index immutable model and report runs in MLflow."
-    )
+    parser = argparse.ArgumentParser(description="Index immutable model and report runs in MLflow.")
     parser.add_argument(
         "run_dirs",
         nargs="*",

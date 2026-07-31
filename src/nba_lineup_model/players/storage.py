@@ -128,6 +128,20 @@ def read_player_catalog(
     return player_catalog_from_frame(pd.read_parquet(Path(path)))
 
 
+def merge_player_catalogs(
+    existing: PlayerCatalog,
+    incoming: PlayerCatalog,
+) -> PlayerCatalog:
+    """Preserve the union of players while preferring the latest source row."""
+
+    by_player_id = {player.player_id: player for player in existing.players}
+    for player in incoming.players:
+        current = by_player_id.get(player.player_id)
+        if current is None or int(player.source_season[:4]) >= int(current.source_season[:4]):
+            by_player_id[player.player_id] = player
+    return PlayerCatalog(players=[by_player_id[player_id] for player_id in sorted(by_player_id)])
+
+
 def player_season_bio_frame(
     dataset: PlayerSeasonBioDataset | Sequence[PlayerSeasonBio],
 ) -> pd.DataFrame:
@@ -207,9 +221,7 @@ def write_player_season_bios(
         part_path = temporary_dir / "part-00000.parquet"
         frame = player_season_bio_frame(dataset)
         frame.to_parquet(part_path, index=False)
-        index_hashes = {
-            player.player_index_source_sha256 for player in dataset.players
-        }
+        index_hashes = {player.player_index_source_sha256 for player in dataset.players}
         bio_hashes = {player.bio_source_sha256 for player in dataset.players}
         if len(index_hashes) != 1 or len(bio_hashes) != 1:
             raise ValueError("Player-season rows must share exact source identities")
@@ -261,10 +273,7 @@ def read_player_season_bios(
 ) -> PlayerSeasonBioDataset:
     """Read and validate one player-season bio partition."""
 
-    part_path = (
-        player_season_partition_dir(season, season_type, curated_dir)
-        / "part-00000.parquet"
-    )
+    part_path = player_season_partition_dir(season, season_type, curated_dir) / "part-00000.parquet"
     return player_season_bios_from_frame(pd.read_parquet(part_path))
 
 
@@ -275,10 +284,7 @@ def read_player_season_manifest(
 ) -> PlayerSeasonBioManifest:
     """Read one player-season bio integrity manifest."""
 
-    path = (
-        player_season_partition_dir(season, season_type, curated_dir)
-        / "_manifest.json"
-    )
+    path = player_season_partition_dir(season, season_type, curated_dir) / "_manifest.json"
     return PlayerSeasonBioManifest.model_validate_json(path.read_text())
 
 

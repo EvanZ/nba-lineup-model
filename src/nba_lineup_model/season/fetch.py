@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from nba_lineup_model.ingest.nba_cdn import (
+    DEFAULT_ACCESS_DENIAL_COOLDOWN_SECONDS,
     CachedResponse,
     NbaCdnClient,
     NbaCdnEndpoint,
@@ -40,6 +41,9 @@ def fetch_game_raw(
     prefect_task_run_id: str | None = None,
     started_at: datetime | None = None,
     client: NbaCdnClient | None = None,
+    min_request_interval_seconds: float = 0.0,
+    request_interval_jitter_seconds: float = 0.0,
+    access_denial_cooldown_seconds: float = DEFAULT_ACCESS_DENIAL_COOLDOWN_SECONDS,
 ) -> GameFetchRecord:
     """Fetch and validate both raw game documents without Prefect dependencies."""
 
@@ -76,7 +80,12 @@ def fetch_game_raw(
             )
 
     owns_client = client is None
-    client = client or NbaCdnClient(cache=cache)
+    client = client or NbaCdnClient(
+        cache=cache,
+        min_request_interval_seconds=min_request_interval_seconds,
+        request_interval_jitter_seconds=request_interval_jitter_seconds,
+        access_denial_cooldown_seconds=access_denial_cooldown_seconds,
+    )
     try:
         if refresh or initial_play_by_play is None:
             client.fetch_play_by_play(game.game_id, use_cache=False)
@@ -193,9 +202,7 @@ def require_artifact_evidence(
 
     evidence = artifact_evidence(cache, endpoint, game_id)
     if evidence is None:
-        raise NbaCdnError(
-            f"NBA {endpoint.value} response was not cached for {game_id}"
-        )
+        raise NbaCdnError(f"NBA {endpoint.value} response was not cached for {game_id}")
     return evidence
 
 
@@ -299,17 +306,14 @@ def _validate_game_payload(
     if not isinstance(game, dict):
         raise NbaCdnError(f"NBA {endpoint.value} response is missing its game object")
     if game.get("gameId") != game_id:
-        raise NbaCdnError(
-            f"NBA {endpoint.value} response gameId does not match {game_id}"
-        )
+        raise NbaCdnError(f"NBA {endpoint.value} response gameId does not match {game_id}")
     if endpoint is NbaCdnEndpoint.PLAY_BY_PLAY and not isinstance(
         game.get("actions"),
         list,
     ):
         raise NbaCdnError("NBA playbyplay response is missing its actions")
     if endpoint is NbaCdnEndpoint.BOXSCORE and (
-        not isinstance(game.get("homeTeam"), dict)
-        or not isinstance(game.get("awayTeam"), dict)
+        not isinstance(game.get("homeTeam"), dict) or not isinstance(game.get("awayTeam"), dict)
     ):
         raise NbaCdnError("NBA boxscore response is missing its teams")
 

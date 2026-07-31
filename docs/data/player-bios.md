@@ -42,6 +42,10 @@ historical player. It includes:
 Latest listed team and physical fields are source snapshots, not historical
 truth for every season.
 
+Collection updates the catalog monotonically. Player IDs from an existing
+newer catalog are preserved during an older-season backfill, and the row from
+the latest source season wins when the same player appears in both snapshots.
+
 ## Player-season bios
 
 The season partition is:

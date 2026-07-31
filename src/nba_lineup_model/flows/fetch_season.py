@@ -14,6 +14,7 @@ from prefect.task_runners import ThreadPoolTaskRunner
 from prefect.tasks import Task
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nba_lineup_model.ingest.nba_cdn import DEFAULT_ACCESS_DENIAL_COOLDOWN_SECONDS
 from nba_lineup_model.season.fetch import (
     failed_fetch_record,
     fetch_game_raw,
@@ -85,7 +86,7 @@ def should_retry_fetch(
 @task(
     name="fetch-raw-game",
     retries=3,
-    retry_delay_seconds=[2, 10, 30],
+    retry_delay_seconds=[5, 30, 120],
     retry_jitter_factor=0.25,
     retry_condition_fn=should_retry_fetch,
     persist_result=False,
@@ -95,6 +96,9 @@ def fetch_raw_game_task(
     run_id: str,
     raw_dir: str,
     refresh: bool,
+    min_request_interval_seconds: float,
+    request_interval_jitter_seconds: float,
+    access_denial_cooldown_seconds: float,
 ) -> GameFetchRecord:
     """Prefect task wrapper around the framework-independent raw fetcher."""
 
@@ -112,6 +116,9 @@ def fetch_raw_game_task(
             prefect_flow_run_id=flow_run_id,
             prefect_task_run_id=task_run_id,
             started_at=started_at,
+            min_request_interval_seconds=min_request_interval_seconds,
+            request_interval_jitter_seconds=request_interval_jitter_seconds,
+            access_denial_cooldown_seconds=access_denial_cooldown_seconds,
         )
     except Exception as error:
         record = failed_fetch_record(
@@ -145,6 +152,9 @@ def fetch_season_raw_flow(
     limit: int | None = None,
     refresh: bool = False,
     run_id: str | None = None,
+    min_request_interval_seconds: float = 1.0,
+    request_interval_jitter_seconds: float = 0.25,
+    access_denial_cooldown_seconds: float = DEFAULT_ACCESS_DENIAL_COOLDOWN_SECONDS,
 ) -> FetchRunSummary:
     """Fetch raw game feeds concurrently for one cataloged NBA season."""
 
@@ -171,6 +181,9 @@ def fetch_season_raw_flow(
                 run_id,
                 raw_dir,
                 refresh,
+                min_request_interval_seconds,
+                request_interval_jitter_seconds,
+                access_denial_cooldown_seconds,
             )
         )
     wait(futures)
@@ -210,9 +223,7 @@ def fetch_season_raw_flow(
         finished_at=finished_at,
         duration_seconds=(finished_at - started_at).total_seconds(),
         manifest_path=str(Path(manifest_path)),
-        failed_game_ids=[
-            record.game_id for record in records if record.status == "failed"
-        ],
+        failed_game_ids=[record.game_id for record in records if record.status == "failed"],
     )
 
 
@@ -248,13 +259,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-workers",
         type=int,
-        default=4,
+        default=2,
         help="Maximum concurrent game fetches",
     )
     parser.add_argument(
         "--refresh",
         action="store_true",
         help="Refetch both feeds even when valid cache files exist",
+    )
+    parser.add_argument(
+        "--min-request-interval",
+        type=float,
+        default=1.0,
+        help="Minimum process-wide seconds between NBA CDN requests",
+    )
+    parser.add_argument(
+        "--request-interval-jitter",
+        type=float,
+        default=0.25,
+        help="Maximum random seconds added to each request interval",
+    )
+    parser.add_argument(
+        "--access-denial-cooldown",
+        type=float,
+        default=DEFAULT_ACCESS_DENIAL_COOLDOWN_SECONDS,
+        help="Seconds to block new requests after an HTTP 403 or 429",
     )
     parser.add_argument("--run-id", help="Optional caller-owned run identifier")
     return parser
@@ -264,6 +293,12 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.max_workers < 1:
         raise SystemExit("--max-workers must be positive")
+    if args.min_request_interval < 0:
+        raise SystemExit("--min-request-interval cannot be negative")
+    if args.request_interval_jitter < 0:
+        raise SystemExit("--request-interval-jitter cannot be negative")
+    if args.access_denial_cooldown <= 0:
+        raise SystemExit("--access-denial-cooldown must be positive")
     configured_flow = fetch_season_raw_flow.with_options(
         task_runner=ThreadPoolTaskRunner(max_workers=args.max_workers)
     )
@@ -277,6 +312,9 @@ def main() -> None:
         limit=args.limit,
         refresh=args.refresh,
         run_id=args.run_id,
+        min_request_interval_seconds=args.min_request_interval,
+        request_interval_jitter_seconds=args.request_interval_jitter,
+        access_denial_cooldown_seconds=args.access_denial_cooldown,
     )
     print(
         f"{summary.season} raw fetch: selected={summary.selected_game_count}, "

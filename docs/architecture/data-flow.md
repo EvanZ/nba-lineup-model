@@ -7,6 +7,10 @@ flowchart LR
     CAT --> FLOW["Prefect season fetch"]
     FLOW --> CDN["NBA CDN game JSON"]
     CDN["NBA CDN game JSON"] --> RAW["Byte-preserving raw cache"]
+    CAT --> SHFLOW["Prefect Stats history fetch"]
+    STATS["NBA Stats V3 game JSON"] --> SHFLOW
+    SHFLOW --> SRAW["Stats archival raw cache"]
+    SHFLOW --> SMAN["Stats fetch manifest"]
     FLOW --> FMAN["Fetch manifest"]
     RAW --> PFLOW["Prefect season processing"]
     PFLOW --> EVT["Canonical events"]
@@ -58,6 +62,10 @@ data/raw/
   playbyplay/0022000180.meta.json
   boxscore/0022000180.json
   boxscore/0022000180.meta.json
+  stats/playbyplayv3/0021900194.json
+  stats/playbyplayv3/0021900194.meta.json
+  stats/boxscoretraditionalv3/0021900194.json
+  stats/boxscoretraditionalv3/0021900194.meta.json
 
 data/processed/
   events/0022000180.parquet
@@ -84,6 +92,7 @@ data/catalog/
 
 data/manifests/
   fetches.parquet
+  stats_fetches.parquet
   builds.parquet
 
 data/quality/
@@ -135,6 +144,10 @@ Raw responses remain one JSON file per endpoint and game. Retryable processed
 artifacts also remain per-game files. Validated analytical tables compact into
 season and season-type Parquet partitions; orchestration does not change those
 storage boundaries.
+
+Stats V3 responses are archival inputs at this stage. A future source adapter
+must map their action and substitution representation into the canonical event
+contract before they can enter season processing.
 
 Compaction is lossless. It preserves every accepted source row, adds catalog and
 provenance metadata, and verifies per-game and partition row conservation.

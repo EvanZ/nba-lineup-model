@@ -83,6 +83,7 @@ flowchart LR
 <div class="capability-list" markdown="1">
 
 - Fetch play-by-play and boxscore JSON directly from NBA CDN endpoints.
+- Preserve historical Stats V3 responses when CDN game objects are unavailable.
 - Preserve raw response bytes with fetch metadata and SHA-256 digests.
 - Discover historical season schedules directly into a canonical game catalog.
 - Fetch complete seasons through a resumable local Prefect flow.

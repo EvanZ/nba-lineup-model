@@ -13,6 +13,9 @@ The direct client currently supports:
 | Boxscore | `data/raw/boxscore/{game_id}.json` |
 | Today's scoreboard | `data/raw/scoreboard/todays_scoreboard_00.json` |
 | Historical season schedule | `data/raw/scheduleleaguev2/{season}.json` |
+| Stats V3 play-by-play | `data/raw/stats/playbyplayv3/{game_id}.json` |
+| Stats V3 traditional box score | `data/raw/stats/boxscoretraditionalv3/{game_id}.json` |
+| Stats game rotation | `data/raw/stats/gamerotation/{game_id}.json` |
 
 Game IDs must be ten-digit strings. Keeping them as strings preserves leading
 zeros.
@@ -38,6 +41,12 @@ returned.
 Schedule sidecars use `season` instead of endpoint and game ID fields. They
 retain the same URL, UTC fetch time, and exact-byte digest guarantees.
 
+Stats endpoint sidecars also retain selected response provenance headers,
+including `x-datasource` when supplied. The Stats namespace is intentionally
+separate because its V3 play-by-play schema is not identical to the liveData
+CDN schema. Raw acquisition does not imply that a Stats response is already
+compatible with the canonical event normalizer.
+
 ## Refresh behavior
 
 Commands use valid cached documents by default. `--refresh` ignores existing
@@ -51,6 +60,10 @@ replaced rather than treated as completed work.
 Refreshing changes external state and can expose feed corrections. The sidecar
 timestamp and digest make that change observable, but raw files are not retained
 as a built-in version history.
+
+The historical Stats flow resumes at endpoint granularity. A cached
+`playbyplayv3` response remains complete even if the corresponding box score or
+rotation request fails.
 
 ## Data policy
 

@@ -155,6 +155,7 @@ class NbaScheduleClient:
     ) -> None:
         self.cache = cache or SeasonScheduleCache()
         self.endpoint = endpoint
+        self._owns_http_client = http_client is None
         self._client = http_client or httpx.Client(
             timeout=timeout,
             headers={
@@ -169,6 +170,16 @@ class NbaScheduleClient:
             },
             follow_redirects=True,
         )
+
+    def close(self) -> None:
+        if self._owns_http_client:
+            self._client.close()
+
+    def __enter__(self) -> NbaScheduleClient:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
     def fetch(self, season: str, *, use_cache: bool = True) -> ScheduleResponse:
         season = validate_season(season)
@@ -384,9 +395,7 @@ def _season_type(row: dict[str, Any], game_id: str) -> str:
     if "playoff" in label or "finals" in label:
         return "playoffs"
 
-    raise NbaScheduleError(
-        f"Cannot classify NBA game {game_id} from its labels or ID prefix"
-    )
+    raise NbaScheduleError(f"Cannot classify NBA game {game_id} from its labels or ID prefix")
 
 
 def _game_status(status_code: int | None, status_text: str | None) -> str:
@@ -407,9 +416,7 @@ def _periods_from_status(
     overtime_match = _OVERTIME_RE.search(status_text or "")
     if overtime_match is None:
         return 4, False
-    overtime_periods = int(
-        overtime_match.group("prefix") or overtime_match.group("suffix") or "1"
-    )
+    overtime_periods = int(overtime_match.group("prefix") or overtime_match.group("suffix") or "1")
     return 4 + overtime_periods, True
 
 

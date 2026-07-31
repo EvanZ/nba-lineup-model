@@ -16,6 +16,14 @@
 
 ::: nba_lineup_model.modeling.bayesian_case_study
 
+## Historical player features
+
+::: nba_lineup_model.modeling.player_history
+
+## RAPM aging model
+
+::: nba_lineup_model.modeling.aging
+
 ::: nba_lineup_model.models.baselines
 
 ::: nba_lineup_model.models.bayesian

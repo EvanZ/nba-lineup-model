@@ -21,6 +21,7 @@ from nba_lineup_model.players.source import (
     PlayerStatsResponse,
 )
 from nba_lineup_model.players.storage import (
+    merge_player_catalogs,
     player_catalog_frame,
     player_season_bio_frame,
     read_player_catalog,
@@ -224,10 +225,7 @@ def test_player_stats_client_preserves_raw_bytes_and_reuses_cache(tmp_path: Path
     ]
     assert index.raw_body == cached_index.raw_body == index_body
     assert bios.raw_body == cached_bios.raw_body == bio_body
-    assert (
-        cache.path_for(PlayerStatsEndpoint.PLAYER_INDEX, "2025-26").read_bytes()
-        == index_body
-    )
+    assert cache.path_for(PlayerStatsEndpoint.PLAYER_INDEX, "2025-26").read_bytes() == index_body
     assert (
         cache.path_for(
             PlayerStatsEndpoint.PLAYER_BIO_STATS,
@@ -312,9 +310,7 @@ def test_player_index_treats_zero_pick_values_as_undrafted():
 
 def test_player_bios_preserve_missing_weight():
     payload = player_bio_payload()
-    payload["resultSets"][0]["rowSet"][0][
-        BIO_HEADERS.index("PLAYER_WEIGHT")
-    ] = None
+    payload["resultSets"][0]["rowSet"][0][BIO_HEADERS.index("PLAYER_WEIGHT")] = None
     catalog = player_catalog_from_response(
         response(
             PlayerStatsEndpoint.PLAYER_INDEX,
@@ -360,11 +356,14 @@ def test_player_catalog_and_season_bios_round_trip_with_stable_types(
     manifest = write_player_season_bios(bios, tmp_path / "curated")
 
     assert read_player_catalog(catalog_path) == catalog
-    assert read_player_season_bios(
-        "2025-26",
-        "regular",
-        tmp_path / "curated",
-    ) == bios
+    assert (
+        read_player_season_bios(
+            "2025-26",
+            "regular",
+            tmp_path / "curated",
+        )
+        == bios
+    )
     assert (
         validate_player_season_partition(
             "2025-26",
@@ -375,12 +374,7 @@ def test_player_catalog_and_season_bios_round_trip_with_stable_types(
     )
     catalog_schema = pq.read_schema(catalog_path)
     bio_path = (
-        tmp_path
-        / "curated"
-        / "player_seasons"
-        / "2025-26"
-        / "regular"
-        / "part-00000.parquet"
+        tmp_path / "curated" / "player_seasons" / "2025-26" / "regular" / "part-00000.parquet"
     )
     bio_schema = pq.read_schema(bio_path)
     assert catalog_schema.field("player_id").type == pa.int64()
@@ -390,6 +384,31 @@ def test_player_catalog_and_season_bios_round_trip_with_stable_types(
     root_frame = pd.read_parquet(tmp_path / "curated" / "player_seasons")
     assert set(root_frame["season"].astype(str)) == {"2025-26"}
     assert set(root_frame["season_type"].astype(str)) == {"regular"}
+
+
+def test_player_catalog_merge_preserves_newer_player_universe():
+    latest = player_catalog_from_response(
+        response(
+            PlayerStatsEndpoint.PLAYER_INDEX,
+            player_index_payload(),
+            season_type=None,
+        )
+    )
+    older_players = [
+        player.model_copy(
+            update={
+                "source_season": "2019-20",
+                "to_year": min(player.to_year or 2019, 2019),
+            }
+        )
+        for player in latest.players[:1]
+    ]
+    older = latest.model_copy(update={"players": older_players})
+
+    merged = merge_player_catalogs(latest, older)
+
+    assert [player.player_id for player in merged.players] == [204001, 1630639]
+    assert all(player.source_season == "2025-26" for player in merged.players)
 
 
 def test_collect_player_bios_writes_both_normalized_datasets(tmp_path: Path):
@@ -425,6 +444,6 @@ def test_collect_player_bios_writes_both_normalized_datasets(tmp_path: Path):
     assert summary.player_bios_cache_hit is False
     assert Path(summary.player_catalog_path).exists()
     assert Path(summary.player_season_partition_path).exists()
-    assert player_catalog_frame(
-        read_player_catalog(summary.player_catalog_path)
-    )["player_id"].tolist() == [204001, 1630639]
+    assert player_catalog_frame(read_player_catalog(summary.player_catalog_path))[
+        "player_id"
+    ].tolist() == [204001, 1630639]

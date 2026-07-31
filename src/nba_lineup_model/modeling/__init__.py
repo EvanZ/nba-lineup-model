@@ -1,6 +1,8 @@
 """Canonical modeling datasets and reproducible training runs."""
 
 from nba_lineup_model.modeling.schema import (
+    AgingModelRunManifest,
+    AgingSeasonFold,
     BaselineRunManifest,
     BayesianRapmRunManifest,
     ChronologicalFold,
@@ -20,6 +22,8 @@ from nba_lineup_model.modeling.stints import (
 )
 
 __all__ = [
+    "AgingModelRunManifest",
+    "AgingSeasonFold",
     "BaselineRunManifest",
     "BayesianRapmRunManifest",
     "ChronologicalFold",

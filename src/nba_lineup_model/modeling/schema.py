@@ -141,8 +141,7 @@ class NeuralPossessionManifest(BaseModel):
     @model_validator(mode="after")
     def validate_counts(self) -> NeuralPossessionManifest:
         if (
-            self.included_possession_count
-            + self.excluded_multi_segment_possession_count
+            self.included_possession_count + self.excluded_multi_segment_possession_count
             != self.source_possession_count
         ):
             raise ValueError("Included and excluded neural possessions must conserve sources")
@@ -303,9 +302,9 @@ class NeuralRapmRunManifest(BaseModel):
     weight_decay: float = Field(ge=0)
     learning_rate_candidates: tuple[float, ...] = ()
     weight_decay_candidates: tuple[float, ...] = ()
-    hyperparameter_selection_metric: Literal[
+    hyperparameter_selection_metric: Literal["validation_possession_weighted_mse"] = (
         "validation_possession_weighted_mse"
-    ] = "validation_possession_weighted_mse"
+    )
     player_embedding_dim: int | None = Field(default=None, ge=1)
     role_embedding_dim: int | None = Field(default=None, ge=1)
     player_hidden_dim: int | None = Field(default=None, ge=1)
@@ -347,13 +346,9 @@ class NeuralRapmRunManifest(BaseModel):
                 raise ValueError("Learning-rate candidates must be positive")
             if any(value < 0 for value in self.weight_decay_candidates):
                 raise ValueError("Weight-decay candidates must be nonnegative")
-            if len(set(self.learning_rate_candidates)) != len(
-                self.learning_rate_candidates
-            ):
+            if len(set(self.learning_rate_candidates)) != len(self.learning_rate_candidates):
                 raise ValueError("Learning-rate candidates must be unique")
-            if len(set(self.weight_decay_candidates)) != len(
-                self.weight_decay_candidates
-            ):
+            if len(set(self.weight_decay_candidates)) != len(self.weight_decay_candidates):
                 raise ValueError("Weight-decay candidates must be unique")
             if self.learning_rate not in self.learning_rate_candidates:
                 raise ValueError("Selected learning rate is absent from its grid")
@@ -375,9 +370,7 @@ class NeuralRapmRunManifest(BaseModel):
                 value < 1 for value in self.lineup_hidden_dims
             ):
                 raise ValueError("Deep Sets manifests require lineup hidden dimensions")
-            if len(self.refit_seeds) < 3 or len(set(self.refit_seeds)) != len(
-                self.refit_seeds
-            ):
+            if len(self.refit_seeds) < 3 or len(set(self.refit_seeds)) != len(self.refit_seeds):
                 raise ValueError("Deep Sets requires at least three unique refit seeds")
             if self.leaderboard_seed not in self.refit_seeds:
                 raise ValueError("Leaderboard seed must be one of the refit seeds")
@@ -497,8 +490,7 @@ class RapmBasePredictionManifest(BaseModel):
         if self.stage_count != self.split_config.cv_folds + 2:
             raise ValueError("Base-prediction stages must be CV folds plus final and all-season")
         if (
-            self.in_sample_prediction_count
-            + self.out_of_sample_prediction_count
+            self.in_sample_prediction_count + self.out_of_sample_prediction_count
             != self.prediction_row_count
         ):
             raise ValueError("Base-prediction sample roles must conserve rows")
@@ -547,9 +539,7 @@ class RapmTransformerRunManifest(BaseModel):
     weight_decay: float = Field(ge=0)
     learning_rate_candidates: tuple[float, ...] = Field(min_length=1)
     weight_decay_candidates: tuple[float, ...] = Field(min_length=1)
-    hyperparameter_selection_metric: Literal[
-        "validation_possession_weighted_mse"
-    ]
+    hyperparameter_selection_metric: Literal["validation_possession_weighted_mse"]
     d_model: int = Field(ge=1)
     attention_heads: int = Field(ge=1)
     transformer_layers: int = Field(ge=1)
@@ -585,13 +575,9 @@ class RapmTransformerRunManifest(BaseModel):
             raise ValueError("Transformer selected epochs cannot exceed the training limit")
         if self.d_model % self.attention_heads != 0:
             raise ValueError("Transformer width must be divisible by attention heads")
-        if len(set(self.learning_rate_candidates)) != len(
-            self.learning_rate_candidates
-        ):
+        if len(set(self.learning_rate_candidates)) != len(self.learning_rate_candidates):
             raise ValueError("Transformer learning-rate candidates must be unique")
-        if len(set(self.weight_decay_candidates)) != len(
-            self.weight_decay_candidates
-        ):
+        if len(set(self.weight_decay_candidates)) != len(self.weight_decay_candidates):
             raise ValueError("Transformer weight-decay candidates must be unique")
         if self.learning_rate not in self.learning_rate_candidates:
             raise ValueError("Selected Transformer learning rate is absent from its grid")
@@ -697,9 +683,7 @@ class ModelEvaluationManifest(BaseModel):
                 self.catboost_selected_tree_count,
                 self.catboost_resolved_learning_rate,
             )
-            if self.schema_version < 2 or any(
-                value is None for value in catboost_values
-            ):
+            if self.schema_version < 2 or any(value is None for value in catboost_values):
                 raise ValueError(
                     "CatBoost evaluation manifests require schema version 2 "
                     "and complete source parameters"
@@ -707,12 +691,9 @@ class ModelEvaluationManifest(BaseModel):
             if (
                 self.catboost_best_iteration is not None
                 and self.catboost_selected_tree_count is not None
-                and self.catboost_best_iteration + 1
-                != self.catboost_selected_tree_count
+                and self.catboost_best_iteration + 1 != self.catboost_selected_tree_count
             ):
-                raise ValueError(
-                    "CatBoost best iteration and selected tree count do not match"
-                )
+                raise ValueError("CatBoost best iteration and selected tree count do not match")
         if "rapm_transformer" in self.models:
             transformer_values = (
                 self.rapm_transformer_run_id,
@@ -723,9 +704,7 @@ class ModelEvaluationManifest(BaseModel):
                 self.rapm_transformer_selected_epochs,
                 self.rapm_transformer_leaderboard_seed,
             )
-            if self.schema_version < 3 or any(
-                value is None for value in transformer_values
-            ):
+            if self.schema_version < 3 or any(value is None for value in transformer_values):
                 raise ValueError(
                     "RAPM Transformer evaluation manifests require schema "
                     "version 3 and complete source parameters"
@@ -801,4 +780,127 @@ class RapmDiagnosticsManifest(BaseModel):
         filenames = [artifact.filename for artifact in self.artifacts]
         if len(filenames) != len(set(filenames)):
             raise ValueError("Diagnostic artifact filenames must be unique")
+        return self
+
+
+class AgingSeasonFold(BaseModel):
+    """One expanding target-season validation fold for the aging model."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    fold: int = Field(ge=0)
+    train_target_seasons: tuple[str, ...] = Field(min_length=1)
+    validation_target_season: str = Field(pattern=SEASON_PATTERN)
+    train_player_count: int = Field(ge=1)
+    validation_player_count: int = Field(ge=1)
+
+    @field_validator("train_target_seasons")
+    @classmethod
+    def validate_train_seasons(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(validate_season(value) for value in values)
+
+    @field_validator("validation_target_season")
+    @classmethod
+    def validate_validation_season(cls, value: str) -> str:
+        return validate_season(value)
+
+    @model_validator(mode="after")
+    def validate_chronology(self) -> AgingSeasonFold:
+        validation_year = int(self.validation_target_season[:4])
+        if any(int(season[:4]) >= validation_year for season in self.train_target_seasons):
+            raise ValueError("Aging fold training seasons must precede validation")
+        return self
+
+
+class AgingModelRunManifest(BaseModel):
+    """Reproducibility contract for one forward-only RAPM aging model."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
+
+    schema_version: Literal[1] = 1
+    run_id: str = Field(min_length=1)
+    created_at: datetime
+    season: str = Field(pattern=SEASON_PATTERN)
+    season_type: Literal["regular"] = "regular"
+    aging_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
+    source_panel_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    source_seasons: tuple[str, ...] = Field(min_length=3)
+    training_target_seasons: tuple[str, ...] = Field(min_length=2)
+    holdout_target_season: str = Field(pattern=SEASON_PATTERN)
+    folds: tuple[AgingSeasonFold, ...] = Field(min_length=1)
+    feature_columns: tuple[str, ...] = Field(min_length=1)
+    target_column: Literal["target_rapm"] = "target_rapm"
+    sample_weight_column: Literal["target_rapm_possessions"] = "target_rapm_possessions"
+    regularization_grid: tuple[float, ...] = Field(min_length=2)
+    selected_regularization: float = Field(ge=0)
+    age_spline_knots: int = Field(ge=3)
+    age_spline_degree: int = Field(ge=1, le=3)
+    training_player_season_count: int = Field(ge=1)
+    holdout_player_count: int = Field(ge=1)
+    holdout_returning_player_count: int = Field(ge=0)
+    holdout_cold_start_player_count: int = Field(ge=0)
+    artifacts: tuple[ArtifactRecord, ...] = Field(min_length=6)
+
+    @field_validator(
+        "season",
+        "holdout_target_season",
+    )
+    @classmethod
+    def validate_single_season(cls, value: str) -> str:
+        return validate_season(value)
+
+    @field_validator(
+        "source_seasons",
+        "training_target_seasons",
+    )
+    @classmethod
+    def validate_seasons(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(validate_season(value) for value in values)
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Aging model seasons must be unique")
+        if normalized != tuple(sorted(normalized, key=lambda value: int(value[:4]))):
+            raise ValueError("Aging model seasons must be chronological")
+        return normalized
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_datetime(cls, value: datetime) -> datetime:
+        return _as_utc(value)
+
+    @field_validator("regularization_grid")
+    @classmethod
+    def validate_regularization_grid(
+        cls,
+        values: tuple[float, ...],
+    ) -> tuple[float, ...]:
+        if any(value < 0 for value in values):
+            raise ValueError("Aging regularization values must be non-negative")
+        if len(values) != len(set(values)):
+            raise ValueError("Aging regularization values must be unique")
+        return values
+
+    @model_validator(mode="after")
+    def validate_run(self) -> AgingModelRunManifest:
+        if self.season != self.holdout_target_season:
+            raise ValueError("Aging run season must equal its holdout season")
+        holdout_year = int(self.holdout_target_season[:4])
+        if any(int(season[:4]) >= holdout_year for season in self.training_target_seasons):
+            raise ValueError("Aging training seasons must precede the holdout")
+        if self.selected_regularization not in self.regularization_grid:
+            raise ValueError("Selected aging regularization is outside the grid")
+        if len(self.folds) != len(self.training_target_seasons) - 1:
+            raise ValueError("Aging folds must validate every training season after the first")
+        if (
+            tuple(fold.validation_target_season for fold in self.folds)
+            != (self.training_target_seasons[1:])
+        ):
+            raise ValueError("Aging folds do not match expanding validation seasons")
+        if (
+            self.holdout_returning_player_count + self.holdout_cold_start_player_count
+            != self.holdout_player_count
+        ):
+            raise ValueError("Aging holdout cohorts must conserve players")
+        filenames = [artifact.filename for artifact in self.artifacts]
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("Aging artifact filenames must be unique")
         return self

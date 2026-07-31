@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import re
+import threading
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -12,6 +17,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 GAME_ID_RE = re.compile(r"^\d{10}$")
+DEFAULT_ACCESS_DENIAL_COOLDOWN_SECONDS = 15 * 60.0
 
 
 class NbaCdnEndpoint(StrEnum):
@@ -30,11 +36,82 @@ class NbaCdnError(RuntimeError):
         status_code: int | None = None,
         url: str | None = None,
         transient: bool = False,
+        retry_after_seconds: float | None = None,
+        content_type: str | None = None,
+        response_body_preview: str | None = None,
+        circuit_open: bool = False,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.url = url
         self.transient = transient
+        self.retry_after_seconds = retry_after_seconds
+        self.content_type = content_type
+        self.response_body_preview = response_body_preview
+        self.circuit_open = circuit_open
+
+
+class NbaCdnRequestGate:
+    """Coordinate request pacing and access-denial cooldown across worker threads."""
+
+    def __init__(
+        self,
+        *,
+        monotonic_clock: Callable[[], float] = time.monotonic,
+        sleeper: Callable[[float], None] = time.sleep,
+        jitter_source: Callable[[float, float], float] = random.uniform,
+    ) -> None:
+        self._monotonic_clock = monotonic_clock
+        self._sleeper = sleeper
+        self._jitter_source = jitter_source
+        self._lock = threading.Lock()
+        self._next_request_at = 0.0
+        self._blocked_until = 0.0
+        self._block_reason: str | None = None
+
+    def wait_for_request_slot(
+        self,
+        *,
+        minimum_interval_seconds: float,
+        interval_jitter_seconds: float,
+    ) -> None:
+        """Reserve one request slot or fail fast while the CDN circuit is open."""
+
+        while True:
+            with self._lock:
+                now = self._monotonic_clock()
+                if now < self._blocked_until:
+                    remaining = self._blocked_until - now
+                    reason = self._block_reason or "an earlier access denial"
+                    raise NbaCdnError(
+                        "NBA CDN request circuit is open for "
+                        f"{remaining:.1f} more seconds after {reason}",
+                        transient=False,
+                        retry_after_seconds=remaining,
+                        circuit_open=True,
+                    )
+                if now >= self._next_request_at:
+                    jitter = (
+                        self._jitter_source(0.0, interval_jitter_seconds)
+                        if interval_jitter_seconds > 0
+                        else 0.0
+                    )
+                    self._next_request_at = now + minimum_interval_seconds + jitter
+                    return
+                delay = self._next_request_at - now
+            self._sleeper(delay)
+
+    def open_circuit(self, *, cooldown_seconds: float, reason: str) -> float:
+        """Block new request slots for at least the requested cooldown."""
+
+        with self._lock:
+            now = self._monotonic_clock()
+            self._blocked_until = max(self._blocked_until, now + cooldown_seconds)
+            self._block_reason = reason
+            return self._blocked_until - now
+
+
+_DEFAULT_REQUEST_GATE = NbaCdnRequestGate()
 
 
 class CachedResponse(BaseModel):
@@ -154,9 +231,23 @@ class NbaCdnClient:
         http_client: httpx.Client | None = None,
         base_url: str = "https://cdn.nba.com/static/json/liveData",
         timeout: float = 30.0,
+        min_request_interval_seconds: float = 0.0,
+        request_interval_jitter_seconds: float = 0.0,
+        access_denial_cooldown_seconds: float = DEFAULT_ACCESS_DENIAL_COOLDOWN_SECONDS,
+        request_gate: NbaCdnRequestGate | None = None,
     ) -> None:
+        if min_request_interval_seconds < 0:
+            raise ValueError("Minimum request interval cannot be negative")
+        if request_interval_jitter_seconds < 0:
+            raise ValueError("Request interval jitter cannot be negative")
+        if access_denial_cooldown_seconds <= 0:
+            raise ValueError("Access-denial cooldown must be positive")
         self.cache = cache or RawJsonCache()
         self.base_url = base_url.rstrip("/")
+        self.min_request_interval_seconds = min_request_interval_seconds
+        self.request_interval_jitter_seconds = request_interval_jitter_seconds
+        self.access_denial_cooldown_seconds = access_denial_cooldown_seconds
+        self._request_gate = request_gate or _DEFAULT_REQUEST_GATE
         self._owns_http_client = http_client is None
         self._client = http_client or self._new_http_client(timeout)
 
@@ -236,17 +327,12 @@ class NbaCdnClient:
         *,
         game_id: str | None = None,
     ) -> CachedResponse:
+        self._request_gate.wait_for_request_slot(
+            minimum_interval_seconds=self.min_request_interval_seconds,
+            interval_jitter_seconds=self.request_interval_jitter_seconds,
+        )
         try:
             http_response = self._client.get(url)
-            http_response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            status_code = exc.response.status_code
-            raise NbaCdnError(
-                f"NBA CDN returned HTTP {status_code} for {url}",
-                status_code=status_code,
-                url=url,
-                transient=status_code in {408, 425, 429} or status_code >= 500,
-            ) from exc
         except httpx.HTTPError as exc:
             raise NbaCdnError(
                 f"NBA CDN request failed for {url}",
@@ -254,11 +340,22 @@ class NbaCdnClient:
                 transient=True,
             ) from exc
 
+        if http_response.status_code != 200:
+            raise self._response_error(http_response, url)
+
         raw_body = http_response.content
         try:
             payload = json.loads(raw_body)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise NbaCdnError(f"NBA CDN returned non-JSON content for {url}") from exc
+            content_type = http_response.headers.get("content-type")
+            preview = _response_body_preview(raw_body)
+            raise NbaCdnError(
+                f"NBA CDN returned non-JSON content for {url}"
+                f"{_response_context(content_type, preview)}",
+                url=url,
+                content_type=content_type,
+                response_body_preview=preview,
+            ) from exc
 
         if not isinstance(payload, dict):
             raise NbaCdnError(f"NBA CDN returned unexpected JSON root for {url}")
@@ -271,11 +368,86 @@ class NbaCdnClient:
             raw_body=raw_body,
         )
 
+    def _response_error(self, response: httpx.Response, url: str) -> NbaCdnError:
+        status_code = response.status_code
+        content_type = response.headers.get("content-type")
+        preview = _response_body_preview(response.content)
+        retry_after_seconds = _parse_retry_after(response.headers.get("retry-after"))
+        circuit_open = status_code in {403, 429}
+        if circuit_open:
+            cooldown_seconds = max(
+                self.access_denial_cooldown_seconds,
+                retry_after_seconds or 0.0,
+            )
+            retry_after_seconds = self._request_gate.open_circuit(
+                cooldown_seconds=cooldown_seconds,
+                reason=f"HTTP {status_code} from {url}",
+            )
+        reason = _response_reason(status_code, preview)
+        message = (
+            f"NBA CDN returned HTTP {status_code} for {url}; reason={reason}"
+            f"{_response_context(content_type, preview)}"
+        )
+        if retry_after_seconds is not None:
+            message += f"; retry_after_seconds={retry_after_seconds:.1f}"
+        return NbaCdnError(
+            message,
+            status_code=status_code,
+            url=url,
+            transient=not circuit_open and (status_code in {408, 425} or status_code >= 500),
+            retry_after_seconds=retry_after_seconds,
+            content_type=content_type,
+            response_body_preview=preview,
+            circuit_open=circuit_open,
+        )
+
 
 def validate_game_id(game_id: str) -> str:
     if not GAME_ID_RE.match(game_id):
         raise ValueError(f"Expected a 10-digit NBA game_id, got {game_id!r}")
     return game_id
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    try:
+        return max(0.0, float(stripped))
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(stripped)
+    except (TypeError, ValueError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+
+
+def _response_body_preview(body: bytes, *, limit: int = 200) -> str:
+    text = body.decode("utf-8", errors="replace")
+    return " ".join(text.split())[:limit]
+
+
+def _response_reason(status_code: int, preview: str) -> str:
+    normalized = preview.casefold()
+    if status_code == 403 and (
+        "access denied" in normalized or "permission to access" in normalized
+    ):
+        return "access_denied"
+    if status_code == 429:
+        return "rate_limited"
+    if status_code >= 500:
+        return "upstream_error"
+    return "http_error"
+
+
+def _response_context(content_type: str | None, preview: str) -> str:
+    context = f"; content_type={content_type}" if content_type else ""
+    if preview:
+        context += f"; body_preview={preview!r}"
+    return context
 
 
 def _is_legacy_cache_envelope(document: Any) -> bool:

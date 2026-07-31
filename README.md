@@ -136,6 +136,36 @@ The command makes two bulk requests, preserves both response bodies under
 `data/raw/`, writes `data/catalog/players.parquet`, and publishes leakage-safe
 season rows under `data/curated/player_seasons/2025-26/regular/`.
 
+Run the regular-season historical pipeline from 2019-20 through 2024-25 with a
+checkpointed parent manifest:
+
+```bash
+uv run nba-backfill-history \
+  --run-id history-2019-2024 \
+  --max-workers 2 \
+  --min-request-interval 0.5
+```
+
+Rerunning the same command skips completed stages and resumes from validated
+game-level artifacts. See the
+[historical backfill guide](docs/guides/backfill-history.md) for stage ranges,
+failure policy, and Prefect behavior.
+
+Preserve cloud-backed Stats V3 responses for historical regular-season games
+whose liveData CDN artifacts are missing:
+
+```bash
+uv run nba-fetch-stats-history \
+  --season 2019-20 \
+  --cdn-missing-only \
+  --run-id stats-gaps-2019-20
+```
+
+This fallback flow tracks play-by-play and box scores independently under
+`data/raw/stats/`. See the
+[historical Stats guide](docs/guides/fetch-stats-history.md) for full-history,
+endpoint-specific, and rotation commands.
+
 Build the canonical regular-season modeling stints and train the mean, team,
 and one-number RAPM baselines:
 
@@ -148,6 +178,29 @@ folds, evaluates once on the final 15% of games, and then refits the rankings
 on the complete regular season. Modeling tables are written under
 `data/analytical/`; reproducible run artifacts are written under
 `artifacts/models/rapm/`.
+
+After historical RAPM runs exist, build the leakage-safe player-season feature
+boundary shared by future box-score, aging, and neural models:
+
+```bash
+uv run nba-build-player-season-panel \
+  2019-20 2020-21 2021-22 2022-23 2023-24 2024-25 2025-26
+```
+
+The same-season table retains research outcomes. The transition table exposes
+only prior-season performance for each target-season player, with explicit
+cold starts for players without a prior row.
+
+Train the first forward-only aging prior, using the latest transition season as
+an untouched holdout:
+
+```bash
+uv run nba-train-aging-model
+```
+
+The immutable run compares zero, training-mean, prior-RAPM persistence, and
+aging-ridge predictions. Its label-free `player_priors.parquet` is the future
+handoff to prior-centered RAPM and Transformer player tokens.
 
 Run stability, context, influence, and possession-allocation diagnostics
 against the latest validated RAPM run:

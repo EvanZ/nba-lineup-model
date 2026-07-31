@@ -12,7 +12,9 @@ from nba_lineup_model.players.normalize import (
 )
 from nba_lineup_model.players.source import PlayerStatsCache, PlayerStatsClient
 from nba_lineup_model.players.storage import (
+    merge_player_catalogs,
     player_season_partition_dir,
+    read_player_catalog,
     write_player_catalog,
     write_player_season_bios,
 )
@@ -65,8 +67,15 @@ def collect_player_bios(
         if owns_client:
             active_client.close()
 
-    catalog = player_catalog_from_response(player_index)
-    bios = player_season_bios_from_response(player_bios, catalog)
+    source_catalog = player_catalog_from_response(player_index)
+    bios = player_season_bios_from_response(player_bios, source_catalog)
+    catalog_path = Path(player_catalog_path)
+    catalog = source_catalog
+    if catalog_path.exists():
+        catalog = merge_player_catalogs(
+            read_player_catalog(catalog_path),
+            source_catalog,
+        )
     catalog_path = write_player_catalog(catalog, player_catalog_path)
     write_player_season_bios(bios, curated_dir)
     index_raw_path = active_client.cache.path_for(

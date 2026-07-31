@@ -41,16 +41,37 @@ connecting future flow runs, and restoring temporary-server mode.
 ## Full season
 
 ```bash
-uv run nba-fetch-season 2025-26 --max-workers 4
+uv run nba-fetch-season 2025-26
 ```
 
 The flow creates one task per game. A task owns both source documents for that
 game, while the thread-pool limit controls how many games are fetched
 concurrently.
 
-Four workers is the conservative default. Increasing concurrency makes the NBA
-source more likely to throttle the run and should be justified by observed
-throughput rather than local CPU capacity.
+The conservative defaults use two workers and space requests by at least one
+second plus up to 0.25 seconds of random jitter:
+
+```bash
+uv run nba-fetch-season 2025-26 \
+  --max-workers 2 \
+  --min-request-interval 1.0 \
+  --request-interval-jitter 0.25
+```
+
+The interval is process-wide, so concurrency can overlap response latency but
+cannot increase the source request rate. Cached documents do not consume
+request slots.
+
+For a cold-cache historical run, retain these defaults unless a smoke test
+shows the CDN needs a slower rate:
+
+```bash
+uv run nba-fetch-season 2019-20 \
+  --season-type regular \
+  --max-workers 2 \
+  --min-request-interval 1.0 \
+  --request-interval-jitter 0.25
+```
 
 ## Selection
 
@@ -89,12 +110,46 @@ will be validated and skipped.
 ## Retries and failures
 
 Each game task allows three retries after the initial attempt, with delays of
-2, 10, and 30 seconds plus jitter. Retries are limited to network failures,
-HTTP 408, 425, 429, and 5xx responses. Permanent HTTP failures and invalid
+5, 30, and 120 seconds plus jitter. Retries are limited to network failures,
+HTTP 408, 425, and 5xx responses. Other permanent HTTP failures and invalid
 source structures fail immediately.
+
+The NBA CDN uses a web application firewall and can return HTML `403 Access
+Denied` responses. The direct client sends the required
+`Referer: https://www.nba.com/` header, checks HTTP status before parsing JSON,
+and includes content type plus a short body preview in the failure record. This
+behavior follows the failure reported in
+[`nba_api` issue #678](https://github.com/swar/nba_api/issues/678) and the
+header fix in
+[`nba_api` pull request #671](https://github.com/swar/nba_api/pull/671).
+
+An HTTP 403 or 429 opens a process-wide request circuit immediately. The default
+cooldown is 15 minutes, and a longer source `Retry-After` value takes
+precedence. Queued tasks then fail fast without making more CDN requests. This
+is deliberate: repeated short retries against a WAF denial can extend the
+block.
 
 The command exits nonzero when any selected game still fails after retries.
 Successful and partial raw files remain available for the next run.
+
+## Recover from an access denial
+
+1. Stop the fetch and make no further CDN probes during the cooldown.
+2. Wait at least 15 minutes; use the reported `retry_after_seconds` when longer.
+3. Run one missing game with one worker and a two-second interval.
+4. Resume the original command only after that smoke test succeeds.
+
+```bash
+uv run nba-fetch-season 2019-20 \
+  --season-type regular \
+  --game-id MISSING_GAME_ID \
+  --max-workers 1 \
+  --min-request-interval 2.0 \
+  --request-interval-jitter 0.5
+```
+
+The cache makes the resumed run incremental. Do not use `--refresh`: it would
+redownload valid raw files and add avoidable requests.
 
 ## Durable manifest
 
