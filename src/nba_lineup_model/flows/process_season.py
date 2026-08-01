@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import pandas as pd
 from prefect import flow, runtime, task
 from prefect.client.schemas.objects import State, TaskRun
 from prefect.futures import PrefectFuture, as_completed
@@ -342,6 +343,19 @@ def build_parser() -> argparse.ArgumentParser:
         dest="game_ids",
         help="Limit to one game ID; repeat for multiple games",
     )
+    parser.add_argument(
+        "--audit-games",
+        help=(
+            "Audit games.parquet whose pass/warning rows define the process selection; "
+            "cannot be combined with --game-id"
+        ),
+    )
+    parser.add_argument(
+        "--audit-offset",
+        type=int,
+        default=0,
+        help="Skip this many audit-selected games before applying --limit",
+    )
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument(
         "--limit",
@@ -386,6 +400,15 @@ def main() -> None:
         raise SystemExit("--max-workers must be positive")
     if args.checkpoint_size < 1:
         raise SystemExit("--checkpoint-size must be positive")
+    if args.audit_games and args.game_ids:
+        raise SystemExit("--audit-games cannot be combined with --game-id")
+    if args.audit_offset < 0:
+        raise SystemExit("--audit-offset must be non-negative")
+    game_ids = args.game_ids
+    if args.audit_games:
+        game_ids = _eligible_audit_game_ids(args.audit_games, args.season)[args.audit_offset :]
+    elif args.audit_offset:
+        raise SystemExit("--audit-offset requires --audit-games")
     configured_flow = process_season_flow.with_options(
         task_runner=ThreadPoolTaskRunner(max_workers=args.max_workers)
     )
@@ -398,7 +421,7 @@ def main() -> None:
         quality_games_path=args.quality_games,
         quality_summary_path=args.quality_summary,
         season_types=args.season_types,
-        game_ids=args.game_ids,
+        game_ids=game_ids,
         limit=args.limit,
         sample_per_stratum=args.sample_per_stratum,
         random_seed=args.seed,
@@ -445,6 +468,27 @@ def _write_checkpoint(
 def _new_run_id(season: str, started_at: datetime) -> str:
     timestamp = started_at.strftime("%Y%m%dT%H%M%SZ")
     return f"process-{season}-{timestamp}-{uuid4().hex[:8]}"
+
+
+def _eligible_audit_game_ids(audit_games_path: str, season: str) -> list[str]:
+    """Select only audit-approved regular-season game IDs for one season."""
+
+    frame = pd.read_parquet(audit_games_path)
+    required = {"game_id", "season", "season_type", "status"}
+    missing = required - set(frame)
+    if missing:
+        raise ValueError(f"Audit report missing columns: {sorted(missing)}")
+    selected = frame.loc[
+        frame["season"].eq(season)
+        & frame["season_type"].eq("regular")
+        & frame["status"].isin(["pass", "warning"]),
+        "game_id",
+    ].astype(str)
+    if selected.duplicated().any():
+        raise ValueError("Audit report has duplicate eligible game IDs")
+    if selected.empty:
+        raise ValueError(f"Audit report has no eligible regular-season games for {season}")
+    return selected.tolist()
 
 
 def _runtime_id(value: object) -> str | None:

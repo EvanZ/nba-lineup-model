@@ -249,6 +249,8 @@ class GameBuildRecord(BaseModel):
     terminal_stage: BuildStage
     use_cache: bool
     code_version: str | None = None
+    play_by_play_source: Literal["live_data", "stats_v3"] | None = None
+    boxscore_source: Literal["live_data", "stats_v3"] | None = None
     play_by_play_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     boxscore_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     event_count: int | None = Field(default=None, ge=0)
@@ -354,6 +356,8 @@ class GameQualityRecord(AuditGameResult):
     prefect_task_run_id: str | None = None
     attempt_number: int = Field(ge=1)
     code_version: str = Field(min_length=1)
+    play_by_play_source: Literal["live_data", "stats_v3"] | None = None
+    boxscore_source: Literal["live_data", "stats_v3"] | None = None
     play_by_play_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     boxscore_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     recorded_at: datetime

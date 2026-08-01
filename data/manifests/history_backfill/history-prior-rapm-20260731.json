@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "run_id": "history-prior-rapm-20260731",
+  "created_at": "2026-07-31T19:29:53.488328Z",
+  "seasons": [
+    "2019-20",
+    "2020-21",
+    "2021-22",
+    "2022-23",
+    "2023-24",
+    "2024-25"
+  ],
+  "from_stage": "process",
+  "through_stage": "rapm",
+  "season_type": "regular",
+  "records": [
+    {
+      "season": "2019-20",
+      "stage": "process",
+      "status": "failed",
+      "started_at": "2026-07-31T19:30:12.819158Z",
+      "finished_at": "2026-07-31T19:34:56.363950Z",
+      "duration_seconds": 283.544792,
+      "details": {},
+      "error_type": "RuntimeError",
+      "error_message": "2019-20 processing failed for 267 games"
+    }
+  ]
+}

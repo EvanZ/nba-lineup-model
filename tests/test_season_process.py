@@ -121,10 +121,14 @@ def test_process_catalog_game_builds_quality_and_resumes(tmp_path: Path):
 
     assert built.record.status == "succeeded"
     assert built.record.output_table_count == 6
+    assert built.record.play_by_play_source == "live_data"
+    assert built.record.boxscore_source == "live_data"
     assert built.quality is not None
     assert built.quality.status in {"pass", "warning"}
     quality = quality_record_for_outcome(built)
     assert quality is not None
+    assert quality.play_by_play_source == "live_data"
+    assert quality.boxscore_source == "live_data"
 
     resumed = process_catalog_game(
         game,
@@ -182,7 +186,7 @@ def test_process_catalog_game_records_missing_raw_preflight(tmp_path: Path):
 
     assert outcome.record.status == "failed"
     assert outcome.record.terminal_stage == "preflight"
-    assert outcome.record.error_type == "NbaCdnError"
+    assert outcome.record.error_type == "GameSourceError"
     assert outcome.quality is not None
     assert outcome.quality.status == "error"
     assert quality_record_for_outcome(outcome) is not None

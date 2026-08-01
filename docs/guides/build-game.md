@@ -16,7 +16,8 @@ Useful options:
 
 ## Processing stages
 
-1. Fetch or read cached play-by-play and boxscore documents.
+1. Read cached documents, preferring liveData per endpoint and falling back to
+   Stats V3. Fetch liveData if neither source exists.
 2. Normalize the ordered event stream.
 3. Reconstruct event lineups and lineup stints.
 4. Reconstruct possessions.

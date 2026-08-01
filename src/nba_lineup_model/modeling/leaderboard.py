@@ -70,6 +70,7 @@ from nba_lineup_model.season.layout import CuratedDatasetLayout, CuratedPartitio
 
 MODEL_ORDER = (
     "ridge_rapm",
+    "forward_lagged_rapm",
     "bayesian_rapm",
     "additive_neural",
     "deep_sets",
@@ -78,6 +79,7 @@ MODEL_ORDER = (
 )
 MODEL_NAMES = {
     "ridge_rapm": "One-year ridge RAPM",
+    "forward_lagged_rapm": "Forward lagged-prior RAPM",
     "bayesian_rapm": "One-year Bayesian RAPM",
     "additive_neural": "One-year additive neural",
     "deep_sets": "One-year Deep Sets",
@@ -94,6 +96,8 @@ COHORT_NAMES = {
 class EvaluationSources:
     ridge_dir: Path
     ridge_manifest: BaselineRunManifest
+    prior_dir: Path
+    prior_metadata: dict[str, Any]
     bayesian_dir: Path
     bayesian_manifest: BayesianRapmRunManifest
     neural_dir: Path
@@ -151,6 +155,7 @@ def build_model_evaluation(
     season: str,
     *,
     ridge_run_id: str | None = None,
+    prior_rapm_run_id: str | None = None,
     bayesian_run_id: str | None = None,
     neural_run_id: str | None = None,
     deep_sets_run_id: str | None = None,
@@ -169,6 +174,7 @@ def build_model_evaluation(
         season,
         model_root,
         ridge_run_id,
+        prior_rapm_run_id,
         bayesian_run_id,
         neural_run_id,
         deep_sets_run_id,
@@ -318,6 +324,13 @@ def evaluate_fitted_models(
         "prediction_rapm",
         float(regular_train["target_offense_margin"].mean()),
     )
+    prior_regular = _mapped_stint_predictions(
+        regular_holdout,
+        regular_stint_lookup,
+        pd.read_parquet(sources.prior_dir / "holdout_predictions.parquet"),
+        "prediction_prior_rapm",
+        float(regular_train["target_offense_margin"].mean()),
+    )
     bayesian_regular = _mapped_stint_predictions(
         regular_holdout,
         regular_stint_lookup,
@@ -355,6 +368,11 @@ def evaluate_fitted_models(
         sources.ridge_dir,
         full_regular_mean,
     )
+    prior_playoffs, prior_unknown = _prior_rapm_playoff_predictions(
+        playoff_possessions,
+        sources.prior_dir,
+        full_regular_mean,
+    )
     bayesian_playoffs, bayesian_unknown = _bayesian_playoff_predictions(
         playoff_possessions,
         sources.bayesian_dir,
@@ -381,6 +399,7 @@ def evaluate_fitted_models(
 
     regular_predictions = {
         "ridge_rapm": ridge_regular,
+        "forward_lagged_rapm": prior_regular,
         "bayesian_rapm": bayesian_regular,
         "additive_neural": neural_regular,
         "deep_sets": deep_sets_regular,
@@ -389,6 +408,7 @@ def evaluate_fitted_models(
     }
     playoff_predictions = {
         "ridge_rapm": ridge_playoffs,
+        "forward_lagged_rapm": prior_playoffs,
         "bayesian_rapm": bayesian_playoffs,
         "additive_neural": neural_playoffs,
         "deep_sets": deep_sets_playoffs,
@@ -411,6 +431,22 @@ def evaluate_fitted_models(
     )
     comparisons = pd.concat(
         [
+            paired_game_cluster_bootstrap(
+                regular_holdout,
+                ridge_regular,
+                prior_regular,
+                cohort="regular_holdout",
+                reference_model="ridge_rapm",
+                candidate_model="forward_lagged_rapm",
+            ),
+            paired_game_cluster_bootstrap(
+                playoff_possessions,
+                ridge_playoffs,
+                prior_playoffs,
+                cohort="playoffs",
+                reference_model="ridge_rapm",
+                candidate_model="forward_lagged_rapm",
+            ),
             paired_game_cluster_bootstrap(
                 regular_holdout,
                 neural_regular,
@@ -488,6 +524,16 @@ def evaluate_fitted_models(
             "regular_holdout_state": "stored final-test stint predictions",
             "playoff_state": "stored all-regular-season coefficients",
         },
+        "forward_lagged_rapm": {
+            "run_id": sources.prior_metadata["run_id"],
+            "historical_seasons": sources.prior_metadata["historical_seasons"],
+            "historical_selected_lambdas": sources.prior_metadata[
+                "historical_selected_lambdas"
+            ],
+            "target_selected_lambda": sources.prior_metadata["target_selected_lambda"],
+            "regular_holdout_state": "stored final-training stint predictions",
+            "playoff_state": "stored all-regular-season coefficient refit",
+        },
         "bayesian": {
             "run_id": sources.bayesian_manifest.run_id,
             "source_ridge_run_id": sources.bayesian_manifest.source_model_run_id,
@@ -561,6 +607,7 @@ def evaluate_fitted_models(
         ),
         "playoff_unknown_player_exposures": {
             "ridge_rapm": ridge_unknown,
+            "forward_lagged_rapm": prior_unknown,
             "bayesian_rapm": bayesian_unknown,
             "additive_neural": neural_unknown,
             "deep_sets": deep_sets_unknown,
@@ -1030,6 +1077,12 @@ residual, using a RAPM fit that excludes every validation or test game it
 predicts. Regular holdout and playoff outcomes remain outside every selection
 process.
 
+Forward lagged-prior RAPM selects lambda independently within each historical
+season, carries the completed prior season's coefficient estimate forward, and
+uses zero for players without a prior-season estimate. Its regular-holdout
+state is fit only on the first 1,044 games; its playoff state is refit on all
+1,230 regular-season games after selection.
+
 ## Paired model comparisons
 
 To preserve correlation among possessions from the same game, uncertainty is
@@ -1074,6 +1127,7 @@ uv run pytest -q tests/test_model_evaluation.py
 ```bash
 uv run nba-evaluate-models {manifest.season} \
   --ridge-run-id {manifest.ridge_run_id} \
+  --prior-rapm-run-id {manifest.prior_rapm_run_id} \
   --bayesian-run-id {manifest.bayesian_run_id} \
   --neural-run-id {manifest.neural_run_id} \
   --deep-sets-run-id {manifest.deep_sets_run_id} \
@@ -1085,6 +1139,7 @@ uv run nba-evaluate-models {manifest.season} \
 | --- | --- |
 | Evaluation run | `{manifest.run_id}` |
 | Ridge run | `{manifest.ridge_run_id}` |
+| Forward prior RAPM run | `{manifest.prior_rapm_run_id}` |
 | Bayesian run | `{manifest.bayesian_run_id}` |
 | Neural run | `{manifest.neural_run_id}` |
 | Neural selection | {neural_selection} |
@@ -1142,10 +1197,45 @@ def validate_model_evaluation_run(
     return manifest
 
 
+def validate_forward_lagged_rapm_run(run_dir: Path | str) -> dict[str, Any]:
+    """Validate the forward-prior RAPM artifact contract."""
+
+    root = Path(run_dir)
+    manifest = json.loads((root / "manifest.json").read_text())
+    metadata = json.loads((root / "metadata.json").read_text())
+    expected = {str(item["filename"]): item for item in manifest["artifacts"]}
+    actual = {
+        path.name for path in root.iterdir() if path.is_file() and path.name != "manifest.json"
+    }
+    if set(expected) != actual:
+        raise ValueError("Forward prior RAPM files do not match its manifest")
+    for filename, record in expected.items():
+        path = root / filename
+        if path.stat().st_size != int(record["byte_count"]):
+            raise ValueError(f"Forward prior RAPM artifact size changed: {filename}")
+        if f"sha256:{_sha256_file(path)}" != str(record["sha256"]):
+            raise ValueError(f"Forward prior RAPM artifact hash changed: {filename}")
+    required = {
+        "run_id",
+        "target_season",
+        "historical_seasons",
+        "historical_selected_lambdas",
+        "target_selected_lambda",
+        "target_final_train_games",
+        "target_final_test_games",
+    }
+    if required - set(metadata):
+        raise ValueError("Forward prior RAPM metadata is incomplete")
+    if metadata["run_id"] != manifest["run_id"]:
+        raise ValueError("Forward prior RAPM run identifiers do not match")
+    return metadata
+
+
 def _resolve_sources(
     season: str,
     model_root: Path,
     ridge_run_id: str | None,
+    prior_rapm_run_id: str | None,
     bayesian_run_id: str | None,
     neural_run_id: str | None,
     deep_sets_run_id: str | None,
@@ -1153,6 +1243,7 @@ def _resolve_sources(
     rapm_transformer_run_id: str | None,
 ) -> EvaluationSources:
     ridge_dir = _resolve_run(model_root / "rapm" / season, ridge_run_id)
+    prior_dir = _resolve_run(model_root / "prior_rapm" / season, prior_rapm_run_id)
     bayesian_dir = _resolve_run(
         model_root / "bayesian_rapm" / season,
         bayesian_run_id,
@@ -1173,6 +1264,8 @@ def _resolve_sources(
     return EvaluationSources(
         ridge_dir=ridge_dir,
         ridge_manifest=validate_baseline_run(ridge_dir),
+        prior_dir=prior_dir,
+        prior_metadata=validate_forward_lagged_rapm_run(prior_dir),
         bayesian_dir=bayesian_dir,
         bayesian_manifest=validate_bayesian_rapm_run(bayesian_dir),
         neural_dir=neural_dir,
@@ -1213,6 +1306,8 @@ def _validate_source_relationships(
     )
     if any(manifest.season != season for manifest in manifests):
         raise ValueError("Evaluation source seasons do not match")
+    if sources.prior_metadata["target_season"] != season:
+        raise ValueError("Forward prior RAPM source season does not match")
     if sources.bayesian_manifest.source_model_run_id != sources.ridge_manifest.run_id:
         raise ValueError("Bayesian evaluation source does not derive from ridge source")
     if (
@@ -1250,6 +1345,27 @@ def _validate_source_relationships(
     comparison = pd.read_parquet(sources.bayesian_dir / "comparison_metrics.parquet").iloc[0]
     if float(comparison["max_absolute_test_prediction_difference"]) > 1e-4:
         raise ValueError("Bayesian posterior mean no longer matches ridge test predictions")
+    ridge_splits = pd.read_parquet(sources.ridge_dir / "game_splits.parquet")
+    prior_splits = pd.read_parquet(sources.prior_dir / "target_game_splits.parquet")
+    ridge_assignments = set(
+        map(
+            tuple,
+            ridge_splits.loc[ridge_splits["split"].eq("final"), ["game_id", "role"]]
+            .astype(str)
+            .to_numpy(),
+        )
+    )
+    prior_assignments = set(
+        map(
+            tuple,
+            prior_splits.loc[:, ["game_id", "split"]]
+            .rename(columns={"split": "role"})
+            .astype(str)
+            .to_numpy(),
+        )
+    )
+    if ridge_assignments != prior_assignments:
+        raise ValueError("Forward prior RAPM final assignments do not match ridge RAPM")
 
 
 def _read_curated_partition(
@@ -1363,6 +1479,30 @@ def _ridge_playoff_predictions(
         possessions,
         coefficients,
         intercept,
+        training_mean,
+    )
+
+
+def _prior_rapm_playoff_predictions(
+    possessions: pd.DataFrame,
+    run_dir: Path,
+    training_mean: float,
+) -> tuple[np.ndarray, int]:
+    coefficients_frame = pd.read_parquet(
+        run_dir / "full_season_player_coefficients.parquet"
+    )
+    coefficients = dict(
+        zip(
+            coefficients_frame["player_id"].astype(int),
+            coefficients_frame["rapm"].astype(float),
+            strict=True,
+        )
+    )
+    state = json.loads((run_dir / "full_season_state.json").read_text())
+    return _translated_lineup_predictions(
+        possessions,
+        coefficients,
+        float(state["intercept_home_net_rating"]),
         training_mean,
     )
 
@@ -1622,13 +1762,17 @@ def _write_evaluation(
         regular = evaluation.cohorts.set_index("cohort").loc["regular_holdout"]
         playoffs = evaluation.cohorts.set_index("cohort").loc["playoffs"]
         manifest = ModelEvaluationManifest(
-            schema_version=3,
+            schema_version=4,
             run_id=run_id,
             created_at=now,
             season=season,
             evaluation_code_version=evaluation_code_fingerprint(),
             ridge_run_id=sources.ridge_manifest.run_id,
             ridge_manifest_sha256=_sha256_file(sources.ridge_dir / "manifest.json"),
+            prior_rapm_run_id=str(sources.prior_metadata["run_id"]),
+            prior_rapm_manifest_sha256=_sha256_file(
+                sources.prior_dir / "manifest.json"
+            ),
             bayesian_run_id=sources.bayesian_manifest.run_id,
             bayesian_manifest_sha256=_sha256_file(
                 sources.bayesian_dir / "manifest.json"
@@ -1810,12 +1954,13 @@ def _sha256_file_for_display(manifest: ModelEvaluationManifest) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate frozen ridge, Bayesian, neural, CatBoost, and Transformer "
-            "models on the regular holdout and playoffs."
+            "Evaluate frozen ridge, forward-prior RAPM, Bayesian, neural, "
+            "CatBoost, and Transformer models on the regular holdout and playoffs."
         )
     )
     parser.add_argument("season", help="NBA season in YYYY-YY format")
     parser.add_argument("--ridge-run-id")
+    parser.add_argument("--prior-rapm-run-id")
     parser.add_argument("--bayesian-run-id")
     parser.add_argument("--neural-run-id")
     parser.add_argument("--deep-sets-run-id")
@@ -1839,6 +1984,7 @@ def main() -> None:
     manifest, run_dir = build_model_evaluation(
         args.season,
         ridge_run_id=args.ridge_run_id,
+        prior_rapm_run_id=args.prior_rapm_run_id,
         bayesian_run_id=args.bayesian_run_id,
         neural_run_id=args.neural_run_id,
         deep_sets_run_id=args.deep_sets_run_id,

@@ -83,6 +83,69 @@ class RidgeLineupModel:
         return self.model
 
 
+class PriorCenteredRidgeLineupModel:
+    """Sparse ridge whose coefficient penalty is centered on a prior vector.
+
+    Fitting ridge to ``y - X @ prior`` gives the coefficient adjustment around
+    the prior. Adding the prior back to that adjustment is equivalent to
+    penalizing ``||coefficient - prior||^2`` in the original objective.
+    """
+
+    def __init__(self, regularization: float = 1.0) -> None:
+        self.regularization = regularization
+        self.residual_model = RidgeLineupModel(regularization)
+        self.prior: np.ndarray | None = None
+
+    def fit(
+        self,
+        features: sparse.spmatrix | np.ndarray,
+        target: np.ndarray,
+        sample_weight: np.ndarray,
+        coefficient_prior: np.ndarray,
+    ) -> PriorCenteredRidgeLineupModel:
+        prior = np.asarray(coefficient_prior, dtype=float)
+        if prior.ndim != 1 or features.shape[1] != len(prior):
+            raise ValueError("Coefficient prior must match the feature columns")
+        if not np.isfinite(prior).all():
+            raise ValueError("Coefficient prior must be finite")
+        values = np.asarray(target, dtype=float)
+        if features.shape[0] != len(values):
+            raise ValueError("Feature and target rows must match")
+        offset = np.asarray(features @ prior, dtype=float).reshape(-1)
+        self.residual_model.fit(features, values - offset, sample_weight)
+        self.prior = prior
+        return self
+
+    def predict(self, features: sparse.spmatrix | np.ndarray) -> np.ndarray:
+        prior = self._prior()
+        offset = np.asarray(features @ prior, dtype=float).reshape(-1)
+        return self.residual_model.predict(features) + offset
+
+    @property
+    def intercept_(self) -> float:
+        return self.residual_model.intercept_
+
+    @property
+    def coef_(self) -> np.ndarray:
+        return self._prior() + self.residual_model.coef_
+
+    @property
+    def adjustment_(self) -> np.ndarray:
+        return self.residual_model.coef_
+
+    @property
+    def sklearn_alpha(self) -> float:
+        alpha = self.residual_model.sklearn_alpha
+        if alpha is None:
+            raise ValueError("Model has not been fitted")
+        return alpha
+
+    def _prior(self) -> np.ndarray:
+        if self.prior is None:
+            raise ValueError("Model has not been fitted")
+        return self.prior
+
+
 def entity_vocabulary(
     frame: pd.DataFrame,
     positive_column: str,

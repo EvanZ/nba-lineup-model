@@ -328,6 +328,122 @@ def validate_rapm_stint_partition(
     return manifest
 
 
+def build_rapm_stints_from_processed_games(
+    game_ids: Sequence[str],
+    *,
+    processed_dir: Path | str = Path("data/processed"),
+) -> pd.DataFrame:
+    """Build RAPM stints directly from selected persisted per-game tables."""
+
+    root = Path(processed_dir)
+    selected = tuple(str(game_id) for game_id in game_ids)
+    if not selected or len(selected) != len(set(selected)):
+        raise ValueError("Selected game IDs must be non-empty and unique")
+    lineup_paths = [root / "lineup_stints" / f"{game_id}.parquet" for game_id in selected]
+    segment_paths = [
+        root / "possession_segments" / f"{game_id}.parquet" for game_id in selected
+    ]
+    missing = [str(path) for path in (*lineup_paths, *segment_paths) if not path.is_file()]
+    if missing:
+        raise ValueError(f"Selected processed tables are missing: {missing[:3]}")
+    return rapm_stints_frame(
+        pd.concat([pd.read_parquet(path) for path in lineup_paths], ignore_index=True),
+        pd.concat([pd.read_parquet(path) for path in segment_paths], ignore_index=True),
+    )
+
+
+def build_rapm_stints_from_legacy_processed_games(
+    game_ids: Sequence[str],
+    *,
+    catalog_path: Path | str = Path("data/catalog/games.parquet"),
+    processed_dir: Path | str = Path("data/processed"),
+) -> tuple[pd.DataFrame, tuple[str, ...]]:
+    """Adapt cached pre-envelope per-game tables into valid RAPM source rows."""
+
+    catalog = pd.read_parquet(catalog_path).set_index("game_id")
+    root = Path(processed_dir)
+    outputs: list[pd.DataFrame] = []
+    excluded: list[str] = []
+    for game_id in game_ids:
+        key = str(game_id)
+        try:
+            game = catalog.loc[key]
+            stints = pd.read_parquet(root / "lineup_stints" / f"{key}.parquet")
+            segments = pd.read_parquet(root / "possession_segments" / f"{key}.parquet")
+            common = {
+                "season": str(game.season),
+                "season_type": str(game.season_type),
+                "game_date": game.game_date,
+                "game_time_utc": game.game_time_utc,
+                "catalog_home_team_id": int(game.home_team_id),
+                "catalog_away_team_id": int(game.away_team_id),
+                "catalog_home_team_tricode": str(game.home_team_tricode),
+                "catalog_away_team_tricode": str(game.away_team_tricode),
+            }
+            for column, value in common.items():
+                stints[column] = value
+                segments[column] = value
+            stints["quality_status"] = "warning"
+            stints["quality_issue_codes_json"] = "[]"
+            stints["source_build_run_id"] = "legacy_processed_playoff"
+            stints["processing_code_version"] = "legacy_processed_playoff"
+            stints["play_by_play_sha256"] = ""
+            stints["boxscore_sha256"] = ""
+            outputs.append(rapm_stints_frame(stints, segments))
+        except (KeyError, OSError, ValueError):
+            excluded.append(key)
+    if not outputs:
+        raise ValueError("No valid legacy processed RAPM stints were produced")
+    return pd.concat(outputs, ignore_index=True), tuple(sorted(excluded))
+
+
+def build_rapm_stints_from_curated_games(
+    season: str,
+    *,
+    curated_dir: Path | str = Path("data/curated"),
+) -> tuple[pd.DataFrame, tuple[str, ...]]:
+    """Build historical RAPM stints while excluding invalid game-level inputs.
+
+    Historical curated partitions can contain a small number of games produced
+    before a lineup or possession reconstruction repair.  RAPM requires exact
+    point conservation, so an invalid game is excluded rather than allowing it
+    to contaminate a season-wide design matrix.  The caller persists the
+    returned game IDs as part of its run provenance.
+    """
+
+    layout = CuratedDatasetLayout(Path(curated_dir))
+    partition_kwargs = {"season": season, "season_type": "regular"}
+    lineup_dir = layout.partition_dir(CuratedPartition(table="lineup_stints", **partition_kwargs))
+    segment_dir = layout.partition_dir(
+        CuratedPartition(table="possession_segments", **partition_kwargs)
+    )
+    lineup_stints = pd.read_parquet(lineup_dir)
+    segments = pd.read_parquet(segment_dir)
+    outputs: list[pd.DataFrame] = []
+    excluded: list[str] = []
+    segment_games = {
+        str(game_id): frame for game_id, frame in segments.groupby("game_id", sort=False)
+    }
+    for game_id, game_stints in lineup_stints.groupby("game_id", sort=False):
+        key = str(game_id)
+        game_segments = segment_games.get(key)
+        if game_segments is None:
+            excluded.append(key)
+            continue
+        try:
+            outputs.append(rapm_stints_frame(game_stints, game_segments))
+        except ValueError:
+            excluded.append(key)
+    if not outputs:
+        raise ValueError(f"No valid RAPM stints were produced for {season}")
+    return (
+        pd.concat(outputs, ignore_index=True).sort_values(
+            ["game_time_utc", "game_id", "stint_index"], kind="stable"
+        ).reset_index(drop=True),
+        tuple(sorted(excluded)),
+    )
+
+
 def _assign_segments_to_stints(
     stints: pd.DataFrame,
     segments: pd.DataFrame,
@@ -378,8 +494,9 @@ def _validate_source_frames(
 ) -> None:
     if stints.empty or segments.empty:
         raise ValueError("RAPM source frames cannot be empty")
-    if set(stints["season_type"].astype(str)) != {"regular"}:
-        raise ValueError("Initial RAPM data is restricted to the regular season")
+    season_types = set(stints["season_type"].astype(str))
+    if season_types not in ({"regular"}, {"playoffs"}):
+        raise ValueError("RAPM source frames must contain one supported season type")
     if set(stints["game_id"].astype(str)) != set(segments["game_id"].astype(str)):
         raise ValueError("Lineup stint and possession segment games do not match")
     keys = stints[["game_id", "stint_index"]]

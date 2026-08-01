@@ -14,7 +14,9 @@ uv run nba-fetch-season 2025-26 --max-workers 4
 ```
 
 Every selected game must have valid play-by-play and boxscore JSON plus its
-provenance sidecar under `data/raw/`.
+provenance sidecar under `data/raw/`. Each endpoint may come from liveData or
+Stats V3. When both are retained, Stats V3 is selected because it retains both
+sides of historical substitutions.
 
 ## Representative pilot
 
@@ -39,13 +41,14 @@ uv run nba-process-season 2025-26 --max-workers 4
 
 The flow creates one Prefect task per final catalog game. Each task:
 
-1. Validates both local raw documents and their exact-byte hashes.
-2. Reconstructs canonical events, lineups, lineup stints, possessions, and
+1. Selects and validates both local raw documents and their exact-byte hashes.
+2. Adapts any selected Stats V3 documents to the processing boundary.
+3. Reconstructs canonical events, lineups, lineup stints, possessions, and
    fixed-lineup possession segments.
-3. Applies score, duration, possession, lineup, overtime, and catalog
+4. Applies score, duration, possession, lineup, overtime, and catalog
    invariants.
-4. Writes six per-game Parquet tables only after the hard quality gate passes.
-5. Returns terminal build and quality records to the flow's single writer.
+5. Writes six per-game Parquet tables only after the hard quality gate passes.
+6. Returns terminal build and quality records to the flow's single writer.
 
 Warnings remain usable and visible in the quality report. Hard failures do not
 count as successful builds and do not stop unrelated game tasks.
@@ -101,6 +104,7 @@ season type.
 
 A game is skipped only when all of the following agree:
 
+- selected play-by-play and boxscore source names;
 - play-by-play and boxscore SHA-256 digests;
 - a fingerprint of processing-owned reconstruction and quality source;
 - a prior successful build-ledger record;
@@ -145,6 +149,22 @@ uv run nba-process-season 2025-26 \
 
 Use `--limit N` for a deterministic prefix or `--sample-per-stratum N` for a
 representative pilot. Those two options are mutually exclusive.
+
+## Audit-selected historical processing
+
+To materialize only the historical games approved by the reproducible raw-cache
+audit, point the processor at its combined `games.parquet` report:
+
+```bash
+uv run nba-process-season 2019-20 \
+  --season-type regular \
+  --audit-games data/audit/historical_regular/games.parquet \
+  --max-workers 4
+```
+
+The selector accepts only `pass` and `warning` rows for the requested regular
+season. It does not reinterpret failed or errored audit rows as eligible. Use
+`--audit-offset` with `--limit` to run durable bounded batches.
 
 ## Prefect UI
 

@@ -598,13 +598,18 @@ class ModelEvaluationManifest(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
 
-    schema_version: Literal[1, 2, 3] = 1
+    schema_version: Literal[1, 2, 3, 4] = 1
     run_id: str = Field(min_length=1)
     created_at: datetime
     season: str = Field(pattern=SEASON_PATTERN)
     evaluation_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
     ridge_run_id: str = Field(min_length=1)
     ridge_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    prior_rapm_run_id: str | None = None
+    prior_rapm_manifest_sha256: str | None = Field(
+        default=None,
+        pattern=SHA256_PATTERN,
+    )
     bayesian_run_id: str = Field(min_length=1)
     bayesian_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     neural_run_id: str = Field(min_length=1)
@@ -646,6 +651,7 @@ class ModelEvaluationManifest(BaseModel):
     models: tuple[
         Literal[
             "ridge_rapm",
+            "forward_lagged_rapm",
             "bayesian_rapm",
             "additive_neural",
             "deep_sets",
@@ -694,6 +700,16 @@ class ModelEvaluationManifest(BaseModel):
                 and self.catboost_best_iteration + 1 != self.catboost_selected_tree_count
             ):
                 raise ValueError("CatBoost best iteration and selected tree count do not match")
+        if "forward_lagged_rapm" in self.models:
+            if (
+                self.schema_version < 4
+                or self.prior_rapm_run_id is None
+                or self.prior_rapm_manifest_sha256 is None
+            ):
+                raise ValueError(
+                    "Forward prior RAPM evaluation manifests require schema version 4 "
+                    "and source provenance"
+                )
         if "rapm_transformer" in self.models:
             transformer_values = (
                 self.rapm_transformer_run_id,

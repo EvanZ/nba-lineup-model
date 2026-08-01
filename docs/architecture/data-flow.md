@@ -145,9 +145,11 @@ artifacts also remain per-game files. Validated analytical tables compact into
 season and season-type Parquet partitions; orchestration does not change those
 storage boundaries.
 
-Stats V3 responses are archival inputs at this stage. A future source adapter
-must map their action and substitution representation into the canonical event
-contract before they can enter season processing.
+Stats V3 responses enter reconstruction through a source adapter. The adapter
+maps the historical action vocabulary, splits combined substitutions, infers
+unreported period-boundary lineup changes, and converts traditional V3 box
+scores to the liveData-shaped processing boundary. The original response bytes
+remain unchanged in the raw cache.
 
 Compaction is lossless. It preserves every accepted source row, adds catalog and
 provenance metadata, and verifies per-game and partition row conservation.

@@ -1,9 +1,9 @@
 # Fetch Historical NBA Stats Responses
 
 The historical Stats flow preserves archived game responses directly from
-`stats.nba.com`. It is a source-acquisition fallback for games whose liveData
-CDN objects are unavailable; it does not yet feed the canonical event
-normalizer.
+`stats.nba.com`. It is both a source fallback for games whose liveData CDN
+objects are unavailable and an independently retained comparison source for
+games available from both systems.
 
 ## Endpoints
 
@@ -18,6 +18,11 @@ The default run fetches two endpoints independently:
 interval-level substitution evidence, but coverage and latency differ from the
 two cloud-backed V3 feeds. A missing rotation response never invalidates a
 retained play-by-play or box score.
+
+Canonical processing selects each endpoint independently. It prefers a valid
+liveData artifact and otherwise adapts the corresponding Stats V3 artifact.
+The build ledger and quality report record the selected source and SHA-256
+digest of the exact raw response.
 
 ## One-game smoke test
 

@@ -40,6 +40,7 @@ def test_score_prediction_cohort_uses_identical_rows_for_every_model() -> None:
     actual = possessions["target_offense_margin"].to_numpy(dtype=float)
     predictions = {
         "ridge_rapm": np.array([1.0, 0.0, 0.0, 2.0]),
+        "forward_lagged_rapm": np.array([1.0, 0.0, 0.0, 2.0]),
         "bayesian_rapm": np.array([1.0, 0.0, 0.0, 2.0]),
         "additive_neural": actual.copy(),
         "deep_sets": actual.copy(),
@@ -97,6 +98,7 @@ def test_generated_evaluation_page_defines_metrics_and_bolds_winner(
         possessions,
         {
             "ridge_rapm": np.array([1.0, 0.0, 0.0, 2.0]),
+            "forward_lagged_rapm": np.array([1.0, 0.0, 0.0, 2.0]),
             "bayesian_rapm": np.array([1.0, 0.0, 0.0, 2.0]),
             "additive_neural": actual.copy(),
             "deep_sets": actual.copy(),
@@ -183,13 +185,15 @@ def _cohort_row(cohort: str) -> dict[str, object]:
 def _manifest() -> ModelEvaluationManifest:
     digest = "a" * 64
     return ModelEvaluationManifest(
-        schema_version=3,
+        schema_version=4,
         run_id="evaluation-2025-26-test",
         created_at=datetime(2026, 7, 29, tzinfo=UTC),
         season="2025-26",
         evaluation_code_version="sha256:" + digest,
         ridge_run_id="ridge",
         ridge_manifest_sha256=digest,
+        prior_rapm_run_id="forward-prior",
+        prior_rapm_manifest_sha256=digest,
         bayesian_run_id="bayesian",
         bayesian_manifest_sha256=digest,
         neural_run_id="neural",

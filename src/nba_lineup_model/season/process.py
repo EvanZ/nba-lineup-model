@@ -20,12 +20,6 @@ from nba_lineup_model.build_game import (
     persist_game_reconstruction,
     reconstruct_game_payloads,
 )
-from nba_lineup_model.ingest.nba_cdn import (
-    NbaCdnEndpoint,
-    NbaCdnError,
-    RawJsonCache,
-)
-from nba_lineup_model.season.fetch import RawArtifactEvidence, artifact_evidence
 from nba_lineup_model.season.layout import CURATED_TABLES
 from nba_lineup_model.season.schema import (
     BuildLedger,
@@ -34,6 +28,10 @@ from nba_lineup_model.season.schema import (
     GameBuildRecord,
     GameQualityRecord,
 )
+from nba_lineup_model.season.source import (
+    SelectedRawArtifact,
+    load_game_source_documents,
+)
 
 _PROCESSING_SOURCE_ENTRIES = (
     "audit/runner.py",
@@ -41,6 +39,7 @@ _PROCESSING_SOURCE_ENTRIES = (
     "build_game.py",
     "events",
     "ingest/nba_cdn.py",
+    "ingest/nba_stats.py",
     "lineups",
     "normalize",
     "possessions",
@@ -48,6 +47,7 @@ _PROCESSING_SOURCE_ENTRIES = (
     "season/layout.py",
     "season/process.py",
     "season/schema.py",
+    "season/source.py",
 )
 
 
@@ -79,20 +79,12 @@ def process_catalog_game(
 
     started_at = started_at or datetime.now(UTC)
     attempt_id = f"{run_id}:{game.game_id}:{attempt_number}:{uuid4().hex[:8]}"
-    cache = RawJsonCache(raw_dir)
     play_by_play = None
     boxscore = None
     try:
-        play_by_play = _require_raw_artifact(
-            cache,
-            NbaCdnEndpoint.PLAY_BY_PLAY,
-            game.game_id,
-        )
-        boxscore = _require_raw_artifact(
-            cache,
-            NbaCdnEndpoint.BOXSCORE,
-            game.game_id,
-        )
+        documents = load_game_source_documents(game.game_id, raw_dir=raw_dir)
+        play_by_play = documents.play_by_play
+        boxscore = documents.boxscore
     except Exception as error:
         return _failure_outcome(
             game,
@@ -142,6 +134,8 @@ def process_catalog_game(
                 terminal_stage="preflight",
                 use_cache=True,
                 code_version=code_version,
+                play_by_play_source=play_by_play.source,
+                boxscore_source=boxscore.source,
                 play_by_play_sha256=play_by_play.sha256,
                 boxscore_sha256=boxscore.sha256,
                 event_count=prior_success.event_count,
@@ -156,8 +150,8 @@ def process_catalog_game(
 
     try:
         reconstruction = reconstruct_game_payloads(
-            play_by_play.response.payload,
-            boxscore.response.payload,
+            play_by_play.payload,
+            boxscore.payload,
         )
     except Exception as error:
         return _failure_outcome(
@@ -180,7 +174,7 @@ def process_catalog_game(
         quality = audit_reconstruction(
             _audit_spec(game),
             reconstruction,
-            boxscore.response.payload,
+            boxscore.payload,
         )
         quality = _apply_catalog_invariants(game, quality)
     except Exception as error:
@@ -226,7 +220,7 @@ def process_catalog_game(
     try:
         processed = persist_game_reconstruction(
             reconstruction,
-            boxscore.response.payload,
+            boxscore.payload,
             output_root=processed_dir,
         )
     except Exception as error:
@@ -287,6 +281,8 @@ def process_catalog_game(
             terminal_stage="complete",
             use_cache=True,
             code_version=code_version,
+            play_by_play_source=play_by_play.source,
+            boxscore_source=boxscore.source,
             play_by_play_sha256=play_by_play.sha256,
             boxscore_sha256=boxscore.sha256,
             event_count=processed.event_count,
@@ -318,6 +314,8 @@ def quality_record_for_outcome(
         prefect_task_run_id=record.prefect_task_run_id,
         attempt_number=record.attempt_number,
         code_version=record.code_version,
+        play_by_play_source=record.play_by_play_source,
+        boxscore_source=record.boxscore_source,
         play_by_play_sha256=record.play_by_play_sha256,
         boxscore_sha256=record.boxscore_sha256,
         recorded_at=record.finished_at,
@@ -492,33 +490,26 @@ def processed_outputs_valid(
     return True
 
 
-def _require_raw_artifact(
-    cache: RawJsonCache,
-    endpoint: NbaCdnEndpoint,
-    game_id: str,
-) -> RawArtifactEvidence:
-    evidence = artifact_evidence(cache, endpoint, game_id)
-    if evidence is None:
-        raise NbaCdnError(f"Missing cached NBA {endpoint.value} response for {game_id}")
-    return evidence
-
-
 def _can_resume(
     game: CatalogGame,
     *,
     prior_success: GameBuildRecord,
     prior_quality: GameQualityRecord,
     code_version: str,
-    play_by_play: RawArtifactEvidence,
-    boxscore: RawArtifactEvidence,
+    play_by_play: SelectedRawArtifact,
+    boxscore: SelectedRawArtifact,
     processed_dir: Path | str,
 ) -> bool:
     return (
         prior_success.code_version == code_version
+        and prior_success.play_by_play_source == play_by_play.source
+        and prior_success.boxscore_source == boxscore.source
         and prior_success.play_by_play_sha256 == play_by_play.sha256
         and prior_success.boxscore_sha256 == boxscore.sha256
         and prior_quality.status in {"pass", "warning"}
         and prior_quality.code_version == code_version
+        and prior_quality.play_by_play_source == play_by_play.source
+        and prior_quality.boxscore_source == boxscore.source
         and prior_quality.play_by_play_sha256 == play_by_play.sha256
         and prior_quality.boxscore_sha256 == boxscore.sha256
         and processed_outputs_valid(game.game_id, processed_dir)
@@ -592,8 +583,8 @@ def _failure_outcome(
     error: Exception,
     prefect_flow_run_id: str | None,
     prefect_task_run_id: str | None,
-    play_by_play: RawArtifactEvidence | None = None,
-    boxscore: RawArtifactEvidence | None = None,
+    play_by_play: SelectedRawArtifact | None = None,
+    boxscore: SelectedRawArtifact | None = None,
     reconstruction: GameReconstruction | None = None,
     quality: AuditGameResult | None = None,
     output_table_count: int = 0,
@@ -616,6 +607,10 @@ def _failure_outcome(
             terminal_stage=stage,
             use_cache=True,
             code_version=code_version,
+            play_by_play_source=(
+                play_by_play.source if play_by_play is not None else None
+            ),
+            boxscore_source=boxscore.source if boxscore is not None else None,
             play_by_play_sha256=(
                 play_by_play.sha256 if play_by_play is not None else None
             ),

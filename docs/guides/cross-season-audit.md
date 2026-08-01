@@ -16,6 +16,26 @@ uv run nba-audit-games \
   --fail-on-warnings
 ```
 
+## Audit the retained historical cache
+
+The full regular-season cache audit selects the best retained source for each
+endpoint, reconstructs games in memory, and writes a durable report with raw
+source hashes. Use bounded batches when running in an execution environment
+with a short command timeout:
+
+```bash
+uv run nba-audit-history \
+  --season 2019-20 \
+  --offset 0 \
+  --limit 50 \
+  --output-dir data/audit/historical_regular/batches/2019-20-0000
+```
+
+Each output directory contains `games.parquet`, `summary.parquet`,
+`sources.parquet`, and `manifest.json`. `sources.parquet` records the selected
+endpoint source and SHA-256 values for every audited game. This report is an
+audit artifact, not a replacement for the canonical processing quality ledger.
+
 ## Read the report
 
 ```python

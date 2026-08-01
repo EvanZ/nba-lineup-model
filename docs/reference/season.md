@@ -6,6 +6,8 @@
 
 ::: nba_lineup_model.season.stats
 
+::: nba_lineup_model.season.source
+
 ::: nba_lineup_model.season.process
 
 ::: nba_lineup_model.season.discover

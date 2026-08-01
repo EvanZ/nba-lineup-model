@@ -159,14 +159,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    from nba_lineup_model.season.source import (
+        GameSourceError,
+        load_game_source_documents,
+    )
+
     args = build_parser().parse_args()
-    client = NbaCdnClient(cache=RawJsonCache(Path(args.raw_dir)))
-    use_cache = not args.refresh
-    play_by_play = client.fetch_play_by_play(args.game_id, use_cache=use_cache)
-    boxscore = client.fetch_boxscore(args.game_id, use_cache=use_cache)
+    raw_dir = Path(args.raw_dir)
+    if args.refresh:
+        with NbaCdnClient(cache=RawJsonCache(raw_dir)) as client:
+            client.fetch_play_by_play(args.game_id, use_cache=False)
+            client.fetch_boxscore(args.game_id, use_cache=False)
+    try:
+        documents = load_game_source_documents(args.game_id, raw_dir=raw_dir)
+    except GameSourceError:
+        with NbaCdnClient(cache=RawJsonCache(raw_dir)) as client:
+            client.fetch_play_by_play(args.game_id, use_cache=True)
+            client.fetch_boxscore(args.game_id, use_cache=True)
+        documents = load_game_source_documents(args.game_id, raw_dir=raw_dir)
     result = process_game_payloads(
-        play_by_play.payload,
-        boxscore.payload,
+        documents.play_by_play.payload,
+        documents.boxscore.payload,
         output_root=Path(args.processed_dir),
     )
 
@@ -176,6 +189,11 @@ def main() -> None:
         f"{result.possession_count} possessions, "
         f"{result.possession_segment_count} possession segments, "
         f"{result.issue_count} validation issues"
+    )
+    print(
+        "sources: "
+        f"play-by-play={documents.play_by_play.source}, "
+        f"boxscore={documents.boxscore.source}"
     )
     for table_name, path in result.output_paths.items():
         print(f"{table_name}: {path}")

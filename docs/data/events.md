@@ -16,6 +16,13 @@ NBA source action becomes one `Event`.
 Source order numbers are integers. Their magnitude is not a timestamp and no
 precision is discarded.
 
+For liveData, `source_order_number` is the NBA-provided `orderNumber`. Stats V3
+does not provide that field, can repeat `actionNumber` for related records, and
+can append corrections after later actions. The adapter orders by period and
+game clock, then uses `actionNumber` and `actionId` as same-clock tie-breakers.
+It encodes those fields into a unique integer ordering key while retaining the
+original `actionNumber` in `source_action_number`.
+
 ## Clocks
 
 The event contract retains both clock representations:
@@ -46,6 +53,27 @@ Fields such as `event_type`, `event_subtype`, `descriptor`, `qualifiers`,
 `shot_result`, and `source_possession_team_id` remain close to the NBA response.
 Downstream modules interpret combinations of these fields; event normalization
 does not attempt to fully classify possession outcomes.
+
+## Stats V3 adaptation
+
+The V3 feed uses a different event vocabulary and combines each substitution
+into one record such as `SUB: Wright FOR Curry`. Before canonical event
+normalization, the adapter:
+
+- maps made and missed shots to `2pt` or `3pt`;
+- normalizes free-throw sequences and foul descriptors;
+- classifies team and player rebounds using the preceding missed attempt;
+- restores explicit team IDs on team rebounds and turnovers;
+- assigns team heaves from the V3 home/visitor location marker;
+- maps separate steal and block records;
+- expands each substitution into ordered `out` and `in` events; and
+- labels periods after the fourth as overtime.
+
+V3 can omit lineup changes between periods. The adapter infers each period's
+opening lineup from player activity and substitution direction, then emits
+explicit boundary substitution events with
+`descriptor = stats_v3_period_lineup`. These events expose the inference in
+processed data and subject it to the existing lineup and minute audits.
 
 ## Output
 

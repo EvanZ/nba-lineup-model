@@ -166,6 +166,7 @@ def compact_season_flow(
     ledger_path: str = "data/manifests/builds.parquet",
     quality_games_path: str = "data/quality/games.parquet",
     season_types: list[str] | None = None,
+    game_ids: list[str] | None = None,
     games_per_part: int = 100,
     force: bool = False,
     curation_code_version: str | None = None,
@@ -184,6 +185,7 @@ def compact_season_flow(
         read_game_catalog(catalog_path),
         season=season,
         season_types=season_types,
+        game_ids=game_ids,
     )
     if not games:
         raise ValueError(f"No final catalog games matched compaction for {season}")
@@ -352,6 +354,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compact one complete season type; repeat for multiple types",
     )
     parser.add_argument(
+        "--game-id",
+        action="append",
+        dest="game_ids",
+        help="Compact one selected game ID; repeat for multiple games",
+    )
+    parser.add_argument(
         "--games-per-part",
         type=int,
         default=100,
@@ -389,6 +397,7 @@ def main() -> None:
         ledger_path=args.ledger,
         quality_games_path=args.quality_games,
         season_types=args.season_types,
+        game_ids=args.game_ids,
         games_per_part=args.games_per_part,
         force=args.force,
         run_id=args.run_id,

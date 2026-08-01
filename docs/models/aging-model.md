@@ -33,7 +33,8 @@ where:
 - \(n\) is prior-season RAPM possession exposure.
 
 The prediction \(\mu_{i,t}\) is a prior mean, not the final target-season RAPM
-coefficient.
+coefficient. [Prior-Centered RAPM](prior-rapm.md) is the first consumer of this
+handoff.
 
 ## Initial feature model
 
@@ -163,4 +164,3 @@ hierarchical trajectory model.
   chapters.
 - Sill, J. (2010). "Improved NBA Adjusted +/- Using Regularization and
   Out-of-Sample Testing." *MIT Sloan Sports Analytics Conference*.
-

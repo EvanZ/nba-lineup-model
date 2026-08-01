@@ -44,8 +44,9 @@ retain the same URL, UTC fetch time, and exact-byte digest guarantees.
 Stats endpoint sidecars also retain selected response provenance headers,
 including `x-datasource` when supplied. The Stats namespace is intentionally
 separate because its V3 play-by-play schema is not identical to the liveData
-CDN schema. Raw acquisition does not imply that a Stats response is already
-compatible with the canonical event normalizer.
+CDN schema. Processing adapts V3 in memory through
+`nba_lineup_model.normalize.stats_v3`; it never rewrites the retained raw
+response.
 
 ## Refresh behavior
 
