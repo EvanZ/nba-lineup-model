@@ -16,8 +16,9 @@ Useful options:
 
 ## Processing stages
 
-1. Read cached documents, preferring liveData per endpoint and falling back to
-   Stats V3. Fetch liveData if neither source exists.
+1. Read cached documents, preferring Stats V3 per endpoint and falling back to
+   retained liveData. Historical acquisition fetches Stats V3 if neither source
+   exists.
 2. Normalize the ordered event stream.
 3. Reconstruct event lineups and lineup stints.
 4. Reconstruct possessions.

@@ -1,9 +1,9 @@
 # Fetch Historical NBA Stats Responses
 
 The historical Stats flow preserves archived game responses directly from
-`stats.nba.com`. It is both a source fallback for games whose liveData CDN
-objects are unavailable and an independently retained comparison source for
-games available from both systems.
+`stats.nba.com`. It is the primary acquisition path for historical games.
+Previously retained liveData files are used only as a compatibility fallback
+when a matching V3 document is absent.
 
 ## Endpoints
 
@@ -20,7 +20,8 @@ two cloud-backed V3 feeds. A missing rotation response never invalidates a
 retained play-by-play or box score.
 
 Canonical processing selects each endpoint independently. It prefers a valid
-liveData artifact and otherwise adapts the corresponding Stats V3 artifact.
+Stats V3 artifact and otherwise uses the corresponding retained liveData
+artifact.
 The build ledger and quality report record the selected source and SHA-256
 digest of the exact raw response.
 
@@ -39,10 +40,10 @@ uv run nba-fetch-stats-history \
 The flow creates one Prefect task per game and endpoint. A second invocation
 validates and skips both cache artifacts without making a request.
 
-## Fill current CDN gaps first
+## Legacy Cache Reconciliation
 
-The fastest high-value acquisition pass is the set of regular-season endpoint
-artifacts missing from the existing liveData cache:
+`--cdn-missing-only` is retained only to reconcile a legacy cache. It is not
+the recommended historical acquisition path:
 
 ```bash
 uv run nba-fetch-stats-history \
@@ -54,8 +55,8 @@ uv run nba-fetch-stats-history \
   --run-id stats-gaps-2019-20
 ```
 
-`--cdn-missing-only` is evaluated per endpoint. For example, a valid CDN box
-score does not prevent acquisition of missing Stats V3 play-by-play.
+For a new historical pull, omit `--cdn-missing-only` and archive the V3 pair
+directly.
 
 ## Preserve all historical V3 feeds
 

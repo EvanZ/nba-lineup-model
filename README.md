@@ -151,17 +151,18 @@ game-level artifacts. See the
 [historical backfill guide](docs/guides/backfill-history.md) for stage ranges,
 failure policy, and Prefect behavior.
 
-Preserve cloud-backed Stats V3 responses for historical regular-season games
-whose liveData CDN artifacts are missing:
+Preserve NBA Stats V3 responses as the primary historical archive. Retained
+liveData files are used only where a matching V3 artifact is absent:
 
 ```bash
 uv run nba-fetch-stats-history \
   --season 2019-20 \
-  --cdn-missing-only \
-  --run-id stats-gaps-2019-20
+  --endpoint playbyplayv3 \
+  --endpoint boxscoretraditionalv3 \
+  --run-id stats-v3-2019-20
 ```
 
-This fallback flow tracks play-by-play and box scores independently under
+This archive flow tracks play-by-play and box scores independently under
 `data/raw/stats/`. See the
 [historical Stats guide](docs/guides/fetch-stats-history.md) for full-history,
 endpoint-specific, and rotation commands.

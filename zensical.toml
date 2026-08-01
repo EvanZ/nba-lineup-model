@@ -25,6 +25,7 @@ nav = [
       {"Validation-first processing" = "architecture/decisions/0003-validation-first.md"},
       {"Hybrid season storage" = "architecture/decisions/0004-hybrid-season-storage.md"},
       {"MLflow experiment index" = "architecture/decisions/0005-mlflow-experiment-index.md"},
+      {"Stats V3-first historical archive" = "architecture/decisions/0006-historical-stats-v3-first.md"},
     ]},
   ]},
   {"Data contracts" = [

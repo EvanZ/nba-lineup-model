@@ -29,7 +29,7 @@ Each response has a `.meta.json` sidecar:
 
 | Field | Meaning |
 | --- | --- |
-| `endpoint` | Logical NBA CDN endpoint |
+| `endpoint` | Logical NBA source endpoint |
 | `game_id` | Ten-digit game ID, when applicable |
 | `url` | Requested source URL |
 | `fetched_at` | UTC fetch timestamp |
