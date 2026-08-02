@@ -109,8 +109,8 @@ class PlayerSeasonBio(BaseModel):
     team_abbreviation: str = Field(pattern=r"^[A-Z0-9]{2,3}$")
     age: float = Field(ge=15, le=80)
     listed_position: str | None = None
-    height_raw: str
-    height_inches: int = Field(ge=48, le=100)
+    height_raw: str | None = None
+    height_inches: int | None = Field(default=None, ge=48, le=100)
     weight_pounds: int | None = Field(default=None, ge=80, le=500)
     college: str | None = None
     country: str | None = None

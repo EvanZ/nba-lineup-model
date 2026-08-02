@@ -78,10 +78,12 @@ def adapt_stats_v3_play_by_play(
     source_actions = source_game.get("actions")
     if not isinstance(source_actions, list):
         raise ValueError("Expected Stats V3 game actions to be a list")
+    source_actions = _with_missing_period_starts(source_actions)
     ordered_source_actions = sorted(
         source_actions,
         key=_source_action_sort_key,
     )
+    ordered_source_actions = _forward_fill_placeholder_scores(ordered_source_actions)
 
     rosters, lineups, team_tricodes = _roster_context(box_game)
     source_aliases = _source_player_aliases(ordered_source_actions, rosters)
@@ -150,6 +152,85 @@ def adapt_stats_v3_play_by_play(
     }
 
 
+def _forward_fill_placeholder_scores(
+    source_actions: list[Any],
+) -> list[dict[str, Any]]:
+    """Fill historical non-scoring rows whose score fields revert to ``0``."""
+
+    scores = {"scoreHome": 0, "scoreAway": 0}
+    adapted_actions: list[dict[str, Any]] = []
+    for action in source_actions:
+        if not isinstance(action, Mapping):
+            raise ValueError("Expected every Stats V3 action to be an object")
+        adapted = copy.deepcopy(dict(action))
+        for field, prior_score in scores.items():
+            raw_score = _nonnegative_score(adapted.get(field), field)
+            if raw_score is None or (raw_score == 0 and prior_score > 0):
+                adapted[field] = prior_score
+            elif raw_score >= prior_score:
+                scores[field] = raw_score
+        adapted_actions.append(adapted)
+    return adapted_actions
+
+
+def _with_missing_period_starts(source_actions: list[Any]) -> list[Any]:
+    """Supply the period-start record omitted by a small historical feed subset."""
+
+    periods = sorted(
+        {
+            _required_int(action, "period")
+            for action in source_actions
+            if isinstance(action, Mapping)
+        }
+    )
+    present_starts = {
+        _required_int(action, "period")
+        for action in source_actions
+        if isinstance(action, Mapping)
+        and str(action.get("actionType") or "").casefold() == "period"
+        and str(action.get("subType") or "").casefold() == "start"
+    }
+    synthetic_starts = [
+        {
+            "actionNumber": 0,
+            "actionId": 0,
+            "clock": "PT12M00.00S" if period <= 4 else "PT05M00.00S",
+            "period": period,
+            "teamId": 0,
+            "teamTricode": "",
+            "personId": 0,
+            "playerName": "",
+            "playerNameI": "",
+            "description": f"Synthetic start of period {period}",
+            "actionType": "period",
+            "subType": "start",
+            "isFieldGoal": 0,
+            "shotValue": 0,
+            "scoreHome": "",
+            "scoreAway": "",
+        }
+        for period in periods
+        if period not in present_starts
+    ]
+    return [*source_actions, *synthetic_starts]
+
+
+def _nonnegative_score(value: Any, field: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"Expected non-negative integer {field}, got {value!r}")
+    if isinstance(value, int):
+        score = value
+    elif isinstance(value, str) and value.isdigit():
+        score = int(value)
+    else:
+        raise ValueError(f"Expected non-negative integer {field}, got {value!r}")
+    if score < 0:
+        raise ValueError(f"Expected non-negative integer {field}, got {value!r}")
+    return score
+
+
 def _adapt_regular_action(
     source_action: Mapping[str, Any],
     *,
@@ -190,23 +271,16 @@ def _adapt_regular_action(
     )
 
     if normalized_type in {"2pt", "3pt"}:
-        action["shotResult"] = (
-            "Made" if source_type.casefold() == "made shot" else "Missed"
-        )
-        pending_miss_team_id = (
-            (team_id or None) if action["shotResult"] == "Missed" else None
-        )
+        action["shotResult"] = "Made" if source_type.casefold() == "made shot" else "Missed"
+        pending_miss_team_id = (team_id or None) if action["shotResult"] == "Missed" else None
     elif normalized_type == "freethrow":
-        action["shotResult"] = (
-            "Missed" if description.upper().startswith("MISS ") else "Made"
-        )
+        action["shotResult"] = "Missed" if description.upper().startswith("MISS ") else "Made"
         if action["shotResult"] == "Missed":
             pending_miss_team_id = team_id or None
     elif normalized_type == "rebound":
         action["subType"] = (
             "offensive"
-            if pending_miss_team_id is not None
-            and team_id == pending_miss_team_id
+            if pending_miss_team_id is not None and team_id == pending_miss_team_id
             else "defensive"
         )
         pending_miss_team_id = None
@@ -224,13 +298,14 @@ def _adapt_team(source_team: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(players, list):
         raise ValueError("Expected Stats V3 team players to be a list")
 
+    starter_ids = _stats_v3_starter_ids(players)
     adapted_players: list[dict[str, Any]] = []
     for source_player in players:
         if not isinstance(source_player, Mapping):
             raise ValueError("Expected every Stats V3 player to be an object")
         player = copy.deepcopy(dict(source_player))
-        position = str(player.get("position") or "")
-        player["starter"] = "1" if position else "0"
+        player_id = _required_int(player, "personId")
+        player["starter"] = "1" if player_id in starter_ids else "0"
         statistics = player.get("statistics")
         if isinstance(statistics, Mapping):
             player["statistics"] = _adapt_statistics(statistics)
@@ -247,6 +322,27 @@ def _adapt_team(source_team: Mapping[str, Any]) -> dict[str, Any]:
     return team
 
 
+def _stats_v3_starter_ids(players: list[Any]) -> set[int]:
+    """Resolve the two starter encodings used by the Stats V3 box archive."""
+
+    position_starters = {
+        _required_int(player, "personId")
+        for player in players
+        if isinstance(player, Mapping) and str(player.get("position") or "")
+    }
+    if len(position_starters) == 5:
+        return position_starters
+
+    # Historical boxes list a position for many reserve players, but retain the
+    # traditional box-score ordering of five starters followed by the bench.
+    player_ids = [
+        _required_int(player, "personId") for player in players if isinstance(player, Mapping)
+    ]
+    if len(player_ids) < 5:
+        raise ValueError("Stats V3 box score has fewer than five listed players")
+    return set(player_ids[:5])
+
+
 def _adapt_statistics(statistics: Mapping[str, Any]) -> dict[str, Any]:
     adapted = copy.deepcopy(dict(statistics))
     minutes = adapted.get("minutes")
@@ -258,13 +354,12 @@ def _adapt_statistics(statistics: Mapping[str, Any]) -> dict[str, Any]:
 def _minutes_to_iso(value: str) -> str:
     if value.startswith("PT"):
         return value
+    if value.isdigit():
+        return f"PT{int(value)}M00.00S"
     match = re.fullmatch(r"(?P<minutes>\d+):(?P<seconds>\d{2})", value)
     if match is None:
         raise ValueError(f"Unexpected Stats V3 minutes value: {value!r}")
-    return (
-        f"PT{int(match.group('minutes'))}M"
-        f"{int(match.group('seconds')):02d}.00S"
-    )
+    return f"PT{int(match.group('minutes'))}M{int(match.group('seconds')):02d}.00S"
 
 
 def _roster_context(
@@ -306,9 +401,7 @@ def _source_player_aliases(
     source_actions: list[Any],
     rosters: Mapping[int, Mapping[int, Mapping[str, Any]]],
 ) -> dict[int, dict[str, set[int]]]:
-    aliases: dict[int, dict[str, set[int]]] = {
-        team_id: {} for team_id in rosters
-    }
+    aliases: dict[int, dict[str, set[int]]] = {team_id: {} for team_id in rosters}
     for action in source_actions:
         if not isinstance(action, Mapping):
             continue
@@ -354,16 +447,13 @@ def _infer_period_lineups(
 
     result: dict[int, dict[int, set[int]]] = {}
     prior_end = {team_id: set(lineup) for team_id, lineup in first_period_lineups.items()}
-    original_starters = {
-        team_id: set(lineup) for team_id, lineup in first_period_lineups.items()
-    }
+    original_starters = {team_id: set(lineup) for team_id, lineup in first_period_lineups.items()}
 
     for period in periods:
         period_actions = [
             action
             for action in source_actions
-            if isinstance(action, Mapping)
-            and _required_int(action, "period") == period
+            if isinstance(action, Mapping) and _required_int(action, "period") == period
         ]
         starts: dict[int, set[int]] = {}
         for team_id, roster in rosters.items():
@@ -542,10 +632,7 @@ def _infer_team_period_lineup(
             action_team_id == team_id
             and person_id in roster
             and _actor_implies_on_court(action)
-            and (
-                first_substitution_index is None
-                or index < first_substitution_index
-            )
+            and (first_substitution_index is None or index < first_substitution_index)
         ):
             first_actor_index.setdefault(person_id, index)
         if (
@@ -570,15 +657,12 @@ def _infer_team_period_lineup(
         first_transactions.setdefault(incoming_id, (index, "in"))
 
     required_on = {
-        player_id
-        for player_id, (_, direction) in first_transactions.items()
-        if direction == "out"
+        player_id for player_id, (_, direction) in first_transactions.items() if direction == "out"
     }
     required_on.update(
         player_id
         for player_id, actor_index in first_actor_index.items()
-        if player_id not in first_transactions
-        or actor_index < first_transactions[player_id][0]
+        if player_id not in first_transactions or actor_index < first_transactions[player_id][0]
     )
     required_off = {
         player_id
@@ -594,8 +678,7 @@ def _infer_team_period_lineup(
 
     lineup = set(required_on)
     actor_order = [
-        player_id
-        for player_id, _ in sorted(first_actor_index.items(), key=lambda item: item[1])
+        player_id for player_id, _ in sorted(first_actor_index.items(), key=lambda item: item[1])
     ]
     for candidates in (
         sorted(prior_lineup),
@@ -619,10 +702,7 @@ def _actor_implies_on_court(action: Mapping[str, Any]) -> bool:
     description = str(action.get("description") or "").casefold()
     return not (
         action_type == "ejection"
-        or (
-            action_type == "foul"
-            and ("technical" in subtype or "t.foul" in description)
-        )
+        or (action_type == "foul" and ("technical" in subtype or "t.foul" in description))
     )
 
 
@@ -752,18 +832,14 @@ def _resolve_player_name(
     target = _normalize_name(source_name)
     suffixless_target = re.sub(r"\s+(?:jr|sr|ii|iii|iv)$", "", target)
     source_candidates = (
-        set(source_aliases.get(target, set()))
-        if source_aliases is not None
-        else set()
+        set(source_aliases.get(target, set())) if source_aliases is not None else set()
     )
     resolved = _unique_name_candidate(source_candidates, current_lineup)
     if resolved is not None:
         return resolved
 
     exact_roster_candidates = {
-        player_id
-        for player_id, player in roster.items()
-        if target in _player_aliases(player)
+        player_id for player_id, player in roster.items() if target in _player_aliases(player)
     }
     resolved = _unique_name_candidate(exact_roster_candidates, current_lineup)
     if resolved is not None:

@@ -68,6 +68,52 @@ def test_adapts_stats_v3_boxscore_and_event_vocabulary() -> None:
     assert turnover.source_order_number != steal.source_order_number
 
 
+def test_adapts_historical_stats_v3_boxscore_starter_order_and_minutes() -> None:
+    boxscore = stats_boxscore()
+    for side in ("homeTeam", "awayTeam"):
+        players = boxscore["boxScoreTraditional"][side]["players"]
+        for player in players:
+            player["position"] = "G"
+        players[0]["statistics"]["minutes"] = "10"
+
+    _, adapted_boxscore = adapt_stats_v3_game(stats_play_by_play(), boxscore)
+
+    home_players = adapted_boxscore["game"]["homeTeam"]["players"]
+    assert [player["starter"] for player in home_players] == [
+        "1",
+        "1",
+        "1",
+        "1",
+        "1",
+        "0",
+    ]
+    assert home_players[0]["statistics"]["minutes"] == "PT10M00.00S"
+
+
+def test_forward_fills_historical_zero_score_placeholders() -> None:
+    play_by_play = stats_play_by_play()
+    play_by_play["game"]["actions"][2]["scoreHome"] = "2"
+
+    adapted, _ = adapt_stats_v3_game(play_by_play, stats_boxscore())
+    events = canonical_events(adapted)
+
+    assert events[2].score_home == 2
+    assert events[3].score_home == 2
+    assert "negative_score_delta" not in events[3].validation_flags
+
+
+def test_supplies_missing_historical_period_start() -> None:
+    play_by_play = stats_play_by_play()
+    play_by_play["game"]["actions"] = play_by_play["game"]["actions"][1:]
+
+    adapted, _ = adapt_stats_v3_game(play_by_play, stats_boxscore())
+
+    first_action = adapted["game"]["actions"][0]
+    assert first_action["actionType"] == "period"
+    assert first_action["subType"] == "start"
+    assert first_action["period"] == 1
+
+
 def test_labels_stats_v3_overtime_periods() -> None:
     play_by_play = stats_play_by_play()
     overtime = action(
@@ -403,14 +449,26 @@ def stats_boxscore() -> dict[str, Any]:
             "homeTeam": team(
                 HOME_TEAM_ID,
                 "HOM",
-                [(101, "Homeone"), (102, "Hometwo"), (103, "Homethree"),
-                 (104, "Homefour"), (105, "Homefive"), (106, "Homebench")],
+                [
+                    (101, "Homeone"),
+                    (102, "Hometwo"),
+                    (103, "Homethree"),
+                    (104, "Homefour"),
+                    (105, "Homefive"),
+                    (106, "Homebench"),
+                ],
             ),
             "awayTeam": team(
                 AWAY_TEAM_ID,
                 "AW",
-                [(201, "Awayone"), (202, "Awaytwo"), (203, "Awaythree"),
-                 (204, "Awayfour"), (205, "Awayfive"), (206, "Awaybench")],
+                [
+                    (201, "Awayone"),
+                    (202, "Awaytwo"),
+                    (203, "Awaythree"),
+                    (204, "Awayfour"),
+                    (205, "Awayfive"),
+                    (206, "Awaybench"),
+                ],
             ),
         }
     }

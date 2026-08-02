@@ -18,6 +18,7 @@ from nba_lineup_model.ingest.nba_cdn import NbaCdnEndpoint, NbaCdnError, RawJson
 from nba_lineup_model.ingest.nba_stats import (
     DEFAULT_STATS_ACCESS_DENIAL_COOLDOWN_SECONDS,
     NbaStatsEndpoint,
+    NbaStatsError,
     NbaStatsRawCache,
 )
 from nba_lineup_model.season.fetch import artifact_evidence, select_catalog_games
@@ -164,16 +165,20 @@ def _log_downloaded_game(
         return
 
     detail = "final unavailable"
-    if record.endpoint is NbaStatsEndpoint.PLAY_BY_PLAY_V3:
-        response = NbaStatsRawCache(stats_raw_dir).read(record.endpoint, game.game_id)
-        if response is not None:
-            final_score = stats_play_by_play_final_score(response.payload)
-            if final_score is not None:
-                home_score, away_score = final_score
-                detail = (
-                    f"final {game.away_team_tricode} {away_score}-"
-                    f"{home_score} {game.home_team_tricode}"
-                )
+    try:
+        response = NbaStatsRawCache(stats_raw_dir).read(
+            NbaStatsEndpoint.PLAY_BY_PLAY_V3,
+            game.game_id,
+        )
+    except (OSError, ValueError, NbaStatsError):
+        response = None
+    if response is not None:
+        final_score = stats_play_by_play_final_score(response.payload)
+        if final_score is not None:
+            home_score, away_score = final_score
+            detail = (
+                f"final {game.away_team_tricode} {away_score}-{home_score} {game.home_team_tricode}"
+            )
 
     get_run_logger().info(
         "Archived %s | %s | %s @ %s | %s",

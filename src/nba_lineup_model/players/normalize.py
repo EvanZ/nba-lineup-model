@@ -63,7 +63,7 @@ def player_catalog_from_response(response: PlayerStatsResponse) -> PlayerCatalog
     """Normalize the historical PlayerIndex response without lossy ID coercion."""
 
     source_sha256 = _response_sha256(response)
-    players = []
+    players_by_id: dict[int, PlayerIdentity] = {}
     for row in _result_rows(
         response,
         result_name="PlayerIndex",
@@ -71,9 +71,7 @@ def player_catalog_from_response(response: PlayerStatsResponse) -> PlayerCatalog
     ):
         first_name = _optional_text(row["PLAYER_FIRST_NAME"])
         last_name = _optional_text(row["PLAYER_LAST_NAME"])
-        display_name = " ".join(
-            value for value in (first_name, last_name) if value
-        ).strip()
+        display_name = " ".join(value for value in (first_name, last_name) if value).strip()
         player_id = _required_int(row["PERSON_ID"], "PERSON_ID")
         if not display_name:
             display_name = _optional_text(row["PLAYER_SLUG"]) or str(player_id)
@@ -81,42 +79,66 @@ def player_catalog_from_response(response: PlayerStatsResponse) -> PlayerCatalog
             row,
             missing_status=None,
         )
-        players.append(
-            PlayerIdentity(
-                player_id=player_id,
-                first_name=first_name,
-                last_name=last_name,
-                display_name=display_name,
-                player_slug=_optional_text(row["PLAYER_SLUG"]),
-                listed_position=_optional_text(row["POSITION"]),
-                height_raw=_optional_text(row["HEIGHT"]),
-                height_inches=_height_inches(row["HEIGHT"]),
-                weight_pounds=_optional_int(row["WEIGHT"]),
-                college=_optional_text(row["COLLEGE"]),
-                country=_optional_text(row["COUNTRY"]),
-                draft_year=draft_year,
-                draft_round=draft_round,
-                draft_number=draft_number,
-                is_undrafted=is_undrafted,
-                roster_status=_optional_bool(row["ROSTER_STATUS"]),
-                from_year=_optional_int(row["FROM_YEAR"]),
-                to_year=_optional_int(row["TO_YEAR"]),
-                latest_team_id=_positive_optional_int(row["TEAM_ID"]),
-                latest_team_abbreviation=_optional_text(
-                    row["TEAM_ABBREVIATION"]
-                ),
-                latest_team_slug=_optional_text(row["TEAM_SLUG"]),
-                latest_jersey_number=_optional_text(row["JERSEY_NUMBER"]),
-                is_defunct_team=_optional_bool(row["IS_DEFUNCT"]),
-                supplemental_status=_optional_text(row["SUPPLEMENTAL_STATUS"]),
-                source_season=response.season,
-                source_url=response.url,
-                source_fetched_at=response.fetched_at,
-                source_sha256=source_sha256,
-            )
+        candidate = PlayerIdentity(
+            player_id=player_id,
+            first_name=first_name,
+            last_name=last_name,
+            display_name=display_name,
+            player_slug=_optional_text(row["PLAYER_SLUG"]),
+            listed_position=_optional_text(row["POSITION"]),
+            height_raw=_optional_text(row["HEIGHT"]),
+            height_inches=_height_inches(row["HEIGHT"]),
+            weight_pounds=_optional_int(row["WEIGHT"]),
+            college=_optional_text(row["COLLEGE"]),
+            country=_optional_text(row["COUNTRY"]),
+            draft_year=draft_year,
+            draft_round=draft_round,
+            draft_number=draft_number,
+            is_undrafted=is_undrafted,
+            roster_status=_optional_bool(row["ROSTER_STATUS"]),
+            from_year=_optional_int(row["FROM_YEAR"]),
+            to_year=_optional_int(row["TO_YEAR"]),
+            latest_team_id=_positive_optional_int(row["TEAM_ID"]),
+            latest_team_abbreviation=_optional_text(row["TEAM_ABBREVIATION"]),
+            latest_team_slug=_optional_text(row["TEAM_SLUG"]),
+            latest_jersey_number=_optional_text(row["JERSEY_NUMBER"]),
+            is_defunct_team=_optional_bool(row["IS_DEFUNCT"]),
+            supplemental_status=_optional_text(row["SUPPLEMENTAL_STATUS"]),
+            source_season=response.season,
+            source_url=response.url,
+            source_fetched_at=response.fetched_at,
+            source_sha256=source_sha256,
         )
+        existing = players_by_id.get(player_id)
+        if existing is None:
+            players_by_id[player_id] = candidate
+        elif _player_identity_fields(existing) != _player_identity_fields(candidate):
+            raise ValueError(f"PlayerIndex has conflicting identity data for player ID {player_id}")
     return PlayerCatalog(
-        players=sorted(players, key=lambda player: player.player_id)
+        players=sorted(players_by_id.values(), key=lambda player: player.player_id)
+    )
+
+
+def _player_identity_fields(player: PlayerIdentity) -> tuple[object, ...]:
+    """Return identity fields invariant across duplicate team listings."""
+
+    return (
+        player.first_name,
+        player.last_name,
+        player.display_name,
+        player.player_slug,
+        player.listed_position,
+        player.height_raw,
+        player.height_inches,
+        player.weight_pounds,
+        player.college,
+        player.country,
+        player.draft_year,
+        player.draft_round,
+        player.draft_number,
+        player.is_undrafted,
+        player.from_year,
+        player.to_year,
     )
 
 
@@ -140,17 +162,20 @@ def player_season_bios_from_response(
         identity = catalog_by_id.get(player_id)
         if identity is None:
             raise ValueError(f"Player bio ID is missing from PlayerIndex: {player_id}")
-        height_raw = _required_text(row["PLAYER_HEIGHT"], "PLAYER_HEIGHT")
-        height_inches = _required_int(
-            row["PLAYER_HEIGHT_INCHES"],
-            "PLAYER_HEIGHT_INCHES",
-        )
+        height_raw = _optional_text(row["PLAYER_HEIGHT"])
+        height_inches = _optional_int(row["PLAYER_HEIGHT_INCHES"])
         parsed_height = _height_inches(height_raw)
-        if parsed_height != height_inches:
+        if (
+            parsed_height is not None
+            and height_inches is not None
+            and parsed_height != height_inches
+        ):
             raise ValueError(
                 f"Player bio height fields disagree for {player_id}: "
                 f"{height_raw} vs {height_inches}"
             )
+        if height_inches is None:
+            height_inches = parsed_height
         draft_year, draft_round, draft_number, is_undrafted = _draft_fields(
             row,
             missing_status=None,
@@ -200,9 +225,7 @@ def _result_rows(
 ) -> list[dict[str, Any]]:
     result_sets = response.payload.get("resultSets")
     if not isinstance(result_sets, list):
-        raise PlayerStatsError(
-            f"NBA {response.endpoint.value} response lacks resultSets"
-        )
+        raise PlayerStatsError(f"NBA {response.endpoint.value} response lacks resultSets")
     result = next(
         (
             candidate
@@ -212,28 +235,20 @@ def _result_rows(
         None,
     )
     if result is None:
-        raise PlayerStatsError(
-            f"NBA {response.endpoint.value} response lacks {result_name}"
-        )
+        raise PlayerStatsError(f"NBA {response.endpoint.value} response lacks {result_name}")
     headers = result.get("headers")
     row_set = result.get("rowSet")
-    if not isinstance(headers, list) or not all(
-        isinstance(header, str) for header in headers
-    ):
+    if not isinstance(headers, list) or not all(isinstance(header, str) for header in headers):
         raise PlayerStatsError(f"NBA {result_name} result has invalid headers")
     missing = required_fields - set(headers)
     if missing:
-        raise PlayerStatsError(
-            f"NBA {result_name} result lacks fields: {sorted(missing)}"
-        )
+        raise PlayerStatsError(f"NBA {result_name} result lacks fields: {sorted(missing)}")
     if not isinstance(row_set, list) or not row_set:
         raise PlayerStatsError(f"NBA {result_name} result contains no rows")
     rows: list[dict[str, Any]] = []
     for number, values in enumerate(row_set):
         if not isinstance(values, list) or len(values) != len(headers):
-            raise PlayerStatsError(
-                f"NBA {result_name} row {number} does not match its headers"
-            )
+            raise PlayerStatsError(f"NBA {result_name} row {number} does not match its headers")
         rows.append(dict(zip(headers, values, strict=True)))
     return rows
 
@@ -331,17 +346,10 @@ def _draft_fields(
         row["DRAFT_ROUND"],
         row["DRAFT_NUMBER"],
     )
-    texts = {
-        text.lower()
-        for value in source_values
-        if (text := _optional_text(value)) is not None
-    }
+    texts = {text.lower() for value in source_values if (text := _optional_text(value)) is not None}
     is_undrafted = "undrafted" in texts
     if is_undrafted:
-        if any(
-            text != "undrafted"
-            for text in texts
-        ):
+        if any(text != "undrafted" for text in texts):
             raise ValueError("NBA draft fields mix Undrafted and numeric values")
         return None, None, None, True
     draft_year = _optional_int(row["DRAFT_YEAR"])

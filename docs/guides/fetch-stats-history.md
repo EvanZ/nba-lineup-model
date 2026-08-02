@@ -53,9 +53,9 @@ the play-by-play archive is complete.
 
 ## Progress Logs
 
-Each newly archived play-by-play response emits a Prefect task log with the game
-ID, local game date, matchup, and final score from the final V3 event. For
-example:
+Each newly archived game endpoint emits a Prefect task log with the game ID,
+local game date, matchup, and final score from the cached V3 play-by-play event.
+For example:
 
 ```text
 Archived 0029600001 | 1996-11-01 | CHI @ BOS | final CHI 107-98 BOS

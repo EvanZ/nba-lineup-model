@@ -63,6 +63,9 @@ when a final NBA feed requires deterministic reconciliation:
   entrants and early on-court actors;
 - an exact replay of an already-applied team substitution is idempotent;
 - boundary events may precede a delayed period-start marker at the same clock;
+- a missing Stats V3 period-start marker is represented by a derived start
+  boundary, and historical blank or reset score placeholders carry forward the
+  preceding cumulative score;
 - a nonmonotonic source clock retains its raw clock and order while derived
   elapsed time is clamped to the preceding event and flagged;
 - held-ball companions, possession-retaining foul shots, and same-play clock

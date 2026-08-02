@@ -32,25 +32,51 @@ excludes precisely those rows; final games and identified games still undergo
 strict schema validation. See
 [ADR-0007](../architecture/decisions/0007-stats-v3-play-by-play-history-boundary.md).
 
-## Regular-Season Archive Boundary
+## Regular-Season Source Coverage
 
-The following table describes the source mix for 2019-20 through 2024-25.
-`Stats V3 preferred` is the number of game endpoint artifacts selected whenever
-both required raw documents validate. `Legacy liveData only` is the small
-remainder covered by the earlier cache.
+This table is generated from the final-game catalog, byte-preserved raw cache,
+and player-season bio partitions. Every listed season uses Stats V3 for its
+play-by-play and box-score archive except `2019-20*`. Source completeness is
+not processing eligibility: only games passing the downstream quality contract
+are model-ready.
 
-| Season | Games | Stats V3 preferred PBP | Legacy liveData-only PBP | Stats V3 preferred box | Legacy liveData-only box |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 2019-20 | 1,059 | 264 | 795 | 266 | 793 |
-| 2020-21 | 1,080 | 1,078 | 2 | 1,078 | 2 |
-| 2021-22 | 1,230 | 1,228 | 2 | 1,228 | 2 |
-| 2022-23 | 1,230 | 1,228 | 2 | 1,228 | 2 |
-| 2023-24 | 1,230 | 1,228 | 2 | 1,228 | 2 |
-| 2024-25 | 1,230 | 1,228 | 2 | 1,228 | 2 |
+| Season | Catalog regular games | PBP source | Box source | Player-season bios |
+| --- | ---: | ---: | ---: | ---: |
+| 1996-97 | 1,189 | 1,189 V3 | 1,189 V3 | 441 |
+| 1997-98 | 1,189 | 1,189 V3 | 1,189 V3 | 439 |
+| 1998-99 | 725 | 725 V3 | 725 V3 | 440 |
+| 1999-00 | 1,189 | 1,189 V3 | 1,189 V3 | 439 |
+| 2000-01 | 1,189 | 1,189 V3 | 1,189 V3 | 441 |
+| 2001-02 | 1,189 | 1,189 V3 | 1,189 V3 | 440 |
+| 2002-03 | 1,189 | 1,189 V3 | 1,189 V3 | 428 |
+| 2003-04 | 1,189 | 1,189 V3 | 1,189 V3 | 442 |
+| 2004-05 | 1,230 | 1,230 V3 | 1,230 V3 | 464 |
+| 2005-06 | 1,230 | 1,230 V3 | 1,230 V3 | 458 |
+| 2006-07 | 1,230 | 1,230 V3 | 1,230 V3 | 458 |
+| 2007-08 | 1,230 | 1,230 V3 | 1,230 V3 | 451 |
+| 2008-09 | 1,230 | 1,230 V3 | 1,230 V3 | 445 |
+| 2009-10 | 1,230 | 1,230 V3 | 1,230 V3 | 442 |
+| 2010-11 | 1,230 | 1,230 V3 | 1,230 V3 | 452 |
+| 2011-12 | 990 | 990 V3 | 990 V3 | 478 |
+| 2012-13 | 1,229 | 1,229 V3 | 1,229 V3 | 469 |
+| 2013-14 | 1,230 | 1,230 V3 | 1,230 V3 | 482 |
+| 2014-15 | 1,230 | 1,230 V3 | 1,230 V3 | 492 |
+| 2015-16 | 1,230 | 1,230 V3 | 1,230 V3 | 476 |
+| 2016-17 | 1,230 | 1,230 V3 | 1,230 V3 | 486 |
+| 2017-18 | 1,230 | 1,230 V3 | 1,230 V3 | 540 |
+| 2018-19 | 1,230 | 1,230 V3 | 1,230 V3 | 530 |
+| 2019-20* | 1,059 | 264 V3 + 795 CDN | 266 V3 + 793 CDN | 529 |
+| 2020-21 | 1,080 | 1,078 V3 + 2 CDN | 1,078 V3 + 2 CDN | 540 |
+| 2021-22 | 1,230 | 1,228 V3 + 2 CDN | 1,228 V3 + 2 CDN | 605 |
+| 2022-23 | 1,230 | 1,228 V3 + 2 CDN | 1,228 V3 + 2 CDN | 539 |
+| 2023-24 | 1,230 | 1,228 V3 + 2 CDN | 1,228 V3 + 2 CDN | 572 |
+| 2024-25 | 1,230 | 1,228 V3 + 2 CDN | 1,228 V3 + 2 CDN | 569 |
+| 2025-26 | 1,230 | 1,230 V3 | 1,230 V3 | 582 |
 
-The 2019-20 split reflects an older partial V3 archive. It is retained as an
-explicit source boundary, rather than silently presenting the legacy cache as
-a successful live historical feed.
+\* The earlier 2019-20 V3 cache is partial, so 795 PBP and 793 box-score
+responses use the retained liveData CDN fallback. The two CDN fallbacks in
+2020-21 through 2024-25 are isolated cache gaps, not a second acquisition
+strategy.
 
 ## Source Adaptation
 
@@ -59,6 +85,15 @@ V3 event vocabulary, splits combined substitution records, preserves player
 identifiers as strings or integers without float coercion, and normalizes
 scores and period clocks to the common event schema. Original raw JSON is never
 rewritten.
+
+The 1996-era archive also uses a few deterministic legacy encodings. When a
+box score has exactly five non-empty position values, those players are its
+starters; when it lists positions for reserves too, the traditional first-five
+box-score ordering defines the starters. Blank score fields and a regressive
+`0-0` score on non-scoring actions carry forward the preceding cumulative
+score. If an otherwise valid period has no start action, the adapter inserts a
+derived period-start boundary. These are representation reconciliations, not
+changes to the preserved source documents.
 
 Older liveData substitutions can encode only the outgoing player. When that
 legacy fallback is selected, the source adapter expands its paired identifiers
@@ -73,10 +108,12 @@ Games with contradictory or insufficient evidence remain named failures or
 warnings in the quality report; they are never silently repaired.
 
 The regular-season historical RAPM panel uses the approved pass/warning subset
-recorded in `data/audit/historical_regular/games.parquet`. The current panel
-contains 6,011 eligible games across the six historical seasons. It is the
-input boundary for forward priors, not a claim that every catalog game is
-model-ready.
+recorded in `data/audit/historical_regular/games.parquet`. This processing
+eligibility is intentionally separate from the raw-coverage table above: the
+append-only build ledger and latest `data/quality/games.parquet` rows are the
+authority while the 1996-97 through 2018-19 reconstruction run is in progress.
+Only the approved subset is a model input; raw completeness is never presented
+as a claim that every catalog game is model-ready.
 
 ## Postseason
 

@@ -267,6 +267,42 @@ def test_normalizes_identity_and_leakage_safe_player_seasons():
     )
 
 
+def test_player_index_collapses_duplicate_team_listings():
+    payload = player_index_payload()
+    duplicate = list(payload["resultSets"][0]["rowSet"][1])
+    duplicate[INDEX_HEADERS.index("TEAM_ID")] = 1610612738
+    duplicate[INDEX_HEADERS.index("TEAM_ABBREVIATION")] = "BOS"
+    payload["resultSets"][0]["rowSet"].append(duplicate)
+
+    catalog = player_catalog_from_response(
+        response(
+            PlayerStatsEndpoint.PLAYER_INDEX,
+            payload,
+            season_type=None,
+        )
+    )
+
+    assert [player.player_id for player in catalog.players] == [204001, 1630639]
+    porzingis = next(player for player in catalog.players if player.player_id == 204001)
+    assert porzingis.latest_team_abbreviation == "GSW"
+
+
+def test_player_index_rejects_conflicting_duplicate_identities():
+    payload = player_index_payload()
+    duplicate = list(payload["resultSets"][0]["rowSet"][1])
+    duplicate[INDEX_HEADERS.index("PLAYER_LAST_NAME")] = "Other"
+    payload["resultSets"][0]["rowSet"].append(duplicate)
+
+    with pytest.raises(ValueError, match="conflicting identity data"):
+        player_catalog_from_response(
+            response(
+                PlayerStatsEndpoint.PLAYER_INDEX,
+                payload,
+                season_type=None,
+            )
+        )
+
+
 def test_rejects_disagreeing_player_bio_height():
     catalog = player_catalog_from_response(
         response(
@@ -329,6 +365,33 @@ def test_player_bios_preserve_missing_weight():
     )
 
     assert bios.players[1].weight_pounds is None
+
+
+def test_player_bios_preserve_missing_historical_height():
+    payload = player_bio_payload()
+    row = payload["resultSets"][0]["rowSet"][0]
+    row[BIO_HEADERS.index("PLAYER_HEIGHT")] = None
+    row[BIO_HEADERS.index("PLAYER_HEIGHT_INCHES")] = None
+    catalog = player_catalog_from_response(
+        response(
+            PlayerStatsEndpoint.PLAYER_INDEX,
+            player_index_payload(),
+            season_type=None,
+        )
+    )
+
+    bios = player_season_bios_from_response(
+        response(
+            PlayerStatsEndpoint.PLAYER_BIO_STATS,
+            payload,
+            season_type="regular",
+        ),
+        catalog,
+    )
+
+    player = next(player for player in bios.players if player.player_id == 1630639)
+    assert player.height_raw is None
+    assert player.height_inches is None
 
 
 def test_player_catalog_and_season_bios_round_trip_with_stable_types(

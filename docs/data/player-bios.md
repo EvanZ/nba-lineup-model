@@ -65,6 +65,8 @@ NBA source sentinels are normalized explicitly:
 - `Undrafted` becomes `is_undrafted=true` with nullable pick fields;
 - numeric zero round or number also identifies an undrafted source record;
 - missing draft history remains unknown rather than automatically undrafted;
+- historical season rows can omit height, which is preserved as null rather
+  than inferred from another season;
 - missing weight remains null;
 - source text such as accented names remains Unicode.
 
