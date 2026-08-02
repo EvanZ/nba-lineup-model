@@ -25,6 +25,46 @@ artifact.
 The build ledger and quality report record the selected source and SHA-256
 digest of the exact raw response.
 
+## Archive From 1996-97
+
+`playbyplayv3` has been verified as populated from 1996-97 onward. Begin a
+regular-season archive with play-by-play, then retain box scores in a separate
+resumable pass. Explicit `--season` values keep the source range visible in the
+run provenance:
+
+```bash
+uv run nba-fetch-stats-history \
+  --season 1996-97 \
+  --season 1997-98 \
+  --season 1998-99 \
+  --season 1999-00 \
+  --endpoint playbyplayv3 \
+  --season-type regular \
+  --max-workers 2 \
+  --min-request-interval 1.0 \
+  --request-interval-jitter 0.25 \
+  --run-id stats-v3-pbp-1996-1999
+```
+
+Repeat the same command for subsequent season blocks. The raw cache validates
+and skips completed responses, so an interrupted archive is resumed by rerunning
+the identical selection. Retain `boxscoretraditionalv3` in a second pass after
+the play-by-play archive is complete.
+
+## Progress Logs
+
+Each newly archived play-by-play response emits a Prefect task log with the game
+ID, local game date, matchup, and final score from the final V3 event. For
+example:
+
+```text
+Archived 0029600001 | 1996-11-01 | CHI @ BOS | final CHI 107-98 BOS
+```
+
+Validated cache hits do not produce a second progress line. Prefect still tracks
+them as completed tasks, while the raw cache remains the authoritative resume
+boundary.
+
 ## One-game smoke test
 
 Start with the historical game already used to validate the endpoint contract:
@@ -129,6 +169,7 @@ The endpoint contract tests are in
 - source game-ID and minimum-schema validation;
 - cache resume behavior and typed Parquet manifest round trips;
 - transient server-error classification.
+- final-score extraction used by play-by-play progress logs.
 
 Run the focused suite with:
 

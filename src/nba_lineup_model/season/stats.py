@@ -138,9 +138,7 @@ class StatsFetchRecord(BaseModel):
             raise ValueError("Stats fetch hash and byte count must be recorded together")
 
         has_artifact = (
-            self.sha256 is not None
-            and self.byte_count is not None
-            and self.source_url is not None
+            self.sha256 is not None and self.byte_count is not None and self.source_url is not None
         )
         if self.status == "succeeded":
             if not has_artifact or self.cache_hit:
@@ -174,10 +172,7 @@ class StatsFetchManifest(BaseModel):
 
     @model_validator(mode="after")
     def validate_unique_work_per_run(self) -> StatsFetchManifest:
-        keys = [
-            (record.run_id, record.game_id, record.endpoint)
-            for record in self.records
-        ]
+        keys = [(record.run_id, record.game_id, record.endpoint) for record in self.records]
         if len(keys) != len(set(keys)):
             raise ValueError("Stats manifest contains duplicate endpoint work within a run")
         return self
@@ -197,9 +192,7 @@ def fetch_stats_endpoint_raw(
     client: NbaStatsClient | None = None,
     min_request_interval_seconds: float = 0.0,
     request_interval_jitter_seconds: float = 0.0,
-    access_denial_cooldown_seconds: float = (
-        DEFAULT_STATS_ACCESS_DENIAL_COOLDOWN_SECONDS
-    ),
+    access_denial_cooldown_seconds: float = (DEFAULT_STATS_ACCESS_DENIAL_COOLDOWN_SECONDS),
 ) -> StatsFetchRecord:
     """Fetch one endpoint without requiring Prefect."""
 
@@ -249,6 +242,25 @@ def fetch_stats_endpoint_raw(
         cache_hit=False,
         evidence=evidence,
     )
+
+
+def stats_play_by_play_final_score(payload: Mapping[str, Any]) -> tuple[int, int] | None:
+    """Return the last valid home and away score from a V3 play-by-play payload."""
+
+    game = payload.get("game")
+    if not isinstance(game, Mapping):
+        return None
+    actions = game.get("actions")
+    if not isinstance(actions, Sequence) or isinstance(actions, (str, bytes)):
+        return None
+    for action in reversed(actions):
+        if not isinstance(action, Mapping):
+            continue
+        home_score = _nonnegative_score(action.get("scoreHome"))
+        away_score = _nonnegative_score(action.get("scoreAway"))
+        if home_score is not None and away_score is not None:
+            return home_score, away_score
+    return None
 
 
 def failed_stats_fetch_record(
@@ -444,6 +456,16 @@ def _safe_artifact_evidence(
         return stats_artifact_evidence(cache, endpoint, game_id)
     except (OSError, ValueError, NbaStatsError):
         return None
+
+
+def _nonnegative_score(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        return None
+    return score if score >= 0 else None
 
 
 def _python_record(record: Mapping[str, Any]) -> dict[str, Any]:

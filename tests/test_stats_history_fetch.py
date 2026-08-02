@@ -22,12 +22,14 @@ from nba_lineup_model.season.stats import (
     fetch_stats_endpoint_raw,
     is_transient_stats_fetch_error,
     read_stats_fetch_manifest,
+    stats_play_by_play_final_score,
 )
 
 GAME_ID = "0021900194"
 PLAY_BY_PLAY_BODY = (
     b'{"meta":{"request":"http://nba.cloud/games/0021900194/playbyplay?Format=json"},'
-    b'"game":{"gameId":"0021900194","actions":[{"actionNumber":2,"actionType":"period"}]}}'
+    b'"game":{"gameId":"0021900194","actions":[{"actionNumber":2,"actionType":"period",'
+    b'"scoreHome":"100","scoreAway":"97"}]}}'
 )
 BOXSCORE_BODY = (
     b'{"meta":{"request":"http://nba.cloud/games/0021900194/boxscoretraditional?'
@@ -200,6 +202,19 @@ def test_stats_fetch_downloads_then_skips_and_round_trips_manifest(tmp_path: Pat
     )
     assert schema.field("byte_count").type == pa.int64()
     assert schema.field("started_at").type.tz == "UTC"
+
+
+def test_stats_play_by_play_final_score_uses_last_valid_score_pair():
+    assert stats_play_by_play_final_score(
+        {
+            "game": {
+                "actions": [
+                    {"scoreHome": "100", "scoreAway": "97"},
+                    {"scoreHome": "", "scoreAway": ""},
+                ]
+            }
+        }
+    ) == (100, 97)
 
 
 def test_stats_server_error_is_transient_and_not_cached(tmp_path: Path):

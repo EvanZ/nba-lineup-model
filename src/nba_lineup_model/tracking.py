@@ -22,6 +22,8 @@ TRACKING_ENABLED_ENV = "NBA_MLFLOW_TRACKING_ENABLED"
 TRACKING_ROOT_ENV = "NBA_MLFLOW_ROOT"
 
 _MODEL_RUN_PREFIXES = (
+    "aging-prior-rapm-",
+    "blended-prior-rapm-",
     "aging-",
     "baseline-",
     "bayesian-",
@@ -517,6 +519,10 @@ def _experiment_name(project_run_id: str, season: str) -> str:
 
 
 def _run_kind(project_run_id: str, manifest: Mapping[str, Any]) -> str:
+    if project_run_id.startswith("blended-prior-rapm-"):
+        return "blended_prior_rapm"
+    if project_run_id.startswith("aging-prior-rapm-"):
+        return "aging_prior_rapm"
     if project_run_id.startswith("baseline-"):
         return "ridge_rapm"
     if project_run_id.startswith("aging-"):

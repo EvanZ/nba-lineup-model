@@ -103,6 +103,94 @@ RMSE, MAE, exposure-weighted RMSE and MAE, skill versus zero, and skill versus
 persistence are reported for all players, exposure-eligible players, returning
 players, and cold starts.
 
+## 2025-26 Holdout
+
+The first published run holds out 2025-26, trains on target seasons 2020-21
+through 2024-25, and selects from the documented six-value ridge grid using
+four expanding folds. It uses 2,819 training player-seasons and 582 holdout
+players (462 returning and 120 cold starts). The selected normalized ridge
+regularization is \(\lambda=1\).
+
+| Cohort | Zero | Training mean | Persistence | Aging ridge | Aging skill vs. persistence |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| All players | 1.959 | 1.922 | 2.013 | **1.766** | **23.0%** |
+| Exposure eligible | 1.975 | 1.934 | 2.026 | **1.779** | **23.0%** |
+| Returning | 1.989 | 1.933 | 2.049 | **1.782** | **24.4%** |
+| Cold start | 1.712 | 1.828 | 1.712 | **1.643** | **7.9%** |
+
+Values are target-RAPM exposure-weighted RMSE; skill is the reduction in
+weighted MSE relative to persistence. The run is
+`aging-2025-26-20260801T220356Z-4de5f001`, stored under
+`artifacts/models/aging/2025-26/`. Its input panel covers 2019-20 through
+2025-26 and is pinned by hash in the model manifest.
+
+## Aging Curve Case Study
+
+The fitted spline defines a shared, conditional age effect. To make that term
+interpretable, the case study holds all non-age inputs fixed at an
+exposure-weighted returning-player reference profile and reports
+
+\[
+g(a) - g(27),
+\]
+
+where \(g(a)\) is the model prediction when only target age changes. Because
+the model has no age interactions, this difference is exactly the fitted age
+spline contribution and does not depend on the particular valid reference
+profile used for the calculation. It is not average player RAPM at age \(a\),
+nor a causal biological effect of aging.
+
+The published curve comes from
+`aging-curve-2025-26-20260801T234016Z-eec32898`. It uses the 2,819
+player-season rows from target seasons 2020-21 through 2024-25 that trained the
+source aging model. The shaded bands are 5th to 95th percentiles from 250
+target-season block bootstrap refits. The selected ridge penalty and spline
+specification remain fixed in each refit, so the interval reflects training
+season resampling, not hyperparameter-selection uncertainty.
+
+![Conditional age effect centered at age 27](../assets/images/aging/2025-26/aging-curve.svg)
+
+The model estimates rapid positive movement for young players: the common age
+term rises by +0.27 points per 100 possessions from age 19 to 20 and by +0.17
+from 21 to 22. It is effectively flat around ages 27 through 29, then declines
+by roughly 0.02 points per 100 possessions per year from ages 29 through 33.
+At age 35 the estimated partial effect is -0.11 relative to age 27, with a
+90% interval of [-0.16, -0.07].
+
+| Age | Partial effect vs. 27 | 90% interval | Change to next age | Training player-seasons |
+| ---: | ---: | ---: | ---: | ---: |
+| 19 | -1.01 | [-1.34, -0.64] | +0.27 | 25 |
+| 21 | -0.53 | [-0.66, -0.35] | +0.17 | 184 |
+| 24 | -0.15 | [-0.22, -0.05] | +0.07 | 337 |
+| 27 | 0.00 | [0.00, 0.00] | +0.01 | 208 |
+| 28 | +0.01 | [0.00, +0.02] | -0.01 | 177 |
+| 30 | -0.03 | [-0.04, -0.01] | -0.02 | 120 |
+| 33 | -0.08 | [-0.12, -0.05] | -0.02 | 73 |
+| 35 | -0.11 | [-0.16, -0.07] | -0.01 | 48 |
+| 37 | -0.14 | [-0.19, -0.09] | -0.01 | 22 |
+| 40 | -0.16 | [-0.22, -0.10] | 0.00 | 4 |
+
+![Observed age support](../assets/images/aging/2025-26/age-support.svg)
+
+The chart intentionally shows the thin tails. Ages 40 through 43 have only
+eight player-seasons combined, so the linear spline extension there should not
+be used as a strong claim about late-career decline. The empirical result is
+better read as a smoothed, exposure-weighted prior for the observed NBA
+population.
+
+Rebuild the report and images from the pinned aging run with:
+
+```bash
+uv run --group docs nba-build-aging-curve-case-study 2025-26 \
+  --aging-run-id aging-2025-26-20260801T220356Z-4de5f001 \
+  --bootstrap-samples 250 \
+  --bootstrap-seed 20260801
+```
+
+The immutable report contains `curve.parquet`, source hashes, a complete age
+table, and both SVGs under
+`artifacts/reports/aging_curve/2025-26/`.
+
 ## Prior uncertainty
 
 The model reports separate returning-player and cold-start error scales. Each

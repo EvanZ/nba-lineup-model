@@ -25,7 +25,7 @@ class RapmStintManifest(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     season: str = Field(pattern=SEASON_PATTERN)
     season_type: Literal["regular"] = "regular"
     created_at: datetime
@@ -40,6 +40,8 @@ class RapmStintManifest(BaseModel):
     multi_segment_possession_count: int = Field(ge=0)
     included_stint_count: int = Field(ge=1)
     excluded_zero_exposure_stint_count: int = Field(ge=0)
+    excluded_nonconserving_stint_count: int = Field(default=0, ge=0)
+    excluded_nonconserving_game_ids: tuple[str, ...] = ()
     player_count: int = Field(ge=10)
     home_offensive_possessions: float = Field(gt=0)
     away_offensive_possessions: float = Field(gt=0)
@@ -61,7 +63,9 @@ class RapmStintManifest(BaseModel):
     @model_validator(mode="after")
     def validate_counts(self) -> RapmStintManifest:
         if (
-            self.included_stint_count + self.excluded_zero_exposure_stint_count
+            self.included_stint_count
+            + self.excluded_zero_exposure_stint_count
+            + self.excluded_nonconserving_stint_count
             != self.source_stint_count
         ):
             raise ValueError("Included and excluded stints must conserve source stints")
@@ -69,6 +73,15 @@ class RapmStintManifest(BaseModel):
             raise ValueError("RAPM part rows must match included stints")
         if self.multi_segment_possession_count > self.source_possession_count:
             raise ValueError("Multi-segment possessions exceed source possessions")
+        if len(set(self.excluded_nonconserving_game_ids)) != len(
+            self.excluded_nonconserving_game_ids
+        ):
+            raise ValueError("Excluded nonconserving game IDs must be unique")
+        if self.schema_version == 1 and (
+            self.excluded_nonconserving_stint_count
+            or self.excluded_nonconserving_game_ids
+        ):
+            raise ValueError("Schema version 1 cannot record excluded nonconserving games")
         return self
 
 

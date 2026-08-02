@@ -234,7 +234,13 @@ def build_rapm_stint_dataset(
     segment_dir = layout.partition_dir(segment_partition)
     lineup_stints = pd.read_parquet(lineup_dir)
     segments = pd.read_parquet(segment_dir)
-    output = rapm_stints_frame(lineup_stints, segments)
+    output, excluded_game_ids = build_rapm_stints_from_curated_games(
+        season,
+        curated_dir=curated_root,
+    )
+    excluded_stint_count = int(
+        lineup_stints["game_id"].astype(str).isin(excluded_game_ids).sum()
+    )
 
     target_dir = analytical_root / "rapm_stints" / season / season_type
     target_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -246,6 +252,7 @@ def build_rapm_stint_dataset(
         output.to_parquet(part_path, index=False)
         possession_sizes = segments.groupby(["game_id", "possession_id"]).size()
         manifest = RapmStintManifest(
+            schema_version=2,
             season=season,
             created_at=datetime.now(UTC),
             builder_code_version=modeling_code_fingerprint(),
@@ -258,7 +265,11 @@ def build_rapm_stint_dataset(
             source_possession_count=len(possession_sizes),
             multi_segment_possession_count=int(possession_sizes.gt(1).sum()),
             included_stint_count=len(output),
-            excluded_zero_exposure_stint_count=len(lineup_stints) - len(output),
+            excluded_zero_exposure_stint_count=(
+                len(lineup_stints) - excluded_stint_count - len(output)
+            ),
+            excluded_nonconserving_stint_count=excluded_stint_count,
+            excluded_nonconserving_game_ids=excluded_game_ids,
             player_count=len(set().union(*output["home_player_ids"], *output["away_player_ids"])),
             home_offensive_possessions=float(output["home_offensive_possessions"].sum()),
             away_offensive_possessions=float(output["away_offensive_possessions"].sum()),

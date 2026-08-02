@@ -143,7 +143,7 @@ def run_aging_experiment(
 ) -> AgingExperiment:
     """Select and evaluate an aging model without using holdout outcomes."""
 
-    prepared = _prepare_transitions(transitions)
+    prepared = prepare_aging_transitions(transitions)
     _validate_configuration(
         regularization_grid,
         age_spline_knots,
@@ -165,7 +165,7 @@ def run_aging_experiment(
         for fold in folds:
             train = eligible.loc[eligible["target_season"].isin(fold.train_target_seasons)]
             validation = eligible.loc[eligible["target_season"].eq(fold.validation_target_season)]
-            model = _fit_aging_pipeline(
+            model = fit_aging_pipeline(
                 train,
                 regularization=regularization,
                 age_spline_knots=age_spline_knots,
@@ -232,7 +232,7 @@ def run_aging_experiment(
 
     training = eligible.loc[eligible["target_season"].isin(training_seasons)]
     holdout_rows = eligible.loc[eligible["target_season"].eq(holdout)]
-    fitted_model = _fit_aging_pipeline(
+    fitted_model = fit_aging_pipeline(
         training,
         regularization=selected_regularization,
         age_spline_knots=age_spline_knots,
@@ -398,7 +398,7 @@ def aging_code_fingerprint(
     return f"sha256:{digest.hexdigest()}"
 
 
-def _prepare_transitions(transitions: pd.DataFrame) -> pd.DataFrame:
+def prepare_aging_transitions(transitions: pd.DataFrame) -> pd.DataFrame:
     missing = _REQUIRED_TRANSITION_COLUMNS - set(transitions)
     if missing:
         raise ValueError(f"Aging transitions missing columns: {sorted(missing)}")
@@ -474,7 +474,7 @@ def _validate_configuration(
         raise ValueError("Aging spline degree must be 1, 2, or 3")
 
 
-def _fit_aging_pipeline(
+def fit_aging_pipeline(
     frame: pd.DataFrame,
     *,
     regularization: float,

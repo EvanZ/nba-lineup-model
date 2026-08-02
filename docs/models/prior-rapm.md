@@ -5,8 +5,8 @@
 <p class="project-lead">
 Prior-centered RAPM keeps the canonical one-number lineup design but shrinks
 each player toward a forward-looking estimate instead of toward zero. The
-first exemplar uses only prior-season RAPM; age adjustment is deliberately
-deferred to a later ablation.
+first exemplar uses only prior-season RAPM; a second, directly comparable
+ablation uses the frozen output of the RAPM aging model.
 </p>
 
 ## Estimand
@@ -39,9 +39,9 @@ Players absent from the frozen prior table are explicit cold starts and receive
 a zero prior. The output records `prior_available` so
 missing prior coverage cannot be mistaken for an observed zero estimate.
 
-This ablation intentionally excludes age, experience, box-score, and draft
-information. Once its value relative to zero-centered RAPM is understood, the
-aging adjustment becomes a separate, directly comparable extension.
+This first ablation intentionally excludes age, experience, box-score, and
+draft information. The age-informed extension below evaluates whether a
+pre-season aging forecast improves this simple lagged prior.
 
 ## Implementation
 
@@ -74,10 +74,74 @@ regular-season games used by the other exemplars and predicts the same final
 season fold; lambda is selected only by chronological validation within those
 1,044 training games.
 
-The Leaderboard row will use the same possession-level and eligible-game-margin
-metrics as canonical Ridge RAPM, on exactly the same holdout game IDs. The
-implementation is intentionally present before that promotion so the model's
-assumptions are reviewable without retrofitting them to an outcome.
+The Leaderboard row uses the same possession-level and eligible-game-margin
+metrics as canonical Ridge RAPM, on exactly the same holdout game IDs.
+
+## Age-Informed Prior Exemplar
+
+The second exemplar replaces the completed prior-season coefficient with the
+frozen player-specific forecast from the [RAPM Aging Model](aging-model.md):
+
+\[
+\mu_{i,2025\text{-}26}
+=
+f\left(
+  \widehat{\beta}^{0}_{i,2024\text{-}25},
+  \operatorname{age}_{i,2025\text{-}26},
+  \operatorname{experience}_{i,2025\text{-}26},
+  \operatorname{exposure}_{i,2024\text{-}25},
+  \operatorname{returning}_i,
+  \operatorname{rookie}_i
+\right).
+\]
+
+The aging run is trained only through 2024-25 and publishes its 2025-26
+`player_priors.parquet` before any 2025-26 RAPM fitting. This RAPM model uses
+that table as the penalty center, with the same chronological lambda selection
+and 1,044-game regular-season fit as the lagged-prior model. It selects
+\(\lambda=0.03\), the same penalty selected by the lagged-prior run.
+
+| Prior definition | Regular possession RMSE | Regular game-margin RMSE | Frozen playoff possession RMSE | Frozen playoff game-margin RMSE |
+| --- | ---: | ---: | ---: | ---: |
+| Completed 2024-25 RAPM | **1.199192** | **14.4048** | 1.191612 | 15.4165 |
+| Aging-model forecast | 1.199351 | 14.4618 | **1.191494** | **15.2522** |
+
+All metrics use the common eligible-possession cohorts and the same frozen
+first-1,044-game 2025-26 state. The age-informed prior is marginally worse on
+the regular holdout. Its playoff possession improvement is only 0.000118 RMSE,
+so it should not be treated as evidence of a general improvement; the lower
+playoff game-margin RMSE is more material but based on just 85 games. This is a
+useful negative ablation: the aging model's player-level forecasting advantage
+does not automatically transfer to lineup-level prediction.
+
+The immutable RAPM artifact is
+`aging-prior-rapm-2025-26-20260801T221623Z-8c32f284`; it pins aging run
+`aging-2025-26-20260801T220356Z-4de5f001`, the aging manifest hash, game
+assignments, frozen player coefficients, and frozen-playoff predictions.
+
+## Blended Aging And Lagged Prior
+
+The next ablation gives each frozen prior an explicit nonnegative share:
+
+\[
+\mu_i = w\mu_i^{\text{lagged}} + (1-w)\mu_i^{\text{aging}},
+\qquad 0 \leq w \leq 1.
+\]
+
+The candidate grid is \(w \in \{0,0.25,0.5,0.75,1\}\), crossed with the
+standard RAPM lambda grid and selected by pooled chronological validation MSE
+within the first 1,044 2025-26 regular-season games. The endpoints reproduce
+the two earlier prior definitions exactly.
+
+The selected weight is \(w=1\) on lagged RAPM and \(w=0\) on the aging
+forecast, with \(\lambda=0.03\). The best interior candidate, \(w=0.75\),
+has validation weighted MSE 10,839.61 versus 10,837.78 for the selected
+lagged-only candidate. Consequently, its regular-holdout and frozen-playoff
+metrics exactly match the lagged-prior model. There is no evidence here that a
+linear blend adds information beyond the recursive lagged RAPM prior.
+
+The selection surface and frozen outputs are retained in
+`blended-prior-rapm-2025-26-20260801T224013Z-c49851fb`.
 
 ## 2025-26 Ranking
 

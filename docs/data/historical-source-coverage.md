@@ -17,6 +17,21 @@ coverage was incomplete and unreliable across older seasons. The surviving
 liveData files are a legacy cache layer, not a source to probe when extending
 history. New historical acquisition goes through `nba-fetch-stats-history`.
 
+## V3 Play-By-Play Boundary
+
+Direct NBA Stats probes found populated `playbyplayv3` event streams from
+1996-97 onward. Equivalent 1995-96 and earlier requests returned structurally
+valid responses with an empty `game.actions` array. Since possession and lineup
+reconstruction require events, 1996-97 is the practical lower boundary for the
+V3 archive. Earlier `boxscoretraditionalv3` availability does not change that
+boundary.
+
+Older schedule responses can include unplayed exhibition and if-necessary
+placeholders with non-final status and zero-valued team identities. Discovery
+excludes precisely those rows; final games and identified games still undergo
+strict schema validation. See
+[ADR-0007](../architecture/decisions/0007-stats-v3-play-by-play-history-boundary.md).
+
 ## Regular-Season Archive Boundary
 
 The following table describes the source mix for 2019-20 through 2024-25.

@@ -849,7 +849,7 @@ def _write_experiment(
             dataset_manifest_sha256=_sha256_file(dataset_dir / "_manifest.json"),
             dataset_part_sha256=dataset_manifest.part_sha256,
             stint_count=dataset_manifest.row_count,
-            game_count=dataset_manifest.source_game_count,
+            game_count=int(experiment.split_plan.ordered_games["game_id"].nunique()),
             player_count=len(experiment.player_ids),
             team_count=len(experiment.team_ids),
             split_config=split_config,

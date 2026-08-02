@@ -292,14 +292,19 @@ def player_season_frame(
     missing = required_rankings - set(rapm_rankings)
     if missing:
         raise ValueError(f"RAPM rankings missing columns: {sorted(missing)}")
-    ids = {
-        "boxscores": set(boxscore_features["player_id"].astype(int)),
-        "rapm": set(rapm_rankings["player_id"].astype(int)),
-        "bios": set(player_bios["player_id"].astype(int)),
-    }
-    if len({frozenset(values) for values in ids.values()}) != 1:
-        details = ", ".join(f"{name}={len(values)}" for name, values in ids.items())
-        raise ValueError(f"Player-season sources have different player IDs: {details}")
+    ranking_ids = set(rapm_rankings["player_id"].astype(int))
+    bio_ids = set(player_bios["player_id"].astype(int))
+    boxscore_ids = set(boxscore_features["player_id"].astype(int))
+    if not ranking_ids <= bio_ids:
+        raise ValueError(
+            "RAPM rankings contain players absent from season bios: "
+            f"rapm={len(ranking_ids)}, bios={len(bio_ids)}"
+        )
+    if not boxscore_ids <= ranking_ids:
+        raise ValueError(
+            "Boxscore features contain players absent from RAPM rankings: "
+            f"boxscores={len(boxscore_ids)}, rapm={len(ranking_ids)}"
+        )
 
     rankings = rapm_rankings.loc[
         :,
@@ -337,6 +342,7 @@ def player_season_frame(
         rankings.merge(
             boxscore_features.drop(columns="player_name"),
             on="player_id",
+            how="left",
             validate="one_to_one",
         )
         .merge(bios, on="player_id", validate="one_to_one")
@@ -347,6 +353,7 @@ def player_season_frame(
     panel.insert(1, "season", season)
     panel.insert(2, "season_start_year", start_year)
     panel.insert(3, "rapm_run_id", rapm_run_id)
+    panel["boxscore_features_available"] = panel["games"].notna()
     panel["nba_experience_years"] = (
         (start_year - pd.to_numeric(panel["from_year"], errors="raise"))
         .clip(lower=0)

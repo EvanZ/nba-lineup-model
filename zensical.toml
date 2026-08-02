@@ -26,6 +26,7 @@ nav = [
       {"Hybrid season storage" = "architecture/decisions/0004-hybrid-season-storage.md"},
       {"MLflow experiment index" = "architecture/decisions/0005-mlflow-experiment-index.md"},
       {"Stats V3-first historical archive" = "architecture/decisions/0006-historical-stats-v3-first.md"},
+      {"Stats V3 play-by-play history boundary" = "architecture/decisions/0007-stats-v3-play-by-play-history-boundary.md"},
     ]},
   ]},
   {"Data contracts" = [
@@ -55,6 +56,8 @@ nav = [
     {"Backfill historical seasons" = "guides/backfill-history.md"},
     {"Train RAPM baselines" = "guides/train-rapm.md"},
     {"Train the RAPM aging model" = "guides/train-aging.md"},
+    {"Train age-informed prior RAPM" = "guides/train-aging-prior-rapm.md"},
+    {"Train blended-prior RAPM" = "guides/train-blended-prior-rapm.md"},
     {"Train neural models" = "guides/train-neural.md"},
     {"Train RAPM + Transformer" = "guides/train-transformer.md"},
     {"Train CatBoost" = "guides/train-catboost.md"},

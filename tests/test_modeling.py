@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -12,7 +13,10 @@ from nba_lineup_model.evaluation.metrics import (
     skill_score,
 )
 from nba_lineup_model.modeling.schema import ChronologicalSplitConfig
-from nba_lineup_model.modeling.stints import rapm_stints_frame
+from nba_lineup_model.modeling.stints import (
+    build_rapm_stints_from_curated_games,
+    rapm_stints_frame,
+)
 from nba_lineup_model.modeling.train import (
     chronological_game_splits,
     fit_baseline_experiment,
@@ -23,6 +27,7 @@ from nba_lineup_model.models.baselines import (
     signed_entity_matrix,
     vocabulary_mapping,
 )
+from nba_lineup_model.season.layout import CuratedDatasetLayout, CuratedPartition
 
 
 def test_rapm_stints_conserve_points_and_split_possession_exposure() -> None:
@@ -38,6 +43,48 @@ def test_rapm_stints_conserve_points_and_split_possession_exposure() -> None:
     assert result["away_offensive_possessions"].sum() == pytest.approx(1.0)
     assert result["possessions"].tolist() == pytest.approx([0.25, 0.75])
     assert result["target_home_net_rating"].tolist() == pytest.approx([400.0, -400.0 / 3.0])
+
+
+def test_curated_stint_builder_excludes_whole_nonconserving_game(
+    tmp_path: Path,
+) -> None:
+    """A historical score mismatch removes the game, never one malformed stint."""
+
+    curated = tmp_path / "curated"
+    layout = CuratedDatasetLayout(curated)
+    lineup_dir = layout.partition_dir(
+        CuratedPartition(table="lineup_stints", season="2025-26", season_type="regular")
+    )
+    segment_dir = layout.partition_dir(
+        CuratedPartition(
+            table="possession_segments",
+            season="2025-26",
+            season_type="regular",
+        )
+    )
+    lineup_dir.mkdir(parents=True)
+    segment_dir.mkdir(parents=True)
+    bad_stints = _source_stints()
+    bad_segments = _source_segments()
+    bad_stints.loc[0, "points_home"] = 0
+    good_stints = _source_stints().assign(game_id="0022500002")
+    good_segments = _source_segments().assign(game_id="0022500002")
+    pd.concat([bad_stints, good_stints], ignore_index=True).to_parquet(
+        lineup_dir / "part-00000.parquet",
+        index=False,
+    )
+    pd.concat([bad_segments, good_segments], ignore_index=True).to_parquet(
+        segment_dir / "part-00000.parquet",
+        index=False,
+    )
+
+    result, excluded = build_rapm_stints_from_curated_games(
+        "2025-26",
+        curated_dir=curated,
+    )
+
+    assert excluded == ("0022500001",)
+    assert set(result["game_id"]) == {"0022500002"}
 
 
 def test_signed_sparse_player_encoding() -> None:

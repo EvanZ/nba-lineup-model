@@ -29,6 +29,8 @@ written and validated:
 - `nba-train-rapm`;
 - `nba-train-bayesian-rapm`;
 - `nba-train-aging-model`;
+- `nba-train-aging-prior-rapm`;
+- `nba-train-blended-prior-rapm`;
 - `nba-train-neural-rapm`;
 - `nba-train-deep-sets`;
 - `nba-evaluate-models`.

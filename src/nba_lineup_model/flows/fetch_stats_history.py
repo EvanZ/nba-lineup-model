@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from prefect import flow, runtime, task
+from prefect import flow, get_run_logger, runtime, task
 from prefect.client.schemas.objects import State, TaskRun
 from prefect.futures import PrefectFuture, wait
 from prefect.task_runners import ThreadPoolTaskRunner
@@ -18,6 +18,7 @@ from nba_lineup_model.ingest.nba_cdn import NbaCdnEndpoint, NbaCdnError, RawJson
 from nba_lineup_model.ingest.nba_stats import (
     DEFAULT_STATS_ACCESS_DENIAL_COOLDOWN_SECONDS,
     NbaStatsEndpoint,
+    NbaStatsRawCache,
 )
 from nba_lineup_model.season.fetch import artifact_evidence, select_catalog_games
 from nba_lineup_model.season.schema import CatalogGame, validate_season
@@ -27,6 +28,7 @@ from nba_lineup_model.season.stats import (
     failed_stats_fetch_record,
     fetch_stats_endpoint_raw,
     is_transient_stats_fetch_error,
+    stats_play_by_play_final_score,
 )
 from nba_lineup_model.season.storage import read_game_catalog
 
@@ -119,7 +121,7 @@ def fetch_stats_endpoint_task(
     task_run_id = _runtime_id(runtime.task_run.id)
     attempt_number = runtime.task_run.run_count or 1
     try:
-        return fetch_stats_endpoint_raw(
+        record = fetch_stats_endpoint_raw(
             game,
             endpoint,
             run_id=run_id,
@@ -133,6 +135,8 @@ def fetch_stats_endpoint_task(
             request_interval_jitter_seconds=request_interval_jitter_seconds,
             access_denial_cooldown_seconds=access_denial_cooldown_seconds,
         )
+        _log_downloaded_game(record, game, Path(stats_raw_dir))
+        return record
     except Exception as error:
         record = failed_stats_fetch_record(
             game,
@@ -147,6 +151,38 @@ def fetch_stats_endpoint_task(
             prefect_task_run_id=task_run_id,
         )
         raise StatsFetchTaskError(record, error) from error
+
+
+def _log_downloaded_game(
+    record: StatsFetchRecord,
+    game: CatalogGame,
+    stats_raw_dir: Path,
+) -> None:
+    """Emit useful archive progress only for a newly retained source response."""
+
+    if record.status != "succeeded":
+        return
+
+    detail = "final unavailable"
+    if record.endpoint is NbaStatsEndpoint.PLAY_BY_PLAY_V3:
+        response = NbaStatsRawCache(stats_raw_dir).read(record.endpoint, game.game_id)
+        if response is not None:
+            final_score = stats_play_by_play_final_score(response.payload)
+            if final_score is not None:
+                home_score, away_score = final_score
+                detail = (
+                    f"final {game.away_team_tricode} {away_score}-"
+                    f"{home_score} {game.home_team_tricode}"
+                )
+
+    get_run_logger().info(
+        "Archived %s | %s | %s @ %s | %s",
+        game.game_id,
+        game.game_date.isoformat(),
+        game.away_team_tricode,
+        game.home_team_tricode,
+        detail,
+    )
 
 
 @flow(
@@ -170,9 +206,7 @@ def fetch_stats_history_flow(
     run_id: str | None = None,
     min_request_interval_seconds: float = 1.0,
     request_interval_jitter_seconds: float = 0.25,
-    access_denial_cooldown_seconds: float = (
-        DEFAULT_STATS_ACCESS_DENIAL_COOLDOWN_SECONDS
-    ),
+    access_denial_cooldown_seconds: float = (DEFAULT_STATS_ACCESS_DENIAL_COOLDOWN_SECONDS),
 ) -> StatsHistoryFetchSummary:
     """Retain raw NBA Stats game responses across one or more seasons."""
 
@@ -343,9 +377,7 @@ def main() -> None:
     if args.access_denial_cooldown <= 0:
         raise SystemExit("--access-denial-cooldown must be positive")
     endpoints = (
-        [NbaStatsEndpoint(endpoint) for endpoint in args.endpoints]
-        if args.endpoints
-        else None
+        [NbaStatsEndpoint(endpoint) for endpoint in args.endpoints] if args.endpoints else None
     )
     configured_flow = fetch_stats_history_flow.with_options(
         task_runner=ThreadPoolTaskRunner(max_workers=args.max_workers)

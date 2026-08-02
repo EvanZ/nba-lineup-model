@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from nba_lineup_model.modeling.aging_prior_rapm import aging_prior_frame
+from nba_lineup_model.modeling.blended_prior_rapm import blended_prior_frame
 from nba_lineup_model.modeling.prior_rapm import (
     fit_forward_lagged_rapm_history,
     fit_prior_rapm_experiment,
@@ -105,6 +107,44 @@ def test_forward_history_uses_only_previous_season_estimates_as_priors() -> None
     second_priors = results[1].player_estimates.set_index("player_id")["prior_rapm"]
     assert results[0].player_estimates["prior_available"].sum() == 0
     assert second_priors.to_dict() == pytest.approx(first_estimates.to_dict())
+
+
+def test_aging_prior_frame_is_label_free_and_preseason() -> None:
+    source = pd.DataFrame(
+        {
+            "target_season": ["2025-26", "2025-26"],
+            "player_id": [1, 2],
+            "aging_prior_mean": [1.5, -0.5],
+            "model_train_last_target_season": ["2024-25", "2024-25"],
+        }
+    )
+
+    result = aging_prior_frame(source, target_season="2025-26")
+
+    assert result.to_dict("list") == {
+        "player_id": [1, 2],
+        "lagged_rapm_prior": [1.5, -0.5],
+    }
+    with pytest.raises(ValueError, match="target-season outcomes"):
+        aging_prior_frame(
+            source.assign(target_rapm=[1.0, 2.0]),
+            target_season="2025-26",
+        )
+
+
+def test_blended_prior_preserves_endpoint_models() -> None:
+    aging = pd.DataFrame({"player_id": [1, 2], "lagged_rapm_prior": [1.0, -2.0]})
+    lagged = pd.DataFrame({"player_id": [1, 2], "lagged_rapm_prior": [3.0, 4.0]})
+
+    assert blended_prior_frame(aging, lagged, lagged_weight=0.0)[
+        "lagged_rapm_prior"
+    ].tolist() == pytest.approx([1.0, -2.0])
+    assert blended_prior_frame(aging, lagged, lagged_weight=1.0)[
+        "lagged_rapm_prior"
+    ].tolist() == pytest.approx([3.0, 4.0])
+    assert blended_prior_frame(aging, lagged, lagged_weight=0.25)[
+        "lagged_rapm_prior"
+    ].tolist() == pytest.approx([1.5, -0.5])
 
 
 def _stints(game_count: int) -> pd.DataFrame:

@@ -34,15 +34,17 @@ uv run nba-build-player-season-panel \
 
 ## Same-season table
 
-One row represents one player who appeared in a regular-season game. Player IDs
-must reconcile exactly across played box scores, season bios, and RAPM
-rankings.
+One row represents one player in the RAPM outcome universe. Every RAPM player
+must have a season bio; bio-only players are not outcomes and are excluded.
+Played box-score rows are expected to be a subset: a small number of historical
+player-game box-score records can be absent even when lineup reconstruction
+identifies the player.
 
 The table includes:
 
 - RAPM, raw on-court net rating, exposure, possessions, seconds, and stints;
 - games, starts, minutes, and counting totals from positive-minute game box
-  scores;
+  scores, plus `boxscore_features_available`;
 - selected per-36 rates and shooting percentages;
 - season-specific age, position, size, country, college, and draft fields;
 - career start year, derived experience, rookie status, and years since draft;
@@ -54,7 +56,10 @@ historical component models, not as a direct input for possessions from the
 same season.
 
 NBA rows marked as played with zero recorded minutes are retained in the
-curated source table but excluded from season games and totals.
+curated source table but excluded from season games and totals. When a RAPM/bio
+player has no played box-score summary, its box-score features remain null and
+`boxscore_features_available=false`; they are never imputed as zero during
+panel construction.
 
 ## Transition table
 

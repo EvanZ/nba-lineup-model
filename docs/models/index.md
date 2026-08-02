@@ -13,6 +13,7 @@ interactions.
 | RAPM | Signed identities of all ten players |
 | Bayesian RAPM | RAPM posterior uncertainty under an explicit Gaussian model |
 | RAPM aging model | Forward player-season priors from prior RAPM and age |
+| Age-informed prior RAPM | Lineup RAPM centered on the frozen aging forecast |
 | Additive neural RAPM | Possession-level signed scalar player embeddings |
 | Deep Sets | Nonlinear permutation-invariant lineup aggregation |
 | CatBoost | Categorical player states and boosted-tree interactions |

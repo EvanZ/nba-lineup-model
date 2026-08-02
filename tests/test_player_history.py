@@ -147,6 +147,66 @@ def test_player_season_frame_combines_outcomes_and_bio_context():
     assert player["nba_experience_years"] == 3
     assert player["years_since_draft"] == pytest.approx(3.0)
     assert bool(player["is_rookie"]) is False
+    assert bool(player["boxscore_features_available"]) is True
+
+
+def test_player_season_frame_preserves_rapm_player_without_boxscore_features():
+    rankings = pd.DataFrame(
+        [
+            {
+                "player_id": 1,
+                "rapm": 2.5,
+                "raw_on_court_net_rating": 4.0,
+                "stint_count": 12,
+                "possessions": 300.0,
+                "seconds": 900.0,
+                "exposure_eligible": True,
+                "primary_team_id": 10,
+                "primary_team_tricode": "AAA",
+            }
+        ]
+    )
+    bios = pd.DataFrame(
+        [
+            {
+                "player_id": 1,
+                "player_name": "Player One",
+                "age": 25.0,
+                "listed_position": "G",
+                "height_inches": 75,
+                "weight_pounds": 195,
+                "college": "Example",
+                "country": "USA",
+                "draft_year": 2017,
+                "draft_round": 1,
+                "draft_number": 12,
+                "is_undrafted": False,
+            }
+        ]
+    )
+    catalog = pd.DataFrame([{"player_id": 1, "from_year": 2017, "to_year": 2025}])
+    empty_boxscores = pd.DataFrame(
+        columns=[
+            "player_id",
+            "player_name",
+            "games",
+            "box_primary_team_id",
+            "box_primary_team_tricode",
+        ]
+    )
+
+    panel = player_season_frame(
+        "2020-21",
+        empty_boxscores,
+        rankings,
+        bios,
+        catalog,
+        rapm_run_id="rapm-test",
+    )
+
+    assert len(panel) == 1
+    assert bool(panel.loc[0, "boxscore_features_available"]) is False
+    assert pd.isna(panel.loc[0, "games"])
 
 
 def test_player_transition_frame_lags_performance_and_preserves_cold_starts():

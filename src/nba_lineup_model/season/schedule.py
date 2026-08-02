@@ -284,6 +284,8 @@ def _schedule_rows(payload: dict[str, Any], *, season: str) -> list[dict[str, An
                 raise NbaScheduleError(
                     f"NBA schedule game {game_index} for date {date_index} is invalid"
                 )
+            if _is_unidentifiable_non_catalog_placeholder(game):
+                continue
             rows.append(
                 _flatten_schedule_game(
                     game,
@@ -318,6 +320,8 @@ def _flatten_schedule_game(
                 f"NBA schedule {location} {side} team is missing required fields: "
                 f"{', '.join(missing_team_fields)}"
             )
+        if not _has_identifiable_team(team):
+            raise NbaScheduleError(f"NBA schedule {location} {side} team has an invalid identity")
 
     return {
         **game,
@@ -328,6 +332,27 @@ def _flatten_schedule_game(
         "awayTeam_teamId": away_team["teamId"],
         "awayTeam_teamTricode": away_team["teamTricode"],
     }
+
+
+def _is_unidentifiable_non_catalog_placeholder(game: dict[str, Any]) -> bool:
+    """Identify unplayed schedule placeholders without actual teams."""
+
+    if _optional_int(game.get("gameStatus"), field="gameStatus") == 3:
+        return False
+    home_team = game.get("homeTeam")
+    away_team = game.get("awayTeam")
+    return not (
+        isinstance(home_team, dict)
+        and isinstance(away_team, dict)
+        and _has_identifiable_team(home_team)
+        and _has_identifiable_team(away_team)
+    )
+
+
+def _has_identifiable_team(team: dict[str, Any]) -> bool:
+    team_id = _optional_int(team.get("teamId"), field="teamId")
+    tricode = _optional_text(team.get("teamTricode"))
+    return team_id is not None and team_id > 0 and tricode is not None
 
 
 def _catalog_game(

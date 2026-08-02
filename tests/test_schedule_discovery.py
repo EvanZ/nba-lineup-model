@@ -19,9 +19,7 @@ from nba_lineup_model.season.schema import CatalogGame, GameCatalog
 from nba_lineup_model.season.storage import read_game_catalog
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "scheduleleaguev2_minimal.json"
-SOURCE_URL = (
-    "https://stats.nba.com/stats/scheduleleaguev2?LeagueID=00&Season=2025-26"
-)
+SOURCE_URL = "https://stats.nba.com/stats/scheduleleaguev2?LeagueID=00&Season=2025-26"
 FETCHED_AT = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 
 
@@ -119,6 +117,94 @@ def test_schedule_rejects_nested_contract_drift():
         catalog_from_schedule(response.model_copy(update={"payload": payload}))
 
 
+def test_schedule_skips_unidentifiable_historical_preseason_placeholder():
+    response = schedule_response()
+    payload = response.model_copy(deep=True).payload
+    placeholder = payload["leagueSchedule"]["gameDates"][0]["games"][0].copy()
+    placeholder.update(
+        {
+            "gameId": "0012500001",
+            "gameStatus": 0,
+            "gameStatusText": "",
+            "homeTeam": {"teamId": 0, "teamTricode": None},
+            "awayTeam": {"teamId": 0, "teamTricode": None},
+        }
+    )
+    payload["leagueSchedule"]["gameDates"][0]["games"].insert(0, placeholder)
+
+    catalog = catalog_from_schedule(response.model_copy(update={"payload": payload}))
+
+    assert {game.game_id for game in catalog.games} == {
+        "0022500001",
+        "0022500002",
+        "0052500101",
+        "0042500401",
+    }
+
+
+def test_schedule_skips_unidentifiable_historical_all_star_placeholder():
+    response = schedule_response()
+    payload = response.model_copy(deep=True).payload
+    placeholder = payload["leagueSchedule"]["gameDates"][0]["games"][0].copy()
+    placeholder.update(
+        {
+            "gameId": "0032500011",
+            "gameLabel": "All-Star Game",
+            "gameStatus": 0,
+            "gameStatusText": "",
+            "homeTeam": {"teamId": 0, "teamTricode": None},
+            "awayTeam": {"teamId": 0, "teamTricode": None},
+        }
+    )
+    payload["leagueSchedule"]["gameDates"][0]["games"].insert(0, placeholder)
+
+    catalog = catalog_from_schedule(response.model_copy(update={"payload": payload}))
+
+    assert "0032500011" not in {game.game_id for game in catalog.games}
+
+
+def test_schedule_skips_unidentifiable_legacy_non_game_placeholder():
+    response = schedule_response()
+    payload = response.model_copy(deep=True).payload
+    placeholder = payload["leagueSchedule"]["gameDates"][0]["games"][0].copy()
+    placeholder.update(
+        {
+            "gameId": "0092500001",
+            "gameStatus": 0,
+            "gameStatusText": "",
+            "homeTeam": {"teamId": 0, "teamTricode": None},
+            "awayTeam": {"teamId": 0, "teamTricode": None},
+        }
+    )
+    payload["leagueSchedule"]["gameDates"][0]["games"].insert(0, placeholder)
+
+    catalog = catalog_from_schedule(response.model_copy(update={"payload": payload}))
+
+    assert "0092500001" not in {game.game_id for game in catalog.games}
+
+
+def test_schedule_rejects_invalid_regular_season_team_identity():
+    response = schedule_response()
+    payload = response.model_copy(deep=True).payload
+    payload["leagueSchedule"]["gameDates"][0]["games"][0]["homeTeam"] = {
+        "teamId": 0,
+        "teamTricode": None,
+    }
+
+    with pytest.raises(NbaScheduleError, match="invalid identity"):
+        catalog_from_schedule(response.model_copy(update={"payload": payload}))
+
+
+def test_schedule_rejects_unidentifiable_final_playoff_game():
+    response = schedule_response()
+    payload = response.model_copy(deep=True).payload
+    game = payload["leagueSchedule"]["gameDates"][1]["games"][0]
+    game["homeTeam"] = {"teamId": 0, "teamTricode": None}
+
+    with pytest.raises(NbaScheduleError, match="invalid identity"):
+        catalog_from_schedule(response.model_copy(update={"payload": payload}))
+
+
 def test_nba_cup_knockout_games_follow_source_game_type():
     response = schedule_response()
     payload = response.model_copy(deep=True).payload
@@ -126,14 +212,10 @@ def test_nba_cup_knockout_games_follow_source_game_type():
     game["gameLabel"] = "Emirates NBA Cup"
     game["gameSubLabel"] = "Quarterfinals"
 
-    quarterfinal = catalog_from_schedule(
-        response.model_copy(update={"payload": payload})
-    ).games[0]
+    quarterfinal = catalog_from_schedule(response.model_copy(update={"payload": payload})).games[0]
     game["gameId"] = "0062500001"
     game["gameSubLabel"] = "Championship"
-    championship = catalog_from_schedule(
-        response.model_copy(update={"payload": payload})
-    ).games[0]
+    championship = catalog_from_schedule(response.model_copy(update={"payload": payload})).games[0]
 
     assert quarterfinal.season_type == "regular"
     assert championship.season_type == "nba_cup_final"
@@ -142,13 +224,9 @@ def test_nba_cup_knockout_games_follow_source_game_type():
 def test_schedule_preserves_source_status_text_lexically():
     response = schedule_response()
     payload = response.model_copy(deep=True).payload
-    payload["leagueSchedule"]["gameDates"][0]["games"][0]["gameStatusText"] = (
-        "Final               "
-    )
+    payload["leagueSchedule"]["gameDates"][0]["games"][0]["gameStatusText"] = "Final               "
 
-    game = catalog_from_schedule(
-        response.model_copy(update={"payload": payload})
-    ).games[0]
+    game = catalog_from_schedule(response.model_copy(update={"payload": payload})).games[0]
 
     assert game.game_status == "final"
     assert game.period_count == 4
@@ -183,8 +261,8 @@ def test_replace_catalog_season_preserves_other_seasons():
 
     assert {game.season for game in merged.games} == {"2024-25", "2025-26"}
     assert len(merged.games) == len(discovered.games) + 1
-    assert next(game for game in merged.games if game.game_id == "0022500001") == (
-        discovered.games[0]
+    assert (
+        next(game for game in merged.games if game.game_id == "0022500001") == (discovered.games[0])
     )
 
 

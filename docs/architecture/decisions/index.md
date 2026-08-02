@@ -11,6 +11,7 @@ modeling. They explain why a rule exists and which alternatives were rejected.
 | [ADR-0004](0004-hybrid-season-storage.md) | Accepted | Separate game build artifacts from curated season partitions. |
 | [ADR-0005](0005-mlflow-experiment-index.md) | Accepted | Index immutable model runs in MLflow without making it authoritative. |
 | [ADR-0006](0006-historical-stats-v3-first.md) | Accepted | Use Stats V3 as the primary historical game archive and retain liveData only as a legacy fallback. |
+| [ADR-0007](0007-stats-v3-play-by-play-history-boundary.md) | Accepted | Use 1996-97 as the practical V3 play-by-play history boundary. |
 
 New decisions should be added as numbered Markdown files. Existing decisions
 should be superseded by a new record rather than rewritten after their context
