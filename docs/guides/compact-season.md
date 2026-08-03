@@ -45,6 +45,21 @@ uv run nba-compact-season 2025-26 \
 The command does not offer individual-game or prefix selection because
 publishing a partial canonical partition would make the dataset ambiguous.
 
+Historical RAPM can instead use an explicit, provenance-labeled subset of
+games with successful builds and a `pass` or `warning` quality status:
+
+```bash
+uv run nba-compact-season 2018-19 \
+  --season-type regular \
+  --quality-eligible-only \
+  --max-workers 4
+```
+
+This is not a complete-season canonical partition. Its run manifest records
+`selection_policy=quality_eligible_subset`, the complete catalog count, the
+selected pass/warning count, and the excluded count. It is intended only for
+the historical modeling panel, whose season coverage is reported separately.
+
 ## Outputs
 
 Each of the six tables uses the same partition contract:

@@ -36,7 +36,7 @@ The prediction \(\mu_{i,t}\) is a prior mean, not the final target-season RAPM
 coefficient. [Prior-Centered RAPM](prior-rapm.md) is the first consumer of this
 handoff.
 
-## Initial feature model
+## Draft And Physical Feature Model
 
 The initial estimator is exposure-weighted ridge regression with:
 
@@ -45,6 +45,15 @@ The initial estimator is exposure-weighted ridge regression with:
 - prior RAPM;
 - `log1p` prior RAPM possessions;
 - explicit prior-season availability and rookie indicators.
+- estimated draft age, draft status and pick availability;
+- draft pick, height, and weight with fold-local median imputation and
+  missingness indicators;
+- age-slope interactions for early-entry drafted players, late-entry drafted
+  players, and undrafted players.
+
+Season bios provide a listed age and draft year, not an exact birth date and
+draft date. The model therefore uses an estimated draft age and retains only
+plausible values from 17 through 30; other records are explicitly unknown.
 
 Cold-start players retain `has_prior_season=false`. Their missing prior RAPM is
 represented as zero only inside the fitted design; the published prior table
@@ -69,16 +78,10 @@ where \(\widetilde{n}_j\) is target RAPM exposure normalized to mean one and
 
 ## Forward-only selection
 
-Target seasons are the split unit. Suppose transition rows end in 2020-21
-through 2025-26:
-
-| Fold | Training targets | Validation target |
-| --- | --- | --- |
-| 0 | 2020-21 | 2021-22 |
-| 1 | 2020-21 through 2021-22 | 2022-23 |
-| 2 | 2020-21 through 2022-23 | 2023-24 |
-| 3 | 2020-21 through 2023-24 | 2024-25 |
-| Final | 2020-21 through 2024-25 | 2025-26 |
+Target seasons are the split unit. The full-history run has 27 expanding
+validation folds: it fits 1997-98 to predict 1998-99, extends the training
+window one season at a time through a 2023-24 to 2024-25 validation fold, then
+fits 1997-98 through 2024-25 to publish 2025-26 priors.
 
 Regularization minimizes pooled exposure-weighted validation MSE. The age
 spline, scaling parameters, and ridge coefficients are refitted inside every
@@ -105,23 +108,23 @@ players, and cold starts.
 
 ## 2025-26 Holdout
 
-The first published run holds out 2025-26, trains on target seasons 2020-21
-through 2024-25, and selects from the documented six-value ridge grid using
-four expanding folds. It uses 2,819 training player-seasons and 582 holdout
-players (462 returning and 120 cold starts). The selected normalized ridge
-regularization is \(\lambda=1\).
+The full-history run holds out 2025-26, trains on target seasons 1997-98
+through 2024-25, and selects from the documented ridge grid using 27 expanding
+folds. It uses 13,527 training player-seasons and 582 holdout players (462
+returning and 120 cold starts). The selected normalized ridge regularization is
+\(\lambda=0.001\).
 
 | Cohort | Zero | Training mean | Persistence | Aging ridge | Aging skill vs. persistence |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| All players | 1.959 | 1.922 | 2.013 | **1.766** | **23.0%** |
-| Exposure eligible | 1.975 | 1.934 | 2.026 | **1.779** | **23.0%** |
-| Returning | 1.989 | 1.933 | 2.049 | **1.782** | **24.4%** |
-| Cold start | 1.712 | 1.828 | 1.712 | **1.643** | **7.9%** |
+| All players | 1.959 | 1.920 | 2.013 | **1.728** | **26.3%** |
+| Exposure eligible | 1.975 | 1.932 | 2.026 | **1.741** | **26.2%** |
+| Returning | 1.989 | 1.927 | 2.049 | **1.743** | **27.6%** |
+| Cold start | 1.712 | 1.862 | 1.712 | **1.611** | **11.4%** |
 
 Values are target-RAPM exposure-weighted RMSE; skill is the reduction in
 weighted MSE relative to persistence. The run is
-`aging-2025-26-20260801T220356Z-4de5f001`, stored under
-`artifacts/models/aging/2025-26/`. Its input panel covers 2019-20 through
+`aging-2025-26-20260803T214653Z-94ce6277`, stored under
+`artifacts/models/aging/2025-26/`. Its input panel covers 1996-97 through
 2025-26 and is pinned by hash in the model manifest.
 
 ## Aging Curve Case Study
@@ -141,8 +144,8 @@ profile used for the calculation. It is not average player RAPM at age \(a\),
 nor a causal biological effect of aging.
 
 The published curve comes from
-`aging-curve-2025-26-20260801T234016Z-eec32898`. It uses the 2,819
-player-season rows from target seasons 2020-21 through 2024-25 that trained the
+`aging-curve-2025-26-20260803T215413Z-5c88357f`. It uses the 13,527
+player-season rows from target seasons 1997-98 through 2024-25 that trained the
 source aging model. The shaded bands are 5th to 95th percentiles from 250
 target-season block bootstrap refits. The selected ridge penalty and spline
 specification remain fixed in each refit, so the interval reflects training
@@ -150,30 +153,34 @@ season resampling, not hyperparameter-selection uncertainty.
 
 ![Conditional age effect centered at age 27](../assets/images/aging/2025-26/aging-curve.svg)
 
-The model estimates rapid positive movement for young players: the common age
-term rises by +0.27 points per 100 possessions from age 19 to 20 and by +0.17
-from 21 to 22. It is effectively flat around ages 27 through 29, then declines
-by roughly 0.02 points per 100 possessions per year from ages 29 through 33.
-At age 35 the estimated partial effect is -0.11 relative to age 27, with a
-90% interval of [-0.16, -0.07].
+![Draft-adjusted aging curves](../assets/images/aging/2025-26/draft-adjusted-aging-curves.svg)
+
+The cohort chart holds prior RAPM, exposure, experience, height, and weight at
+the same reference profile. It contrasts early-entry drafted (estimated draft
+age 20), late-entry drafted (estimated draft age 24), and undrafted profiles.
+These are model counterfactuals, not separate observed cohort averages.
+
+The common age term rises rapidly through age 23, where the conditional effect
+is +0.20 points per 100 possessions relative to age 27. It then declines from
+the late twenties: the estimated partial effect is -0.17 at age 30 and -0.56
+at age 35. These are model-based conditional effects, not direct within-player
+aging estimates.
 
 | Age | Partial effect vs. 27 | 90% interval | Change to next age | Training player-seasons |
 | ---: | ---: | ---: | ---: | ---: |
-| 19 | -1.01 | [-1.34, -0.64] | +0.27 | 25 |
-| 21 | -0.53 | [-0.66, -0.35] | +0.17 | 184 |
-| 24 | -0.15 | [-0.22, -0.05] | +0.07 | 337 |
-| 27 | 0.00 | [0.00, 0.00] | +0.01 | 208 |
-| 28 | +0.01 | [0.00, +0.02] | -0.01 | 177 |
-| 30 | -0.03 | [-0.04, -0.01] | -0.02 | 120 |
-| 33 | -0.08 | [-0.12, -0.05] | -0.02 | 73 |
-| 35 | -0.11 | [-0.16, -0.07] | -0.01 | 48 |
-| 37 | -0.14 | [-0.19, -0.09] | -0.01 | 22 |
-| 40 | -0.16 | [-0.22, -0.10] | 0.00 | 4 |
+| 19 | -0.49 | [-0.85, -0.21] | +0.32 | 87 |
+| 21 | +0.05 | [-0.07, +0.17] | +0.12 | 600 |
+| 23 | +0.20 | [+0.11, +0.28] | -0.08 | 1,290 |
+| 27 | 0.00 | [-0.00, +0.00] | -0.03 | 1,050 |
+| 30 | -0.17 | [-0.24, -0.11] | -0.09 | 749 |
+| 33 | -0.42 | [-0.54, -0.32] | -0.07 | 470 |
+| 35 | -0.56 | [-0.71, -0.42] | -0.06 | 273 |
+| 40 | -0.78 | [-1.07, -0.50] | -0.02 | 31 |
 
 ![Observed age support](../assets/images/aging/2025-26/age-support.svg)
 
-The chart intentionally shows the thin tails. Ages 40 through 43 have only
-eight player-seasons combined, so the linear spline extension there should not
+The chart intentionally shows the thin tails. Ages 41 through 44 have only 17
+player-seasons combined, so the linear spline extension there should not
 be used as a strong claim about late-career decline. The empirical result is
 better read as a smoothed, exposure-weighted prior for the observed NBA
 population.
@@ -182,7 +189,7 @@ Rebuild the report and images from the pinned aging run with:
 
 ```bash
 uv run --group docs nba-build-aging-curve-case-study 2025-26 \
-  --aging-run-id aging-2025-26-20260801T220356Z-4de5f001 \
+  --aging-run-id aging-2025-26-20260803T214653Z-94ce6277 \
   --bootstrap-samples 250 \
   --bootstrap-seed 20260801
 ```

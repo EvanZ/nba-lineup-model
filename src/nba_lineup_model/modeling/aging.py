@@ -14,6 +14,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import SplineTransformer, StandardScaler
@@ -44,6 +45,17 @@ AGING_FEATURE_COLUMNS = (
     "log1p_prior_rapm_possessions",
     "has_prior_season",
     "is_rookie",
+    "draft_age_estimate",
+    "draft_pick",
+    "height_inches",
+    "weight_pounds",
+    "has_draft_age_estimate",
+    "has_draft_pick",
+    "is_undrafted",
+    "draft_record_unknown",
+    "age_by_early_entry",
+    "age_by_late_entry",
+    "age_by_undrafted",
 )
 _TARGET_OUTCOME_COLUMNS = {
     "target_rapm",
@@ -405,6 +417,11 @@ def prepare_aging_transitions(transitions: pd.DataFrame) -> pd.DataFrame:
     if transitions.empty:
         raise ValueError("Aging transitions cannot be empty")
     frame = transitions.copy()
+    for column in ("draft_year", "draft_number", "height_inches", "weight_pounds"):
+        if column not in frame:
+            frame[column] = np.nan
+    if "is_undrafted" not in frame:
+        frame["is_undrafted"] = False
     frame["target_season"] = frame["target_season"].map(lambda value: validate_season(str(value)))
     frame["prior_season"] = frame["prior_season"].map(lambda value: validate_season(str(value)))
     if any(
@@ -449,6 +466,26 @@ def prepare_aging_transitions(transitions: pd.DataFrame) -> pd.DataFrame:
     frame["prior_rapm_filled"] = frame["prior_rapm"].fillna(0.0)
     frame["prior_rapm_possessions"] = frame["prior_rapm_possessions"].fillna(0.0)
     frame["log1p_prior_rapm_possessions"] = np.log1p(frame["prior_rapm_possessions"].clip(lower=0))
+    frame["draft_year"] = pd.to_numeric(frame["draft_year"], errors="coerce")
+    frame["draft_pick"] = pd.to_numeric(frame["draft_number"], errors="coerce")
+    frame["height_inches"] = pd.to_numeric(frame["height_inches"], errors="coerce")
+    frame["weight_pounds"] = pd.to_numeric(frame["weight_pounds"], errors="coerce")
+    draft_age = frame["target_age"] - (
+        frame["target_season"].str[:4].astype(float) - frame["draft_year"]
+    )
+    # Season bios expose age and draft year, not an exact birth/draft date. Keep
+    # only plausible estimates and represent the remaining records explicitly.
+    frame["draft_age_estimate"] = draft_age.where(draft_age.between(17.0, 30.0))
+    frame["has_draft_age_estimate"] = frame["draft_age_estimate"].notna().astype(float)
+    frame["has_draft_pick"] = frame["draft_pick"].notna().astype(float)
+    frame["is_undrafted"] = frame["is_undrafted"].astype(bool).astype(float)
+    frame["draft_record_unknown"] = (
+        frame["draft_year"].isna() & frame["is_undrafted"].eq(0.0)
+    ).astype(float)
+    centered_age = frame["target_age"] - 27.0
+    frame["age_by_early_entry"] = centered_age * frame["draft_age_estimate"].le(20.5)
+    frame["age_by_late_entry"] = centered_age * frame["draft_age_estimate"].gt(22.5)
+    frame["age_by_undrafted"] = centered_age * frame["is_undrafted"].eq(1.0)
     for column in AGING_FEATURE_COLUMNS:
         frame[column] = pd.to_numeric(frame[column], errors="raise").astype(float)
     return frame.sort_values(
@@ -506,17 +543,36 @@ def fit_aging_pipeline(
             ),
             (
                 "numeric",
-                StandardScaler(),
+                Pipeline(
+                    steps=[
+                        ("impute", SimpleImputer(strategy="median", add_indicator=True)),
+                        ("scale", StandardScaler()),
+                    ]
+                ),
                 [
                     "target_nba_experience_years",
                     "prior_rapm_filled",
                     "log1p_prior_rapm_possessions",
+                    "draft_age_estimate",
+                    "draft_pick",
+                    "height_inches",
+                    "weight_pounds",
                 ],
             ),
             (
                 "binary",
                 "passthrough",
-                ["has_prior_season", "is_rookie"],
+                [
+                    "has_prior_season",
+                    "is_rookie",
+                    "has_draft_age_estimate",
+                    "has_draft_pick",
+                    "is_undrafted",
+                    "draft_record_unknown",
+                    "age_by_early_entry",
+                    "age_by_late_entry",
+                    "age_by_undrafted",
+                ],
             ),
         ],
         verbose_feature_names_out=True,

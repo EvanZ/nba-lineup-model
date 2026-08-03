@@ -30,10 +30,12 @@ canonical Ridge RAPM.
 ## First Exemplar
 
 The prior for season (t) is the completed RAPM estimate from season (t-1).
-2019-20 is fitted as ordinary zero-centered Ridge RAPM; its player estimates
-become the 2020-21 priors, then the procedure repeats forward through 2025-26.
+1996-97 is fitted as ordinary zero-centered Ridge RAPM; its player estimates
+become the 1997-98 priors, then the procedure repeats forward through 2025-26.
 The target season's games, box-score outcomes, and RAPM estimates are not
-inputs to its prior.
+inputs to its prior. Each historical season uses only its audited pass/warning
+curated-game subset; unresolved legacy identity placeholders are excluded from
+the separate player-history panel, not silently mapped to real players.
 
 Players absent from the frozen prior table are explicit cold starts and receive
 a zero prior. The output records `prior_available` so
@@ -66,7 +68,7 @@ the fitted adjustment from the prior.
 
 ## Selection And Evaluation
 
-The historical pass/warning panel from 2019-20 through 2024-25 is used only
+The historical pass/warning panel from 1996-97 through 2024-25 is used only
 to construct frozen lagged-RAPM priors. It does not change the Leaderboard
 evaluation split: the final model trains on the same first 1,044 2025-26
 regular-season games used by the other exemplars and predicts the same final
@@ -96,28 +98,21 @@ f\left(
 \]
 
 The aging run is trained only through 2024-25 and publishes its 2025-26
-`player_priors.parquet` before any 2025-26 RAPM fitting. This RAPM model uses
-that table as the penalty center, with the same chronological lambda selection
-and 1,044-game regular-season fit as the lagged-prior model. It selects
-\(\lambda=0.03\), the same penalty selected by the lagged-prior run.
+`player_priors.parquet` before any 2025-26 RAPM fitting. The current run uses
+the full 1996-97 through 2024-25 history, the same chronological lambda
+selection, and the same 1,044-game fit as the lagged-prior model.
 
-| Prior definition | Regular possession RMSE | Regular game-margin RMSE | Frozen playoff possession RMSE | Frozen playoff game-margin RMSE |
+| Prior definition | Holdout stint RMSE | Holdout game-margin RMSE | Frozen playoff possession RMSE | Frozen playoff game-margin RMSE |
 | --- | ---: | ---: | ---: | ---: |
-| Completed 2024-25 RAPM | **1.199192** | **14.4048** | 1.191612 | 15.4165 |
-| Aging-model forecast | 1.199351 | 14.4618 | **1.191494** | **15.2522** |
+| Completed 2024-25 RAPM | **103.7747** | **15.2350** | 1.191755 | 15.3103 |
+| Full-history aging forecast | 103.8514 | 15.3933 | **1.191519** | **15.2805** |
 
-All metrics use the common eligible-possession cohorts and the same frozen
-first-1,044-game 2025-26 state. The age-informed prior is marginally worse on
-the regular holdout. Its playoff possession improvement is only 0.000118 RMSE,
-so it should not be treated as evidence of a general improvement; the lower
-playoff game-margin RMSE is more material but based on just 85 games. This is a
-useful negative ablation: the aging model's player-level forecasting advantage
-does not automatically transfer to lineup-level prediction.
-
-The immutable RAPM artifact is
-`aging-prior-rapm-2025-26-20260801T221623Z-8c32f284`; it pins aging run
-`aging-2025-26-20260801T220356Z-4de5f001`, the aging manifest hash, game
-assignments, frozen player coefficients, and frozen-playoff predictions.
+The age-informed prior is weaker on the locked regular-season holdout, while
+the frozen playoff result is better on this 85-game cohort. This remains an
+informative negative regular-season ablation, not sufficient evidence to
+override the prespecified regular-season selection target. The immutable RAPM
+artifact is `aging-prior-rapm-2025-26-20260803T214725Z-9df2aa04`; it pins aging
+run `aging-2025-26-20260803T214653Z-94ce6277` and all game assignments.
 
 ## Blended Aging And Lagged Prior
 
@@ -134,14 +129,15 @@ within the first 1,044 2025-26 regular-season games. The endpoints reproduce
 the two earlier prior definitions exactly.
 
 The selected weight is \(w=1\) on lagged RAPM and \(w=0\) on the aging
-forecast, with \(\lambda=0.03\). The best interior candidate, \(w=0.75\),
-has validation weighted MSE 10,839.61 versus 10,837.78 for the selected
-lagged-only candidate. Consequently, its regular-holdout and frozen-playoff
-metrics exactly match the lagged-prior model. There is no evidence here that a
-linear blend adds information beyond the recursive lagged RAPM prior.
+forecast, with \(\lambda=0.03\). In the full-history selection surface, the
+best interior candidate, \(w=0.75\), has validation weighted MSE 10,838.03
+versus 10,836.97 for lagged-only. Consequently, its regular-holdout and
+frozen-playoff metrics exactly match the lagged-prior model. There is no
+evidence here that a linear blend adds information beyond the recursive
+lagged-RAPM prior.
 
 The selection surface and frozen outputs are retained in
-`blended-prior-rapm-2025-26-20260801T224013Z-c49851fb`.
+`blended-prior-rapm-2025-26-20260803T214825Z-2dbb1766`.
 
 ## 2025-26 Ranking
 
@@ -152,31 +148,31 @@ and are not directly interchangeable with zero-centered one-season RAPM.
 
 | Rank | Player | Team | RAPM | Prior | Adjustment | Possessions |
 | ---: | --- | :---: | ---: | ---: | ---: | ---: |
-| 1 | Nikola Jokić | DEN | 11.16 | 9.09 | 2.08 | 4,786 |
-| 2 | Shai Gilgeous-Alexander | OKC | 10.13 | 8.59 | 1.54 | 4,730 |
-| 3 | Derrick White | BOS | 9.26 | 5.66 | 3.60 | 5,180 |
-| 4 | Victor Wembanyama | SAS | 8.78 | 2.35 | 6.43 | 3,896 |
-| 5 | Giannis Antetokounmpo | MIL | 8.25 | 7.57 | 0.68 | 2,129 |
-| 6 | Alex Caruso | OKC | 8.19 | 6.51 | 1.68 | 2,125 |
-| 7 | Kawhi Leonard | LAC | 7.99 | 5.97 | 2.01 | 4,167 |
-| 8 | Bam Adebayo | MIA | 7.62 | 4.43 | 3.19 | 5,031 |
-| 9 | Jimmy Butler III | GSW | 7.38 | 5.70 | 1.67 | 2,449 |
-| 10 | Joel Embiid | PHI | 6.96 | 7.15 | -0.18 | 2,479 |
-| 11 | Donovan Mitchell | CLE | 6.86 | 4.92 | 1.94 | 4,925 |
-| 12 | Aaron Gordon | DEN | 6.49 | 4.70 | 1.79 | 2,057 |
-| 13 | Devin Booker | PHX | 6.37 | 4.88 | 1.49 | 4,442 |
-| 14 | Cade Cunningham | DET | 6.32 | 2.99 | 3.32 | 4,490 |
-| 15 | Lauri Markkanen | UTA | 6.21 | 3.96 | 2.25 | 3,080 |
-| 16 | Jayson Tatum | BOS | 6.15 | 5.69 | 0.47 | 1,046 |
-| 17 | Marcus Smart | LAL | 5.80 | 1.98 | 3.82 | 3,607 |
-| 18 | Kevin Durant | HOU | 5.77 | 5.04 | 0.72 | 5,732 |
-| 19 | Paul George | PHI | 5.55 | 6.32 | -0.76 | 2,328 |
-| 20 | Michael Porter Jr. | BKN | 5.53 | 3.96 | 1.57 | 3,396 |
-| 21 | Luka Dončić | LAL | 5.52 | 4.61 | 0.92 | 4,759 |
-| 22 | Chet Holmgren | OKC | 5.42 | 2.55 | 2.88 | 4,129 |
-| 23 | De'Anthony Melton | GSW | 5.32 | 2.01 | 3.31 | 2,311 |
-| 24 | Stephen Curry | GSW | 5.29 | 6.34 | -1.05 | 2,822 |
-| 25 | Jrue Holiday | POR | 5.29 | 4.57 | 0.71 | 3,295 |
+| 1 | Nikola Jokić | DEN | 13.07 | 11.47 | 1.61 | 4,786 |
+| 2 | Shai Gilgeous-Alexander | OKC | 9.76 | 7.85 | 1.91 | 4,730 |
+| 3 | Victor Wembanyama | SAS | 8.62 | 1.91 | 6.71 | 3,896 |
+| 4 | Giannis Antetokounmpo | MIL | 8.56 | 7.76 | 0.80 | 2,129 |
+| 5 | Jimmy Butler III | GSW | 8.37 | 7.41 | 0.95 | 2,449 |
+| 6 | Derrick White | BOS | 8.25 | 3.91 | 4.34 | 5,180 |
+| 7 | Alex Caruso | OKC | 7.75 | 5.71 | 2.04 | 2,125 |
+| 8 | Donovan Mitchell | CLE | 7.64 | 5.96 | 1.69 | 4,925 |
+| 9 | Joel Embiid | PHI | 7.58 | 7.73 | -0.14 | 2,479 |
+| 10 | Stephen Curry | GSW | 7.40 | 9.47 | -2.06 | 2,822 |
+| 11 | Bam Adebayo | MIA | 7.12 | 3.40 | 3.71 | 5,031 |
+| 12 | Kawhi Leonard | LAC | 7.00 | 4.02 | 2.98 | 4,167 |
+| 13 | Marcus Smart | LAL | 6.67 | 3.77 | 2.90 | 3,607 |
+| 14 | Aaron Gordon | DEN | 6.65 | 4.73 | 1.92 | 2,057 |
+| 15 | Karl-Anthony Towns | NYK | 6.43 | 5.53 | 0.90 | 4,716 |
+| 16 | Devin Booker | PHX | 6.39 | 4.79 | 1.60 | 4,442 |
+| 17 | Cade Cunningham | DET | 6.27 | 2.66 | 3.61 | 4,490 |
+| 18 | Jayson Tatum | BOS | 6.25 | 5.76 | 0.50 | 1,046 |
+| 19 | Rudy Gobert | MIN | 6.15 | 5.92 | 0.23 | 4,951 |
+| 20 | Jrue Holiday | POR | 6.12 | 5.71 | 0.41 | 3,295 |
+| 21 | Chris Paul | LAC | 5.82 | 8.57 | -2.75 | 457 |
+| 22 | Lauri Markkanen | UTA | 5.77 | 3.40 | 2.37 | 3,080 |
+| 23 | Chet Holmgren | OKC | 5.73 | 2.86 | 2.87 | 4,129 |
+| 24 | Paul George | PHI | 5.72 | 6.52 | -0.80 | 2,328 |
+| 25 | De'Anthony Melton | GSW | 5.67 | 2.56 | 3.12 | 2,311 |
 
 ## Largest 2025-26 Adjustments
 
@@ -189,61 +185,61 @@ lineup context, or estimation noise.
 
 | Player | Team | RAPM | Prior | Adjustment | Possessions |
 | --- | :---: | ---: | ---: | ---: | ---: |
-| Victor Wembanyama | SAS | 8.78 | 2.35 | 6.43 | 3,896 |
-| Devin Vassell | SAS | 2.81 | -2.69 | 5.50 | 4,258 |
-| Moussa Diabaté | CHA | 5.23 | 0.76 | 4.47 | 3,790 |
-| Julian Champagnie | SAS | 4.40 | 0.30 | 4.10 | 4,745 |
-| Marcus Smart | LAL | 5.80 | 1.98 | 3.82 | 3,607 |
-| Collin Gillespie | PHX | 3.58 | -0.21 | 3.78 | 4,627 |
-| Josh Green | CHA | 3.15 | -0.58 | 3.73 | 1,804 |
-| LaMelo Ball | CHA | 4.90 | 1.19 | 3.71 | 4,101 |
-| Hugo González | BOS | 3.69 | 0.00 | 3.69 | 2,133 |
-| Derrick White | BOS | 9.26 | 5.66 | 3.60 | 5,180 |
-| Jalen Smith | CHI | 3.07 | -0.31 | 3.38 | 2,316 |
-| Davion Mitchell | MIA | 3.98 | 0.64 | 3.34 | 4,265 |
-| Cade Cunningham | DET | 6.32 | 2.99 | 3.32 | 4,490 |
-| De'Anthony Melton | GSW | 5.32 | 2.01 | 3.31 | 2,311 |
-| Dyson Daniels | ATL | 3.88 | 0.58 | 3.29 | 5,317 |
-| Oso Ighodaro | PHX | 3.27 | 0.02 | 3.25 | 3,634 |
-| Bam Adebayo | MIA | 7.62 | 4.43 | 3.19 | 5,031 |
-| Donte DiVincenzo | MIN | 3.39 | 0.27 | 3.12 | 5,223 |
-| Kon Knueppel | CHA | 3.09 | 0.00 | 3.09 | 5,207 |
-| Brandon Miller | CHA | 2.27 | -0.81 | 3.08 | 3,968 |
-| CJ McCollum | ATL | 4.22 | 1.32 | 2.90 | 4,762 |
-| Neemias Queta | BOS | 2.35 | -0.53 | 2.89 | 3,752 |
-| Chet Holmgren | OKC | 5.42 | 2.55 | 2.88 | 4,129 |
-| Amen Thompson | HOU | 4.04 | 1.29 | 2.75 | 5,936 |
-| Grant Williams | CHA | 3.03 | 0.29 | 2.75 | 1,438 |
+| Victor Wembanyama | SAS | 8.62 | 1.91 | 6.71 | 3,896 |
+| Devin Vassell | SAS | 3.79 | -1.35 | 5.14 | 4,258 |
+| Moussa Diabaté | CHA | 5.14 | 0.43 | 4.71 | 3,790 |
+| Derrick White | BOS | 8.25 | 3.91 | 4.34 | 5,180 |
+| Julian Champagnie | SAS | 4.35 | 0.09 | 4.26 | 4,745 |
+| Collin Gillespie | PHX | 3.80 | -0.12 | 3.93 | 4,626 |
+| Josh Green | CHA | 3.41 | -0.43 | 3.84 | 1,804 |
+| Hugo González | BOS | 3.80 | 0.00 | 3.80 | 2,133 |
+| LaMelo Ball | CHA | 5.43 | 1.64 | 3.79 | 4,101 |
+| Bam Adebayo | MIA | 7.12 | 3.40 | 3.71 | 5,031 |
+| Cade Cunningham | DET | 6.27 | 2.66 | 3.61 | 4,490 |
+| Davion Mitchell | MIA | 4.82 | 1.27 | 3.55 | 4,265 |
+| Oso Ighodaro | PHX | 3.35 | 0.04 | 3.31 | 3,634 |
+| Kon Knueppel | CHA | 3.31 | 0.00 | 3.31 | 5,207 |
+| Donte DiVincenzo | MIN | 3.22 | -0.02 | 3.24 | 5,223 |
+| Brandon Miller | CHA | 2.58 | -0.65 | 3.23 | 3,968 |
+| Jalen Smith | CHI | 3.97 | 0.76 | 3.21 | 2,316 |
+| Dyson Daniels | ATL | 4.40 | 1.28 | 3.12 | 5,317 |
+| De'Anthony Melton | GSW | 5.67 | 2.56 | 3.12 | 2,311 |
+| Scottie Barnes | TOR | 3.39 | 0.31 | 3.07 | 5,512 |
+| Neemias Queta | BOS | 3.13 | 0.07 | 3.06 | 3,752 |
+| Kawhi Leonard | LAC | 7.00 | 4.02 | 2.98 | 4,167 |
+| Marcus Smart | LAL | 6.67 | 3.77 | 2.90 | 3,607 |
+| Amen Thompson | HOU | 4.43 | 1.56 | 2.88 | 5,936 |
+| Chet Holmgren | OKC | 5.73 | 2.86 | 2.87 | 4,129 |
 
 ### Largest Negative Adjustments
 
 | Player | Team | RAPM | Prior | Adjustment | Possessions |
 | --- | :---: | ---: | ---: | ---: | ---: |
-| Drake Powell | BKN | -4.13 | 0.00 | -4.13 | 2,655 |
-| Isaiah Collier | UTA | -4.98 | -0.87 | -4.11 | 3,237 |
-| Draymond Green | GSW | 0.91 | 5.01 | -4.10 | 3,874 |
-| Kobe Brown | IND | -4.15 | -0.38 | -3.77 | 1,960 |
-| Nic Claxton | BKN | -4.41 | -0.81 | -3.60 | 3,868 |
-| Tre Mann | CHA | -3.70 | -0.14 | -3.56 | 1,319 |
-| Gary Trent Jr. | MIL | -6.20 | -2.75 | -3.46 | 2,800 |
-| Royce O'Neale | PHX | -2.01 | 1.15 | -3.17 | 4,548 |
-| Luguentz Dort | OKC | 1.38 | 4.51 | -3.14 | 3,809 |
-| Darius Garland | CLE | 1.84 | 4.89 | -3.05 | 2,807 |
-| Bub Carrington | WAS | -4.68 | -1.70 | -2.98 | 4,827 |
-| Myles Turner | MIL | 1.80 | 4.78 | -2.98 | 3,938 |
-| Jarace Walker | IND | -3.48 | -0.59 | -2.88 | 4,157 |
-| De'Andre Hunter | CLE | -1.42 | 1.42 | -2.83 | 2,489 |
-| Patrick Williams | CHI | -5.02 | -2.19 | -2.83 | 3,168 |
-| Andrew Nembhard | IND | -2.79 | 0.02 | -2.80 | 3,732 |
-| Mike Conley | MIN | 1.04 | 3.84 | -2.80 | 2,071 |
-| LeBron James | LAL | 2.42 | 5.13 | -2.71 | 4,077 |
-| Brooks Barnhizer | OKC | -2.69 | 0.00 | -2.69 | 703 |
-| Rayan Rupert | POR | -3.43 | -0.74 | -2.68 | 2,244 |
-| Caris LeVert | DET | -1.06 | 1.60 | -2.66 | 2,370 |
-| Will Riley | WAS | -2.65 | 0.00 | -2.65 | 3,434 |
-| Jeremy Sochan | SAS | -2.10 | 0.54 | -2.64 | 958 |
-| DeMar DeRozan | SAC | -0.38 | 2.22 | -2.60 | 4,983 |
-| Bruce Brown | DEN | -4.68 | -2.08 | -2.60 | 4,097 |
+| Draymond Green | GSW | 0.14 | 4.23 | -4.10 | 3,874 |
+| Isaiah Collier | UTA | -4.84 | -0.78 | -4.06 | 3,237 |
+| Drake Powell | BKN | -4.02 | 0.00 | -4.02 | 2,655 |
+| Gary Trent Jr. | MIL | -5.41 | -1.51 | -3.90 | 2,800 |
+| Kobe Brown | IND | -4.19 | -0.43 | -3.76 | 1,960 |
+| Tre Mann | CHA | -3.07 | 0.50 | -3.58 | 1,319 |
+| LeBron James | LAL | 3.23 | 6.78 | -3.56 | 4,077 |
+| Royce O'Neale | PHX | -1.35 | 1.98 | -3.33 | 4,548 |
+| Andrew Nembhard | IND | -2.19 | 1.13 | -3.31 | 3,732 |
+| Patrick Williams | CHI | -4.25 | -0.95 | -3.30 | 3,168 |
+| Mike Conley | MIN | 1.91 | 5.13 | -3.22 | 2,071 |
+| Luguentz Dort | OKC | 1.36 | 4.36 | -2.99 | 3,809 |
+| Nic Claxton | BKN | -3.97 | -1.13 | -2.84 | 3,868 |
+| Bub Carrington | WAS | -4.51 | -1.68 | -2.83 | 4,827 |
+| Jarace Walker | IND | -3.33 | -0.50 | -2.82 | 4,157 |
+| De'Andre Hunter | CLE | -0.94 | 1.87 | -2.81 | 2,489 |
+| Bruce Brown | DEN | -4.58 | -1.79 | -2.79 | 4,097 |
+| Buddy Hield | GSW | 0.09 | 2.83 | -2.74 | 1,718 |
+| DeMar DeRozan | SAC | -0.25 | 2.45 | -2.70 | 4,983 |
+| Tyus Jones | ORL | -2.74 | -0.04 | -2.69 | 2,021 |
+| Darius Garland | CLE | 1.73 | 4.39 | -2.66 | 2,806 |
+| Brooks Barnhizer | OKC | -2.64 | 0.00 | -2.64 | 703 |
+| Myles Turner | MIL | 1.50 | 4.11 | -2.61 | 3,938 |
+| Rayan Rupert | POR | -3.24 | -0.66 | -2.58 | 2,244 |
+| Caris LeVert | DET | -0.75 | 1.82 | -2.57 | 2,370 |
 
 ## Historical Coverage Boundary
 
@@ -255,10 +251,12 @@ the shared Leaderboard holdout.
 
 ## Historical Playoff Ablation
 
-The initial comparison also fits a second prior chain that appends each
-completed historical season's available playoff stints to its regular-season
-stints before forming the next season's prior. Both variants use the identical
-2025-26 first-1,044-game fit and are evaluated with that frozen state.
+The initial six-season comparison also fits a second prior chain that appends
+each completed historical season's available playoff stints to its
+regular-season stints before forming the next season's prior. Both variants use
+the identical 2025-26 first-1,044-game fit and are evaluated with that frozen
+state. It has not yet been regenerated over the full 1996-97 history because
+historical playoff coverage is a separate acquisition/quality boundary.
 
 | Historical prior source | 2025-26 holdout stint RMSE | Holdout game-margin RMSE | Frozen-state playoff possession RMSE | Frozen-state playoff game-margin RMSE |
 | --- | ---: | ---: | ---: | ---: |
@@ -280,7 +278,6 @@ and that an unseen player receives the explicit zero cold-start prior.
 
 ## Next Extensions
 
-- add the forward age adjustment to the lagged RAPM prior;
 - use returning and cold-start error scales as prior precision weights;
 - add box-score plus-minus and draft-position inputs to cold-start priors;
 - replace the two-stage pipeline with the joint dynamic RAPM design in the

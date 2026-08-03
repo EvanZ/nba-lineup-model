@@ -168,6 +168,7 @@ class PlayerSeasonPanelManifest(BaseModel):
 def aggregate_box_score_features(players: pd.DataFrame) -> pd.DataFrame:
     """Aggregate played game boxscore rows into stable season-level features."""
 
+    players = _normalize_legacy_boxscore_schema(players)
     required = {
         "game_id",
         "personId",
@@ -276,6 +277,50 @@ def aggregate_box_score_features(players: pd.DataFrame) -> pd.DataFrame:
     return output.sort_values("player_id", kind="stable").reset_index(drop=True)
 
 
+def _normalize_legacy_boxscore_schema(players: pd.DataFrame) -> pd.DataFrame:
+    """Fill historical NBA Stats fields absent before the modern player schema.
+
+    Older box scores provide player identity, minutes, total field goals, and
+    three-point totals but omit a modern ``played`` flag, full name, two-point
+    totals, and foul-drawn/offensive-foul counts. Positive minutes remain the
+    inclusion rule, so treating an absent played flag as present cannot include
+    a DNP. Unavailable foul counts are explicit structural zeros; two-point
+    totals are identities derived from the recorded aggregate fields.
+    """
+
+    frame = players.copy()
+    if "name" not in frame:
+        first = frame.get("firstName", pd.Series("", index=frame.index)).fillna("")
+        family = frame.get("familyName", pd.Series("", index=frame.index)).fillna("")
+        full_name = first.astype(str).str.strip() + " " + family.astype(str).str.strip()
+        full_name = full_name.str.strip()
+        initials = frame.get("nameI", pd.Series("", index=frame.index)).fillna("")
+        frame["name"] = full_name.where(full_name.ne(""), initials.astype(str).str.strip())
+    if "played" not in frame:
+        legacy_minutes = pd.to_timedelta(frame["statistics_minutes"], errors="coerce")
+        frame["played"] = legacy_minutes.dt.total_seconds().gt(0).astype("int64").astype(str)
+    for column in ("statistics_foulsOffensive", "statistics_foulsDrawn"):
+        if column not in frame:
+            frame[column] = 0
+    if "statistics_twoPointersAttempted" not in frame and {
+        "statistics_fieldGoalsAttempted",
+        "statistics_threePointersAttempted",
+    } <= set(frame):
+        frame["statistics_twoPointersAttempted"] = (
+            pd.to_numeric(frame["statistics_fieldGoalsAttempted"], errors="raise")
+            - pd.to_numeric(frame["statistics_threePointersAttempted"], errors="raise")
+        )
+    if "statistics_twoPointersMade" not in frame and {
+        "statistics_fieldGoalsMade",
+        "statistics_threePointersMade",
+    } <= set(frame):
+        frame["statistics_twoPointersMade"] = (
+            pd.to_numeric(frame["statistics_fieldGoalsMade"], errors="raise")
+            - pd.to_numeric(frame["statistics_threePointersMade"], errors="raise")
+        )
+    return frame
+
+
 def player_season_frame(
     season: str,
     boxscore_features: pd.DataFrame,
@@ -292,19 +337,25 @@ def player_season_frame(
     missing = required_rankings - set(rapm_rankings)
     if missing:
         raise ValueError(f"RAPM rankings missing columns: {sorted(missing)}")
+    catalog_ids = set(player_catalog["player_id"].astype(int))
+    # Some pre-modern Stats feeds emit numeric roster placeholders that are not
+    # NBA player identities. They cannot be joined to a bio or carried across
+    # seasons, so exclude them from the player-level modeling universe.
+    rapm_rankings = rapm_rankings.loc[
+        rapm_rankings["player_id"].astype(int).isin(catalog_ids)
+    ].copy()
     ranking_ids = set(rapm_rankings["player_id"].astype(int))
     bio_ids = set(player_bios["player_id"].astype(int))
-    boxscore_ids = set(boxscore_features["player_id"].astype(int))
     if not ranking_ids <= bio_ids:
         raise ValueError(
             "RAPM rankings contain players absent from season bios: "
             f"rapm={len(ranking_ids)}, bios={len(bio_ids)}"
         )
-    if not boxscore_ids <= ranking_ids:
-        raise ValueError(
-            "Boxscore features contain players absent from RAPM rankings: "
-            f"boxscores={len(boxscore_ids)}, rapm={len(ranking_ids)}"
-        )
+    # A partial historical RAPM season can exclude a game that still has a
+    # positive-minute box score. The panel's outcome universe is RAPM players.
+    boxscore_features = boxscore_features.loc[
+        boxscore_features["player_id"].astype(int).isin(ranking_ids)
+    ].copy()
 
     rankings = rapm_rankings.loc[
         :,

@@ -48,6 +48,27 @@ def test_age_curve_is_centered_and_bootstrap_draws_match_the_grid():
     assert np.isfinite(draws).all()
 
 
+def test_draft_adjusted_curves_are_centered_at_the_reference_age():
+    transitions = prepare_aging_transitions(synthetic_transitions())
+    experiment = run_aging_experiment(
+        transitions,
+        regularization_grid=(0.01, 1.0),
+        age_spline_knots=3,
+    )
+    training = transitions.loc[
+        transitions["target_season"].isin(experiment.training_target_seasons)
+    ].copy()
+
+    for cohort in ("early_entry", "late_entry", "undrafted"):
+        curve = extract_partial_age_curve(
+            experiment.fitted_model,
+            training,
+            reference_age=27,
+            draft_cohort=cohort,
+        )
+        assert curve.loc[curve["age"].eq(27), "partial_age_effect"].item() == 0.0
+
+
 def synthetic_transitions() -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for season_index, season in enumerate(("2020-21", "2021-22", "2022-23", "2023-24")):

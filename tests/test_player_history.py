@@ -94,6 +94,43 @@ def test_aggregate_box_score_features_ignores_dnp_and_derives_rates():
     assert player["box_primary_team_tricode"] == "AAA"
 
 
+def test_aggregate_box_score_features_adapts_legacy_boxscore_fields():
+    row = _boxscore_row(game_id="001")
+    for column in (
+        "name",
+        "played",
+        "statistics_foulsOffensive",
+        "statistics_foulsDrawn",
+        "statistics_twoPointersAttempted",
+        "statistics_twoPointersMade",
+    ):
+        row.pop(column)
+    row["firstName"] = "Legacy"
+    row["familyName"] = "Player"
+
+    features = aggregate_box_score_features(pd.DataFrame([row]))
+
+    player = features.iloc[0]
+    assert player["player_name"] == "Legacy Player"
+    assert player["two_pointers_attempted"] == pytest.approx(6.0)
+    assert player["two_pointers_made"] == pytest.approx(4.0)
+    assert player["fouls_offensive"] == pytest.approx(0.0)
+    assert player["fouls_drawn"] == pytest.approx(0.0)
+
+
+def test_aggregate_box_score_features_excludes_legacy_blank_minutes():
+    played = _boxscore_row(game_id="001")
+    blank = _boxscore_row(game_id="002", player_id=2, minutes="")
+    for row in (played, blank):
+        row.pop("played")
+        row["firstName"] = "Legacy"
+        row["familyName"] = str(row["personId"])
+
+    features = aggregate_box_score_features(pd.DataFrame([played, blank]))
+
+    assert features["player_id"].tolist() == [1]
+
+
 def test_player_season_frame_combines_outcomes_and_bio_context():
     boxscores = aggregate_box_score_features(pd.DataFrame([_boxscore_row(game_id="001")]))
     rankings = pd.DataFrame(
@@ -207,6 +244,127 @@ def test_player_season_frame_preserves_rapm_player_without_boxscore_features():
     assert len(panel) == 1
     assert bool(panel.loc[0, "boxscore_features_available"]) is False
     assert pd.isna(panel.loc[0, "games"])
+
+
+def test_player_season_frame_drops_boxscore_only_historical_players():
+    boxscores = aggregate_box_score_features(pd.DataFrame([_boxscore_row(game_id="001")]))
+    extra = boxscores.copy()
+    extra["player_id"] = 2
+    extra["player_name"] = "Excluded Player"
+    boxscores = pd.concat([boxscores, extra], ignore_index=True)
+    rankings = pd.DataFrame(
+        [
+            {
+                "player_id": 1,
+                "rapm": 2.5,
+                "raw_on_court_net_rating": 4.0,
+                "stint_count": 12,
+                "possessions": 300.0,
+                "seconds": 900.0,
+                "exposure_eligible": True,
+                "primary_team_id": 10,
+                "primary_team_tricode": "AAA",
+            }
+        ]
+    )
+    bios = pd.DataFrame(
+        [
+            {
+                "player_id": 1,
+                "player_name": "Player One",
+                "age": 25.0,
+                "listed_position": "G",
+                "height_inches": 75,
+                "weight_pounds": 195,
+                "college": "Example",
+                "country": "USA",
+                "draft_year": 2017,
+                "draft_round": 1,
+                "draft_number": 12,
+                "is_undrafted": False,
+            }
+        ]
+    )
+    catalog = pd.DataFrame([{"player_id": 1, "from_year": 2017, "to_year": 2025}])
+
+    panel = player_season_frame(
+        "2020-21",
+        boxscores,
+        rankings,
+        bios,
+        catalog,
+        rapm_run_id="rapm-test",
+    )
+
+    assert panel["player_id"].tolist() == [1]
+
+
+def test_player_season_frame_drops_noncanonical_legacy_rapm_placeholders():
+    rankings = pd.DataFrame(
+        [
+            {
+                "player_id": 1,
+                "rapm": 2.5,
+                "raw_on_court_net_rating": 4.0,
+                "stint_count": 12,
+                "possessions": 300.0,
+                "seconds": 900.0,
+                "exposure_eligible": True,
+                "primary_team_id": 10,
+                "primary_team_tricode": "AAA",
+            },
+            {
+                "player_id": 888,
+                "rapm": -0.3,
+                "raw_on_court_net_rating": -1.0,
+                "stint_count": 1,
+                "possessions": 23.5,
+                "seconds": 60.0,
+                "exposure_eligible": False,
+                "primary_team_id": 10,
+                "primary_team_tricode": "AAA",
+            },
+        ]
+    )
+    bios = pd.DataFrame(
+        [
+            {
+                "player_id": 1,
+                "player_name": "Player One",
+                "age": 25.0,
+                "listed_position": "G",
+                "height_inches": 75,
+                "weight_pounds": 195,
+                "college": "Example",
+                "country": "USA",
+                "draft_year": 2017,
+                "draft_round": 1,
+                "draft_number": 12,
+                "is_undrafted": False,
+            }
+        ]
+    )
+    catalog = pd.DataFrame([{"player_id": 1, "from_year": 2017, "to_year": 2025}])
+    empty_boxscores = pd.DataFrame(
+        columns=[
+            "player_id",
+            "player_name",
+            "games",
+            "box_primary_team_id",
+            "box_primary_team_tricode",
+        ]
+    )
+
+    panel = player_season_frame(
+        "2020-21",
+        empty_boxscores,
+        rankings,
+        bios,
+        catalog,
+        rapm_run_id="rapm-test",
+    )
+
+    assert panel["player_id"].tolist() == [1]
 
 
 def test_player_transition_frame_lags_performance_and_preserves_cold_starts():

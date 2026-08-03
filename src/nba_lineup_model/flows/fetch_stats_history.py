@@ -212,6 +212,7 @@ def fetch_stats_history_flow(
     min_request_interval_seconds: float = 1.0,
     request_interval_jitter_seconds: float = 0.25,
     access_denial_cooldown_seconds: float = (DEFAULT_STATS_ACCESS_DENIAL_COOLDOWN_SECONDS),
+    max_retries: int = 3,
 ) -> StatsHistoryFetchSummary:
     """Retain raw NBA Stats game responses across one or more seasons."""
 
@@ -228,6 +229,8 @@ def fetch_stats_history_flow(
         raise ValueError("Stats history fetch endpoints must be unique")
     if limit is not None and limit < 1:
         raise ValueError("Stats history fetch limit must be positive")
+    if max_retries < 0:
+        raise ValueError("Stats history fetch retries cannot be negative")
 
     run_id = run_id or _new_run_id(started_at)
     catalog = read_game_catalog(catalog_path)
@@ -256,10 +259,11 @@ def fetch_stats_history_flow(
     stats_raw_dir = str(Path(raw_dir) / "stats")
     submitted_at: dict[tuple[str, NbaStatsEndpoint], datetime] = {}
     futures: list[PrefectFuture[StatsFetchRecord]] = []
+    endpoint_task = fetch_stats_endpoint_task.with_options(retries=max_retries)
     for game, endpoint in work:
         submitted_at[(game.game_id, endpoint)] = datetime.now(UTC)
         futures.append(
-            fetch_stats_endpoint_task.submit(
+            endpoint_task.submit(
                 game,
                 endpoint,
                 run_id,
@@ -366,6 +370,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_STATS_ACCESS_DENIAL_COOLDOWN_SECONDS,
     )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="Retries per transient endpoint failure; defaults to 3",
+    )
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--run-id")
     return parser
@@ -381,6 +391,8 @@ def main() -> None:
         raise SystemExit("--request-interval-jitter cannot be negative")
     if args.access_denial_cooldown <= 0:
         raise SystemExit("--access-denial-cooldown must be positive")
+    if args.max_retries < 0:
+        raise SystemExit("--max-retries cannot be negative")
     endpoints = (
         [NbaStatsEndpoint(endpoint) for endpoint in args.endpoints] if args.endpoints else None
     )
@@ -402,6 +414,7 @@ def main() -> None:
         min_request_interval_seconds=args.min_request_interval,
         request_interval_jitter_seconds=args.request_interval_jitter,
         access_denial_cooldown_seconds=args.access_denial_cooldown,
+        max_retries=args.max_retries,
     )
     print(
         f"Stats history {summary.run_id}: seasons={len(summary.seasons)}, "

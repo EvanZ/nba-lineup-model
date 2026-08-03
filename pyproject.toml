@@ -22,6 +22,10 @@ dependencies = [
 [project.scripts]
 nba-audit-games = "nba_lineup_model.audit.runner:main"
 nba-audit-history = "nba_lineup_model.audit.history:main"
+nba-probe-game-rotation = "nba_lineup_model.audit.game_rotation_probe:main"
+nba-recover-game-rotation = "nba_lineup_model.audit.game_rotation_recovery:main"
+nba-import-external-game-rotations = "nba_lineup_model.audit.external_game_rotation_import:main"
+nba-fetch-game-rotation-failures = "nba_lineup_model.audit.game_rotation_fetch:main"
 nba-build-game = "nba_lineup_model.build_game:main"
 nba-build-bayesian-rapm-case-study = "nba_lineup_model.modeling.bayesian_case_study:main"
 nba-build-aging-curve-case-study = "nba_lineup_model.modeling.aging_curve:main"

@@ -48,6 +48,13 @@ CDN schema. Processing adapts V3 in memory through
 `nba_lineup_model.normalize.stats_v3`; it never rewrites the retained raw
 response.
 
+An external Game Rotation CSV may be normalized into the same cache contract
+for recovery experiments. Those generated JSON files are not represented as
+official response bytes: the sidecar URI points to the local source file and
+the retained `x-nba-lineup-model-source-*` headers record its filename and
+SHA-256. The corresponding import report is the authoritative selection and
+row-level provenance record.
+
 ## Refresh behavior
 
 Commands use valid cached documents by default. `--refresh` ignores existing

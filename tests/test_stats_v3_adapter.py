@@ -267,6 +267,61 @@ def test_source_loader_uses_stats_v3_when_live_data_is_missing(tmp_path) -> None
     assert documents.play_by_play.source == "stats_v3"
     assert documents.boxscore.source == "stats_v3"
     assert documents.play_by_play.payload["game"]["actions"][1]["actionType"] == "jumpball"
+    assert documents.game_rotation is None
+
+
+def test_game_rotation_supplies_period_start_lineups() -> None:
+    play_by_play = stats_play_by_play()
+    play_by_play["game"]["actions"].extend(
+        [
+            action(
+                action_id=10,
+                action_number=30,
+                period=2,
+                action_type="period",
+                subtype="start",
+                description="Start of 2nd Period",
+            ),
+            action(
+                action_id=11,
+                action_number=31,
+                period=2,
+                clock="PT00M00.00S",
+                action_type="period",
+                subtype="end",
+                description="End of 2nd Period",
+            ),
+        ]
+    )
+
+    adapted, _ = adapt_stats_v3_game(
+        play_by_play,
+        stats_boxscore(),
+        game_rotation_payload=rotation_payload(),
+    )
+
+    rotation_substitutions = [
+        action
+        for action in adapted["game"]["actions"]
+        if action.get("descriptor") == "stats_v3_period_lineup"
+    ]
+    assert [(action["subType"], action["personId"]) for action in rotation_substitutions] == [
+        ("out", 106),
+        ("in", 101),
+    ]
+
+
+def test_source_loader_retains_game_rotation_provenance(tmp_path) -> None:
+    stats_cache = NbaStatsRawCache(tmp_path / "stats")
+    write_stats(stats_cache, NbaStatsEndpoint.PLAY_BY_PLAY_V3, stats_play_by_play())
+    write_stats(stats_cache, NbaStatsEndpoint.BOXSCORE_TRADITIONAL_V3, stats_boxscore())
+    write_stats(stats_cache, NbaStatsEndpoint.GAME_ROTATION, rotation_payload())
+
+    documents = load_game_source_documents(GAME_ID, raw_dir=tmp_path)
+
+    assert documents.game_rotation is not None
+    assert documents.game_rotation.source == "stats_v3"
+    assert len(documents.game_rotation.sha256) == 64
 
 
 def test_source_loader_prefers_stats_v3_per_endpoint(tmp_path) -> None:
@@ -471,6 +526,28 @@ def stats_boxscore() -> dict[str, Any]:
                 ],
             ),
         }
+    }
+
+
+def rotation_payload() -> dict[str, Any]:
+    headers = ["TEAM_ID", "PERSON_ID", "IN_TIME_REAL", "OUT_TIME_REAL"]
+    home_rows = [
+        [HOME_TEAM_ID, player_id, 0.0, 14400.0]
+        for player_id in (102, 103, 104, 105)
+    ] + [
+        [HOME_TEAM_ID, 106, 0.0, 7200.0],
+        [HOME_TEAM_ID, 101, 7200.0, 14400.0],
+    ]
+    away_rows = [
+        [AWAY_TEAM_ID, player_id, 0.0, 14400.0]
+        for player_id in (201, 202, 203, 204, 205)
+    ]
+    return {
+        "parameters": {"GameID": GAME_ID, "LeagueID": "00"},
+        "resultSets": [
+            {"name": "AwayTeam", "headers": headers, "rowSet": away_rows},
+            {"name": "HomeTeam", "headers": headers, "rowSet": home_rows},
+        ]
     }
 
 

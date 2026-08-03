@@ -42,13 +42,8 @@ from nba_lineup_model.models.baselines import (
 )
 
 PRIOR_MEAN_COLUMN = "lagged_rapm_prior"
-HISTORICAL_SEASONS = (
-    "2019-20",
-    "2020-21",
-    "2021-22",
-    "2022-23",
-    "2023-24",
-    "2024-25",
+HISTORICAL_SEASONS = tuple(
+    f"{year}-{str(year + 1)[-2:]}" for year in range(1996, 2025)
 )
 
 

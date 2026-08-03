@@ -87,3 +87,26 @@ def test_historical_backfill_checkpoints_failure(
         "completed",
         "completed",
     ]
+
+
+def test_historical_backfill_passes_explicit_subset_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    received: list[bool] = []
+
+    def execute(_season: str, _stage: str, context: dict[str, object]):
+        received.append(bool(context["quality_eligible_only"]))
+        return {}
+
+    monkeypatch.setattr(backfill, "_execute_stage", execute)
+    backfill.run_historical_backfill(
+        ("2018-19",),
+        from_stage="compact",
+        through_stage="compact",
+        quality_eligible_only=True,
+        run_manifest_dir=tmp_path,
+        run_id="history-subset",
+    )
+
+    assert received == [True]

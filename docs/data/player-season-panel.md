@@ -34,11 +34,16 @@ uv run nba-build-player-season-panel \
 
 ## Same-season table
 
-One row represents one player in the RAPM outcome universe. Every RAPM player
-must have a season bio; bio-only players are not outcomes and are excluded.
-Played box-score rows are expected to be a subset: a small number of historical
-player-game box-score records can be absent even when lineup reconstruction
-identifies the player.
+One row represents one canonical NBA player in the RAPM outcome universe.
+Every canonical RAPM player must have a season bio; bio-only players are not
+outcomes and are excluded. The RAPM outcome universe controls panel membership.
+Historical partial-season curation can leave positive-minute box-score rows for
+players whose only games were excluded from RAPM; those box-score-only players
+are dropped. Conversely, RAPM players with no played box-score summary remain
+as outcomes with null box-score features. A few pre-modern Stats feeds expose
+numeric roster placeholders that are absent from the NBA player catalog; these
+unresolvable rows are excluded from the player-level panel because they cannot
+support a longitudinal player estimate.
 
 The table includes:
 
@@ -60,6 +65,13 @@ curated source table but excluded from season games and totals. When a RAPM/bio
 player has no played box-score summary, its box-score features remain null and
 `boxscore_features_available=false`; they are never imputed as zero during
 panel construction.
+
+Pre-modern NBA Stats player boxes omit the `played` flag, full name, two-point
+totals, offensive fouls, and fouls drawn. The panel derives names and two-point
+totals from the retained fields, uses positive recorded minutes as the played
+criterion, and records the unavailable foul counts as structural zero. This
+keeps the historical box-score feature schema stable without inventing player
+or possession outcomes.
 
 ## Transition table
 

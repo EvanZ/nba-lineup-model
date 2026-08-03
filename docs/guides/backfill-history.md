@@ -77,12 +77,20 @@ uv run nba-backfill-history \
 Use stage ranges only when all prerequisite outputs already exist. `--refresh`
 forces source refreshes; `--force` rebuilds processed and curated outputs.
 
+For the historical RAPM panel, where some game reconstructions are
+intentionally excluded by quality gates, add `--quality-eligible-only` while
+running the `compact` through `rapm` stages. The compaction manifest records
+the subset policy and counts; incomplete catalog games are not silently
+promoted.
+
 ## Failure policy
 
-The runner never promotes a partial season. A fetch stage fails when any final
+The default runner never promotes a partial season. A fetch stage fails when any final
 regular-season game remains unavailable after retries, processing fails when
 any game build fails, and compaction requires every selected game to pass its
-quality gate.
+quality gate. `--quality-eligible-only` is the sole documented exception: it
+publishes only the successful pass/warning subset for historical modeling and
+records the exclusion count in its compaction manifest.
 
 Network failures, NBA CDN `408`, `425`, and server errors receive bounded
 retries. A CDN `403` or `429` instead opens the request circuit for at least 15

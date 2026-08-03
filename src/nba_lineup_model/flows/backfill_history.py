@@ -130,6 +130,7 @@ def run_historical_backfill(
     access_denial_cooldown_seconds: float = DEFAULT_ACCESS_DENIAL_COOLDOWN_SECONDS,
     refresh: bool = False,
     force: bool = False,
+    quality_eligible_only: bool = False,
     run_id: str | None = None,
 ) -> tuple[HistoricalBackfillManifest, Path]:
     """Run existing resumable season stages serially across historical seasons."""
@@ -198,6 +199,7 @@ def run_historical_backfill(
         "access_denial_cooldown_seconds": access_denial_cooldown_seconds,
         "refresh": refresh,
         "force": force,
+        "quality_eligible_only": quality_eligible_only,
     }
 
     for season in normalized_seasons:
@@ -312,6 +314,7 @@ def _execute_stage(
             season_types=["regular"],
             games_per_part=context["games_per_part"],
             force=context["force"],
+            quality_eligible_only=context["quality_eligible_only"],
         )
         if summary.failed_partition_count:
             raise RuntimeError(
@@ -424,6 +427,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--quality-eligible-only",
+        action="store_true",
+        help=(
+            "Compact only successful pass/warning games for historical "
+            "modeling; the subset policy is recorded in each run manifest"
+        ),
+    )
     parser.add_argument("--run-id")
     return parser
 
@@ -443,6 +454,7 @@ def main() -> None:
         access_denial_cooldown_seconds=args.access_denial_cooldown,
         refresh=args.refresh,
         force=args.force,
+        quality_eligible_only=args.quality_eligible_only,
         run_id=args.run_id,
     )
     print(

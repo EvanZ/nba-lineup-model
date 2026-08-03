@@ -253,6 +253,7 @@ class GameBuildRecord(BaseModel):
     boxscore_source: Literal["live_data", "stats_v3"] | None = None
     play_by_play_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     boxscore_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    game_rotation_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     event_count: int | None = Field(default=None, ge=0)
     lineup_stint_count: int | None = Field(default=None, ge=0)
     possession_count: int | None = Field(default=None, ge=0)
@@ -360,6 +361,7 @@ class GameQualityRecord(AuditGameResult):
     boxscore_source: Literal["live_data", "stats_v3"] | None = None
     play_by_play_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     boxscore_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    game_rotation_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     recorded_at: datetime
 
     @field_validator("game_id")

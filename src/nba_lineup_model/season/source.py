@@ -36,11 +36,12 @@ class SelectedRawArtifact:
 
 @dataclass(frozen=True)
 class GameSourceDocuments:
-    """Selected play-by-play and box-score documents for one game."""
+    """Selected play-by-play, box-score, and optional rotation documents."""
 
     game_id: str
     play_by_play: SelectedRawArtifact
     boxscore: SelectedRawArtifact
+    game_rotation: SelectedRawArtifact | None = None
 
 
 def load_game_source_documents(
@@ -94,16 +95,37 @@ def load_game_source_documents(
         game_id,
     )
     if stats_play_by_play is not None:
+        stats_game_rotation = stats_artifact_evidence(
+            stats_cache,
+            NbaStatsEndpoint.GAME_ROTATION,
+            game_id,
+        )
+        game_rotation = (
+            SelectedRawArtifact(
+                source="stats_v3",
+                payload=stats_game_rotation.response.payload,
+                sha256=stats_game_rotation.sha256,
+                byte_count=stats_game_rotation.byte_count,
+                path=stats_cache.path_for(NbaStatsEndpoint.GAME_ROTATION, game_id),
+            )
+            if stats_game_rotation is not None
+            else None
+        )
         play_by_play = SelectedRawArtifact(
             source="stats_v3",
             payload=adapt_stats_v3_play_by_play(
-                stats_play_by_play.response.payload, boxscore.payload
+                stats_play_by_play.response.payload,
+                boxscore.payload,
+                game_rotation_payload=(
+                    game_rotation.payload if game_rotation is not None else None
+                ),
             ),
             sha256=stats_play_by_play.sha256,
             byte_count=stats_play_by_play.byte_count,
             path=stats_cache.path_for(NbaStatsEndpoint.PLAY_BY_PLAY_V3, game_id),
         )
     else:
+        game_rotation = None
         live_play_by_play = _live_artifact_evidence(
             live_cache, NbaCdnEndpoint.PLAY_BY_PLAY, game_id
         )
@@ -123,6 +145,7 @@ def load_game_source_documents(
         game_id=game_id,
         play_by_play=play_by_play,
         boxscore=boxscore,
+        game_rotation=game_rotation,
     )
 
 

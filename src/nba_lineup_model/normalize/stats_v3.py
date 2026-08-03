@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import re
 import unicodedata
 from collections.abc import Mapping
@@ -25,6 +26,7 @@ HISTORICAL_NAME_PERSON_IDS = {
 def adapt_stats_v3_game(
     play_by_play_payload: Mapping[str, Any],
     boxscore_payload: Mapping[str, Any],
+    game_rotation_payload: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Adapt NBA Stats V3 documents to the existing liveData-shaped boundary."""
 
@@ -32,6 +34,7 @@ def adapt_stats_v3_game(
     play_by_play = adapt_stats_v3_play_by_play(
         play_by_play_payload,
         boxscore,
+        game_rotation_payload=game_rotation_payload,
     )
     return play_by_play, boxscore
 
@@ -59,6 +62,8 @@ def adapt_stats_v3_boxscore(payload: Mapping[str, Any]) -> dict[str, Any]:
 def adapt_stats_v3_play_by_play(
     payload: Mapping[str, Any],
     boxscore_payload: Mapping[str, Any],
+    *,
+    game_rotation_payload: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert ``playbyplayv3`` actions to the liveData action vocabulary."""
 
@@ -87,11 +92,21 @@ def adapt_stats_v3_play_by_play(
 
     rosters, lineups, team_tricodes = _roster_context(box_game)
     source_aliases = _source_player_aliases(ordered_source_actions, rosters)
+    rotation_lineups = _rotation_period_lineups(
+        game_rotation_payload,
+        periods={
+            _required_int(action, "period")
+            for action in ordered_source_actions
+            if isinstance(action, Mapping)
+        },
+        rosters=rosters,
+    )
     period_lineups = _infer_period_lineups(
         ordered_source_actions,
         rosters,
         lineups,
         source_aliases,
+        rotation_lineups=rotation_lineups,
     )
     actions: list[dict[str, Any]] = []
     pending_miss_team_id: int | None = None
@@ -434,6 +449,8 @@ def _infer_period_lineups(
     rosters: Mapping[int, Mapping[int, Mapping[str, Any]]],
     first_period_lineups: Mapping[int, set[int]],
     source_aliases: Mapping[int, Mapping[str, set[int]]],
+    *,
+    rotation_lineups: Mapping[int, Mapping[int, set[int]]] | None = None,
 ) -> dict[int, dict[int, set[int]]]:
     periods = sorted(
         {
@@ -467,6 +484,9 @@ def _infer_period_lineups(
                     prior_lineup=prior_end[team_id],
                     original_starters=original_starters[team_id],
                     source_aliases=source_aliases[team_id],
+                    rotation_lineup=(rotation_lineups or {})
+                    .get(period, {})
+                    .get(team_id),
                 )
             )
 
@@ -499,8 +519,23 @@ def _infer_or_solve_period_lineup(
     prior_lineup: set[int],
     original_starters: set[int],
     source_aliases: Mapping[str, set[int]],
+    rotation_lineup: set[int] | None = None,
 ) -> set[int]:
     """Use the fast inference when valid, then solve ambiguous starts exactly."""
+
+    if rotation_lineup is not None:
+        if _period_lineup_matches_evidence(
+            rotation_lineup,
+            period_actions,
+            team_id=team_id,
+            roster=roster,
+            source_aliases=source_aliases,
+        ):
+            return set(rotation_lineup)
+        raise ValueError(
+            f"Game Rotation period lineup contradicts play-by-play evidence for team "
+            f"{team_id}"
+        )
 
     try:
         inferred = _infer_team_period_lineup(
@@ -694,6 +729,90 @@ def _infer_team_period_lineup(
     if len(lineup) != 5:
         raise ValueError(f"Could not infer five period starters for team {team_id}")
     return lineup
+
+
+def _rotation_period_lineups(
+    payload: Mapping[str, Any] | None,
+    *,
+    periods: set[int],
+    rosters: Mapping[int, Mapping[int, Mapping[str, Any]]],
+) -> dict[int, dict[int, set[int]]]:
+    """Return exact-five period starters supported by cached Game Rotation data.
+
+    ``IN_TIME_REAL`` and ``OUT_TIME_REAL`` are elapsed-game tenths of a second.
+    Incomplete, malformed, or non-five-player intervals are intentionally ignored
+    so the existing play-by-play inference remains the fallback.
+    """
+
+    if payload is None:
+        return {}
+    result_sets = payload.get("resultSets")
+    if not isinstance(result_sets, list):
+        return {}
+
+    intervals_by_team: dict[int, list[tuple[int, int, int]]] = {}
+    for result_set in result_sets:
+        if not isinstance(result_set, Mapping):
+            continue
+        headers = result_set.get("headers")
+        rows = result_set.get("rowSet")
+        if not isinstance(headers, list) or not isinstance(rows, list):
+            continue
+        required = {"TEAM_ID", "PERSON_ID", "IN_TIME_REAL", "OUT_TIME_REAL"}
+        if not required.issubset(headers):
+            continue
+        indexes = {field: headers.index(field) for field in required}
+        for row in rows:
+            if not isinstance(row, list) or len(row) < len(headers):
+                continue
+            team_id = _positive_rotation_int(row[indexes["TEAM_ID"]])
+            player_id = _positive_rotation_int(row[indexes["PERSON_ID"]])
+            in_time = _rotation_tenths(row[indexes["IN_TIME_REAL"]])
+            out_time = _rotation_tenths(row[indexes["OUT_TIME_REAL"]])
+            if (
+                team_id is None
+                or player_id is None
+                or in_time is None
+                or out_time is None
+                or out_time <= in_time
+                or team_id not in rosters
+                or player_id not in rosters[team_id]
+            ):
+                continue
+            intervals_by_team.setdefault(team_id, []).append(
+                (player_id, in_time, out_time)
+            )
+
+    result: dict[int, dict[int, set[int]]] = {}
+    for period in sorted(period for period in periods if period > 1):
+        start_tenths = _completed_period_seconds(period) * 10
+        team_lineups: dict[int, set[int]] = {}
+        for team_id, intervals in intervals_by_team.items():
+            active = {
+                player_id
+                for player_id, in_time, out_time in intervals
+                if in_time <= start_tenths < out_time
+            }
+            if len(active) == 5:
+                team_lineups[team_id] = active
+        if team_lineups:
+            result[period] = team_lineups
+    return result
+
+
+def _positive_rotation_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def _rotation_tenths(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0 or not number.is_integer():
+        return None
+    return int(number)
 
 
 def _actor_implies_on_court(action: Mapping[str, Any]) -> bool:

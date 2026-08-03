@@ -81,10 +81,12 @@ def process_catalog_game(
     attempt_id = f"{run_id}:{game.game_id}:{attempt_number}:{uuid4().hex[:8]}"
     play_by_play = None
     boxscore = None
+    game_rotation = None
     try:
         documents = load_game_source_documents(game.game_id, raw_dir=raw_dir)
         play_by_play = documents.play_by_play
         boxscore = documents.boxscore
+        game_rotation = documents.game_rotation
     except Exception as error:
         return _failure_outcome(
             game,
@@ -97,6 +99,7 @@ def process_catalog_game(
             error=error,
             play_by_play=play_by_play,
             boxscore=boxscore,
+            game_rotation=game_rotation,
             prefect_flow_run_id=prefect_flow_run_id,
             prefect_task_run_id=prefect_task_run_id,
             quality=_error_quality(game, "preflight", error),
@@ -113,6 +116,7 @@ def process_catalog_game(
             code_version=code_version,
             play_by_play=play_by_play,
             boxscore=boxscore,
+            game_rotation=game_rotation,
             processed_dir=processed_dir,
         )
     ):
@@ -138,6 +142,9 @@ def process_catalog_game(
                 boxscore_source=boxscore.source,
                 play_by_play_sha256=play_by_play.sha256,
                 boxscore_sha256=boxscore.sha256,
+                game_rotation_sha256=(
+                    game_rotation.sha256 if game_rotation is not None else None
+                ),
                 event_count=prior_success.event_count,
                 lineup_stint_count=prior_success.lineup_stint_count,
                 possession_count=prior_success.possession_count,
@@ -165,6 +172,7 @@ def process_catalog_game(
             error=error,
             play_by_play=play_by_play,
             boxscore=boxscore,
+            game_rotation=game_rotation,
             prefect_flow_run_id=prefect_flow_run_id,
             prefect_task_run_id=prefect_task_run_id,
             quality=_error_quality(game, "reconstruct", error),
@@ -189,6 +197,7 @@ def process_catalog_game(
             error=error,
             play_by_play=play_by_play,
             boxscore=boxscore,
+            game_rotation=game_rotation,
             prefect_flow_run_id=prefect_flow_run_id,
             prefect_task_run_id=prefect_task_run_id,
             reconstruction=reconstruction,
@@ -211,6 +220,7 @@ def process_catalog_game(
             error=error,
             play_by_play=play_by_play,
             boxscore=boxscore,
+            game_rotation=game_rotation,
             prefect_flow_run_id=prefect_flow_run_id,
             prefect_task_run_id=prefect_task_run_id,
             reconstruction=reconstruction,
@@ -235,6 +245,7 @@ def process_catalog_game(
             error=error,
             play_by_play=play_by_play,
             boxscore=boxscore,
+            game_rotation=game_rotation,
             prefect_flow_run_id=prefect_flow_run_id,
             prefect_task_run_id=prefect_task_run_id,
             reconstruction=reconstruction,
@@ -256,6 +267,7 @@ def process_catalog_game(
             error=error,
             play_by_play=play_by_play,
             boxscore=boxscore,
+            game_rotation=game_rotation,
             prefect_flow_run_id=prefect_flow_run_id,
             prefect_task_run_id=prefect_task_run_id,
             reconstruction=reconstruction,
@@ -285,6 +297,9 @@ def process_catalog_game(
             boxscore_source=boxscore.source,
             play_by_play_sha256=play_by_play.sha256,
             boxscore_sha256=boxscore.sha256,
+            game_rotation_sha256=(
+                game_rotation.sha256 if game_rotation is not None else None
+            ),
             event_count=processed.event_count,
             lineup_stint_count=processed.stint_count,
             possession_count=processed.possession_count,
@@ -318,6 +333,7 @@ def quality_record_for_outcome(
         boxscore_source=record.boxscore_source,
         play_by_play_sha256=record.play_by_play_sha256,
         boxscore_sha256=record.boxscore_sha256,
+        game_rotation_sha256=record.game_rotation_sha256,
         recorded_at=record.finished_at,
     )
 
@@ -498,6 +514,7 @@ def _can_resume(
     code_version: str,
     play_by_play: SelectedRawArtifact,
     boxscore: SelectedRawArtifact,
+    game_rotation: SelectedRawArtifact | None,
     processed_dir: Path | str,
 ) -> bool:
     return (
@@ -506,12 +523,16 @@ def _can_resume(
         and prior_success.boxscore_source == boxscore.source
         and prior_success.play_by_play_sha256 == play_by_play.sha256
         and prior_success.boxscore_sha256 == boxscore.sha256
+        and prior_success.game_rotation_sha256
+        == (game_rotation.sha256 if game_rotation is not None else None)
         and prior_quality.status in {"pass", "warning"}
         and prior_quality.code_version == code_version
         and prior_quality.play_by_play_source == play_by_play.source
         and prior_quality.boxscore_source == boxscore.source
         and prior_quality.play_by_play_sha256 == play_by_play.sha256
         and prior_quality.boxscore_sha256 == boxscore.sha256
+        and prior_quality.game_rotation_sha256
+        == (game_rotation.sha256 if game_rotation is not None else None)
         and processed_outputs_valid(game.game_id, processed_dir)
     )
 
@@ -585,6 +606,7 @@ def _failure_outcome(
     prefect_task_run_id: str | None,
     play_by_play: SelectedRawArtifact | None = None,
     boxscore: SelectedRawArtifact | None = None,
+    game_rotation: SelectedRawArtifact | None = None,
     reconstruction: GameReconstruction | None = None,
     quality: AuditGameResult | None = None,
     output_table_count: int = 0,
@@ -615,6 +637,9 @@ def _failure_outcome(
                 play_by_play.sha256 if play_by_play is not None else None
             ),
             boxscore_sha256=boxscore.sha256 if boxscore is not None else None,
+            game_rotation_sha256=(
+                game_rotation.sha256 if game_rotation is not None else None
+            ),
             event_count=(
                 len(reconstruction.events) if reconstruction is not None else None
             ),

@@ -39,7 +39,12 @@ class CompactSeasonRunSummary(BaseModel):
     prefect_flow_run_id: str | None = None
     season: str
     curation_code_version: str
+    selection_policy: Literal["complete_catalog", "quality_eligible_subset"] = (
+        "complete_catalog"
+    )
+    catalog_game_count: int = Field(ge=1)
     selected_game_count: int = Field(ge=1)
+    excluded_game_count: int = Field(ge=0)
     quality_pass_count: int = Field(ge=0)
     quality_warning_count: int = Field(ge=0)
     partition_count: int = Field(ge=1)
@@ -58,6 +63,8 @@ class CompactSeasonRunSummary(BaseModel):
 
     @model_validator(mode="after")
     def validate_counts(self) -> CompactSeasonRunSummary:
+        if self.selected_game_count + self.excluded_game_count != self.catalog_game_count:
+            raise ValueError("Compaction selection counts do not match the catalog")
         quality_count = self.quality_pass_count + self.quality_warning_count
         if quality_count != self.selected_game_count:
             raise ValueError("Compaction quality counts do not match selected games")
@@ -169,6 +176,7 @@ def compact_season_flow(
     game_ids: list[str] | None = None,
     games_per_part: int = 100,
     force: bool = False,
+    quality_eligible_only: bool = False,
     curation_code_version: str | None = None,
     run_id: str | None = None,
 ) -> CompactSeasonRunSummary:
@@ -216,7 +224,7 @@ def compact_season_flow(
             )
         except ValueError as error:
             preflight_errors.append(f"{game.game_id}: {error}")
-    if preflight_errors:
+    if preflight_errors and not quality_eligible_only:
         examples = "; ".join(preflight_errors[:5])
         remainder = len(preflight_errors) - min(5, len(preflight_errors))
         suffix = f"; plus {remainder} more" if remainder else ""
@@ -224,6 +232,8 @@ def compact_season_flow(
             f"Curated preflight failed for {len(preflight_errors)} games: "
             f"{examples}{suffix}"
         )
+    if not sources:
+        raise ValueError(f"No quality-eligible games are available for {season}")
 
     sources_by_type: dict[str, list[CuratedGameSource]] = {}
     for source in sources:
@@ -291,7 +301,12 @@ def compact_season_flow(
         prefect_flow_run_id=_runtime_id(runtime.flow_run.id),
         season=season,
         curation_code_version=curation_code_version,
+        selection_policy=(
+            "quality_eligible_subset" if quality_eligible_only else "complete_catalog"
+        ),
+        catalog_game_count=len(games),
         selected_game_count=len(sources),
+        excluded_game_count=len(preflight_errors),
         quality_pass_count=quality_statuses["pass"],
         quality_warning_count=quality_statuses["warning"],
         partition_count=len(outcomes),
@@ -326,6 +341,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--catalog",
         default="data/catalog/games.parquet",
         help="Canonical game catalog path",
+    )
+    parser.add_argument(
+        "--quality-eligible-only",
+        action="store_true",
+        help=(
+            "Publish only successful pass/warning games; intended for the "
+            "documented historical modeling subset"
+        ),
     )
     parser.add_argument(
         "--processed-dir",
@@ -376,6 +399,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Rebuild partitions even when inputs and manifests match",
     )
+    parser.add_argument(
+        "--quality-eligible-only",
+        action="store_true",
+        help=(
+            "Publish only successful pass/warning games; intended for the "
+            "documented historical modeling subset"
+        ),
+    )
     parser.add_argument("--run-id", help="Optional caller-owned run identifier")
     return parser
 
@@ -400,6 +431,7 @@ def main() -> None:
         game_ids=args.game_ids,
         games_per_part=args.games_per_part,
         force=args.force,
+        quality_eligible_only=args.quality_eligible_only,
         run_id=args.run_id,
     )
     print(

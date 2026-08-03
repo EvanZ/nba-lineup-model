@@ -6,7 +6,7 @@ after the cohort's training cutoff. Training objectives remain model-specific.
 **Bold values are best at the displayed precision.** Lower error is better;
 higher skill is better.
 
-Last generated: **2026-08-01 00:51 UTC** from `evaluation-2025-26-20260801T005124Z-adc26de4`.
+Last generated: **2026-08-03 20:32 UTC** from `evaluation-2025-26-20260803T203258Z-84bd43a0`.
 
 ## Evaluation cohorts
 
@@ -151,7 +151,7 @@ eligible-possession game-margin RMSE
 | Model | Possession RMSE | Possession MAE | Possession skill vs mean | Eligible-possession game-margin RMSE | Game-margin skill vs mean |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | One-year ridge RAPM | 1.199460 | 1.141670 | 0.2542% | 14.7107 | 29.1594% |
-| Forward lagged-prior RAPM | **1.199192** | **1.140847** | **0.2989%** | **14.4048** | **32.0751%** |
+| Forward lagged-prior RAPM | **1.199147** | **1.140798** | **0.3063%** | **14.2396** | **33.6240%** |
 | One-year Bayesian RAPM | 1.199460 | 1.141670 | 0.2542% | 14.7107 | 29.1594% |
 | One-year additive neural | 1.199453 | 1.141746 | 0.2555% | 14.7181 | 29.0884% |
 | One-year Deep Sets | 1.199759 | 1.142093 | 0.2046% | 15.1073 | 25.2890% |
@@ -168,7 +168,7 @@ eligible-possession game-margin RMSE
 | Model | Possession RMSE | Possession MAE | Possession skill vs mean | Eligible-possession game-margin RMSE | Game-margin skill vs mean |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | One-year ridge RAPM | **1.191688** | 1.135678 | **0.1462%** | 15.2254 | 17.4097% |
-| Forward lagged-prior RAPM | 1.191783 | **1.135535** | 0.1303% | 15.2744 | 16.8768% |
+| Forward lagged-prior RAPM | 1.191755 | **1.135572** | 0.1348% | 15.3103 | 16.4860% |
 | One-year Bayesian RAPM | **1.191688** | 1.135678 | **0.1462%** | 15.2254 | 17.4097% |
 | One-year additive neural | 1.191717 | 1.135770 | 0.1413% | 15.2386 | 17.2667% |
 | One-year Deep Sets | 1.191919 | 1.136305 | 0.1074% | 15.2321 | 17.3372% |
@@ -216,10 +216,10 @@ column is the share of draws where \(\Delta_b < 0\).
 
 | Cohort | Candidate | Reference | Metric | Difference | 95% interval | P(candidate better) |
 | --- | --- | --- | --- | ---: | ---: | ---: |
-| Regular-season holdout | Forward lagged-prior RAPM | One-year ridge RAPM | Possession RMSE | -0.000269 | [-0.000455, -0.000084] | 99.9% |
-| Regular-season holdout | Forward lagged-prior RAPM | One-year ridge RAPM | Eligible-possession game-margin RMSE | -0.305918 | [-0.630367, 0.030078] | 96.2% |
-| Playoffs | Forward lagged-prior RAPM | One-year ridge RAPM | Possession RMSE | 0.000095 | [-0.000186, 0.000397] | 26.0% |
-| Playoffs | Forward lagged-prior RAPM | One-year ridge RAPM | Eligible-possession game-margin RMSE | 0.049036 | [-0.329797, 0.431033] | 38.4% |
+| Regular-season holdout | Forward lagged-prior RAPM | One-year ridge RAPM | Possession RMSE | -0.000313 | [-0.000485, -0.000137] | 100.0% |
+| Regular-season holdout | Forward lagged-prior RAPM | One-year ridge RAPM | Eligible-possession game-margin RMSE | -0.471102 | [-0.790552, -0.140570] | 99.6% |
+| Playoffs | Forward lagged-prior RAPM | One-year ridge RAPM | Possession RMSE | 0.000068 | [-0.000209, 0.000359] | 32.0% |
+| Playoffs | Forward lagged-prior RAPM | One-year ridge RAPM | Eligible-possession game-margin RMSE | 0.084904 | [-0.307806, 0.471020] | 31.9% |
 | Regular-season holdout | One-year Deep Sets | One-year additive neural | Possession RMSE | 0.000306 | [0.000170, 0.000452] | 0.0% |
 | Regular-season holdout | One-year Deep Sets | One-year additive neural | Eligible-possession game-margin RMSE | 0.389153 | [0.173284, 0.637469] | 0.1% |
 | Playoffs | One-year Deep Sets | One-year additive neural | Possession RMSE | 0.000203 | [0.000009, 0.000388] | 2.1% |
@@ -258,7 +258,7 @@ uv run pytest -q tests/test_model_evaluation.py
 ```bash
 uv run nba-evaluate-models 2025-26 \
   --ridge-run-id baseline-2025-26-20260727T230533Z-72eac627 \
-  --prior-rapm-run-id forward-lagged-rapm-2025-26-20260801T004944Z-470a628c \
+  --prior-rapm-run-id forward-lagged-rapm-2025-26-20260803T203054Z-c627d89d \
   --bayesian-run-id bayesian-2025-26-20260729T043953Z-b50cc2f7 \
   --neural-run-id neural-2025-26-20260729T173539Z-51bc0264 \
   --deep-sets-run-id deep-sets-2025-26-20260729T215128Z-dc12dd11 \
@@ -268,9 +268,9 @@ uv run nba-evaluate-models 2025-26 \
 
 | Provenance | Value |
 | --- | --- |
-| Evaluation run | `evaluation-2025-26-20260801T005124Z-adc26de4` |
+| Evaluation run | `evaluation-2025-26-20260803T203258Z-84bd43a0` |
 | Ridge run | `baseline-2025-26-20260727T230533Z-72eac627` |
-| Forward prior RAPM run | `forward-lagged-rapm-2025-26-20260801T004944Z-470a628c` |
+| Forward prior RAPM run | `forward-lagged-rapm-2025-26-20260803T203054Z-c627d89d` |
 | Bayesian run | `bayesian-2025-26-20260729T043953Z-b50cc2f7` |
 | Neural run | `neural-2025-26-20260729T173539Z-51bc0264` |
 | Neural selection | `learning_rate=0.0003`, `weight_decay=0.001`, `epochs=3` |
@@ -280,12 +280,12 @@ uv run nba-evaluate-models 2025-26 \
 | CatBoost selection | `max_iterations=1000`, `best_iteration=117`, `trees=118`, `learning_rate=0.113375` |
 | RAPM + Transformer run | `rapm-transformer-2025-26-20260729T233233Z-e316a73e` |
 | RAPM + Transformer selection | `learning_rate=0.0003`, `weight_decay=0.01`, `epochs=1`, `seed=17` |
-| Evaluation code | `sha256:148648c1b649ac0c61217bee81c810ff0d03386039d570e686824d4982b16c4b` |
-| Evaluation manifest SHA-256 | `6b952293bd36a906bdbade0af0945254de6b88b139dfe6a8f3802e9d3461aba0` |
+| Evaluation code | `sha256:670f2a4facd459d0dd9d960623ad90bdae8e2abcd38179c539841246d3502d0e` |
+| Evaluation manifest SHA-256 | `bf490caee5e8004f85a66ad818ddd3be775a303352abd242fa56f4f86bea7b57` |
 
 The underlying `metrics.parquet`, possession predictions, cohort summary, and
 source metadata are stored under
-`artifacts/reports/model_evaluation/2025-26/evaluation-2025-26-20260801T005124Z-adc26de4/`.
+`artifacts/reports/model_evaluation/2025-26/evaluation-2025-26-20260803T203258Z-84bd43a0/`.
 
 | Artifact | Contents |
 | --- | --- |

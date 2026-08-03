@@ -103,12 +103,77 @@ The build ledger is append-only. The game-quality report keeps the latest
 validated result for each game, while the summary aggregates by season and
 season type.
 
+## Game Rotation recovery
+
+Cached `gamerotation` responses can supply exact-five lineup evidence at a
+period start. The processor uses that auxiliary source only when the interval
+table has a valid five-player state at the boundary. It then preserves the
+play-by-play substitution stream and requires the normal lineup, possession,
+score, and catalog validations to pass.
+
+Direct Game Rotation acquisition is suspended because source coverage is
+nonuniform and frequently returns HTTP 500. This recovery command never
+requests NBA data, but it can use retained cache entries or a documented
+external interval export.
+
+### External rotation import
+
+The shared Riley Gisseman export is a local source artifact, not an NBA network
+response. Import only latest regular-season failures with exact five-player
+states at the starts of periods 2-4:
+
+```bash
+uv run nba-import-external-game-rotations \
+  data/external/nba_rotations_shared_riley_gisseman.csv \
+  --run-id external-rotation-import-r1
+```
+
+The importer reads the CSV in chunks, preserves ten-character game IDs, drops
+nonpositive intervals, validates the home/away teams against the game catalog,
+and emits compatible `data/raw/stats/gamerotation/{game_id}.json` entries. It
+does not overwrite an existing valid cached rotation unless `--overwrite` is
+explicit. Its report under
+`artifacts/reports/external_game_rotation_import/{run_id}/` records the source
+file SHA-256, per-game cache state, and every excluded game.
+
+The first full import, `external-rotation-import-r1`, retained 3,119 new cache
+entries and reused 705 valid local entries from a 2,107,125-row CSV. Its source
+digest is
+`sha256:c68403b13f519a685cb953f2101d77210012ff1eaf2dc90b7ee5cfeea63c111b`.
+Of 3,777 structurally valid recovery candidates, 1,507 (`39.9%`) passed the
+complete reconstruction and quality contract in
+`external-rotation-recovery-r1`. The other games remain explicit failures,
+most commonly for unbalanced possession counts or source score/possession
+anomalies that interval evidence cannot repair.
+
+Reprocess only latest regular-season failures that already have structurally
+valid cached rotations:
+
+```bash
+PREFECT_API_URL=http://127.0.0.1:4200/api \
+  uv run nba-recover-game-rotation \
+  --max-workers 4 \
+  --run-id game-rotation-recovery-r1
+```
+
+This command never requests NBA data. It appends new terminal attempts to the
+build ledger, updates the canonical quality rows, and writes a per-game report
+to `artifacts/reports/game_rotation_recovery/{run_id}/games.parquet`. A failed
+recovery remains excluded; the rotation feed is evidence, not an override of
+the quality contract.
+
+The first cached cohort (`game-rotation-recovery-r1`) contained 35 structurally
+valid rotations from the failed-game probe. Seventeen games (`48.6%`) passed the
+complete reconstruction and quality contract. The remaining 18 were retained as
+failures, predominantly because of possession or score defects outside a
+period-start lineup ambiguity.
+
 ## Resume behavior
 
 A game is skipped only when all of the following agree:
 
 - selected play-by-play and boxscore source names;
-- play-by-play and boxscore SHA-256 digests;
+- play-by-play, boxscore, and any consumed Game Rotation SHA-256 digests;
 - a fingerprint of processing-owned reconstruction and quality source;
 - a prior successful build-ledger record;
 - a prior passing or warning quality record;
