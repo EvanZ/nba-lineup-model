@@ -123,7 +123,7 @@ returning and 120 cold starts). The selected normalized ridge regularization is
 
 Values are target-RAPM exposure-weighted RMSE; skill is the reduction in
 weighted MSE relative to persistence. The run is
-`aging-2025-26-20260803T214653Z-94ce6277`, stored under
+`aging-2025-26-20260803T223755Z-51f6e707`, stored under
 `artifacts/models/aging/2025-26/`. Its input panel covers 1996-97 through
 2025-26 and is pinned by hash in the model manifest.
 
@@ -134,7 +134,7 @@ interpretable, the case study holds all non-age inputs fixed at an
 exposure-weighted returning-player reference profile and reports
 
 \[
-g(a) - g(27),
+g(a) - g(29),
 \]
 
 where \(g(a)\) is the model prediction when only target age changes. Because
@@ -144,14 +144,26 @@ profile used for the calculation. It is not average player RAPM at age \(a\),
 nor a causal biological effect of aging.
 
 The published curve comes from
-`aging-curve-2025-26-20260803T215413Z-5c88357f`. It uses the 13,527
+`aging-curve-2025-26-20260803T231802Z-3ab3d8c9`. It uses the 13,527
 player-season rows from target seasons 1997-98 through 2024-25 that trained the
 source aging model. The shaded bands are 5th to 95th percentiles from 250
 target-season block bootstrap refits. The selected ridge penalty and spline
 specification remain fixed in each refit, so the interval reflects training
 season resampling, not hyperparameter-selection uncertainty.
 
-![Conditional age effect centered at age 27](../assets/images/aging/2025-26/aging-curve.svg)
+### Fixed-Experience Background Effect
+
+![Fixed-experience background effect centered at age 29](../assets/images/aging/2025-26/aging-curve.svg)
+
+This curve holds NBA experience fixed while changing chronological age. It is a
+background and selection comparison, not a within-player aging trajectory.
+
+### Forward Aging Trajectory
+
+![Forward aging trajectory](../assets/images/aging/2025-26/forward-aging-trajectory.svg)
+
+This curve advances age and NBA experience together from age 29. It is the
+appropriate conditional curve for a one-year forward player trajectory.
 
 ![Draft-adjusted aging curves](../assets/images/aging/2025-26/draft-adjusted-aging-curves.svg)
 
@@ -159,6 +171,21 @@ The cohort chart holds prior RAPM, exposure, experience, height, and weight at
 the same reference profile. It contrasts early-entry drafted (estimated draft
 age 20), late-entry drafted (estimated draft age 24), and undrafted profiles.
 These are model counterfactuals, not separate observed cohort averages.
+
+### Physical Profiles
+
+![Forward physical-profile aging curves](../assets/images/aging/2025-26/physical-profile-aging-curves.svg)
+
+This forward-trajectory comparison advances age and experience together for a
+6'3", 190 lb small guard, 6'7", 220 lb wing, and 6'11", 255 lb center profile.
+
+### Star RAPM Histories
+
+<div class="star-rapm-chart" data-source="../../assets/images/aging/2025-26/star-observed-rapm.json"></div>
+
+Lines and points are observed one-season RAPM for Shaquille O'Neal, Tim Duncan,
+Kobe Bryant, LeBron James, Stephen Curry, Kevin Durant, and Nikola Jokić. This
+is descriptive history rather than a model-implied aging trajectory.
 
 The common age term rises rapidly through age 23, where the conditional effect
 is +0.20 points per 100 possessions relative to age 27. It then declines from
@@ -189,7 +216,7 @@ Rebuild the report and images from the pinned aging run with:
 
 ```bash
 uv run --group docs nba-build-aging-curve-case-study 2025-26 \
-  --aging-run-id aging-2025-26-20260803T214653Z-94ce6277 \
+  --aging-run-id aging-2025-26-20260803T223755Z-51f6e707 \
   --bootstrap-samples 250 \
   --bootstrap-seed 20260801
 ```

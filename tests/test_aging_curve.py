@@ -30,6 +30,12 @@ def test_age_curve_is_centered_and_bootstrap_draws_match_the_grid():
         training,
         reference_age=27,
     )
+    trajectory = extract_partial_age_curve(
+        experiment.fitted_model,
+        training,
+        reference_age=27,
+        advance_experience=True,
+    )
     draws, annual_draws = season_block_bootstrap_age_curve(
         training,
         regularization=experiment.selected_regularization,
@@ -42,6 +48,8 @@ def test_age_curve_is_centered_and_bootstrap_draws_match_the_grid():
     )
 
     assert curve.loc[curve["age"].eq(27), "partial_age_effect"].item() == 0.0
+    assert trajectory.loc[trajectory["age"].eq(27), "partial_age_effect"].item() == 0.0
+    assert abs(trajectory.loc[trajectory["age"].eq(26), "annual_change"].item()) < 1.0
     assert curve["annual_change"].iloc[-1] != curve["annual_change"].iloc[-1]
     assert draws.shape == (8, len(curve))
     assert annual_draws.shape == (8, len(curve))
@@ -67,6 +75,7 @@ def test_draft_adjusted_curves_are_centered_at_the_reference_age():
             draft_cohort=cohort,
         )
         assert curve.loc[curve["age"].eq(27), "partial_age_effect"].item() == 0.0
+        assert curve.loc[curve["age"].eq(27), "annual_change"].notna().item()
 
 
 def synthetic_transitions() -> pd.DataFrame:

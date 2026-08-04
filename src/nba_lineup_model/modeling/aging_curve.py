@@ -41,6 +41,8 @@ class AgingCurveCaseStudy:
     training_target_seasons: tuple[str, ...]
     curve: pd.DataFrame
     draft_adjusted_curves: pd.DataFrame
+    forward_trajectory_curve: pd.DataFrame
+    physical_profile_curves: pd.DataFrame
 
 
 def extract_partial_age_curve(
@@ -50,6 +52,9 @@ def extract_partial_age_curve(
     reference_age: int,
     ages: np.ndarray | None = None,
     draft_cohort: str = "population",
+    advance_experience: bool = False,
+    physical_profile: tuple[float, float] | None = None,
+    reference_override: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Extract the model's shared age spline, centered at one reference age."""
 
@@ -72,11 +77,15 @@ def extract_partial_age_curve(
     if age_values.ndim != 1 or len(age_values) == 0:
         raise ValueError("Aging curve ages must be a nonempty one-dimensional array")
 
-    reference = _reference_features(training)
+    reference = _reference_features(training, reference_override=reference_override)
     features = pd.DataFrame(
         {column: np.repeat(reference[column], len(age_values)) for column in AGING_FEATURE_COLUMNS}
     )
     features["target_age"] = age_values
+    if advance_experience:
+        features["target_nba_experience_years"] = (
+            reference["target_nba_experience_years"] + age_values - float(reference_age)
+        ).clip(min=0.0)
     # The population-reference curve averages the cohort-specific age slopes.
     for cohort in ("early_entry", "late_entry", "undrafted"):
         features[f"age_by_{cohort}"] = (
@@ -84,9 +93,21 @@ def extract_partial_age_curve(
         )
     if draft_cohort != "population":
         _apply_draft_cohort(features, age_values, reference_age, draft_cohort)
+    if physical_profile is not None:
+        _apply_physical_profile(features, age_values, reference_age, physical_profile)
+    if reference_override is not None:
+        _apply_reference_profile_interactions(features, age_values, reference_age, reference)
     predictions = np.asarray(model.predict(features.loc[:, AGING_FEATURE_COLUMNS]), dtype=float)
     reference_features = features.iloc[[0]].copy()
     reference_features.loc[:, "target_age"] = float(reference_age)
+    reference_features.loc[
+        :,
+        ["age_by_early_entry", "age_by_late_entry", "age_by_undrafted"],
+    ] = 0.0
+    if advance_experience:
+        reference_features.loc[:, "target_nba_experience_years"] = reference[
+            "target_nba_experience_years"
+        ]
     reference_prediction = float(model.predict(reference_features.loc[:, AGING_FEATURE_COLUMNS])[0])
     curve = pd.DataFrame(
         {
@@ -116,6 +137,40 @@ def _apply_draft_cohort(
     features["draft_age_estimate"] = draft_ages[cohort]
     features["draft_pick"] = np.nan if cohort == "undrafted" else features["draft_pick"]
     features[f"age_by_{cohort}"] = ages - float(reference_age)
+
+
+def _apply_physical_profile(
+    features: pd.DataFrame,
+    ages: np.ndarray,
+    reference_age: int,
+    profile: tuple[float, float],
+) -> None:
+    height, weight = profile
+    bmi = 703.0 * weight / height**2
+    features["height_inches"] = height
+    features["weight_pounds"] = weight
+    features["body_mass_index"] = bmi
+    features["age_by_height"] = (ages - float(reference_age)) * height
+    features["age_by_body_mass_index"] = (ages - float(reference_age)) * bmi
+
+
+def _apply_reference_profile_interactions(
+    features: pd.DataFrame,
+    ages: np.ndarray,
+    reference_age: int,
+    reference: dict[str, float],
+) -> None:
+    centered = ages - float(reference_age)
+    draft_age = reference["draft_age_estimate"]
+    features.loc[:, ["age_by_early_entry", "age_by_late_entry", "age_by_undrafted"]] = 0.0
+    if reference["is_undrafted"] >= 0.5:
+        features["age_by_undrafted"] = centered
+    elif np.isfinite(draft_age) and draft_age <= 20.5:
+        features["age_by_early_entry"] = centered
+    elif np.isfinite(draft_age) and draft_age > 22.5:
+        features["age_by_late_entry"] = centered
+    features["age_by_height"] = centered * reference["height_inches"]
+    features["age_by_body_mass_index"] = centered * reference["body_mass_index"]
 
 
 def season_block_bootstrap_age_curve(
@@ -171,7 +226,7 @@ def build_aging_curve_case_study(
     panel_dir: Path | str = Path("data/analytical/player_season_panel"),
     reports_dir: Path | str = Path("artifacts/reports"),
     docs_asset_dir: Path | str = Path("docs/assets/images/aging"),
-    reference_age: int = 27,
+    reference_age: int = 29,
     bootstrap_samples: int = 250,
     bootstrap_seed: int = 20260801,
 ) -> AgingCurveCaseStudy:
@@ -197,6 +252,12 @@ def build_aging_curve_case_study(
         raise ValueError("Aging model artifact is not a scikit-learn Pipeline")
 
     curve = extract_partial_age_curve(model, training, reference_age=reference_age)
+    forward_trajectory_curve = extract_partial_age_curve(
+        model,
+        training,
+        reference_age=reference_age,
+        advance_experience=True,
+    )
     draft_adjusted_curves = pd.concat(
         [
             extract_partial_age_curve(
@@ -209,6 +270,37 @@ def build_aging_curve_case_study(
         ],
         ignore_index=True,
     )
+    physical_profiles = {
+        "small_guard": (75.0, 190.0),
+        "wing": (79.0, 220.0),
+        "center": (83.0, 255.0),
+    }
+    physical_profile_curves = pd.concat(
+        [
+            extract_partial_age_curve(
+                model,
+                training,
+                reference_age=reference_age,
+                advance_experience=True,
+                physical_profile=profile,
+            ).assign(physical_profile=name)
+            for name, profile in physical_profiles.items()
+        ],
+        ignore_index=True,
+    )
+    stars = {
+        406: "Shaquille O'Neal",
+        1495: "Tim Duncan",
+        977: "Kobe Bryant",
+        2544: "LeBron James",
+        201939: "Stephen Curry",
+        201142: "Kevin Durant",
+        203999: "Nikola Jokić",
+    }
+    observed_stars = pd.read_parquet(panel_root / "player_seasons.parquet").loc[
+        lambda frame: frame["player_id"].isin(stars),
+        ["player_id", "player_name", "season", "age", "rapm"],
+    ].sort_values(["player_name", "season"], kind="stable")
     ages = curve["age"].to_numpy(dtype=float)
     curve_draws, annual_draws = season_block_bootstrap_age_curve(
         training,
@@ -237,12 +329,32 @@ def build_aging_curve_case_study(
     try:
         curve.to_parquet(temporary / "curve.parquet", index=False)
         draft_adjusted_curves.to_parquet(temporary / "draft_adjusted_curves.parquet", index=False)
+        physical_profile_curves.to_parquet(
+            temporary / "physical_profile_curves.parquet",
+            index=False,
+        )
+        observed_stars.to_parquet(temporary / "star_observed_rapm.parquet", index=False)
+        forward_trajectory_curve.to_parquet(
+            temporary / "forward_trajectory_curve.parquet",
+            index=False,
+        )
         _write_curve_chart(curve, reference_age, temporary / "aging-curve.svg")
+        _write_forward_trajectory_chart(
+            forward_trajectory_curve,
+            reference_age,
+            temporary / "forward-aging-trajectory.svg",
+        )
         _write_draft_adjusted_chart(
             draft_adjusted_curves,
             reference_age,
             temporary / "draft-adjusted-aging-curves.svg",
         )
+        _write_physical_profile_chart(
+            physical_profile_curves,
+            reference_age,
+            temporary / "physical-profile-aging-curves.svg",
+        )
+        _write_star_observed_chart(observed_stars, temporary / "star-observed-rapm.svg")
         _write_support_chart(curve, temporary / "age-support.svg")
         report = AgingCurveCaseStudy(
             report_id=report_id,
@@ -256,6 +368,8 @@ def build_aging_curve_case_study(
             training_target_seasons=training_seasons,
             curve=curve,
             draft_adjusted_curves=draft_adjusted_curves,
+            forward_trajectory_curve=forward_trajectory_curve,
+            physical_profile_curves=physical_profile_curves,
         )
         (temporary / "report.md").write_text(_report_markdown(report))
         manifest = {
@@ -287,6 +401,23 @@ def build_aging_curve_case_study(
             report_dir / "draft-adjusted-aging-curves.svg",
             asset_dir / "draft-adjusted-aging-curves.svg",
         )
+        shutil.copyfile(
+            report_dir / "forward-aging-trajectory.svg",
+            asset_dir / "forward-aging-trajectory.svg",
+        )
+        shutil.copyfile(
+            report_dir / "physical-profile-aging-curves.svg",
+            asset_dir / "physical-profile-aging-curves.svg",
+        )
+        shutil.copyfile(
+            report_dir / "star-observed-rapm.svg",
+            asset_dir / "star-observed-rapm.svg",
+        )
+        observed_stars.to_json(
+            asset_dir / "star-observed-rapm.json",
+            orient="records",
+            indent=2,
+        )
         shutil.copyfile(report_dir / "age-support.svg", asset_dir / "age-support.svg")
         latest_path = season_dir / "latest.json"
         latest_path.write_text(json.dumps({"run_id": report_id}, indent=2) + "\n")
@@ -297,7 +428,11 @@ def build_aging_curve_case_study(
         raise
 
 
-def _reference_features(training: pd.DataFrame) -> dict[str, float]:
+def _reference_features(
+    training: pd.DataFrame,
+    *,
+    reference_override: pd.Series | None = None,
+) -> dict[str, float]:
     weights = training["target_rapm_possessions"].to_numpy(dtype=float)
     excluded = {
         "target_age",
@@ -312,7 +447,7 @@ def _reference_features(training: pd.DataFrame) -> dict[str, float]:
         for column in AGING_FEATURE_COLUMNS
         if column not in excluded
     }
-    reference["target_age"] = 27.0
+    reference["target_age"] = 29.0
     reference["has_prior_season"] = 1.0
     reference["is_rookie"] = 0.0
     reference["share_early_entry"] = float(
@@ -324,6 +459,11 @@ def _reference_features(training: pd.DataFrame) -> dict[str, float]:
     reference["share_undrafted"] = float(np.average(training["is_undrafted"], weights=weights))
     for column in ("age_by_early_entry", "age_by_late_entry", "age_by_undrafted"):
         reference[column] = 0.0
+    if reference_override is not None:
+        for column in AGING_FEATURE_COLUMNS:
+            value = reference_override.get(column)
+            if value is not None and pd.notna(value):
+                reference[column] = float(value)
     return reference
 
 
@@ -433,19 +573,103 @@ def _write_draft_adjusted_chart(
     plt.close(figure)
 
 
+def _write_forward_trajectory_chart(
+    curve: pd.DataFrame,
+    reference_age: int,
+    output_path: Path,
+) -> None:
+    plt = _pyplot()
+    figure, axis = plt.subplots(figsize=(9.5, 4.8))
+    axis.plot(curve["age"], curve["partial_age_effect"], color="#614f9b", linewidth=2.5)
+    axis.axhline(0, color="#697786", linewidth=1, linestyle="--")
+    axis.axvline(reference_age, color="#d05f3c", linewidth=1.2, linestyle="--")
+    axis.set_xlabel("Target-season age")
+    axis.set_ylabel("Conditional RAPM effect\n(points / 100 possessions)")
+    axis.set_title(
+        "Forward aging trajectory (age and experience advance together)",
+        loc="left",
+        pad=14,
+    )
+    _style_axes(axis)
+    figure.tight_layout()
+    _save_svg(figure, output_path)
+    plt.close(figure)
+
+
+def _write_physical_profile_chart(
+    curves: pd.DataFrame,
+    reference_age: int,
+    output_path: Path,
+) -> None:
+    plt = _pyplot()
+    figure, axis = plt.subplots(figsize=(9.5, 4.8))
+    styles = {
+        "small_guard": ("#1e628f", "Small guard (6'3\", 190 lb)"),
+        "wing": ("#a24c25", "Wing (6'7\", 220 lb)"),
+        "center": ("#4f8c78", "Center (6'11\", 255 lb)"),
+    }
+    for profile, (color, label) in styles.items():
+        curve = curves.loc[curves["physical_profile"].eq(profile)]
+        axis.plot(
+            curve["age"],
+            curve["partial_age_effect"],
+            color=color,
+            linewidth=2.4,
+            label=label,
+        )
+    axis.axhline(0, color="#697786", linewidth=1, linestyle="--")
+    axis.axvline(reference_age, color="#d05f3c", linewidth=1.2, linestyle="--")
+    axis.set_xlabel("Target-season age")
+    axis.set_ylabel("Conditional RAPM effect\n(points / 100 possessions)")
+    axis.set_title("Forward height and weight profile aging curves", loc="left", pad=14)
+    axis.legend(frameon=False, loc="lower left")
+    _style_axes(axis)
+    figure.tight_layout()
+    _save_svg(figure, output_path)
+    plt.close(figure)
+
+
+def _write_star_observed_chart(
+    observed: pd.DataFrame,
+    output_path: Path,
+) -> None:
+    plt = _pyplot()
+    figure, axis = plt.subplots(figsize=(10, 6.2))
+    for player_name, points in observed.groupby("player_name", sort=False):
+        line = axis.plot(
+            points["age"],
+            points["rapm"],
+            linewidth=2,
+            label=player_name,
+        )[0]
+        axis.scatter(points["age"], points["rapm"], color=line.get_color(), s=18)
+    axis.axhline(0, color="#697786", linewidth=1, linestyle="--")
+    axis.set_xlabel("Age")
+    axis.set_ylabel("One-season RAPM\n(points / 100 possessions)")
+    axis.set_title("Observed one-season RAPM by age", loc="left", pad=14)
+    axis.legend(frameon=False, ncol=2, fontsize=8)
+    _style_axes(axis)
+    figure.tight_layout()
+    _save_svg(figure, output_path)
+    plt.close(figure)
+
+
 def _report_markdown(report: AgingCurveCaseStudy) -> str:
     lines = [
         "# Aging Curve Case Study",
         "",
         f"Source aging run: `{report.source_aging_run_id}`.",
         "",
-        "The displayed curve is the fitted common age spline centered at "
+        "The fixed-experience background curve is centered at "
         f"age {report.reference_age}. Bands are 5th to 95th percentiles from "
         f"{report.bootstrap_samples} target-season block bootstrap refits with the selected "
         "model specification fixed.",
         "",
         "`draft_adjusted_curves.parquet` and `draft-adjusted-aging-curves.svg` "
         "compare early-entry, late-entry, and undrafted counterfactual profiles.",
+        "",
+        "`forward_trajectory_curve.parquet` and `forward-aging-trajectory.svg` "
+        "advance age and NBA experience together from the same reference profile.",
         "",
         "| Age | Partial effect | 90% interval | Next-age change | Player-seasons |",
         "| ---: | ---: | ---: | ---: | ---: |",
@@ -542,7 +766,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--panel-dir", default="data/analytical/player_season_panel")
     parser.add_argument("--reports-dir", default="artifacts/reports")
     parser.add_argument("--docs-asset-dir", default="docs/assets/images/aging")
-    parser.add_argument("--reference-age", type=int, default=27)
+    parser.add_argument("--reference-age", type=int, default=29)
     parser.add_argument("--bootstrap-samples", type=int, default=250)
     parser.add_argument("--bootstrap-seed", type=int, default=20260801)
     return parser

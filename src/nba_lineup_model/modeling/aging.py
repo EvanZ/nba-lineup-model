@@ -49,6 +49,7 @@ AGING_FEATURE_COLUMNS = (
     "draft_pick",
     "height_inches",
     "weight_pounds",
+    "body_mass_index",
     "has_draft_age_estimate",
     "has_draft_pick",
     "is_undrafted",
@@ -56,6 +57,8 @@ AGING_FEATURE_COLUMNS = (
     "age_by_early_entry",
     "age_by_late_entry",
     "age_by_undrafted",
+    "age_by_height",
+    "age_by_body_mass_index",
 )
 _TARGET_OUTCOME_COLUMNS = {
     "target_rapm",
@@ -470,6 +473,7 @@ def prepare_aging_transitions(transitions: pd.DataFrame) -> pd.DataFrame:
     frame["draft_pick"] = pd.to_numeric(frame["draft_number"], errors="coerce")
     frame["height_inches"] = pd.to_numeric(frame["height_inches"], errors="coerce")
     frame["weight_pounds"] = pd.to_numeric(frame["weight_pounds"], errors="coerce")
+    frame["body_mass_index"] = 703.0 * frame["weight_pounds"] / frame["height_inches"].pow(2)
     draft_age = frame["target_age"] - (
         frame["target_season"].str[:4].astype(float) - frame["draft_year"]
     )
@@ -486,6 +490,8 @@ def prepare_aging_transitions(transitions: pd.DataFrame) -> pd.DataFrame:
     frame["age_by_early_entry"] = centered_age * frame["draft_age_estimate"].le(20.5)
     frame["age_by_late_entry"] = centered_age * frame["draft_age_estimate"].gt(22.5)
     frame["age_by_undrafted"] = centered_age * frame["is_undrafted"].eq(1.0)
+    frame["age_by_height"] = centered_age * frame["height_inches"]
+    frame["age_by_body_mass_index"] = centered_age * frame["body_mass_index"]
     for column in AGING_FEATURE_COLUMNS:
         frame[column] = pd.to_numeric(frame[column], errors="raise").astype(float)
     return frame.sort_values(
@@ -557,6 +563,9 @@ def fit_aging_pipeline(
                     "draft_pick",
                     "height_inches",
                     "weight_pounds",
+                    "body_mass_index",
+                    "age_by_height",
+                    "age_by_body_mass_index",
                 ],
             ),
             (

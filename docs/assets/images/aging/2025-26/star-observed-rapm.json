@@ -1,0 +1,863 @@
+[
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2007-08",
+    "age":19.0,
+    "rapm":-2.7196178551
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2008-09",
+    "age":20.0,
+    "rapm":-2.7781807098
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2009-10",
+    "age":21.0,
+    "rapm":4.679205108
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2010-11",
+    "age":22.0,
+    "rapm":2.3773110015
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2011-12",
+    "age":23.0,
+    "rapm":3.0449647469
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2012-13",
+    "age":24.0,
+    "rapm":4.1897305678
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2013-14",
+    "age":25.0,
+    "rapm":4.6829781435
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2014-15",
+    "age":26.0,
+    "rapm":2.9969294488
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2015-16",
+    "age":27.0,
+    "rapm":4.9376396952
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2016-17",
+    "age":28.0,
+    "rapm":3.9212573739
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2017-18",
+    "age":29.0,
+    "rapm":1.8555277874
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2018-19",
+    "age":30.0,
+    "rapm":5.0808478393
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2020-21",
+    "age":32.0,
+    "rapm":4.0651319936
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2021-22",
+    "age":33.0,
+    "rapm":1.6552866575
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2022-23",
+    "age":34.0,
+    "rapm":3.1091481313
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2023-24",
+    "age":35.0,
+    "rapm":1.7099910045
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2024-25",
+    "age":36.0,
+    "rapm":2.2596783933
+  },
+  {
+    "player_id":201142,
+    "player_name":"Kevin Durant",
+    "season":"2025-26",
+    "age":37.0,
+    "rapm":1.8952688046
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"1996-97",
+    "age":18.0,
+    "rapm":-0.3209628822
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"1997-98",
+    "age":19.0,
+    "rapm":-0.5812697279
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"1998-99",
+    "age":20.0,
+    "rapm":-0.458384785
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"1999-00",
+    "age":21.0,
+    "rapm":3.8599112821
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2000-01",
+    "age":22.0,
+    "rapm":3.3960229878
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2001-02",
+    "age":23.0,
+    "rapm":2.8989349964
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2002-03",
+    "age":24.0,
+    "rapm":2.5194955319
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2003-04",
+    "age":25.0,
+    "rapm":2.1085597701
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2004-05",
+    "age":26.0,
+    "rapm":1.784047398
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2005-06",
+    "age":27.0,
+    "rapm":3.2151861791
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2006-07",
+    "age":28.0,
+    "rapm":2.6323675897
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2007-08",
+    "age":29.0,
+    "rapm":4.3068379432
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2008-09",
+    "age":30.0,
+    "rapm":2.7958009583
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2009-10",
+    "age":31.0,
+    "rapm":4.0047628413
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2010-11",
+    "age":32.0,
+    "rapm":0.7252156841
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2011-12",
+    "age":33.0,
+    "rapm":1.7543444858
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2012-13",
+    "age":34.0,
+    "rapm":1.3857311998
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2013-14",
+    "age":35.0,
+    "rapm":0.0441009129
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2014-15",
+    "age":36.0,
+    "rapm":-2.0588869512
+  },
+  {
+    "player_id":977,
+    "player_name":"Kobe Bryant",
+    "season":"2015-16",
+    "age":37.0,
+    "rapm":-2.3177310066
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2003-04",
+    "age":19.0,
+    "rapm":0.3125289807
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2004-05",
+    "age":20.0,
+    "rapm":2.3037524097
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2005-06",
+    "age":21.0,
+    "rapm":3.7986036344
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2006-07",
+    "age":22.0,
+    "rapm":4.3772498498
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2007-08",
+    "age":23.0,
+    "rapm":3.0173330343
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2008-09",
+    "age":24.0,
+    "rapm":6.5443557091
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2009-10",
+    "age":25.0,
+    "rapm":6.1343747631
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2010-11",
+    "age":26.0,
+    "rapm":3.976407644
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2011-12",
+    "age":27.0,
+    "rapm":4.4250174335
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2012-13",
+    "age":28.0,
+    "rapm":5.2448760365
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2013-14",
+    "age":29.0,
+    "rapm":3.438565872
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2014-15",
+    "age":30.0,
+    "rapm":4.6868797177
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2015-16",
+    "age":31.0,
+    "rapm":6.116958575
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2016-17",
+    "age":32.0,
+    "rapm":5.3758665818
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2017-18",
+    "age":33.0,
+    "rapm":2.2653437207
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2018-19",
+    "age":34.0,
+    "rapm":3.9279457959
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2019-20",
+    "age":35.0,
+    "rapm":2.516623917
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2020-21",
+    "age":36.0,
+    "rapm":4.4295034232
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2021-22",
+    "age":37.0,
+    "rapm":0.2166023431
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2022-23",
+    "age":38.0,
+    "rapm":3.3339144857
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2023-24",
+    "age":39.0,
+    "rapm":3.3101452549
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2024-25",
+    "age":40.0,
+    "rapm":-2.8354379468
+  },
+  {
+    "player_id":2544,
+    "player_name":"LeBron James",
+    "season":"2025-26",
+    "age":41.0,
+    "rapm":0.2570893454
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2015-16",
+    "age":21.0,
+    "rapm":2.6547060171
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2016-17",
+    "age":22.0,
+    "rapm":5.3214172767
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2017-18",
+    "age":23.0,
+    "rapm":4.077234449
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2018-19",
+    "age":24.0,
+    "rapm":2.9704822814
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2019-20",
+    "age":25.0,
+    "rapm":0.7355235602
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2020-21",
+    "age":26.0,
+    "rapm":3.1872034788
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2021-22",
+    "age":27.0,
+    "rapm":2.1264274455
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2022-23",
+    "age":28.0,
+    "rapm":5.2413605857
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2023-24",
+    "age":29.0,
+    "rapm":5.1680672505
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2024-25",
+    "age":30.0,
+    "rapm":4.8132700283
+  },
+  {
+    "player_id":203999,
+    "player_name":"Nikola Joki\u0107",
+    "season":"2025-26",
+    "age":31.0,
+    "rapm":5.0223725908
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"1996-97",
+    "age":25.0,
+    "rapm":3.5423916709
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"1997-98",
+    "age":26.0,
+    "rapm":5.8728907472
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"1998-99",
+    "age":27.0,
+    "rapm":5.3475297713
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"1999-00",
+    "age":28.0,
+    "rapm":4.8067498605
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2000-01",
+    "age":29.0,
+    "rapm":3.9386108707
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2001-02",
+    "age":30.0,
+    "rapm":5.2055826356
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2002-03",
+    "age":31.0,
+    "rapm":3.7505066911
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2003-04",
+    "age":32.0,
+    "rapm":4.5286985577
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2004-05",
+    "age":33.0,
+    "rapm":3.717650856
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2005-06",
+    "age":34.0,
+    "rapm":3.0048399008
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2006-07",
+    "age":35.0,
+    "rapm":1.4095778174
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2007-08",
+    "age":36.0,
+    "rapm":1.7173972231
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2008-09",
+    "age":37.0,
+    "rapm":1.3744151734
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2009-10",
+    "age":38.0,
+    "rapm":-0.6524124012
+  },
+  {
+    "player_id":406,
+    "player_name":"Shaquille O'Neal",
+    "season":"2010-11",
+    "age":39.0,
+    "rapm":1.9685752197
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2009-10",
+    "age":22.0,
+    "rapm":0.4225468102
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2010-11",
+    "age":23.0,
+    "rapm":2.3306842626
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2011-12",
+    "age":24.0,
+    "rapm":3.1280512543
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2012-13",
+    "age":25.0,
+    "rapm":1.8731643103
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2013-14",
+    "age":26.0,
+    "rapm":4.0079680927
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2014-15",
+    "age":27.0,
+    "rapm":5.7703289088
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2015-16",
+    "age":28.0,
+    "rapm":6.4903585024
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2016-17",
+    "age":29.0,
+    "rapm":7.157858809
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2017-18",
+    "age":30.0,
+    "rapm":3.6448944067
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2018-19",
+    "age":31.0,
+    "rapm":5.6945433193
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2019-20",
+    "age":32.0,
+    "rapm":-0.2854507646
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2020-21",
+    "age":33.0,
+    "rapm":4.5276710235
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2021-22",
+    "age":34.0,
+    "rapm":2.7646238828
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2022-23",
+    "age":35.0,
+    "rapm":2.8750596897
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2023-24",
+    "age":36.0,
+    "rapm":2.3356771831
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2024-25",
+    "age":37.0,
+    "rapm":2.1416712068
+  },
+  {
+    "player_id":201939,
+    "player_name":"Stephen Curry",
+    "season":"2025-26",
+    "age":38.0,
+    "rapm":1.8922769943
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"1997-98",
+    "age":22.0,
+    "rapm":4.3591480611
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"1998-99",
+    "age":23.0,
+    "rapm":3.6446189135
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"1999-00",
+    "age":24.0,
+    "rapm":4.3885174749
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2000-01",
+    "age":25.0,
+    "rapm":4.9053973585
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2001-02",
+    "age":26.0,
+    "rapm":5.3032423223
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2002-03",
+    "age":27.0,
+    "rapm":4.6838289211
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2003-04",
+    "age":28.0,
+    "rapm":4.5697387271
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2004-05",
+    "age":29.0,
+    "rapm":8.3803429854
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2005-06",
+    "age":30.0,
+    "rapm":3.6086412396
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2006-07",
+    "age":31.0,
+    "rapm":6.0247946214
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2007-08",
+    "age":32.0,
+    "rapm":3.7038151349
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2008-09",
+    "age":33.0,
+    "rapm":2.3834747962
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2009-10",
+    "age":34.0,
+    "rapm":3.5465120351
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2010-11",
+    "age":35.0,
+    "rapm":3.5538260608
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2011-12",
+    "age":36.0,
+    "rapm":2.921038311
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2012-13",
+    "age":37.0,
+    "rapm":4.3340338413
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2013-14",
+    "age":38.0,
+    "rapm":1.0617432636
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2014-15",
+    "age":39.0,
+    "rapm":1.6909220798
+  },
+  {
+    "player_id":1495,
+    "player_name":"Tim Duncan",
+    "season":"2015-16",
+    "age":40.0,
+    "rapm":2.584760517
+  }
+]
