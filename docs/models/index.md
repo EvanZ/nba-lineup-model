@@ -14,6 +14,7 @@ interactions.
 | Bayesian RAPM | RAPM posterior uncertainty under an explicit Gaussian model |
 | RAPM aging model | Forward player-season priors from prior RAPM and age |
 | Age-informed prior RAPM | Lineup RAPM centered on the frozen aging forecast |
+| Forward RAPM calibration | Frozen lagged RAPM mapped to team wins using realized lineup seconds |
 | Additive neural RAPM | Possession-level signed scalar player embeddings |
 | Deep Sets | Nonlinear permutation-invariant lineup aggregation |
 | CatBoost | Categorical player states and boosted-tree interactions |
@@ -37,6 +38,7 @@ public releases. [Neural Networks](neural-networks.md) defines the staged
 additive, Deep Sets, and RAPM + Transformer program. [Tree Models](tree-models.md)
 defines the orthogonal CatBoost baseline. [Leaderboard](leaderboard.md) defines
 the shared regular-holdout and playoff metrics and maintains the cross-model
-scoreboard. [RAPM Aging Model](aging-model.md) defines the first temporal player
+scoreboard. [Forward RAPM Calibration](forward-calibration.md) maps frozen
+player priors to regular-season team wins. [RAPM Aging Model](aging-model.md) defines the first temporal player
 prior, while the [Modeling Roadmap](roadmap.md) records the approved joint
 dynamic RAPM extension.

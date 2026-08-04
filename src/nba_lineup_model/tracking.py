@@ -29,6 +29,7 @@ _MODEL_RUN_PREFIXES = (
     "bayesian-",
     "catboost-",
     "deep-sets-",
+    "forward-calibration-",
     "neural-",
     "rapm-transformer-",
 )
@@ -40,6 +41,8 @@ _METRIC_FILES = (
     "comparison_metrics.parquet",
     "predictive_calibration.parquet",
     "comparisons.parquet",
+    "season_metrics.parquet",
+    "target_metrics.parquet",
 )
 _IDENTITY_COLUMNS = (
     "cohort",
@@ -533,6 +536,8 @@ def _run_kind(project_run_id: str, manifest: Mapping[str, Any]) -> str:
         return str(manifest.get("architecture", "additive_neural"))
     if project_run_id.startswith("deep-sets-"):
         return "deep_sets"
+    if project_run_id.startswith("forward-calibration-"):
+        return "forward_rapm_win_calibration"
     if project_run_id.startswith("catboost-"):
         return "catboost"
     if project_run_id.startswith("rapm-transformer-"):
