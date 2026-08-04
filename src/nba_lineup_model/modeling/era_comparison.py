@@ -13,12 +13,14 @@ from uuid import uuid4
 import numpy as np
 import pandas as pd
 
+from nba_lineup_model.modeling.player_history import validate_player_season_panel
 from nba_lineup_model.modeling.stints import read_rapm_stints
 from nba_lineup_model.tracking import track_completed_run
 
 DEFAULT_TARGET_SEASON = "2025-26"
 DEFAULT_MINIMUM_MINUTES = 2_000.0
 DEFAULT_REFERENCE_MINUTES = 2_000.0
+DEFAULT_CANONICAL_PANEL_PATH = Path("data/analytical/player_season_panel/player_seasons.parquet")
 REGULATION_TEAM_PLAYER_MINUTES_PER_GAME = 5.0 * 48.0
 
 
@@ -28,6 +30,7 @@ def build_era_comparison(
     forward_calibration_run_dir: Path | str,
     analytical_dir: Path | str = Path("data/analytical"),
     player_catalog_path: Path | str = Path("data/catalog/players.parquet"),
+    canonical_player_season_panel_path: Path | str = DEFAULT_CANONICAL_PANEL_PATH,
     artifacts_dir: Path | str = Path("artifacts/reports"),
     target_season: str = DEFAULT_TARGET_SEASON,
     minimum_minutes: float = DEFAULT_MINIMUM_MINUTES,
@@ -59,28 +62,27 @@ def build_era_comparison(
         analytical_dir=analytical_dir,
     )
     catalog = _load_player_catalog(player_catalog_path)
-    player_seasons = _standardize_player_seasons(player_coefficients, exposure, catalog)
-    player_seasons["wins_above_average_actual_minutes"] = (
-        win_pct_per_standardized_team_unit
-        * player_seasons["era_standardized_rapm"]
-        * player_seasons["minutes"]
-        / REGULATION_TEAM_PLAYER_MINUTES_PER_GAME
-    )
-    player_seasons["wins_above_average_per_reference_minutes"] = (
-        win_pct_per_standardized_team_unit
-        * player_seasons["era_standardized_rapm"]
-        * reference_minutes
-        / REGULATION_TEAM_PLAYER_MINUTES_PER_GAME
+    player_seasons = _add_calibrated_wins(
+        _standardize_player_seasons(player_coefficients, exposure, catalog),
+        win_pct_per_standardized_team_unit,
+        reference_minutes,
     )
     player_seasons["qualified"] = player_seasons["minutes"].ge(minimum_minutes)
-    qualified = player_seasons.loc[player_seasons["qualified"]].copy()
-    qualified = qualified.sort_values(
-        ["wins_above_average_per_reference_minutes", "minutes", "player_id"],
-        ascending=[False, False, True],
-        kind="stable",
-    ).reset_index(drop=True)
-    qualified["qualified_rank"] = np.arange(1, len(qualified) + 1)
+    qualified = _qualified_peak_seasons(player_seasons)
     top_25 = qualified.head(25).copy()
+    canonical, canonical_manifest_path = _load_canonical_player_seasons(
+        canonical_player_season_panel_path,
+        catalog,
+    )
+    canonical = _add_calibrated_wins(
+        canonical,
+        win_pct_per_standardized_team_unit,
+        reference_minutes,
+    )
+    canonical["qualified"] = canonical["minutes"].ge(minimum_minutes)
+    canonical_qualified = _qualified_peak_seasons(canonical)
+    canonical_top_25 = canonical_qualified.head(25).copy()
+    model_comparison = _model_comparison(player_seasons, canonical)
 
     run_id = f"era-comparison-{target_season}-{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{uuid4().hex[:8]}"
     root = Path(artifacts_dir) / "era_comparison" / target_season
@@ -92,6 +94,18 @@ def build_era_comparison(
         player_seasons.to_parquet(temporary_dir / "player_season_comparisons.parquet", index=False)
         qualified.to_parquet(temporary_dir / "qualified_peak_seasons.parquet", index=False)
         top_25.to_parquet(temporary_dir / "top_25_qualified_peak_seasons.parquet", index=False)
+        canonical.to_parquet(
+            temporary_dir / "canonical_player_season_comparisons.parquet", index=False
+        )
+        canonical_qualified.to_parquet(
+            temporary_dir / "canonical_qualified_peak_seasons.parquet", index=False
+        )
+        canonical_top_25.to_parquet(
+            temporary_dir / "canonical_top_25_qualified_peak_seasons.parquet", index=False
+        )
+        model_comparison.to_parquet(
+            temporary_dir / "forward_canonical_comparison.parquet", index=False
+        )
         metadata = {
             "run_id": run_id,
             "season": target_season,
@@ -101,6 +115,9 @@ def build_era_comparison(
             "source_forward_calibration_run_id": calibration_manifest["run_id"],
             "source_forward_calibration_manifest_sha256": _sha256_file(
                 calibration_root / "manifest.json"
+            ),
+            "source_canonical_player_season_panel_manifest_sha256": _sha256_file(
+                canonical_manifest_path
             ),
             "seasons": sorted(player_seasons["season"].unique(), key=_season_start_year),
             "minimum_minutes": minimum_minutes,
@@ -154,6 +171,48 @@ def _load_player_coefficients(root: Path, target_season: str) -> pd.DataFrame:
     if output.duplicated(["season", "player_id"]).any():
         raise ValueError("Player-season RAPM coefficients must be unique")
     return output
+
+
+def _load_canonical_player_seasons(
+    panel_path: Path | str, catalog: pd.DataFrame
+) -> tuple[pd.DataFrame, Path]:
+    path = Path(panel_path)
+    validate_player_season_panel(path.parent)
+    panel = pd.read_parquet(path)
+    required = {
+        "season",
+        "player_id",
+        "rapm",
+        "rapm_seconds",
+        "primary_team_id",
+        "primary_team_tricode",
+        "team_count",
+    }
+    missing = required - set(panel)
+    if missing:
+        raise ValueError(f"Canonical player-season panel missing columns: {sorted(missing)}")
+    coefficients = panel.loc[:, ["season", "player_id", "rapm"]].copy()
+    exposure = panel.loc[
+        :,
+        [
+            "season",
+            "player_id",
+            "primary_team_id",
+            "primary_team_tricode",
+            "team_count",
+            "rapm_seconds",
+        ],
+    ].rename(
+        columns={
+            "primary_team_id": "team_id",
+            "primary_team_tricode": "team_tricode",
+            "rapm_seconds": "seconds",
+        }
+    )
+    exposure["minutes"] = exposure["seconds"] / 60.0
+    return _standardize_player_seasons(
+        coefficients, exposure, catalog
+    ), path.parent / "_manifest.json"
 
 
 def _load_player_exposure(seasons: tuple[str, ...], *, analytical_dir: Path | str) -> pd.DataFrame:
@@ -314,6 +373,85 @@ def _load_player_catalog(path: Path | str) -> pd.DataFrame:
     return output
 
 
+def _add_calibrated_wins(
+    player_seasons: pd.DataFrame,
+    win_pct_per_standardized_team_unit: float,
+    reference_minutes: float,
+) -> pd.DataFrame:
+    output = player_seasons.copy()
+    output["wins_above_average_actual_minutes"] = (
+        win_pct_per_standardized_team_unit
+        * output["era_standardized_rapm"]
+        * output["minutes"]
+        / REGULATION_TEAM_PLAYER_MINUTES_PER_GAME
+    )
+    output["wins_above_average_per_reference_minutes"] = (
+        win_pct_per_standardized_team_unit
+        * output["era_standardized_rapm"]
+        * reference_minutes
+        / REGULATION_TEAM_PLAYER_MINUTES_PER_GAME
+    )
+    return output
+
+
+def _qualified_peak_seasons(player_seasons: pd.DataFrame) -> pd.DataFrame:
+    output = player_seasons.loc[player_seasons["qualified"]].copy()
+    output = output.sort_values(
+        ["wins_above_average_per_reference_minutes", "minutes", "player_id"],
+        ascending=[False, False, True],
+        kind="stable",
+    ).reset_index(drop=True)
+    output["qualified_rank"] = np.arange(1, len(output) + 1)
+    return output
+
+
+def _model_comparison(forward: pd.DataFrame, canonical: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "season",
+        "player_id",
+        "player_name",
+        "minutes",
+        "rapm",
+        "era_standardized_rapm",
+        "wins_above_average_per_reference_minutes",
+        "qualified",
+    ]
+    forward_view = forward.loc[:, columns].rename(
+        columns={
+            "player_name": "forward_player_name",
+            "minutes": "forward_minutes",
+            "rapm": "forward_rapm",
+            "era_standardized_rapm": "forward_era_standardized_rapm",
+            "wins_above_average_per_reference_minutes": "forward_wins_per_reference_minutes",
+            "qualified": "forward_qualified",
+        }
+    )
+    canonical_view = canonical.loc[:, columns].rename(
+        columns={
+            "player_name": "canonical_player_name",
+            "minutes": "canonical_minutes",
+            "rapm": "canonical_rapm",
+            "era_standardized_rapm": "canonical_era_standardized_rapm",
+            "wins_above_average_per_reference_minutes": "canonical_wins_per_reference_minutes",
+            "qualified": "canonical_qualified",
+        }
+    )
+    output = forward_view.merge(
+        canonical_view,
+        on=["season", "player_id"],
+        how="inner",
+        validate="one_to_one",
+    )
+    output["era_standardized_rapm_difference"] = (
+        output["forward_era_standardized_rapm"] - output["canonical_era_standardized_rapm"]
+    )
+    output["wins_per_reference_minutes_difference"] = (
+        output["forward_wins_per_reference_minutes"]
+        - output["canonical_wins_per_reference_minutes"]
+    )
+    return output.sort_values(["season", "player_id"], kind="stable").reset_index(drop=True)
+
+
 def _validate_sources(
     rapm_manifest: dict[str, object], calibration_manifest: dict[str, object], target_season: str
 ) -> None:
@@ -356,6 +494,10 @@ def main() -> None:
     parser.add_argument("--forward-calibration-run-dir", required=True)
     parser.add_argument("--analytical-dir", default="data/analytical")
     parser.add_argument("--player-catalog-path", default="data/catalog/players.parquet")
+    parser.add_argument(
+        "--canonical-player-season-panel-path",
+        default=str(DEFAULT_CANONICAL_PANEL_PATH),
+    )
     parser.add_argument("--artifacts-dir", default="artifacts/reports")
     parser.add_argument("--target-season", default=DEFAULT_TARGET_SEASON)
     parser.add_argument("--minimum-minutes", type=float, default=DEFAULT_MINIMUM_MINUTES)
@@ -367,6 +509,7 @@ def main() -> None:
             forward_calibration_run_dir=args.forward_calibration_run_dir,
             analytical_dir=args.analytical_dir,
             player_catalog_path=args.player_catalog_path,
+            canonical_player_season_panel_path=args.canonical_player_season_panel_path,
             artifacts_dir=args.artifacts_dir,
             target_season=args.target_season,
             minimum_minutes=args.minimum_minutes,

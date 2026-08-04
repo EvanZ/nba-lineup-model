@@ -16,8 +16,17 @@ Outputs are written under `artifacts/reports/era_comparison/2025-26/`:
 - `player_season_comparisons.parquet` contains every player-season;
 - `qualified_peak_seasons.parquet` applies the default 2,000-minute threshold;
 - `top_25_qualified_peak_seasons.parquet` is the published peak-season table.
+- `canonical_player_season_comparisons.parquet` applies the same standardization
+  to the existing one-season canonical RAPM panel;
+- `canonical_top_25_qualified_peak_seasons.parquet` is its qualified peak table;
+- `forward_canonical_comparison.parquet` aligns player-seasons estimated by both
+  specifications and records their standardized-score differences.
 
 The fixed-role rate deliberately separates quality from availability.
 `wins_above_average_actual_minutes` is included as a descriptive total, but it
 depends on the player's realized usage and should not be treated as a pure
 talent estimate.
+
+The common wins conversion was fit on forward-prior RAPM. It is used for the
+canonical table only as a common-unit translation; it is not a separately
+validated canonical-RAPM win forecast.

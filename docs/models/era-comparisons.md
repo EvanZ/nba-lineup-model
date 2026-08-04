@@ -68,10 +68,10 @@ as a final all-time-player ranking.
 
 ## Initial Peak-Season Results
 
-Run `era-comparison-2025-26-20260804T183707Z-608dce18` covers 14,560
+Run `era-comparison-2025-26-20260804T184941Z-8af20a00` covers 14,560
 player-seasons from 1996-97 through 2025-26. Of those, 2,294 clear the
 2,000-minute qualification threshold. The table ranks the fixed-role rate,
-not actual-minute totals.
+not actual-minute totals. It uses the forward-prior RAPM specification.
 
 | Rank | Season | Player | Team | Minutes | Era RAPM (z) | Wins above average / 2,000 min |
 | ---: | --- | --- | --- | ---: | ---: | ---: |
@@ -102,7 +102,39 @@ not actual-minute totals.
 | 25 | 2002-03 | Kevin Garnett | MIN | 3,043 | 3.510 | 9.52 |
 
 This is a method smoke test, not a promoted all-time ranking. In particular,
-the recurring prior RAPM state can reward sustained past estimates. The next
-review should compare this table with a standardized canonical one-season RAPM
-table, assess sensitivity to the minutes threshold and calibration slope, and
-add uncertainty intervals before making public claims about historical rank.
+the recurring prior RAPM state can reward sustained past estimates.
+
+## Canonical One-Season Cross-Check
+
+The same report standardizes the existing zero-centered, one-season canonical
+RAPM panel using identical exposure weights and qualification. The 2,294
+qualified player-seasons common to both specifications have a 0.761 correlation
+in standardized RAPM. Only seven player-seasons overlap between their top-25
+tables, so the extreme tail remains specification-sensitive.
+
+| Rank | Season | Player | Team | Canonical RAPM (z) | Common-unit wins / 2,000 min |
+| ---: | --- | --- | --- | ---: | ---: |
+| 1 | 2004-05 | Tim Duncan | SAS | 4.195 | 11.38 |
+| 2 | 2024-25 | Shai Gilgeous-Alexander | OKC | 3.692 | 10.01 |
+| 3 | 2015-16 | Draymond Green | GSW | 3.679 | 9.98 |
+| 4 | 2016-17 | Stephen Curry | GSW | 3.657 | 9.92 |
+| 5 | 2002-03 | Kevin Garnett | MIN | 3.457 | 9.38 |
+| 6 | 2002-03 | Dirk Nowitzki | DAL | 3.443 | 9.34 |
+| 7 | 2010-11 | Dirk Nowitzki | DAL | 3.414 | 9.26 |
+| 8 | 2008-09 | LeBron James | CLE | 3.310 | 8.98 |
+| 9 | 2004-05 | Manu Ginobili | SAS | 3.273 | 8.88 |
+| 10 | 2009-10 | LeBron James | CLE | 3.268 | 8.86 |
+
+This directly answers the Duncan-Curry example. Duncan's canonical peak is
+2004-05 at +4.195 standard deviations; Curry's is 2016-17 at +3.657. The
+forward-prior model estimates those same seasons at +4.817 and +3.530,
+respectively. Both models put Duncan ahead, but the forward prior materially
+widens the gap. The conclusion that Duncan's peak was more exceptional in this
+data is robust to this particular specification check; the *size* of that lead
+is not.
+
+The common-unit wins conversion was fit on the forward-prior team calibration.
+It makes the canonical table readable on the same scale, but it is not a
+separately validated canonical-RAPM win forecast. Further promotion still
+requires minutes-threshold and calibration-slope sensitivity, plus uncertainty
+intervals.

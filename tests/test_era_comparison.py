@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from nba_lineup_model.modeling.era_comparison import (
+    _model_comparison,
     _player_season_exposure,
     _standardize_player_seasons,
 )
@@ -65,3 +66,26 @@ def test_standardization_uses_exposure_weighted_season_reference() -> None:
     assert np.average(
         result["era_standardized_rapm"] ** 2, weights=result["seconds"]
     ) == pytest.approx(1.0)
+
+
+def test_model_comparison_aligns_shared_player_seasons() -> None:
+    base = pd.DataFrame(
+        {
+            "season": ["2020-21"],
+            "player_id": [1],
+            "player_name": ["One"],
+            "minutes": [2_000.0],
+            "rapm": [4.0],
+            "era_standardized_rapm": [2.0],
+            "wins_above_average_per_reference_minutes": [5.0],
+            "qualified": [True],
+        }
+    )
+    canonical = base.assign(rapm=3.0, era_standardized_rapm=1.5).copy()
+    canonical["wins_above_average_per_reference_minutes"] = 3.75
+
+    result = _model_comparison(base, canonical)
+
+    assert len(result) == 1
+    assert result.loc[0, "era_standardized_rapm_difference"] == pytest.approx(0.5)
+    assert result.loc[0, "wins_per_reference_minutes_difference"] == pytest.approx(1.25)
