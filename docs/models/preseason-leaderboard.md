@@ -1,0 +1,177 @@
+# Frozen Preseason Leaderboard
+
+This leaderboard evaluates models as true preseason forecasts. Every player
+value is frozen before the target season begins. Target-season lineups and
+exposure are supplied by an oracle, but no target-season score, possession
+outcome, fitted player adjustment, or playoff result can change the model.
+
+This is distinct from the [in-season Leaderboard](leaderboard.md), where models
+fit the first 1,044 regular-season games before predicting the final 186.
+
+## Information Boundary
+
+The initial baseline predicts 2025-26 from the completed 2024-25 regular-only
+forward RAPM state:
+
+| Component | Frozen source |
+| --- | --- |
+| Player values | 2024-25 regular-season forward RAPM |
+| Cold starts | Zero RAPM |
+| Offense-margin mean | 2024-25 regular season |
+| Home-court effect | Recovered from the completed 2024-25 RAPM state |
+| Lineups and exposure | Realized 2025-26 oracle allocation |
+| Player refit | None |
+
+Prior-season playoffs are intentionally excluded from this first baseline.
+
+For eligible target-season possession $i$,
+
+\[
+\widehat y_i =
+\overline y_{2024-25}
++ \frac{\sum_{p\in O_i}r_{p,2024-25}
+- \sum_{p\in D_i}r_{p,2024-25}}{200}
++ s_i\frac{h_{2024-25}}{200},
+\]
+
+where $s_i=+1$ for home offense and $-1$ for away offense. The factor 200
+uses the same one-number RAPM-to-possession conversion as the in-season
+Leaderboard.
+
+### Frozen Aging Candidate
+
+The first candidate keeps the same scoring equation, league mean, home-court
+term, target rows, and oracle lineup exposure. It replaces only the frozen
+player-prior vector with the forward aging ridge model trained through 2024-25.
+That model uses preseason age, NBA experience, prior RAPM and exposure, draft
+profile, height, weight, and age-by-profile interactions. It produces the same
+582-player 2025-26 coverage as the lagged-RAPM baseline and has no 2025-26
+outcome fields.
+
+## Possession And Game Results
+
+Regular season and playoffs are evaluated separately. Possession metrics use
+only possessions with one reconstructed lineup, matching the existing neural
+evaluation boundary. Game-margin RMSE aggregates those eligible possessions in
+the home-team frame.
+
+| Model | Cohort | Games | Possessions | Possession RMSE | Possession MAE | Game-margin RMSE | Possession skill vs frozen mean | Game skill vs frozen mean |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Frozen lagged RAPM | Regular season | 1,230 | 218,810 | **1.199000** | **1.142154** | **14.8894** | **0.0805%** | **11.5905%** |
+| Frozen aging prior | Regular season | 1,230 | 218,810 | 1.199062 | 1.142736 | 15.0203 | 0.0702% | 10.0297% |
+| Frozen lagged RAPM | Playoffs | 85 | 14,253 | 1.192895 | **1.136163** | 17.5409 | -0.0774% | -9.6446% |
+| Frozen aging prior | Playoffs | 85 | 14,253 | **1.192332** | 1.136455 | **16.4946** | **0.0170%** | **3.0460%** |
+
+Bolding marks the better value within each cohort and metric. Future frozen
+priors must use these exact cohorts.
+
+## Team Net Rating
+
+Team net rating uses all regular-season RAPM stints, including allocated
+multi-lineup possessions. For stint (s), the frozen lineup prediction is
+converted to a predicted margin using the stint's oracle possession exposure;
+team margins are then summed and divided by team possessions.
+
+| Model | Teams | Net-rating RMSE | Net-rating MAE | Pearson correlation | Spearman correlation |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Frozen lagged RAPM | 30 | **4.8538** | **3.9606** | 0.6113 | 0.5493 |
+| Frozen aging prior | 30 | 5.0366 | 4.2395 | **0.6484** | **0.6111** |
+
+## Team Win Totals
+
+The primary win estimate is called **Pythagorean wins** in this project. It is
+a forward-safe historical mapping from predicted team net rating to expected
+win percentage, rather than the traditional points-for/points-against
+Pythagorean exponent. The mapping is fit by game-weighted least squares on 862
+regular-season team-seasons from 1996-97 through 2024-25:
+
+\[
+\widehat{\operatorname{WinPct}}_t =
+\operatorname{clip}\left(
+0.499583 + 0.030250\,\widehat{\operatorname{NetRtg}}_t,
+0,
+1
+\right).
+\]
+
+For an 82-game season, the un-clipped form is approximately
+
+\[
+\widehat{\operatorname{Wins}}_t =
+40.97 + 2.4805\,\widehat{\operatorname{NetRtg}}_t.
+\]
+
+The historical calibration's in-sample team win-total RMSE is 2.7446 wins.
+That value measures only the NetRtg-to-wins relationship; the leaderboard
+error below also includes error in the preseason NetRtg prediction itself.
+
+| Model | Teams | Win-total RMSE | Win-total MAE | Win-percentage RMSE | Spearman correlation |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Frozen lagged RAPM | 30 | **10.7006** | **8.9333** | **0.1305** | 0.6238 |
+| Frozen aging prior | 30 | 10.9632 | 9.6337 | 0.1337 | **0.6394** |
+
+As a diagnostic, the artifact also retains the raw count obtained by awarding
+each game to the team with the positive predicted margin. That deterministic
+rule has 14.5258 RMSE and 10.7333 MAE, confirming that it turns small predicted
+edges into unrealistically extreme records. The raw count conserves exactly
+1,230 league wins. Independently calibrated Pythagorean expectations are not
+normalized to the target schedule after fitting: they total 1,230.9 wins for
+the lagged baseline and 1,229.8 for the aging prior.
+
+The age/draft/physical profile does capture part of the young-team signal. For
+example, it moves San Antonio from 32.3 to 39.6 Pythagorean wins, but the actual
+result was 62 wins. A smooth historical player-development prior cannot forecast
+the largest discontinuous breakouts.
+
+### Predicted Standings And Actual Results
+
+The table is sorted by Pythagorean expected wins. Ranks are league-wide rather
+than conference-specific because conference is not part of the current
+team-season data contract.
+
+| Pythagorean rank | Team | Pythagorean wins | Predicted NetRtg | Actual rank | Actual W-L | Actual NetRtg | Win error |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | OKC | 65.6 | +9.92 | 1 | 64-18 | +11.11 | +1.6 |
+| 2 | CLE | 59.8 | +7.60 | 8 | 52-30 | +4.11 | +7.8 |
+| 3 | NYK | 56.1 | +6.11 | 6 | 53-29 | +6.50 | +3.1 |
+| 4 | LAC | 55.5 | +5.86 | 18 | 42-40 | +1.17 | +13.5 |
+| 5 | GSW | 55.0 | +5.66 | 20 | 37-45 | -0.56 | +18.0 |
+| 6 | DEN | 49.5 | +3.43 | 5 | 54-28 | +5.15 | -4.5 |
+| 7 | LAL | 48.3 | +2.96 | 6 | 53-29 | +1.78 | -4.7 |
+| 8 | HOU | 47.0 | +2.42 | 8 | 52-30 | +5.36 | -5.0 |
+| 9 | MIN | 46.6 | +2.28 | 10 | 49-33 | +3.32 | -2.4 |
+| 10 | BOS | 46.3 | +2.16 | 4 | 56-26 | +8.10 | -9.7 |
+| 11 | DET | 45.8 | +1.95 | 3 | 60-22 | +8.18 | -14.2 |
+| 12 | ORL | 41.1 | +0.05 | 13 | 45-37 | +0.63 | -3.9 |
+| 13 | POR | 40.7 | -0.09 | 18 | 42-40 | -0.29 | -1.3 |
+| 14 | ATL | 40.1 | -0.33 | 11 | 46-36 | +2.37 | -5.9 |
+| 15 | MIL | 39.2 | -0.73 | 21 | 32-50 | -6.34 | +7.2 |
+| 16 | IND | 37.8 | -1.29 | 29 | 19-63 | -7.88 | +18.8 |
+| 17 | PHX | 37.4 | -1.43 | 13 | 45-37 | +1.50 | -7.6 |
+| 18 | CHI | 37.1 | -1.56 | 22 | 31-51 | -5.07 | +6.1 |
+| 19 | TOR | 37.0 | -1.61 | 11 | 46-36 | +2.86 | -9.0 |
+| 20 | PHI | 36.0 | -2.01 | 13 | 45-37 | -0.18 | -9.0 |
+| 21 | MEM | 35.3 | -2.28 | 25 | 25-57 | -5.94 | +10.3 |
+| 22 | SAC | 32.9 | -3.25 | 26 | 22-60 | -10.04 | +10.9 |
+| 23 | MIA | 32.7 | -3.32 | 17 | 43-39 | +2.25 | -10.3 |
+| 24 | SAS | 32.3 | -3.49 | 2 | 62-20 | +8.29 | -29.7 |
+| 25 | NOP | 32.1 | -3.58 | 23 | 26-56 | -4.45 | +6.1 |
+| 26 | DAL | 31.0 | -4.02 | 23 | 26-56 | -5.37 | +5.0 |
+| 27 | UTA | 29.8 | -4.50 | 26 | 22-60 | -8.15 | +7.8 |
+| 28 | BKN | 28.7 | -4.93 | 28 | 20-62 | -10.28 | +8.7 |
+| 29 | CHA | 27.5 | -5.42 | 16 | 44-38 | +4.97 | -16.5 |
+| 30 | WAS | 26.6 | -5.80 | 30 | 17-65 | -11.76 | +9.6 |
+
+## Artifact
+
+The promoted baseline run is
+`frozen-lagged-prior-2025-26-20260805T011238Z-9ac7c011` under
+`artifacts/models/frozen_prior_evaluation/2025-26/`. It contains player priors,
+source-state declarations, possession and game predictions, team net-rating
+and win tables, the historical Pythagorean calibration panel, all metric
+tables, file hashes, and an MLflow index.
+
+The evaluated age/draft/physical candidate is
+`frozen-aging-prior-2025-26-20260805T013515Z-2fb4c418` in the same directory.
+Its source state records both the 2024-25 reference lagged-RAPM run used for
+the mean/home-court terms and the 2025-26 aging-prior artifact.

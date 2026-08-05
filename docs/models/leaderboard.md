@@ -6,6 +6,11 @@ after the cohort's training cutoff. Training objectives remain model-specific.
 **Bold values are best at the displayed precision.** Lower error is better;
 higher skill is better.
 
+This board measures **in-season** prediction after fitting target-season
+games. The [Frozen Preseason Leaderboard](preseason-leaderboard.md) separately
+holds out the entire regular season and playoffs with player values fixed
+before opening night.
+
 Last generated: **2026-08-03 20:32 UTC** from `evaluation-2025-26-20260803T203258Z-84bd43a0`.
 
 ## Evaluation cohorts

@@ -24,16 +24,24 @@ TRACKING_ROOT_ENV = "NBA_MLFLOW_ROOT"
 _MODEL_RUN_PREFIXES = (
     "aging-prior-rapm-",
     "blended-prior-rapm-",
+    "box-score-prior-",
     "aging-",
     "baseline-",
     "bayesian-",
     "catboost-",
+    "combined-box-score-prior-rapm-",
+    "cold-start-prior-",
     "deep-sets-",
     "forward-calibration-",
+    "frozen-aging-prior-",
+    "frozen-lagged-prior-",
     "neural-",
     "rapm-transformer-",
 )
 _METRIC_FILES = (
+    "cohort_metrics.parquet",
+    "team_net_rating_metrics.parquet",
+    "team_win_metrics.parquet",
     "holdout_metrics.parquet",
     "test_metrics.parquet",
     "metrics.parquet",
@@ -538,6 +546,10 @@ def _run_kind(project_run_id: str, manifest: Mapping[str, Any]) -> str:
         return "deep_sets"
     if project_run_id.startswith("forward-calibration-"):
         return "forward_rapm_win_calibration"
+    if project_run_id.startswith("frozen-lagged-prior-"):
+        return "frozen_preseason_lagged_rapm"
+    if project_run_id.startswith("frozen-aging-prior-"):
+        return "frozen_preseason_aging_prior"
     if project_run_id.startswith("catboost-"):
         return "catboost"
     if project_run_id.startswith("rapm-transformer-"):

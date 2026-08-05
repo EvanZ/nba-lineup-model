@@ -67,11 +67,12 @@ player has no played box-score summary, its box-score features remain null and
 panel construction.
 
 Pre-modern NBA Stats player boxes omit the `played` flag, full name, two-point
-totals, offensive fouls, and fouls drawn. The panel derives names and two-point
-totals from the retained fields, uses positive recorded minutes as the played
-criterion, and records the unavailable foul counts as structural zero. This
-keeps the historical box-score feature schema stable without inventing player
-or possession outcomes.
+totals, offensive fouls, and fouls drawn. Some Stats V3 boxes retain `played`
+but leave it null. The panel derives participation from positive recorded
+minutes only when the field is absent or null, preserves explicit DNP flags,
+derives names and two-point totals from retained fields, and records unavailable
+foul counts as structural zero. This keeps the historical box-score feature
+schema stable without inventing player or possession outcomes.
 
 ## Transition table
 

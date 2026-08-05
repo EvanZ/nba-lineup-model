@@ -15,6 +15,9 @@ interactions.
 | RAPM aging model | Forward player-season priors from prior RAPM and age |
 | Age-informed prior RAPM | Lineup RAPM centered on the frozen aging forecast |
 | Forward RAPM calibration | Frozen lagged RAPM mapped to team wins using realized lineup seconds |
+| Frozen lagged RAPM | Preseason 2024-25 player values scored on all 2025-26 oracle lineups |
+| Frozen aging prior | Preseason age, experience, prior RAPM, draft, and physical-profile values scored on the same oracle lineups |
+| Box-score RAPM prior | Returning-player forecast from lagged RAPM and possession-native box profile |
 | Additive neural RAPM | Possession-level signed scalar player embeddings |
 | Deep Sets | Nonlinear permutation-invariant lineup aggregation |
 | CatBoost | Categorical player states and boosted-tree interactions |
@@ -39,6 +42,8 @@ additive, Deep Sets, and RAPM + Transformer program. [Tree Models](tree-models.m
 defines the orthogonal CatBoost baseline. [Leaderboard](leaderboard.md) defines
 the shared regular-holdout and playoff metrics and maintains the cross-model
 scoreboard. [Forward RAPM Calibration](forward-calibration.md) maps frozen
-player priors to regular-season team wins. [RAPM Aging Model](aging-model.md) defines the first temporal player
+player priors to regular-season team wins. The [Frozen Preseason
+Leaderboard](preseason-leaderboard.md) holds out the complete target regular
+season and playoffs without a player refit. [RAPM Aging Model](aging-model.md) defines the first temporal player
 prior, while the [Modeling Roadmap](roadmap.md) records the approved joint
 dynamic RAPM extension.

@@ -131,6 +131,16 @@ def test_aggregate_box_score_features_excludes_legacy_blank_minutes():
     assert features["player_id"].tolist() == [1]
 
 
+def test_aggregate_box_score_features_infers_null_played_from_positive_minutes():
+    played = _boxscore_row(game_id="001", played=None)
+    dnp = _boxscore_row(game_id="002", player_id=2, played=None, minutes="PT00M00.00S")
+
+    features = aggregate_box_score_features(pd.DataFrame([played, dnp]))
+
+    assert features["player_id"].tolist() == [1]
+    assert features["minutes"].tolist() == pytest.approx([30.0])
+
+
 def test_player_season_frame_combines_outcomes_and_bio_context():
     boxscores = aggregate_box_score_features(pd.DataFrame([_boxscore_row(game_id="001")]))
     rankings = pd.DataFrame(

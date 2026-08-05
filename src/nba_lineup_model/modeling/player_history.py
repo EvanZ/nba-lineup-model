@@ -296,9 +296,18 @@ def _normalize_legacy_boxscore_schema(players: pd.DataFrame) -> pd.DataFrame:
         full_name = full_name.str.strip()
         initials = frame.get("nameI", pd.Series("", index=frame.index)).fillna("")
         frame["name"] = full_name.where(full_name.ne(""), initials.astype(str).str.strip())
+    inferred_played = (
+        pd.to_timedelta(frame["statistics_minutes"], errors="coerce")
+        .dt.total_seconds()
+        .gt(0)
+        .astype("int64")
+        .astype(str)
+    )
     if "played" not in frame:
-        legacy_minutes = pd.to_timedelta(frame["statistics_minutes"], errors="coerce")
-        frame["played"] = legacy_minutes.dt.total_seconds().gt(0).astype("int64").astype(str)
+        frame["played"] = inferred_played
+    else:
+        # Stats V3 retains the field but leaves it null; preserve explicit DNPs.
+        frame["played"] = frame["played"].where(frame["played"].notna(), inferred_played)
     for column in ("statistics_foulsOffensive", "statistics_foulsDrawn"):
         if column not in frame:
             frame[column] = 0
@@ -306,18 +315,16 @@ def _normalize_legacy_boxscore_schema(players: pd.DataFrame) -> pd.DataFrame:
         "statistics_fieldGoalsAttempted",
         "statistics_threePointersAttempted",
     } <= set(frame):
-        frame["statistics_twoPointersAttempted"] = (
-            pd.to_numeric(frame["statistics_fieldGoalsAttempted"], errors="raise")
-            - pd.to_numeric(frame["statistics_threePointersAttempted"], errors="raise")
-        )
+        frame["statistics_twoPointersAttempted"] = pd.to_numeric(
+            frame["statistics_fieldGoalsAttempted"], errors="raise"
+        ) - pd.to_numeric(frame["statistics_threePointersAttempted"], errors="raise")
     if "statistics_twoPointersMade" not in frame and {
         "statistics_fieldGoalsMade",
         "statistics_threePointersMade",
     } <= set(frame):
-        frame["statistics_twoPointersMade"] = (
-            pd.to_numeric(frame["statistics_fieldGoalsMade"], errors="raise")
-            - pd.to_numeric(frame["statistics_threePointersMade"], errors="raise")
-        )
+        frame["statistics_twoPointersMade"] = pd.to_numeric(
+            frame["statistics_fieldGoalsMade"], errors="raise"
+        ) - pd.to_numeric(frame["statistics_threePointersMade"], errors="raise")
     return frame
 
 
