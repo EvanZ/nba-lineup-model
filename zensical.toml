@@ -11,6 +11,7 @@ extra_css = ["stylesheets/extra.css"]
 extra_javascript = [
   "javascripts/mathjax.js",
   "javascripts/star-rapm-chart.js",
+  "javascripts/sortable-tables.js",
   "https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js",
 ]
 nav = [
@@ -65,6 +66,7 @@ nav = [
     {"Train cold-start RAPM prior" = "guides/train-cold-start-prior.md"},
     {"Train combined box-score prior RAPM" = "guides/train-combined-box-score-prior-rapm.md"},
     {"Evaluate a frozen preseason prior" = "guides/evaluate-frozen-prior.md"},
+    {"Train frozen offense/defense RAPM" = "guides/train-offense-defense-rapm.md"},
     {"Calibrate forward RAPM to wins" = "guides/calibrate-forward-rapm.md"},
     {"Compare RAPM across eras" = "guides/compare-eras.md"},
     {"Train neural models" = "guides/train-neural.md"},
@@ -78,6 +80,7 @@ nav = [
     {"Bayesian RAPM methodology" = "models/bayesian-rapm.md"},
     {"RAPM Aging Model" = "models/aging-model.md"},
     {"Prior-Centered RAPM" = "models/prior-rapm.md"},
+    {"Offense/Defense RAPM" = "models/offense-defense-rapm.md"},
     {"Box-Score RAPM Prior" = "models/box-score-prior.md"},
     {"Forward RAPM Calibration" = "models/forward-calibration.md"},
     {"Era-Adjusted Player Comparisons" = "models/era-comparisons.md"},

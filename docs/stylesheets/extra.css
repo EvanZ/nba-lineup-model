@@ -150,24 +150,62 @@ body {
   border-radius: 4px;
 }
 
-.md-typeset table:not([class]) {
+.md-typeset table:not([class]),
+.md-typeset table.sortable-ranking-table {
   border: 1px solid var(--lineup-line);
   border-radius: 4px;
   box-shadow: none;
 }
 
-.md-typeset table:not([class]) th {
+.md-typeset table:not([class]) th,
+.md-typeset table.sortable-ranking-table th {
   background: var(--lineup-navy);
   color: #ffffff;
   font-weight: 700;
 }
 
-.md-typeset table:not([class]) td {
+.md-typeset table:not([class]) td,
+.md-typeset table.sortable-ranking-table td {
   border-top-color: var(--lineup-line);
 }
 
-.md-typeset table:not([class]) tr:hover td {
+.md-typeset table:not([class]) tr:hover td,
+.md-typeset table.sortable-ranking-table tr:hover td {
   background: var(--lineup-surface);
+}
+
+.md-typeset .sortable-ranking-table th {
+  padding: 0;
+}
+
+.md-typeset .sortable-ranking-table th button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 2.2rem;
+  padding: 0.45rem 0.55rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.md-typeset .sortable-ranking-table th button::after {
+  margin-left: 0.35rem;
+  color: #d8e6f1;
+  content: "\2195";
+}
+
+.md-typeset .sortable-ranking-table th button[aria-sort="ascending"]::after {
+  content: "\2191";
+}
+
+.md-typeset .sortable-ranking-table th button[aria-sort="descending"]::after {
+  content: "\2193";
 }
 
 .md-typeset .mermaid {

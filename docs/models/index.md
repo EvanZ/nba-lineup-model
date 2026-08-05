@@ -17,6 +17,7 @@ interactions.
 | Forward RAPM calibration | Frozen lagged RAPM mapped to team wins using realized lineup seconds |
 | Frozen lagged RAPM | Preseason 2024-25 player values scored on all 2025-26 oracle lineups |
 | Frozen aging prior | Preseason age, experience, prior RAPM, draft, and physical-profile values scored on the same oracle lineups |
+| Frozen O/D RAPM | Forward offense and defense player values scored on the same oracle lineups |
 | Box-score RAPM prior | Returning-player forecast from lagged RAPM and possession-native box profile |
 | Additive neural RAPM | Possession-level signed scalar player embeddings |
 | Deep Sets | Nonlinear permutation-invariant lineup aggregation |

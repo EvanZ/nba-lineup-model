@@ -48,6 +48,15 @@ profile, height, weight, and age-by-profile interactions. It produces the same
 582-player 2025-26 coverage as the lagged-RAPM baseline and has no 2025-26
 outcome fields.
 
+### Frozen Offense/Defense Candidate
+
+The O/D candidate uses two weighted offensive-rating rows per lineup stint:
+the offense lineup enters offensive columns and the opponent lineup enters
+defensive columns. It fits forward regular-only O/D states from 1996-97 through
+2024-25, then freezes the completed 2024-25 state before scoring 2025-26.
+See [Offense/Defense RAPM](offense-defense-rapm.md) for the exact equations and
+identification convention.
+
 ## Possession And Game Results
 
 Regular season and playoffs are evaluated separately. Possession metrics use
@@ -57,10 +66,12 @@ the home-team frame.
 
 | Model | Cohort | Games | Possessions | Possession RMSE | Possession MAE | Game-margin RMSE | Possession skill vs frozen mean | Game skill vs frozen mean |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Frozen lagged RAPM | Regular season | 1,230 | 218,810 | **1.199000** | **1.142154** | **14.8894** | **0.0805%** | **11.5905%** |
+| Frozen lagged RAPM | Regular season | 1,230 | 218,810 | 1.199000 | **1.142154** | **14.8894** | 0.0805% | **11.5905%** |
 | Frozen aging prior | Regular season | 1,230 | 218,810 | 1.199062 | 1.142736 | 15.0203 | 0.0702% | 10.0297% |
+| Frozen O/D RAPM | Regular season | 1,230 | 218,810 | **1.198853** | 1.142664 | 14.8901 | **0.1092%** | 11.5692% |
 | Frozen lagged RAPM | Playoffs | 85 | 14,253 | 1.192895 | **1.136163** | 17.5409 | -0.0774% | -9.6446% |
 | Frozen aging prior | Playoffs | 85 | 14,253 | **1.192332** | 1.136455 | **16.4946** | **0.0170%** | **3.0460%** |
+| Frozen O/D RAPM | Playoffs | 85 | 14,253 | 1.194642 | 1.139203 | 17.8037 | -0.3924% | -12.9804% |
 
 Bolding marks the better value within each cohort and metric. Future frozen
 priors must use these exact cohorts.
@@ -74,8 +85,9 @@ team margins are then summed and divided by team possessions.
 
 | Model | Teams | Net-rating RMSE | Net-rating MAE | Pearson correlation | Spearman correlation |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Frozen lagged RAPM | 30 | **4.8538** | **3.9606** | 0.6113 | 0.5493 |
+| Frozen lagged RAPM | 30 | **4.8538** | 3.9606 | 0.6113 | 0.5493 |
 | Frozen aging prior | 30 | 5.0366 | 4.2395 | **0.6484** | **0.6111** |
+| Frozen O/D RAPM | 30 | 4.8740 | **3.9380** | 0.6113 | 0.5626 |
 
 ## Team Win Totals
 
@@ -109,6 +121,7 @@ error below also includes error in the preseason NetRtg prediction itself.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Frozen lagged RAPM | 30 | **10.7006** | **8.9333** | **0.1305** | 0.6238 |
 | Frozen aging prior | 30 | 10.9632 | 9.6337 | 0.1337 | **0.6394** |
+| Frozen O/D RAPM | 30 | 10.9640 | 8.9734 | 0.1337 | 0.6078 |
 
 As a diagnostic, the artifact also retains the raw count obtained by awarding
 each game to the team with the positive predicted margin. That deterministic
@@ -175,3 +188,7 @@ The evaluated age/draft/physical candidate is
 `frozen-aging-prior-2025-26-20260805T013515Z-2fb4c418` in the same directory.
 Its source state records both the 2024-25 reference lagged-RAPM run used for
 the mean/home-court terms and the 2025-26 aging-prior artifact.
+
+The O/D candidate is
+`frozen-offense-defense-rapm-2025-26-20260805T050511Z-62b718bd` under
+`artifacts/models/frozen_offense_defense_rapm/2025-26/`.
