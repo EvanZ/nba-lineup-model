@@ -139,12 +139,65 @@ lagged-RAPM prior.
 The selection surface and frozen outputs are retained in
 `blended-prior-rapm-2025-26-20260803T214825Z-2dbb1766`.
 
-## 2025-26 Ranking
+## 2025-26 All-Season Ranking
+
+This is the completed-season counterpart to the frozen forecast. It uses the
+same completed 2024-25 regular-only lagged RAPM prior, selects lambda on
+chronological folds in 2025-26, and refits all 1,230 regular-season games.
+It is a descriptive ranking, not a forecast, and does not modify the frozen
+Preseason Leaderboard. `RAPM = Prior + Adjustment`; the 500-possession floor
+applies to the published list. Click any table header to sort it.
+
+### Top 25 Lagged RAPM
+
+| Rank | Player | Team | RAPM | Prior | Adjustment | Possessions |
+| ---: | --- | :---: | ---: | ---: | ---: | ---: |
+| 1 | Nikola Jokić | DEN | 12.88 | 11.47 | 1.41 | 4,786 |
+| 2 | Shai Gilgeous-Alexander | OKC | 10.18 | 7.85 | 2.33 | 4,730 |
+| 3 | Giannis Antetokounmpo | MIL | 8.62 | 7.76 | 0.86 | 2,129 |
+| 4 | Victor Wembanyama | SAS | 8.49 | 1.91 | 6.58 | 3,896 |
+| 5 | Jimmy Butler III | GSW | 8.45 | 7.41 | 1.04 | 2,449 |
+| 6 | Joel Embiid | PHI | 8.08 | 7.73 | 0.35 | 2,479 |
+| 7 | Stephen Curry | GSW | 7.80 | 9.47 | -1.66 | 2,822 |
+| 8 | Kawhi Leonard | LAC | 7.71 | 4.02 | 3.69 | 4,167 |
+| 9 | Derrick White | BOS | 7.54 | 3.91 | 3.63 | 5,181 |
+| 10 | Alex Caruso | OKC | 7.49 | 5.71 | 1.78 | 2,125 |
+| 11 | Donovan Mitchell | CLE | 7.05 | 5.96 | 1.09 | 4,925 |
+| 12 | Bam Adebayo | MIA | 6.92 | 3.40 | 3.52 | 5,031 |
+| 13 | Jrue Holiday | POR | 6.81 | 5.71 | 1.10 | 3,295 |
+| 14 | Devin Booker | PHX | 6.81 | 4.79 | 2.02 | 4,442 |
+| 15 | Chet Holmgren | OKC | 6.31 | 2.86 | 3.45 | 4,129 |
+| 16 | Marcus Smart | LAL | 6.09 | 3.77 | 2.32 | 3,607 |
+| 17 | Rudy Gobert | MIN | 5.98 | 5.92 | 0.06 | 4,951 |
+| 18 | Jayson Tatum | BOS | 5.98 | 5.76 | 0.22 | 1,046 |
+| 19 | Aaron Gordon | DEN | 5.82 | 4.73 | 1.09 | 2,057 |
+| 20 | Jarrett Allen | CLE | 5.78 | 5.73 | 0.05 | 3,191 |
+| 21 | Cade Cunningham | DET | 5.72 | 2.66 | 3.05 | 4,490 |
+| 22 | Lauri Markkanen | UTA | 5.68 | 3.40 | 2.28 | 3,080 |
+| 23 | Luka Dončić | LAL | 5.62 | 5.07 | 0.55 | 4,759 |
+| 24 | Karl-Anthony Towns | NYK | 5.49 | 5.53 | -0.05 | 4,716 |
+| 25 | Dyson Daniels | ATL | 5.48 | 1.28 | 4.19 | 5,317 |
+
+The immutable run is
+`all-season-lagged-rapm-2025-26-20260805T125907Z-236e5954` under
+`artifacts/models/prior_rapm_rankings/2025-26/`. It contains full-season
+coefficients, rankings, lambda-selection evidence, the frozen prior table, and
+hashes that pin the source forward-lagged RAPM run.
+
+Run it with:
+
+```bash
+uv run nba-rank-lagged-rapm --season 2025-26
+```
+
+## 2025-26 Holdout-Fit Ranking
 
 This table is the regular-only forward-prior fit on the first 1,044 2025-26
 regular-season games. `RAPM = Prior + Adjustment`, where the prior is the
 frozen 2024-25 lagged-RAPM estimate. These values use a prior-centered scale
 and are not directly interchangeable with zero-centered one-season RAPM.
+
+### Top 25 Holdout-Fit RAPM
 
 | Rank | Player | Team | RAPM | Prior | Adjustment | Possessions |
 | ---: | --- | :---: | ---: | ---: | ---: | ---: |

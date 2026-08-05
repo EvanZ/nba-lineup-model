@@ -37,6 +37,7 @@ _MODEL_RUN_PREFIXES = (
     "frozen-lagged-prior-",
     "frozen-offense-defense-rapm-",
     "all-season-offense-defense-rapm-",
+    "all-season-lagged-rapm-",
     "neural-",
     "rapm-transformer-",
 )
@@ -556,6 +557,8 @@ def _run_kind(project_run_id: str, manifest: Mapping[str, Any]) -> str:
         return "frozen_preseason_offense_defense_rapm"
     if project_run_id.startswith("all-season-offense-defense-rapm-"):
         return "retrospective_offense_defense_rapm"
+    if project_run_id.startswith("all-season-lagged-rapm-"):
+        return "retrospective_lagged_rapm"
     if project_run_id.startswith("catboost-"):
         return "catboost"
     if project_run_id.startswith("rapm-transformer-"):

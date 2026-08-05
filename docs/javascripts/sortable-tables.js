@@ -1,10 +1,4 @@
 (() => {
-  const rankingHeadings = new Set([
-    "Top 25 Overall",
-    "Top 25 Offense",
-    "Top 25 Defense",
-  ]);
-
   function value(cell) {
     const text = cell.textContent.trim().replaceAll(",", "");
     const numeric = Number(text);
@@ -51,7 +45,7 @@
 
   function initialize(root = document) {
     root.querySelectorAll("h3").forEach((heading) => {
-      if (!rankingHeadings.has(heading.textContent.trim())) return;
+      if (!heading.textContent.trim().startsWith("Top 25 ")) return;
       const table = heading.nextElementSibling;
       if (table?.tagName === "TABLE") enhance(table);
     });

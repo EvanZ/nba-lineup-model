@@ -42,6 +42,8 @@ from nba_lineup_model.models.baselines import (
 )
 
 PRIOR_MEAN_COLUMN = "lagged_rapm_prior"
+ALL_SEASON_RANKING_RUN_PREFIX = "all-season-lagged-rapm"
+DEFAULT_MINIMUM_RANKING_POSSESSIONS = 500.0
 HISTORICAL_SEASONS = tuple(
     f"{year}-{str(year + 1)[-2:]}" for year in range(1996, 2025)
 )
@@ -525,6 +527,215 @@ def train_forward_lagged_rapm(
     return output_dir
 
 
+def build_all_season_lagged_rapm_rankings(
+    *,
+    season: str = "2025-26",
+    curated_dir: Path | str = Path("data/curated"),
+    analytical_dir: Path | str = Path("data/analytical"),
+    artifacts_dir: Path | str = Path("artifacts/models"),
+    source_run_id: str | None = None,
+    minimum_ranking_possessions: float = DEFAULT_MINIMUM_RANKING_POSSESSIONS,
+) -> Path:
+    """Refit a completed regular season solely to publish lagged-RAPM rankings.
+
+    The source prior is pinned to the forward-lagged RAPM evaluation artifact.
+    Target-season outcomes are deliberately used for this retrospective fit,
+    never for the frozen preseason forecast or its Leaderboard metrics.
+    """
+
+    if season != "2025-26":
+        raise ValueError("All-season lagged-RAPM rankings currently support 2025-26 only")
+    if minimum_ranking_possessions < 0:
+        raise ValueError("Minimum ranking possessions cannot be negative")
+    artifact_root = Path(artifacts_dir)
+    source_root = _resolve_prior_ranking_source(
+        artifact_root / "prior_rapm" / season,
+        source_run_id,
+    )
+    source_metadata = json.loads((source_root / "metadata.json").read_text())
+    source_priors = pd.read_parquet(source_root / "target_player_priors.parquet")
+    priors = source_priors.loc[:, ["player_id", "prior_rapm_mean"]].rename(
+        columns={"prior_rapm_mean": PRIOR_MEAN_COLUMN}
+    )
+    stints = read_rapm_stints(season, analytical_dir=analytical_dir)
+    bios_path = Path(curated_dir) / "player_seasons" / season / "regular" / "part-00000.parquet"
+    player_bios = pd.read_parquet(bios_path) if bios_path.is_file() else None
+    result = fit_forward_lagged_rapm_season(
+        season,
+        stints,
+        priors,
+    )
+    rankings = _player_rankings(
+        stints,
+        tuple(result.player_estimates["player_id"].astype(int)),
+        result.player_estimates["rapm"].to_numpy(dtype=float),
+        minimum_ranking_possessions,
+        player_bios,
+    ).merge(
+        result.player_estimates.loc[
+            :, ["player_id", "prior_rapm", "rapm_adjustment_from_prior"]
+        ].rename(columns={"prior_rapm": "prior_rapm_mean"}),
+        on="player_id",
+        how="left",
+        validate="one_to_one",
+    )
+    rankings = rankings.sort_values(
+        ["rapm", "possessions", "player_id"],
+        ascending=[False, False, True],
+        kind="stable",
+    ).reset_index(drop=True)
+    rankings["rank"] = np.arange(1, len(rankings) + 1)
+    eligible = rankings.loc[rankings["exposure_eligible"]]
+    rankings["eligible_rank"] = pd.Series(
+        np.arange(1, len(eligible) + 1), index=eligible.index, dtype="Int64"
+    )
+    return _write_all_season_ranking_run(
+        season=season,
+        result=result,
+        rankings=rankings,
+        source_root=source_root,
+        source_metadata=source_metadata,
+        source_priors=source_priors,
+        artifacts_dir=artifact_root,
+        minimum_ranking_possessions=minimum_ranking_possessions,
+    )
+
+
+def _resolve_prior_ranking_source(season_dir: Path, run_id: str | None) -> Path:
+    if run_id is None:
+        latest = season_dir / "latest.json"
+        if not latest.is_file():
+            raise FileNotFoundError(f"Forward lagged-RAPM source pointer not found: {latest}")
+        run_id = str(json.loads(latest.read_text()).get("run_id", ""))
+    source = season_dir / run_id
+    metadata_path = source / "metadata.json"
+    priors_path = source / "target_player_priors.parquet"
+    if not metadata_path.is_file() or not priors_path.is_file():
+        raise ValueError(f"Invalid forward lagged-RAPM source run: {source}")
+    metadata = json.loads(metadata_path.read_text())
+    if metadata.get("model") != "forward_lagged_prior_centered_ridge_rapm":
+        raise ValueError("All-season rankings require a forward lagged-RAPM source")
+    if metadata.get("target_season") != "2025-26":
+        raise ValueError("Forward lagged-RAPM source season does not match rankings")
+    if metadata.get("historical_training_variant") != "regular_only":
+        raise ValueError("All-season rankings require the regular-only lagged prior")
+    return source
+
+
+def _write_all_season_ranking_run(
+    *,
+    season: str,
+    result: ForwardLaggedRapmSeason,
+    rankings: pd.DataFrame,
+    source_root: Path,
+    source_metadata: dict[str, object],
+    source_priors: pd.DataFrame,
+    artifacts_dir: Path,
+    minimum_ranking_possessions: float,
+) -> Path:
+    now = datetime.now(UTC)
+    run_id = f"{ALL_SEASON_RANKING_RUN_PREFIX}-{season}-{now:%Y%m%dT%H%M%SZ}-{uuid4().hex[:8]}"
+    root = artifacts_dir / "prior_rapm_rankings" / season
+    output = root / run_id
+    temporary = root / f".{run_id}.tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    temporary.mkdir()
+    try:
+        top_25 = rankings.loc[rankings["exposure_eligible"]].head(25)
+        tables = {
+            "player_coefficients.parquet": result.player_estimates,
+            "cv_results.parquet": result.cv_results,
+            "player_rankings.parquet": rankings,
+            "top_25.parquet": top_25,
+            "source_player_priors.parquet": source_priors,
+        }
+        for filename, table in tables.items():
+            table.to_parquet(temporary / filename, index=False)
+        metadata = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "model": "all_season_lagged_prior_centered_ridge_rapm",
+            "season": season,
+            "season_type": "regular",
+            "ranking_scope": "retrospective_all_regular_season",
+            "selected_lambda": result.selected_lambda,
+            "minimum_ranking_possessions": minimum_ranking_possessions,
+            "source_forward_lagged_run_id": source_metadata["run_id"],
+            "source_forward_lagged_manifest_sha256": _sha256_file(
+                source_root / "manifest.json"
+            ),
+            "source_player_priors_sha256": _sha256_file(
+                source_root / "target_player_priors.parquet"
+            ),
+            "source_season": "2024-25",
+            "target_regular_outcomes_used_for_fit": True,
+            "target_playoff_outcomes_used_for_fit": False,
+            "forecast_artifact_updated": False,
+            "created_at": now.isoformat(),
+        }
+        (temporary / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+        artifacts = [
+            {
+                "filename": path.name,
+                "row_count": len(tables[path.name]) if path.name in tables else None,
+                "byte_count": path.stat().st_size,
+                "sha256": _sha256_file(path),
+            }
+            for path in sorted(temporary.iterdir())
+            if path.is_file()
+        ]
+        (temporary / "manifest.json").write_text(
+            json.dumps({**metadata, "artifacts": artifacts}, indent=2) + "\n"
+        )
+        temporary.replace(output)
+        validate_all_season_lagged_rapm_ranking_run(output)
+        latest = root / "latest.json"
+        latest_tmp = latest.with_suffix(".json.tmp")
+        latest_tmp.write_text(json.dumps({"run_id": run_id}, indent=2) + "\n")
+        latest_tmp.replace(latest)
+        return output
+    except Exception:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+        raise
+
+
+def validate_all_season_lagged_rapm_ranking_run(run_dir: Path | str) -> dict[str, object]:
+    """Validate a self-contained retrospective all-season ranking artifact."""
+
+    root = Path(run_dir)
+    manifest = json.loads((root / "manifest.json").read_text())
+    if not str(manifest.get("run_id", "")).startswith(ALL_SEASON_RANKING_RUN_PREFIX):
+        raise ValueError("All-season lagged-RAPM ranking artifact has an invalid run id")
+    if manifest.get("ranking_scope") != "retrospective_all_regular_season":
+        raise ValueError("All-season lagged-RAPM ranking artifact has an invalid scope")
+    if manifest.get("forecast_artifact_updated") is not False:
+        raise ValueError("All-season lagged-RAPM ranking artifact modifies a forecast")
+    required = {
+        "player_coefficients.parquet",
+        "cv_results.parquet",
+        "player_rankings.parquet",
+        "top_25.parquet",
+        "source_player_priors.parquet",
+        "metadata.json",
+    }
+    records = {record["filename"]: record for record in manifest["artifacts"]}
+    if not required <= set(records):
+        raise ValueError("All-season lagged-RAPM ranking artifact is incomplete")
+    for filename, record in records.items():
+        path = root / filename
+        if not path.is_file() or path.stat().st_size != record["byte_count"]:
+            raise ValueError(f"All-season lagged-RAPM artifact changed: {filename}")
+        if _sha256_file(path) != record["sha256"]:
+            raise ValueError(f"All-season lagged-RAPM artifact hash changed: {filename}")
+        if record["row_count"] is not None and len(pd.read_parquet(path)) != record["row_count"]:
+            raise ValueError(f"All-season lagged-RAPM artifact row count changed: {filename}")
+    top = pd.read_parquet(root / "top_25.parquet")
+    if len(top) > 25 or not top["exposure_eligible"].all():
+        raise ValueError("All-season lagged-RAPM artifact has invalid top-25 rows")
+    return manifest
+
+
 def _available_processed_playoff_game_ids(season: str) -> tuple[str, ...]:
     catalog = pd.read_parquet("data/catalog/games.parquet")
     candidates = catalog.loc[
@@ -688,6 +899,36 @@ def main() -> None:
             include_historical_playoffs=args.include_historical_playoffs,
         )
     )
+
+
+def rankings_main() -> None:
+    """Build retrospective rankings from the completed lagged-RAPM season."""
+
+    parser = argparse.ArgumentParser(description="Build all-season lagged-RAPM rankings")
+    parser.add_argument("--season", default="2025-26")
+    parser.add_argument("--curated-dir", default="data/curated")
+    parser.add_argument("--analytical-dir", default="data/analytical")
+    parser.add_argument("--artifacts-dir", default="artifacts/models")
+    parser.add_argument("--source-run-id")
+    parser.add_argument(
+        "--minimum-ranking-possessions",
+        type=float,
+        default=DEFAULT_MINIMUM_RANKING_POSSESSIONS,
+    )
+    args = parser.parse_args()
+    run_dir = build_all_season_lagged_rapm_rankings(
+        season=args.season,
+        curated_dir=args.curated_dir,
+        analytical_dir=args.analytical_dir,
+        artifacts_dir=args.artifacts_dir,
+        source_run_id=args.source_run_id,
+        minimum_ranking_possessions=args.minimum_ranking_possessions,
+    )
+    from nba_lineup_model.tracking import track_completed_run
+
+    tracking = track_completed_run(run_dir)
+    tracking_text = f"; mlflow_run_id={tracking.mlflow_run_id}" if tracking else ""
+    print(f"All-season lagged RAPM rankings: run={run_dir}{tracking_text}")
 
 
 if __name__ == "__main__":
