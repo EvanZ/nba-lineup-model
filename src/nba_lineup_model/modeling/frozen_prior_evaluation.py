@@ -26,6 +26,10 @@ from nba_lineup_model.evaluation.metrics import (
 )
 from nba_lineup_model.modeling.aging import validate_aging_model_run
 from nba_lineup_model.modeling.aging_prior_rapm import aging_prior_frame
+from nba_lineup_model.modeling.draft_prior import validate_draft_prior_study
+from nba_lineup_model.modeling.exposure_gated_cold_start import (
+    validate_exposure_gated_cold_start_prior,
+)
 from nba_lineup_model.modeling.neural_data import (
     neural_possessions_frame,
     read_neural_possessions,
@@ -59,7 +63,14 @@ class FrozenPriorEvaluationManifest(BaseModel):
     run_id: str = Field(min_length=1)
     created_at: datetime
     season: str = Field(pattern=SEASON_PATTERN)
-    model: Literal["frozen_regular_only_lagged_rapm", "frozen_aging_prior"]
+    model: Literal[
+        "frozen_regular_only_lagged_rapm",
+        "frozen_aging_prior",
+        "frozen_combined_box_score_prior",
+        "frozen_draft_cold_start_prior",
+        "frozen_exposure_gated_cold_start_prior",
+        "frozen_exposure_gated_cold_start_prior",
+    ]
     source_season: str = Field(pattern=SEASON_PATTERN)
     evaluation_code_version: str = Field(pattern=CODE_VERSION_PATTERN)
     prior_run_id: str = Field(min_length=1)
@@ -511,6 +522,334 @@ def train_frozen_aging_prior_evaluation(
         artifacts_dir=artifact_root,
         run_prefix="frozen-aging-prior",
         manifest_model="frozen_aging_prior",
+    )
+
+
+def train_frozen_combined_box_score_prior_evaluation(
+    *,
+    season: str = DEFAULT_SEASON,
+    combined_run_id: str | None = None,
+    analytical_dir: Path | str = Path("data/analytical"),
+    curated_dir: Path | str = Path("data/curated"),
+    artifacts_dir: Path | str = DEFAULT_ARTIFACTS_DIR,
+) -> tuple[FrozenPriorEvaluationManifest, Path]:
+    """Score the selected box-score/cold-start prior without a target refit."""
+
+    target_season = validate_season(season)
+    artifact_root = Path(artifacts_dir)
+    combined_root = _resolve_run(
+        artifact_root / "combined_box_score_prior_rapm" / target_season,
+        combined_run_id,
+    )
+    combined_metadata = json.loads((combined_root / "metadata.json").read_text())
+    if combined_metadata.get("model") != (
+        "combined_box_score_and_cold_start_prior_centered_ridge_rapm"
+    ):
+        raise ValueError("Frozen box-score evaluation requires a combined-prior run")
+    if combined_metadata.get("season") != target_season:
+        raise ValueError("Combined box-score prior season does not match evaluation")
+    lagged_run_id = combined_metadata.get("lagged_run_id")
+    if not isinstance(lagged_run_id, str):
+        raise ValueError("Combined box-score prior does not record its lagged source")
+    reference_root = _resolve_run(
+        artifact_root / "prior_rapm" / target_season,
+        lagged_run_id,
+    )
+    _validate_forward_prior_run(reference_root, target_season)
+    combined_priors = pd.read_parquet(combined_root / "combined_player_priors.parquet")
+    required = {"player_id", PRIOR_MEAN_COLUMN, "prior_branch"}
+    missing = required - set(combined_priors)
+    if missing:
+        raise ValueError(f"Combined box-score priors missing columns: {sorted(missing)}")
+    frozen_priors = combined_priors.loc[:, ["player_id", PRIOR_MEAN_COLUMN]].rename(
+        columns={PRIOR_MEAN_COLUMN: "prior_rapm_mean"}
+    )
+    lagged_priors = pd.read_parquet(reference_root / "target_player_priors.parquet")
+    compared = frozen_priors.merge(
+        lagged_priors.loc[:, ["player_id", "prior_rapm_mean"]],
+        on="player_id",
+        how="outer",
+        suffixes=("_combined", "_lagged"),
+        validate="one_to_one",
+    )
+    equal_to_lagged = bool(
+        len(compared) == len(frozen_priors)
+        and compared[["prior_rapm_mean_combined", "prior_rapm_mean_lagged"]]
+        .notna()
+        .all()
+        .all()
+        and np.allclose(
+            compared["prior_rapm_mean_combined"],
+            compared["prior_rapm_mean_lagged"],
+        )
+    )
+    evaluation = run_frozen_lagged_evaluation(
+        season=target_season,
+        prior_run_dir=reference_root,
+        analytical_dir=analytical_dir,
+        curated_dir=curated_dir,
+        player_priors_override=frozen_priors,
+        source_state_overrides={
+            "prior_run_id": combined_metadata["run_id"],
+            "player_prior_method": "selected combined box-score and cold-start prior",
+            "combined_box_score_prior_run_id": combined_metadata["run_id"],
+            "combined_box_score_prior_manifest_sha256": _sha256_file(
+                combined_root / "manifest.json"
+            ),
+            "reference_lagged_prior_run_id": lagged_run_id,
+            "reference_lagged_prior_manifest_sha256": _sha256_file(
+                reference_root / "manifest.json"
+            ),
+            "selected_box_score_weight": combined_metadata["selected_box_score_weight"],
+            "prior_vector_equals_lagged": equal_to_lagged,
+            "prior_branch_counts": combined_metadata["prior_branch_counts"],
+        },
+        evaluation_model="frozen_combined_box_score_prior",
+    )
+    return _write_run(
+        evaluation,
+        prior_root=combined_root,
+        analytical_dir=Path(analytical_dir),
+        curated_dir=Path(curated_dir),
+        artifacts_dir=artifact_root,
+        run_prefix="frozen-combined-box-score-prior",
+        manifest_model="frozen_combined_box_score_prior",
+    )
+
+
+def draft_cold_start_prior_frame(
+    lagged_priors: pd.DataFrame,
+    draft_rankings: pd.DataFrame,
+) -> pd.DataFrame:
+    """Replace only first-NBA-season zero priors with frozen draft-prior values."""
+
+    lagged_required = {"player_id", "prior_rapm_mean", "prior_available"}
+    ranking_required = {"player_id", "draft_prior"}
+    missing_lagged = lagged_required - set(lagged_priors)
+    missing_rankings = ranking_required - set(draft_rankings)
+    if missing_lagged or missing_rankings:
+        raise ValueError(
+            "Draft cold-start inputs missing columns: "
+            f"lagged={sorted(missing_lagged)}, rankings={sorted(missing_rankings)}"
+        )
+    if (
+        lagged_priors["player_id"].duplicated().any()
+        or draft_rankings["player_id"].duplicated().any()
+    ):
+        raise ValueError("Draft cold-start inputs contain duplicate players")
+    forbidden = _FORBIDDEN_EXTERNAL_PRIOR_COLUMNS & set(draft_rankings)
+    if forbidden:
+        raise ValueError(f"Draft rankings contain target outcomes: {sorted(forbidden)}")
+    draft = draft_rankings.loc[:, ["player_id", "draft_prior"]].copy()
+    draft["player_id"] = pd.to_numeric(draft["player_id"], errors="raise").astype(int)
+    draft["draft_prior"] = pd.to_numeric(draft["draft_prior"], errors="raise")
+    if not np.isfinite(draft["draft_prior"].to_numpy(dtype=float)).all():
+        raise ValueError("Draft rankings contain non-finite prior values")
+    output = lagged_priors.loc[:, ["player_id", "prior_rapm_mean", "prior_available"]].copy()
+    output["player_id"] = pd.to_numeric(output["player_id"], errors="raise").astype(int)
+    output = output.merge(draft, on="player_id", how="left", validate="one_to_one")
+    matched = output["draft_prior"].notna()
+    returning = output["prior_available"].astype(bool)
+    if (matched & returning).any():
+        raise ValueError("Draft rankings overlap players with a lagged RAPM prior")
+    if len(draft) != int(matched.sum()):
+        raise ValueError("Draft rankings include players absent from the frozen prior universe")
+    output["prior_branch"] = np.select(
+        [returning, matched],
+        ["lagged_rapm", "draft_cold_start"],
+        default="zero_cold_start",
+    )
+    output.loc[matched, "prior_rapm_mean"] = output.loc[matched, "draft_prior"]
+    return output.drop(columns="draft_prior").sort_values("player_id", kind="stable").reset_index(
+        drop=True
+    )
+
+
+def train_frozen_draft_cold_start_prior_evaluation(
+    *,
+    season: str = DEFAULT_SEASON,
+    draft_run_id: str | None = None,
+    reference_prior_run_id: str | None = None,
+    analytical_dir: Path | str = Path("data/analytical"),
+    curated_dir: Path | str = Path("data/curated"),
+    artifacts_dir: Path | str = DEFAULT_ARTIFACTS_DIR,
+) -> tuple[FrozenPriorEvaluationManifest, Path]:
+    """Evaluate a draft-informed replacement for the frozen zero cold-start prior."""
+
+    target_season = validate_season(season)
+    artifact_root = Path(artifacts_dir)
+    reference_root = _resolve_run(
+        artifact_root / "prior_rapm" / target_season,
+        reference_prior_run_id,
+    )
+    reference_metadata = _validate_forward_prior_run(reference_root, target_season)
+    draft_root = _resolve_run(artifact_root / "draft_prior" / target_season, draft_run_id)
+    draft_metadata = validate_draft_prior_study(draft_root)
+    if draft_metadata.get("target_season") != target_season:
+        raise ValueError("Draft-prior target season does not match frozen evaluation")
+    if draft_metadata.get("training_last_season") != _previous_season(target_season):
+        raise ValueError("Draft-prior study does not end with the source season")
+    if draft_metadata.get("target_outcomes_used_for_fit") is not False:
+        raise ValueError("Draft-prior study uses target-season outcomes")
+    lagged_priors = pd.read_parquet(reference_root / "target_player_priors.parquet")
+    draft_rankings = pd.read_parquet(draft_root / "rookie_rankings.parquet")
+    draft_priors = draft_cold_start_prior_frame(lagged_priors, draft_rankings)
+    branch_counts = draft_priors.groupby("prior_branch").size().to_dict()
+    evaluation = run_frozen_lagged_evaluation(
+        season=target_season,
+        prior_run_dir=reference_root,
+        analytical_dir=analytical_dir,
+        curated_dir=curated_dir,
+        player_priors_override=draft_priors,
+        source_state_overrides={
+            "prior_run_id": draft_metadata["run_id"],
+            "player_prior_method": (
+                "2024-25-or-earlier draft-profile ridge for first-NBA-season players; "
+                "otherwise completed 2024-25 regular-only lagged RAPM or zero cold start"
+            ),
+            "cold_start_prior": "draft profile for first-NBA-season players; zero otherwise",
+            "draft_prior_run_id": draft_metadata["run_id"],
+            "draft_prior_manifest_sha256": _sha256_file(draft_root / "manifest.json"),
+            "draft_prior_training_last_season": draft_metadata["training_last_season"],
+            "draft_prior_selected_regularization": draft_metadata["selected_regularization"],
+            "reference_lagged_prior_run_id": str(reference_metadata["run_id"]),
+            "reference_lagged_prior_manifest_sha256": _sha256_file(
+                reference_root / "manifest.json"
+            ),
+            "prior_branch_counts": branch_counts,
+        },
+        evaluation_model="frozen_draft_cold_start_prior",
+    )
+    return _write_run(
+        evaluation,
+        prior_root=draft_root,
+        analytical_dir=Path(analytical_dir),
+        curated_dir=Path(curated_dir),
+        artifacts_dir=artifact_root,
+        run_prefix="frozen-draft-cold-start-prior",
+        manifest_model="frozen_draft_cold_start_prior",
+    )
+
+
+def exposure_gated_cold_start_prior_frame(
+    lagged_priors: pd.DataFrame,
+    revised_rankings: pd.DataFrame,
+) -> pd.DataFrame:
+    """Replace first-year zero priors with the continuous exposure-gated blend."""
+
+    lagged_required = {"player_id", "prior_rapm_mean", "prior_available"}
+    ranking_required = {"player_id", "blended_cold_start_prior"}
+    missing_lagged = lagged_required - set(lagged_priors)
+    missing_rankings = ranking_required - set(revised_rankings)
+    if missing_lagged or missing_rankings:
+        raise ValueError(
+            "Exposure-gated cold-start inputs missing columns: "
+            f"lagged={sorted(missing_lagged)}, rankings={sorted(missing_rankings)}"
+        )
+    if (
+        lagged_priors["player_id"].duplicated().any()
+        or revised_rankings["player_id"].duplicated().any()
+    ):
+        raise ValueError("Exposure-gated cold-start inputs contain duplicate players")
+    forbidden = _FORBIDDEN_EXTERNAL_PRIOR_COLUMNS & set(revised_rankings)
+    if forbidden:
+        raise ValueError(f"Exposure-gated rankings contain target outcomes: {sorted(forbidden)}")
+    gated = revised_rankings.loc[:, ["player_id", "blended_cold_start_prior"]].copy()
+    gated["player_id"] = pd.to_numeric(gated["player_id"], errors="raise").astype(int)
+    gated["blended_cold_start_prior"] = pd.to_numeric(
+        gated["blended_cold_start_prior"], errors="raise"
+    )
+    if not np.isfinite(gated["blended_cold_start_prior"].to_numpy(dtype=float)).all():
+        raise ValueError("Exposure-gated rankings contain non-finite prior values")
+    output = lagged_priors.loc[:, ["player_id", "prior_rapm_mean", "prior_available"]].copy()
+    output["player_id"] = pd.to_numeric(output["player_id"], errors="raise").astype(int)
+    output = output.merge(gated, on="player_id", how="left", validate="one_to_one")
+    matched = output["blended_cold_start_prior"].notna()
+    returning = output["prior_available"].astype(bool)
+    if (matched & returning).any():
+        raise ValueError("Exposure-gated rankings overlap players with a lagged RAPM prior")
+    if len(gated) != int(matched.sum()):
+        raise ValueError(
+            "Exposure-gated rankings include players absent from frozen prior universe"
+        )
+    output["prior_branch"] = np.select(
+        [returning, matched],
+        ["lagged_rapm", "exposure_gated_cold_start"],
+        default="zero_cold_start",
+    )
+    output.loc[matched, "prior_rapm_mean"] = output.loc[matched, "blended_cold_start_prior"]
+    return output.drop(columns="blended_cold_start_prior").sort_values(
+        "player_id", kind="stable"
+    ).reset_index(drop=True)
+
+
+def train_frozen_exposure_gated_cold_start_prior_evaluation(
+    *,
+    season: str = DEFAULT_SEASON,
+    exposure_gated_run_id: str | None = None,
+    reference_prior_run_id: str | None = None,
+    analytical_dir: Path | str = Path("data/analytical"),
+    curated_dir: Path | str = Path("data/curated"),
+    artifacts_dir: Path | str = DEFAULT_ARTIFACTS_DIR,
+) -> tuple[FrozenPriorEvaluationManifest, Path]:
+    """Evaluate the continuous replacement/draft cold-start blend as a frozen prior."""
+
+    target_season = validate_season(season)
+    artifact_root = Path(artifacts_dir)
+    reference_root = _resolve_run(
+        artifact_root / "prior_rapm" / target_season,
+        reference_prior_run_id,
+    )
+    reference_metadata = _validate_forward_prior_run(reference_root, target_season)
+    gated_root = _resolve_run(
+        artifact_root / "exposure_gated_cold_start" / target_season,
+        exposure_gated_run_id,
+    )
+    gated_metadata = validate_exposure_gated_cold_start_prior(gated_root)
+    if gated_metadata.get("target_season") != target_season:
+        raise ValueError("Exposure-gated cold-start target season does not match evaluation")
+    if gated_metadata.get("source_season") != _previous_season(target_season):
+        raise ValueError("Exposure-gated cold-start prior does not end with the source season")
+    if gated_metadata.get("target_outcomes_used_for_fit") is not False:
+        raise ValueError("Exposure-gated cold-start prior uses target-season outcomes")
+    lagged_priors = pd.read_parquet(reference_root / "target_player_priors.parquet")
+    revised_rankings = pd.read_parquet(gated_root / "revised_rookie_rankings.parquet")
+    frozen_priors = exposure_gated_cold_start_prior_frame(lagged_priors, revised_rankings)
+    branch_counts = frozen_priors.groupby("prior_branch").size().to_dict()
+    evaluation = run_frozen_lagged_evaluation(
+        season=target_season,
+        prior_run_dir=reference_root,
+        analytical_dir=analytical_dir,
+        curated_dir=curated_dir,
+        player_priors_override=frozen_priors,
+        source_state_overrides={
+            "prior_run_id": gated_metadata["run_id"],
+            "player_prior_method": (
+                "2024-25-or-earlier draft rate blended continuously with a 2024-25-or-earlier "
+                "pooled replacement token for first-NBA-season players; otherwise lagged RAPM"
+            ),
+            "cold_start_prior": "exposure-gated draft/replacement blend for first-year players",
+            "exposure_gated_cold_start_run_id": gated_metadata["run_id"],
+            "exposure_gated_cold_start_manifest_sha256": _sha256_file(
+                gated_root / "manifest.json"
+            ),
+            "replacement_rapm": gated_metadata["replacement_rapm"],
+            "reference_lagged_prior_run_id": str(reference_metadata["run_id"]),
+            "reference_lagged_prior_manifest_sha256": _sha256_file(
+                reference_root / "manifest.json"
+            ),
+            "prior_branch_counts": branch_counts,
+        },
+        evaluation_model="frozen_exposure_gated_cold_start_prior",
+    )
+    return _write_run(
+        evaluation,
+        prior_root=gated_root,
+        analytical_dir=Path(analytical_dir),
+        curated_dir=Path(curated_dir),
+        artifacts_dir=artifact_root,
+        run_prefix="frozen-exposure-gated-cold-start-prior",
+        manifest_model="frozen_exposure_gated_cold_start_prior",
     )
 
 
@@ -1078,7 +1417,10 @@ def _write_run(
     artifacts_dir: Path,
     run_prefix: str = "frozen-lagged-prior",
     manifest_model: Literal[
-        "frozen_regular_only_lagged_rapm", "frozen_aging_prior"
+        "frozen_regular_only_lagged_rapm",
+        "frozen_aging_prior",
+        "frozen_combined_box_score_prior",
+        "frozen_draft_cold_start_prior",
     ] = "frozen_regular_only_lagged_rapm",
 ) -> tuple[FrozenPriorEvaluationManifest, Path]:
     now = datetime.now(UTC)
@@ -1239,6 +1581,44 @@ def build_aging_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_combined_box_score_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Evaluate a pre-season frozen combined box-score prior."
+    )
+    parser.add_argument("--season", default=DEFAULT_SEASON)
+    parser.add_argument("--combined-run-id")
+    parser.add_argument("--analytical-dir", default="data/analytical")
+    parser.add_argument("--curated-dir", default="data/curated")
+    parser.add_argument("--artifacts-dir", default=str(DEFAULT_ARTIFACTS_DIR))
+    return parser
+
+
+def build_draft_cold_start_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Evaluate a pre-season frozen draft-informed cold-start prior."
+    )
+    parser.add_argument("--season", default=DEFAULT_SEASON)
+    parser.add_argument("--draft-run-id")
+    parser.add_argument("--reference-prior-run-id")
+    parser.add_argument("--analytical-dir", default="data/analytical")
+    parser.add_argument("--curated-dir", default="data/curated")
+    parser.add_argument("--artifacts-dir", default=str(DEFAULT_ARTIFACTS_DIR))
+    return parser
+
+
+def build_exposure_gated_cold_start_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Evaluate a frozen exposure-gated cold-start prior."
+    )
+    parser.add_argument("--season", default=DEFAULT_SEASON)
+    parser.add_argument("--exposure-gated-run-id")
+    parser.add_argument("--reference-prior-run-id")
+    parser.add_argument("--analytical-dir", default="data/analytical")
+    parser.add_argument("--curated-dir", default="data/curated")
+    parser.add_argument("--artifacts-dir", default=str(DEFAULT_ARTIFACTS_DIR))
+    return parser
+
+
 def main() -> None:
     args = build_parser().parse_args()
     manifest, run_dir = train_frozen_lagged_prior_evaluation(
@@ -1276,6 +1656,71 @@ def aging_main() -> None:
     tracking_text = f"; mlflow_run_id={tracking.mlflow_run_id}" if tracking else ""
     print(
         f"Frozen aging-prior evaluation: season={manifest.season}, "
+        f"regular_games={manifest.regular_game_count}, "
+        f"playoff_games={manifest.playoff_game_count}, "
+        f"teams={manifest.team_count}; run={run_dir}{tracking_text}"
+    )
+
+
+def combined_box_score_main() -> None:
+    args = build_combined_box_score_parser().parse_args()
+    manifest, run_dir = train_frozen_combined_box_score_prior_evaluation(
+        season=args.season,
+        combined_run_id=args.combined_run_id,
+        analytical_dir=args.analytical_dir,
+        curated_dir=args.curated_dir,
+        artifacts_dir=args.artifacts_dir,
+    )
+    from nba_lineup_model.tracking import track_completed_run
+
+    tracking = track_completed_run(run_dir)
+    tracking_text = f"; mlflow_run_id={tracking.mlflow_run_id}" if tracking else ""
+    print(
+        f"Frozen combined box-score-prior evaluation: season={manifest.season}, "
+        f"regular_games={manifest.regular_game_count}, "
+        f"playoff_games={manifest.playoff_game_count}, "
+        f"teams={manifest.team_count}; run={run_dir}{tracking_text}"
+    )
+
+
+def draft_cold_start_main() -> None:
+    args = build_draft_cold_start_parser().parse_args()
+    manifest, run_dir = train_frozen_draft_cold_start_prior_evaluation(
+        season=args.season,
+        draft_run_id=args.draft_run_id,
+        reference_prior_run_id=args.reference_prior_run_id,
+        analytical_dir=args.analytical_dir,
+        curated_dir=args.curated_dir,
+        artifacts_dir=args.artifacts_dir,
+    )
+    from nba_lineup_model.tracking import track_completed_run
+
+    tracking = track_completed_run(run_dir)
+    tracking_text = f"; mlflow_run_id={tracking.mlflow_run_id}" if tracking else ""
+    print(
+        f"Frozen draft-cold-start evaluation: season={manifest.season}, "
+        f"regular_games={manifest.regular_game_count}, "
+        f"playoff_games={manifest.playoff_game_count}, "
+        f"teams={manifest.team_count}; run={run_dir}{tracking_text}"
+    )
+
+
+def exposure_gated_cold_start_main() -> None:
+    args = build_exposure_gated_cold_start_parser().parse_args()
+    manifest, run_dir = train_frozen_exposure_gated_cold_start_prior_evaluation(
+        season=args.season,
+        exposure_gated_run_id=args.exposure_gated_run_id,
+        reference_prior_run_id=args.reference_prior_run_id,
+        analytical_dir=args.analytical_dir,
+        curated_dir=args.curated_dir,
+        artifacts_dir=args.artifacts_dir,
+    )
+    from nba_lineup_model.tracking import track_completed_run
+
+    tracking = track_completed_run(run_dir)
+    tracking_text = f"; mlflow_run_id={tracking.mlflow_run_id}" if tracking else ""
+    print(
+        f"Frozen exposure-gated cold-start evaluation: season={manifest.season}, "
         f"regular_games={manifest.regular_game_count}, "
         f"playoff_games={manifest.playoff_game_count}, "
         f"teams={manifest.team_count}; run={run_dir}{tracking_text}"

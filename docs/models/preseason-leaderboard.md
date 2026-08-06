@@ -57,6 +57,54 @@ defensive columns. It fits forward regular-only O/D states from 1996-97 through
 See [Offense/Defense RAPM](offense-defense-rapm.md) for the exact equations and
 identification convention.
 
+### Frozen Combined Box-Score Candidate
+
+The existing complete box-score/cold-start prior was also evaluated under this
+strict frozen contract. Its earlier in-season lineup-level selection chose a
+box-score blend weight of zero. Consequently, its 582 published player priors
+are exactly equal to the frozen lagged-RAPM vector. The dedicated frozen run
+confirms exact equality across regular-season and playoff possession metrics,
+team NetRtg, and Pythagorean wins. It is therefore not repeated in the primary
+metric tables as a distinct candidate.
+
+### Frozen Draft Cold-Start Candidate
+
+The draft-cold-start candidate keeps the completed 2024-25 lagged-RAPM vector
+for 462 returning players and the neutral zero prior for 20 other no-prior
+players. It replaces only 100 first-NBA-season zero priors with the
+draft-profile ridge estimates fit through 2024-25. This is a direct frozen
+ablation, not a recursive historical RAPM refit. It therefore isolates whether
+the draft profile improves the zero cold-start default on the exact same oracle
+lineups and exposure. The current specification includes a normalized-pick by
+historical-median-centered draft-age interaction.
+
+### Frozen Exposure-Gated Cold-Start Candidate
+
+The exposure-gated candidate keeps the same 462 returning-player lagged RAPM
+values and 20 zero-prior players. For the 100 first-NBA-season players, it
+continuously blends the frozen draft-rate estimate with the pooled 1996-97 to
+2024-25 replacement-token estimate using the player-specific probability of
+finishing below 5% of team possession opportunities. See
+[Exposure-Gated Cold-Start Prior](exposure-gated-cold-start.md) for the
+component contract and revised rookie rankings.
+
+### Frozen Exposure-Gated O/D Cold-Start Candidate
+
+This candidate keeps the frozen 2024-25 O/D state for returning players. For
+the same 100 first-NBA-season players, it replaces missing O/D values with
+separately blended offense and defense draft-rate/replacement-token priors.
+The first-year exposure-gate probability is shared across sides, but the rate
+and replacement components are independently estimated by side. See
+[Exposure-Gated O/D Cold Starts](exposure-gated-offense-defense.md).
+
+### Recursive Exposure-Gated Candidate
+
+This candidate rebuilds the one-number exposure-gated state season by season,
+using only earlier regular seasons for every historical cold-start component.
+It is the production-state candidate, while the simpler frozen blend remains
+the regular-season metric leader on this single target holdout. See [Forward
+Exposure-Gated RAPM](forward-exposure-gated-rapm.md).
+
 ## Possession And Game Results
 
 Regular season and playoffs are evaluated separately. Possession metrics use
@@ -66,12 +114,20 @@ the home-team frame.
 
 | Model | Cohort | Games | Possessions | Possession RMSE | Possession MAE | Game-margin RMSE | Possession skill vs frozen mean | Game skill vs frozen mean |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Frozen lagged RAPM | Regular season | 1,230 | 218,810 | 1.199000 | **1.142154** | **14.8894** | 0.0805% | **11.5905%** |
+| Frozen lagged RAPM | Regular season | 1,230 | 218,810 | 1.199000 | 1.142154 | 14.8894 | 0.0805% | 11.5905% |
 | Frozen aging prior | Regular season | 1,230 | 218,810 | 1.199062 | 1.142736 | 15.0203 | 0.0702% | 10.0297% |
 | Frozen O/D RAPM | Regular season | 1,230 | 218,810 | **1.198853** | 1.142664 | 14.8901 | **0.1092%** | 11.5692% |
+| Frozen draft cold-start prior | Regular season | 1,230 | 218,810 | 1.198986 | 1.142088 | 14.8590 | 0.0829% | 11.9512% |
+| Frozen exposure-gated cold-start prior | Regular season | 1,230 | 218,810 | 1.198952 | **1.141943** | **14.7413** | 0.0886% | **13.3410%** |
+| Frozen exposure-gated O/D cold-start prior | Regular season | 1,230 | 218,810 | **1.198792** | 1.142422 | 14.7631 | **0.1193%** | 13.0714% |
+| Recursive exposure-gated RAPM | Regular season | 1,230 | 218,810 | 1.198993 | 1.142055 | 14.8225 | 0.0817% | 12.3830% |
 | Frozen lagged RAPM | Playoffs | 85 | 14,253 | 1.192895 | **1.136163** | 17.5409 | -0.0774% | -9.6446% |
 | Frozen aging prior | Playoffs | 85 | 14,253 | **1.192332** | 1.136455 | **16.4946** | **0.0170%** | **3.0460%** |
 | Frozen O/D RAPM | Playoffs | 85 | 14,253 | 1.194642 | 1.139203 | 17.8037 | -0.3924% | -12.9804% |
+| Frozen draft cold-start prior | Playoffs | 85 | 14,253 | 1.192971 | 1.136187 | 17.6339 | -0.0901% | -10.8093% |
+| Frozen exposure-gated cold-start prior | Playoffs | 85 | 14,253 | 1.192980 | 1.136174 | 17.6725 | -0.0917% | -11.2952% |
+| Frozen exposure-gated O/D cold-start prior | Playoffs | 85 | 14,253 | 1.194678 | 1.139209 | 17.8562 | -0.3984% | -13.6482% |
+| Recursive exposure-gated RAPM | Playoffs | 85 | 14,253 | 1.192821 | **1.136096** | 17.4188 | -0.0649% | -8.1231% |
 
 Bolding marks the better value within each cohort and metric. Future frozen
 priors must use these exact cohorts.
@@ -85,9 +141,13 @@ team margins are then summed and divided by team possessions.
 
 | Model | Teams | Net-rating RMSE | Net-rating MAE | Pearson correlation | Spearman correlation |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Frozen lagged RAPM | 30 | **4.8538** | 3.9606 | 0.6113 | 0.5493 |
+| Frozen lagged RAPM | 30 | 4.8538 | 3.9606 | 0.6113 | 0.5493 |
 | Frozen aging prior | 30 | 5.0366 | 4.2395 | **0.6484** | **0.6111** |
-| Frozen O/D RAPM | 30 | 4.8740 | **3.9380** | 0.6113 | 0.5626 |
+| Frozen O/D RAPM | 30 | 4.8740 | 3.9380 | 0.6113 | 0.5626 |
+| Frozen draft cold-start prior | 30 | 4.8473 | 3.8653 | 0.6163 | 0.5528 |
+| Frozen exposure-gated cold-start prior | 30 | **4.6989** | **3.6020** | 0.6480 | 0.5844 |
+| Frozen exposure-gated O/D cold-start prior | 30 | 4.7113 | 3.6999 | 0.6454 | 0.6018 |
+| Recursive exposure-gated RAPM | 30 | **4.6680** | 3.8199 | 0.6471 | **0.6236** |
 
 ## Team Win Totals
 
@@ -119,9 +179,13 @@ error below also includes error in the preseason NetRtg prediction itself.
 
 | Model | Teams | Win-total RMSE | Win-total MAE | Win-percentage RMSE | Spearman correlation |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Frozen lagged RAPM | 30 | **10.7006** | **8.9333** | **0.1305** | 0.6238 |
-| Frozen aging prior | 30 | 10.9632 | 9.6337 | 0.1337 | **0.6394** |
+| Frozen lagged RAPM | 30 | 10.7006 | 8.9333 | 0.1305 | 0.6238 |
+| Frozen aging prior | 30 | 10.9632 | 9.6337 | 0.1337 | 0.6394 |
 | Frozen O/D RAPM | 30 | 10.9640 | 8.9734 | 0.1337 | 0.6078 |
+| Frozen draft cold-start prior | 30 | 10.6718 | 8.7037 | 0.1301 | 0.6245 |
+| Frozen exposure-gated cold-start prior | 30 | **10.2466** | **8.0307** | **0.1250** | **0.6586** |
+| Frozen exposure-gated O/D cold-start prior | 30 | 10.5096 | 8.4409 | 0.1282 | 0.6483 |
+| Recursive exposure-gated RAPM | 30 | 10.2778 | 8.4776 | 0.1253 | **0.6829** |
 
 As a diagnostic, the artifact also retains the raw count obtained by awarding
 each game to the team with the positive predicted margin. That deterministic
@@ -192,3 +256,29 @@ the mean/home-court terms and the 2025-26 aging-prior artifact.
 The O/D candidate is
 `frozen-offense-defense-rapm-2025-26-20260805T050511Z-62b718bd` under
 `artifacts/models/frozen_offense_defense_rapm/2025-26/`.
+
+The completed combined box-score/cold-start audit is
+`frozen-combined-box-score-prior-2025-26-20260805T163038Z-8d11217e` in the
+frozen-prior artifact directory. Its source state pins combined run
+`combined-box-score-prior-rapm-2025-26-20260804T215544Z-1b4294e3`, records the
+selected zero box-score weight, and declares `prior_vector_equals_lagged: true`.
+
+The draft-cold-start ablation is
+`frozen-draft-cold-start-prior-2025-26-20260806T001516Z-bd7be959` in the same
+frozen-prior directory. Its source state pins the draft study, records the
+strict 2024-25 cutoff, and declares 462 `lagged_rapm`, 100
+`draft_cold_start`, and 20 `zero_cold_start` player branches.
+
+The exposure-gated cold-start evaluation is
+`frozen-exposure-gated-cold-start-prior-2025-26-20260806T015348Z-089d2a36` in
+the same directory. Its source state records the immutable draft-rate,
+exposure-gate, and 2024-25-cutoff replacement-token inputs, and declares 462
+`lagged_rapm`, 100 `exposure_gated_cold_start`, and 20 `zero_cold_start`
+player branches.
+
+The exposure-gated O/D cold-start evaluation is
+`exposure-gated-od-2025-26-20260806T023559Z-4ffeb2bc` under
+`artifacts/models/exposure_gated_offense_defense/2025-26/`. Its source state
+pins the 2024-25 O/D source and exposure-gate artifacts, separately records
+the 29-season offense and defense replacement-token means, and declares that
+no 2025-26 outcomes formed the prior.

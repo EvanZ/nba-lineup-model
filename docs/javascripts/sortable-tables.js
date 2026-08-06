@@ -7,8 +7,19 @@
 
   function sortTable(table, column, direction) {
     const body = table.tBodies[0];
+    const header = table.tHead.rows[0].cells[column].textContent.trim();
+    const isPickColumn = header.toLocaleLowerCase() === "pick";
     const rows = [...body.rows].map((row, index) => ({ row, index }));
     rows.sort((left, right) => {
+      const leftText = left.row.cells[column].textContent.trim();
+      const rightText = right.row.cells[column].textContent.trim();
+      const leftIsUndrafted = isPickColumn && leftText === "-";
+      const rightIsUndrafted = isPickColumn && rightText === "-";
+
+      if (leftIsUndrafted !== rightIsUndrafted) {
+        return leftIsUndrafted ? 1 : -1;
+      }
+
       const leftValue = value(left.row.cells[column]);
       const rightValue = value(right.row.cells[column]);
       if (leftValue === rightValue) return left.index - right.index;
@@ -20,15 +31,38 @@
     rows.forEach(({ row }) => body.append(row));
   }
 
+  function nearestHeading(table) {
+    const content = table.closest(".md-typeset") ?? document;
+    let latest;
+    content.querySelectorAll("h1, h2, h3, h4").forEach((heading) => {
+      if (heading.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING) {
+        latest = heading;
+      }
+    });
+    return latest?.textContent.trim() ?? "";
+  }
+
+  function isRankingTable(table) {
+    const headerRow = table.tHead?.rows[0];
+    if (!headerRow || !table.tBodies[0]) return false;
+
+    const headers = [...headerRow.cells].map((header) => header.textContent.trim());
+    return headers.some((header) => /\brank\b/i.test(header))
+      || /\brankings?\b/i.test(nearestHeading(table));
+  }
+
   function enhance(table) {
-    if (table.dataset.sortableInitialized) return;
+    const headerRow = table.tHead?.rows[0];
+    if (!headerRow || !table.tBodies[0] || table.dataset.sortableInitialized) return;
+
     table.dataset.sortableInitialized = "true";
     table.classList.add("sortable-ranking-table");
-    [...table.tHead.rows[0].cells].forEach((header, column) => {
+    [...headerRow.cells].forEach((header, column) => {
       const label = header.textContent.trim();
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = label;
+      button.title = `Sort by ${label}`;
       button.setAttribute("aria-label", `Sort by ${label}`);
       button.setAttribute("aria-sort", "none");
       button.addEventListener("click", () => {
@@ -44,10 +78,8 @@
   }
 
   function initialize(root = document) {
-    root.querySelectorAll("h3").forEach((heading) => {
-      if (!heading.textContent.trim().startsWith("Top 25 ")) return;
-      const table = heading.nextElementSibling;
-      if (table?.tagName === "TABLE") enhance(table);
+    root.querySelectorAll("table").forEach((table) => {
+      if (isRankingTable(table)) enhance(table);
     });
   }
 

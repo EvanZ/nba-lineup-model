@@ -62,5 +62,14 @@ uv run --group docs zensical build --clean --strict
 | `src/nba_lineup_model/` | Python API source consumed by MkDocstrings |
 | `site/` | Generated static site |
 
+## Sortable rankings
+
+Ranking tables are enhanced by `docs/javascripts/sortable-tables.js` at page
+load. Any table with a rank-style column heading, or located under a heading
+containing "ranking", receives sortable column headers automatically. Keep
+the source table as ordinary Markdown; no per-page HTML or JavaScript is
+required. In draft tables, an undrafted `Pick` value (`-`) remains after all
+numeric draft picks in either sort direction.
+
 Before committing documentation changes, run the strict build and inspect the
 affected pages in the preview server.

@@ -18,6 +18,8 @@ class PlayerStatsEndpoint(StrEnum):
 
     PLAYER_INDEX = "playerindex"
     PLAYER_BIO_STATS = "leaguedashplayerbiostats"
+    DRAFT_HISTORY = "drafthistory"
+    TEAM_ROSTER = "commonteamroster"
 
 
 class PlayerStatsError(RuntimeError):
@@ -32,6 +34,7 @@ class PlayerStatsResponse(BaseModel):
     endpoint: PlayerStatsEndpoint
     season: str
     season_type: str | None = None
+    team_id: int | None = None
     params: dict[str, str]
     url: str
     fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -47,6 +50,7 @@ class PlayerStatsCacheMetadata(BaseModel):
     endpoint: PlayerStatsEndpoint
     season: str
     season_type: str | None = None
+    team_id: int | None = None
     params: dict[str, str]
     url: str
     fetched_at: datetime
@@ -64,12 +68,21 @@ class PlayerStatsCache:
         endpoint: PlayerStatsEndpoint,
         season: str,
         season_type: str | None = None,
+        team_id: int | None = None,
     ) -> Path:
         season = validate_season(season)
-        if endpoint is PlayerStatsEndpoint.PLAYER_INDEX:
-            if season_type is not None:
-                raise ValueError("Player index cache paths do not use season type")
+        if endpoint in {PlayerStatsEndpoint.PLAYER_INDEX, PlayerStatsEndpoint.DRAFT_HISTORY}:
+            if season_type is not None or team_id is not None:
+                raise ValueError(
+                    "Player index and Draft History cache paths do not use extra scope"
+                )
             return self.root / endpoint.value / f"{season}.json"
+        if endpoint is PlayerStatsEndpoint.TEAM_ROSTER:
+            if season_type is not None or team_id is None or team_id <= 0:
+                raise ValueError("Team roster cache paths require a positive team ID")
+            return self.root / endpoint.value / season / f"{team_id}.json"
+        if team_id is not None:
+            raise ValueError("Player bio cache paths do not use team ID")
         if not season_type:
             raise ValueError("Player bio cache paths require season type")
         return self.root / endpoint.value / season / f"{season_type}.json"
@@ -79,21 +92,23 @@ class PlayerStatsCache:
         endpoint: PlayerStatsEndpoint,
         season: str,
         season_type: str | None = None,
+        team_id: int | None = None,
     ) -> Path:
-        return self.path_for(endpoint, season, season_type).with_suffix(".meta.json")
+        return self.path_for(endpoint, season, season_type, team_id).with_suffix(".meta.json")
 
     def read(
         self,
         endpoint: PlayerStatsEndpoint,
         season: str,
         season_type: str | None,
+        team_id: int | None = None,
         *,
         expected_params: dict[str, str],
     ) -> PlayerStatsResponse | None:
-        path = self.path_for(endpoint, season, season_type)
+        path = self.path_for(endpoint, season, season_type, team_id)
         if not path.exists():
             return None
-        metadata_path = self.metadata_path_for(endpoint, season, season_type)
+        metadata_path = self.metadata_path_for(endpoint, season, season_type, team_id)
         if not metadata_path.exists():
             raise PlayerStatsError(f"Cached player response lacks metadata: {path}")
         raw_body = path.read_bytes()
@@ -104,6 +119,7 @@ class PlayerStatsCache:
             metadata.endpoint != endpoint
             or metadata.season != season
             or metadata.season_type != season_type
+            or metadata.team_id != team_id
         ):
             raise PlayerStatsError(f"Cached player metadata does not match path: {path}")
         if metadata.params != expected_params:
@@ -124,6 +140,7 @@ class PlayerStatsCache:
             endpoint=endpoint,
             season=season,
             season_type=season_type,
+            team_id=team_id,
             params=metadata.params,
             url=metadata.url,
             fetched_at=metadata.fetched_at,
@@ -136,6 +153,7 @@ class PlayerStatsCache:
             response.endpoint,
             response.season,
             response.season_type,
+            response.team_id,
         )
         path.parent.mkdir(parents=True, exist_ok=True)
         raw_body = response.raw_body
@@ -150,6 +168,7 @@ class PlayerStatsCache:
             endpoint=response.endpoint,
             season=response.season,
             season_type=response.season_type,
+            team_id=response.team_id,
             params=response.params,
             url=response.url,
             fetched_at=response.fetched_at,
@@ -161,6 +180,7 @@ class PlayerStatsCache:
                 response.endpoint,
                 response.season,
                 response.season_type,
+                response.team_id,
             ),
         )
         return path
@@ -239,6 +259,44 @@ class PlayerStatsClient:
             use_cache=use_cache,
         )
 
+    def fetch_draft_history(
+        self,
+        season: str,
+        *,
+        use_cache: bool = True,
+    ) -> PlayerStatsResponse:
+        """Fetch one NBA Draft class directly from the NBA Stats endpoint."""
+
+        season = validate_season(season)
+        return self._fetch(
+            PlayerStatsEndpoint.DRAFT_HISTORY,
+            season,
+            None,
+            _draft_history_params(season),
+            use_cache=use_cache,
+        )
+
+    def fetch_team_roster(
+        self,
+        season: str,
+        team_id: int,
+        *,
+        use_cache: bool = True,
+    ) -> PlayerStatsResponse:
+        """Fetch one active team roster directly from NBA Stats."""
+
+        season = validate_season(season)
+        if team_id <= 0:
+            raise ValueError("Team roster requires a positive team ID")
+        return self._fetch(
+            PlayerStatsEndpoint.TEAM_ROSTER,
+            season,
+            None,
+            _team_roster_params(season, team_id),
+            team_id=team_id,
+            use_cache=use_cache,
+        )
+
     def _fetch(
         self,
         endpoint: PlayerStatsEndpoint,
@@ -246,6 +304,7 @@ class PlayerStatsClient:
         season_type: str | None,
         params: dict[str, str],
         *,
+        team_id: int | None = None,
         use_cache: bool,
     ) -> PlayerStatsResponse:
         if use_cache:
@@ -253,6 +312,7 @@ class PlayerStatsClient:
                 endpoint,
                 season,
                 season_type,
+                team_id,
                 expected_params=params,
             )
             if cached is not None:
@@ -287,6 +347,7 @@ class PlayerStatsClient:
             endpoint=endpoint,
             season=season,
             season_type=season_type,
+            team_id=team_id,
             params=params,
             url=str(http_response.url),
             payload=payload,
@@ -351,6 +412,23 @@ def _player_bio_params(season: str, nba_season_type: str) -> dict[str, str]:
         "VsDivision": "",
         "Weight": "",
     }
+
+
+def _draft_history_params(season: str) -> dict[str, str]:
+    return {
+        "College": "",
+        "LeagueID": "00",
+        "OverallPick": "",
+        "RoundNum": "",
+        "RoundPick": "",
+        "Season": season[:4],
+        "TeamID": "0",
+        "TopX": "",
+    }
+
+
+def _team_roster_params(season: str, team_id: int) -> dict[str, str]:
+    return {"LeagueID": "00", "Season": season, "TeamID": str(team_id)}
 
 
 def _nba_season_type(season_type: str) -> str:

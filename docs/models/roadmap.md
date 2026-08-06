@@ -62,3 +62,32 @@ The two-stage forward aging model is implemented first because it makes the
 aging curve, target labels, uncertainty proxy, and leakage boundary directly
 inspectable.
 
+## Exposure-Gated Cold Starts
+
+The [pooled replacement-token study](replacement-token.md) establishes a
+retrospective low-exposure group effect. The [cold-start exposure gate](cold-start-exposure.md)
+estimates a preseason-only rotation probability for first-NBA-season players,
+and the [exposure-gated cold-start prior](exposure-gated-cold-start.md) now
+blends that token with the profile rate prior:
+
+\[
+\widehat{R}^{cold}_i =
+(1-p^{rotation}_i)R^{replacement}
++ p^{rotation}_i\widehat{R}^{profile}_i.
+\]
+
+The remaining limitation is candidate population: the gate conditions on a
+player appearing in the NBA data at least once. Add drafted players with zero
+NBA possessions before interpreting it as a full draft-to-rotation model.
+Then repeat the frozen comparison across future-season holdouts rather than
+promoting a single-season result.
+
+## O/D Exposure-Gated Cold Starts
+
+The initial [exposure-gated O/D cold-start model](exposure-gated-offense-defense.md)
+uses separate draft-rate and replacement-token estimates for offense and
+defense, while sharing the preseason probability of low exposure. Its 2025-26
+run is temporally clean: each component ends with 2024-25. The next extension
+is a rolling historical evaluator that re-estimates the gate, the two draft
+rate models, and the two replacement-token aggregates for every target season
+using only earlier seasons.

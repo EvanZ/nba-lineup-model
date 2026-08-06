@@ -8,10 +8,65 @@ from nba_lineup_model.modeling.frozen_prior_evaluation import (
     PythagoreanWinModel,
     _team_win_evaluation,
     _validate_external_frozen_priors,
+    draft_cold_start_prior_frame,
+    exposure_gated_cold_start_prior_frame,
     fit_pythagorean_win_model,
     score_frozen_possessions,
     score_possession_cohort,
 )
+
+
+def test_draft_cold_start_prior_replaces_only_zero_prior_first_year_players():
+    lagged = pd.DataFrame(
+        {
+            "player_id": [1, 2, 3],
+            "prior_rapm_mean": [4.0, 0.0, 0.0],
+            "prior_available": [True, False, False],
+        }
+    )
+    rankings = pd.DataFrame({"player_id": [2], "draft_prior": [-0.4]})
+
+    output = draft_cold_start_prior_frame(lagged, rankings).set_index("player_id")
+
+    assert output.loc[1, "prior_rapm_mean"] == 4.0
+    assert output.loc[2, "prior_rapm_mean"] == -0.4
+    assert output.loc[3, "prior_rapm_mean"] == 0.0
+    assert output["prior_branch"].to_dict() == {
+        1: "lagged_rapm",
+        2: "draft_cold_start",
+        3: "zero_cold_start",
+    }
+
+    with pytest.raises(ValueError, match="overlap"):
+        draft_cold_start_prior_frame(lagged, pd.DataFrame({"player_id": [1], "draft_prior": [1.0]}))
+
+
+def test_exposure_gated_cold_start_prior_replaces_only_zero_prior_first_year_players():
+    lagged = pd.DataFrame(
+        {
+            "player_id": [1, 2, 3],
+            "prior_rapm_mean": [4.0, 0.0, 0.0],
+            "prior_available": [True, False, False],
+        }
+    )
+    rankings = pd.DataFrame({"player_id": [2], "blended_cold_start_prior": [-2.1]})
+
+    output = exposure_gated_cold_start_prior_frame(lagged, rankings).set_index("player_id")
+
+    assert output.loc[1, "prior_rapm_mean"] == 4.0
+    assert output.loc[2, "prior_rapm_mean"] == -2.1
+    assert output.loc[3, "prior_rapm_mean"] == 0.0
+    assert output["prior_branch"].to_dict() == {
+        1: "lagged_rapm",
+        2: "exposure_gated_cold_start",
+        3: "zero_cold_start",
+    }
+
+    with pytest.raises(ValueError, match="overlap"):
+        exposure_gated_cold_start_prior_frame(
+            lagged,
+            pd.DataFrame({"player_id": [1], "blended_cold_start_prior": [-2.1]}),
+        )
 
 
 def test_frozen_possession_predictions_do_not_depend_on_target_outcomes():

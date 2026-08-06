@@ -23,6 +23,44 @@ common 2024-25 mean and home-court term. Pass `--aging-run-id` or
 `--reference-prior-run-id` to make either dependency explicit. Neither command
 fits a 2025-26 player coefficient.
 
+Evaluate the selected complete box-score/cold-start prior with:
+
+```bash
+uv run nba-evaluate-frozen-combined-box-score-prior --season 2025-26
+```
+
+This resolves the existing combined-prior artifact, freezes its published
+player vector, and evaluates all 2025-26 regular-season and playoff outcomes
+without a target-season refit. The artifact records both the combined-prior
+manifest and its reference lagged-RAPM manifest. In the current 2025-26 run,
+the earlier lineup-level selection chose box-score weight zero, so the command
+correctly reproduces the lagged-RAPM forecast exactly.
+
+Evaluate the draft-informed cold-start replacement with:
+
+```bash
+uv run nba-evaluate-frozen-draft-cold-start-prior --season 2025-26
+```
+
+This resolves a draft-prior study fit through the preceding season and the
+regular-only lagged-RAPM run. It replaces only first-NBA-season zero priors
+that appear in the draft artifact; returning players retain their completed
+lagged RAPM and other no-prior players retain zero. Pass `--draft-run-id` or
+`--reference-prior-run-id` to pin either dependency. It does not recompute
+historical RAPM states or fit target-season player values.
+
+Evaluate the continuous exposure-gated cold-start blend with:
+
+```bash
+uv run nba-evaluate-frozen-exposure-gated-cold-start-prior --season 2025-26
+```
+
+This replaces only first-NBA-season zero priors with the immutable blend of
+draft-rate RAPM, the preseason low-exposure probability, and the pooled
+replacement-token estimate through the preceding season. Returning players
+retain lagged RAPM. Pass `--exposure-gated-run-id` or
+`--reference-prior-run-id` to pin either dependency.
+
 The immutable run is published under:
 
 ```text

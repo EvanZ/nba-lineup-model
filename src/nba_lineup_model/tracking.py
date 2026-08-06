@@ -30,16 +30,26 @@ _MODEL_RUN_PREFIXES = (
     "bayesian-",
     "catboost-",
     "combined-box-score-prior-rapm-",
+    "cold-start-exposure-",
     "cold-start-prior-",
     "deep-sets-",
+    "draft-prior-",
+    "exposure-gated-od-",
+    "exposure-gated-cold-start-",
     "forward-calibration-",
+    "forward-exposure-gated-rapm-",
     "frozen-aging-prior-",
+    "frozen-combined-box-score-prior-",
+    "frozen-draft-cold-start-prior-",
+    "frozen-exposure-gated-cold-start-prior-",
     "frozen-lagged-prior-",
     "frozen-offense-defense-rapm-",
     "all-season-offense-defense-rapm-",
     "all-season-lagged-rapm-",
     "neural-",
     "rapm-transformer-",
+    "replacement-level-",
+    "replacement-token-",
 )
 _METRIC_FILES = (
     "cohort_metrics.parquet",
@@ -143,7 +153,9 @@ def track_immutable_run(
         raise ValueError(f"Run directory does not contain manifest.json: {root}")
     manifest = json.loads(manifest_path.read_text())
     project_run_id = _required_text(manifest, "run_id")
-    season = _required_text(manifest, "season")
+    season = _required_text(manifest, "season") if manifest.get("season") else _required_text(
+        manifest, "through_season"
+    )
     if root.name != project_run_id:
         raise ValueError("Run directory name does not match manifest run_id")
     manifest_sha256 = _sha256_file(manifest_path)
@@ -533,6 +545,14 @@ def _experiment_name(project_run_id: str, season: str) -> str:
 
 
 def _run_kind(project_run_id: str, manifest: Mapping[str, Any]) -> str:
+    if project_run_id.startswith("exposure-gated-od-"):
+        return "frozen_preseason_exposure_gated_offense_defense_cold_start_prior"
+    if project_run_id.startswith("exposure-gated-cold-start-"):
+        return "exposure_gated_cold_start_prior"
+    if project_run_id.startswith("cold-start-exposure-"):
+        return "cold_start_exposure_gate"
+    if project_run_id.startswith("draft-prior-"):
+        return "draft_informed_cold_start_prior"
     if project_run_id.startswith("blended-prior-rapm-"):
         return "blended_prior_rapm"
     if project_run_id.startswith("aging-prior-rapm-"):
@@ -549,10 +569,18 @@ def _run_kind(project_run_id: str, manifest: Mapping[str, Any]) -> str:
         return "deep_sets"
     if project_run_id.startswith("forward-calibration-"):
         return "forward_rapm_win_calibration"
+    if project_run_id.startswith("forward-exposure-gated-rapm-"):
+        return "forward_exposure_gated_rapm"
     if project_run_id.startswith("frozen-lagged-prior-"):
         return "frozen_preseason_lagged_rapm"
     if project_run_id.startswith("frozen-aging-prior-"):
         return "frozen_preseason_aging_prior"
+    if project_run_id.startswith("frozen-combined-box-score-prior-"):
+        return "frozen_preseason_combined_box_score_prior"
+    if project_run_id.startswith("frozen-draft-cold-start-prior-"):
+        return "frozen_preseason_draft_cold_start_prior"
+    if project_run_id.startswith("frozen-exposure-gated-cold-start-prior-"):
+        return "frozen_preseason_exposure_gated_cold_start_prior"
     if project_run_id.startswith("frozen-offense-defense-rapm-"):
         return "frozen_preseason_offense_defense_rapm"
     if project_run_id.startswith("all-season-offense-defense-rapm-"):

@@ -19,6 +19,13 @@ interactions.
 | Frozen aging prior | Preseason age, experience, prior RAPM, draft, and physical-profile values scored on the same oracle lineups |
 | Frozen O/D RAPM | Forward offense and defense player values scored on the same oracle lineups |
 | Box-score RAPM prior | Returning-player forecast from lagged RAPM and possession-native box profile |
+| Draft-informed cold starts | First-NBA-season RAPM diagnostic using draft profile fields only |
+| Replacement-level exposure study | Rejected coefficient-average diagnostic for the low-exposure player pool |
+| Pooled replacement-token RAPM | Retrospective shared-token estimate for the low-exposure player pool |
+| Cold-start exposure gate | First-NBA-season preseason probability of entering the low-exposure pool |
+| Exposure-gated cold-start prior | Continuous draft-rate/replacement blend for first-year players |
+| Exposure-gated O/D cold starts | Separate O/D draft-rate/replacement blend for first-year players |
+| Forward exposure-gated RAPM | Recursive regular-only preseason RAPM state with cold starts |
 | Additive neural RAPM | Possession-level signed scalar player embeddings |
 | Deep Sets | Nonlinear permutation-invariant lineup aggregation |
 | CatBoost | Categorical player states and boosted-tree interactions |
@@ -46,5 +53,20 @@ scoreboard. [Forward RAPM Calibration](forward-calibration.md) maps frozen
 player priors to regular-season team wins. The [Frozen Preseason
 Leaderboard](preseason-leaderboard.md) holds out the complete target regular
 season and playoffs without a player refit. [RAPM Aging Model](aging-model.md) defines the first temporal player
-prior, while the [Modeling Roadmap](roadmap.md) records the approved joint
-dynamic RAPM extension.
+prior. [Draft-Informed Cold Starts](draft-prior.md) is an interpretable
+first-NBA-season diagnostic; it is not yet eligible for the Frozen Preseason
+Leaderboard. The [Replacement-Level Exposure Study](replacement-level.md)
+records why separately ridged low-exposure coefficients fail as a replacement
+estimate. [Pooled Replacement-Token RAPM](replacement-token.md) estimates that
+group directly before a cold-start gate is introduced. The [Cold-Start Exposure
+Gate](cold-start-exposure.md) provides a calibrated first-year-only probability
+for a replacement-token blend. The [Exposure-Gated Cold-Start Prior](exposure-gated-cold-start.md)
+uses that blend in the frozen preseason evaluation. The [Modeling Roadmap](roadmap.md)
+records the approved joint dynamic RAPM extension.
+
+[Exposure-Gated O/D Cold Starts](exposure-gated-offense-defense.md) applies
+the same cold-start logic without collapsing offense and defense into a single
+replacement number.
+
+[Forward Exposure-Gated RAPM](forward-exposure-gated-rapm.md) applies that
+one-number cold-start prior recursively across completed seasons.
