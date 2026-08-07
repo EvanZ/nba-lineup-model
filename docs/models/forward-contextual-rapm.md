@@ -213,6 +213,169 @@ NetRtg, and Pythagorean-win outputs use the standard leaderboard contract.
 The separate `forward_contextual_rankings` artifact records the completed
 additive player state used for the following season's public rankings.
 
+<!-- forward-contextual-case-study:start -->
+## 2025-26 Lineup Context Case Study
+
+These examples use the frozen `g_2024-25` context function and 2025-26 preseason profiles. The context scores do not use 2025-26 point outcomes, but this retrospective case study does use the five-man units, opponent matchups, games, and possession exposure that actually occurred in 2025-26. It is therefore a frozen score conditional on realized lineup allocation, not a preseason forecast of which units would play.
+
+`Actual-matchup context` is the possession-weighted correction in the unit's real 2025-26 opponents. `Standardized context` instead averages an orientation-symmetrized correction against the possession-weighted distribution of the 25 established units in this study, excluding the unit's own team:
+
+\[
+C_{\mathrm{standard}}(L) =
+\mathbb{E}_O\left[\frac{g(L,O)-g(O,L)}{2}\right].
+\]
+
+All values are net-rating points per 100 possessions. `Frozen additive` is the preseason player-prior difference; `frozen full` adds frozen matchup context and the realized home/road mix. Observed NetRtg is descriptive and is not used to select or fit the frozen state.
+
+### Retrospective State Update
+
+The same realized units can also be scored after 2025-26 concludes. `Completed additive` replaces the preseason player priors with the completed 2025-26 player coefficients. `Completed full` additionally replaces `g_2024-25` with the completed `g_2025-26` contextual function. Both completed columns are in-sample descriptive estimates: they use 2025-26 outcomes during fitting and must not be interpreted as a second forecast.
+
+For a realized home/away stint \(s\), the two full estimates are:
+
+\[
+\hat y_s^{\mathrm{frozen}} = a_{2024-25} + x_s^{\mathsf T}\mu_{2025-26} + g_{2024-25}(z_s),
+\qquad
+\hat y_s^{\mathrm{completed}} = a_{2025-26} + x_s^{\mathsf T}\hat\beta_{2025-26} + g_{2025-26}(z_s).
+\]
+
+The tables possession-weight these signed stint estimates over each unit's realized 2025-26 matchups. Thus the difference between the two full columns is the season's combined player-state and contextual-state revision.
+
+The error summary is possession-weighted across the established units in these tables; it is a compact accounting of how the fitted season revised the frozen expectation, rather than an independent validation result.
+
+| Estimate | Possession-weighted RMSE | Possession-weighted MAE |
+| --- | ---: | ---: |
+| Frozen additive player state | 13.27 | 10.60 |
+| Frozen full contextual state | 13.03 | 10.18 |
+| Completed additive player state | 8.67 | 7.05 |
+| Completed full contextual state | 7.78 | 6.21 |
+
+### Worked Context Decomposition
+
+The highest-ranked unit is the LAC lineup of James Harden / Kawhi Leonard / Kris Dunn / Ivica Zubac / John Collins (614 possessions, 24 games). Its frozen standardized context effect is +2.60 points per 100 possessions.
+
+For each original feature \(k\), the spline-Ridge pipeline produces five basis contributions. They are summed into \(q_k(L,O)\), then the displayed component is the possession-weighted orientation-symmetrized attribution:
+
+\[
+C_k(L) = \mathbb{E}_O\left[\frac{q_k(L,O)-q_k(O,L)}{2}\right],
+\qquad
+C_{\mathrm{standard}}(L)=\sum_k C_k(L).
+\]
+
+`Focal minus reference` is the focal lineup's possession-weighted raw feature difference against the same realized 2025-26 reference units. `Contribution` is the model's nonlinear net-rating attribution, not a causal or individual-player credit. The total row exactly equals the unit's standardized context score.
+
+| Context feature | Focal minus reference | Contribution (NetRtg / 100) |
+| --- | ---: | ---: |
+| Steals | +2.03 | +2.01 |
+| Top-two assists | +2.22 | +1.46 |
+| Usage events | +3.31 | +0.30 |
+| Three-point attempt volume | -4.51 | +0.25 |
+| Rebounding-by-usage | +0.08 | +0.19 |
+| Imputed-profile count | -0.09 | +0.18 |
+| Offensive rebounds | +0.94 | +0.12 |
+| Defensive rebounds | +6.05 | +0.07 |
+| Diminishing offensive rebounding | +0.14 | +0.06 |
+| Shooting-by-usage | -0.14 | +0.05 |
+| Diminishing defensive rebounding | +0.48 | +0.05 |
+| Usage concentration | +0.00 | +0.03 |
+| Replacement-profile weight | -0.00 | -0.01 |
+| Bottom-two three-point makes | -0.30 | -0.05 |
+| Blocks | +0.23 | -0.06 |
+| Credible-shooter count | +0.87 | -0.23 |
+| Turnovers | +1.56 | -0.37 |
+| Assists | +1.43 | -0.39 |
+| Shooter-by-passing | +21.33 | -0.46 |
+| Three-point makes | -1.44 | -0.62 |
+| Total standardized context | - | +2.60 |
+
+### Response Curves For Diminishing-Return Candidates
+
+These curves isolate the frozen orientation-symmetrized spline component for relative usage events and relative defensive rebounds. Zero means equal focal and opponent feature values, and all other contextual features are held at zero. The blue band marks the 5th-to-95th percentile range observed when applying the model to 2025-26 stints; the orange line marks the Clippers unit's focal-minus-reference contrast. A flattening curve within the blue band is evidence that the fitted contextual residual is saturating for that feature.
+
+For a single relative feature value \(z\), the plotted response is \(r_k(z)=[q_k(z)-q_k(-z)]/2\). This is the same orientation convention used by the standardized-context attribution, evaluated with every other contextual feature held at zero.
+
+<figure class="case-study-figure" markdown>
+  ![Frozen contextual response curves for relative usage and defensive rebounds](../assets/images/forward-contextual-rapm/context-response-curves.svg)
+  <figcaption>
+    Frozen 2024-25 orientation-symmetrized spline components. These are fitted model components, not causal partial effects.
+  </figcaption>
+</figure>
+
+#### Interpretation
+
+For usage events, the frozen component is approximately linear across the observed application band: it moves from -2.20 at the 5th-percentile difference (-25.29) to +2.19 at the 95th percentile (+25.65). The Clippers unit's relative usage contrast of +3.31 maps to an isolated response of +0.32. This frozen model does not show strong usage saturation in its observed application range.
+
+Defensive rebounding is more nonlinear. Within the observed band, its largest positive component is +0.30 near a relative difference of +6.31, then it falls to +0.18 at the 95th-percentile difference (+7.77). The Clippers contrast is +6.05, with an isolated response of +0.29. That shape is consistent with diminishing marginal contextual value, but it is not a causal estimate of rebounding value.
+
+The attribution table averages this response over each actual reference lineup, whereas the orange line evaluates it at the average raw feature contrast. With a nonlinear spline, \(\mathbb{E}[r_k(Z)]\) need not equal \(r_k(\mathbb{E}[Z])\), so those two displayed values need not match.
+
+### Table Definitions
+
+- `Rank`: rank by frozen standardized context, used only to select the positive and negative examples.
+- `Poss.` and `Games`: realized 2025-26 shared exposure for the five-player unit; both are eligibility filters, not model inputs.
+- `Standardized context`: frozen `g_2024-25` averaged over the established-unit opponent distribution of established lineups that actually appeared in 2025-26. It answers how favorable the unit's composition is against a shared realized reference schedule, not against a synthetic average lineup.
+- `Frozen matchup context`: frozen `g_2024-25` averaged only over the opponents the unit actually faced in 2025-26. It is the context component of `Frozen full`.
+- `Frozen additive`: the signed sum of the five preseason player priors minus the five opposing preseason player priors, averaged over actual matchups.
+- `Frozen full`: frozen additive value, frozen matchup context, and the unit's realized home/road mix. This is the frozen forecast for its realized allocation.
+- `Completed additive`: the same additive calculation after replacing preseason priors with completed 2025-26 player coefficients.
+- `Completed matchup context`: completed `g_2025-26` averaged over the unit's actual 2025-26 opponents.
+- `Completed full`: completed additive value, completed matchup context, and the same realized home/road mix. It is an in-sample retrospective estimate.
+- `Observed NetRtg`: the unit's possession-weighted realized net rating in those same matchups. It is an outcome, never an input to the frozen forecast.
+
+Eligibility: at least 250 shared possessions and 20 games. The tables are sortable.
+
+Immutable case-study artifact: `artifacts/models/forward_contextual_case_study/2025-26/forward-contextual-case-study-2025-26-20260807T213817Z-df8ecb4f`.
+
+The tables are ranked **only** by `Standardized context`: the frozen, opponent-standardized contextual effect. `Frozen matchup context`, the full model estimates, and Observed NetRtg do not determine rank.
+
+### Largest Positive Frozen Context Effects
+
+| Rank | Team | Players | Poss. | Games | Standardized context | Frozen matchup context | Frozen additive | Frozen full | Completed additive | Completed matchup context | Completed full | Observed NetRtg |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | LAC | James Harden / Kawhi Leonard / Kris Dunn / Ivica Zubac / John Collins | 614 | 24 | +2.60 | +1.56 | +12.23 | +13.29 | +3.70 | +3.15 | +6.36 | +5.05 |
+| 2 | HOU | Kevin Durant / Alperen Sengun / Jabari Smith Jr. / Tari Eason / Amen Thompson | 615 | 36 | +1.79 | +2.61 | +2.89 | +5.68 | +1.47 | +3.38 | +5.03 | +8.78 |
+| 3 | HOU | Kevin Durant / Josh Okogie / Alperen Sengun / Jabari Smith Jr. / Amen Thompson | 752 | 41 | +1.50 | +1.52 | +2.31 | +3.93 | +0.93 | +3.49 | +4.51 | +9.71 |
+| 4 | LAL | LeBron James / Deandre Ayton / Luka Dončić / Rui Hachimura / Austin Reaves | 282 | 20 | +1.47 | +2.60 | +5.17 | +8.69 | +0.66 | +0.96 | +2.52 | -15.23 |
+| 5 | MIN | Rudy Gobert / Julius Randle / Donte DiVincenzo / Anthony Edwards / Jaden McDaniels | 1,475 | 54 | +1.10 | +2.15 | +1.22 | +3.19 | +3.31 | +2.16 | +5.30 | +8.07 |
+| 6 | DET | Tobias Harris / Duncan Robinson / Cade Cunningham / Jalen Duren / Ausar Thompson | 1,114 | 42 | +0.99 | +2.18 | +5.64 | +7.88 | +11.15 | +1.18 | +12.38 | +12.03 |
+| 7 | PHX | Devin Booker / Royce O'Neale / Dillon Brooks / Mark Williams / Collin Gillespie | 560 | 30 | +0.73 | +1.93 | +3.39 | +5.00 | +2.52 | +0.62 | +2.83 | +10.36 |
+| 8 | CHA | Miles Bridges / LaMelo Ball / Moussa Diabaté / Brandon Miller / Kon Knueppel | 1,028 | 49 | +0.26 | +0.47 | -3.08 | -2.75 | +9.57 | +3.22 | +12.66 | +26.93 |
+| 9 | DEN | Aaron Gordon / Nikola Jokić / Jamal Murray / Cameron Johnson / Christian Braun | 732 | 23 | +0.14 | +0.81 | +8.88 | +10.15 | +14.14 | +1.24 | +15.82 | +14.48 |
+| 10 | HOU | Kevin Durant / Alperen Sengun / Jabari Smith Jr. / Amen Thompson / Reed Sheppard | 559 | 44 | +0.12 | +2.04 | +3.52 | +5.46 | +1.90 | +3.20 | +5.00 | -4.65 |
+
+### Largest Negative Frozen Context Effects
+
+| Rank | Team | Players | Poss. | Games | Standardized context | Frozen matchup context | Frozen additive | Frozen full | Completed additive | Completed matchup context | Completed full | Observed NetRtg |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 25 | TOR | Brandon Ingram / RJ Barrett / Immanuel Quickley / Scottie Barnes / Collin Murray-Boyles | 333 | 20 | -4.20 | -3.69 | +0.02 | -2.88 | +1.80 | -1.59 | +0.97 | +4.81 |
+| 24 | MIL | Myles Turner / Kyle Kuzma / Gary Trent Jr. / Ryan Rollins / AJ Green | 284 | 22 | -3.71 | -4.17 | -4.43 | -8.47 | -9.18 | -4.25 | -13.31 | -5.27 |
+| 23 | BOS | Jaylen Brown / Derrick White / Neemias Queta / Payton Pritchard / Jordan Walsh | 377 | 26 | -1.47 | -0.25 | -0.99 | -1.34 | +8.14 | +2.00 | +10.04 | +4.24 |
+| 22 | TOR | Brandon Ingram / Jakob Poeltl / RJ Barrett / Immanuel Quickley / Scottie Barnes | 736 | 28 | -1.35 | +0.25 | +3.60 | +3.66 | +2.64 | +1.51 | +3.97 | +9.51 |
+| 21 | ORL | Wendell Carter Jr. / Desmond Bane / Jalen Suggs / Paolo Banchero / Anthony Black | 508 | 21 | -1.34 | +0.15 | +0.28 | +0.71 | +1.84 | +0.76 | +2.87 | +6.69 |
+| 20 | ORL | Wendell Carter Jr. / Desmond Bane / Paolo Banchero / Anthony Black / Tristan da Silva | 351 | 26 | -1.17 | -0.39 | -1.17 | -1.82 | +0.30 | -0.93 | -0.88 | +10.55 |
+| 19 | ATL | CJ McCollum / Nickeil Alexander-Walker / Onyeka Okongwu / Jalen Johnson / Dyson Daniels | 826 | 30 | -0.90 | +1.46 | +0.52 | +2.14 | +6.36 | +2.28 | +8.79 | +20.57 |
+| 18 | ORL | Wendell Carter Jr. / Desmond Bane / Jalen Suggs / Paolo Banchero / Tristan da Silva | 542 | 24 | -0.88 | -0.82 | -0.53 | -0.97 | +2.15 | -0.76 | +1.76 | +10.69 |
+| 17 | DET | Tobias Harris / Duncan Robinson / Jalen Duren / Ausar Thompson / Daniss Jenkins | 378 | 22 | -0.86 | +1.38 | +1.41 | +2.99 | +7.82 | +0.78 | +8.79 | +28.87 |
+| 16 | BOS | Jaylen Brown / Derrick White / Neemias Queta / Payton Pritchard / Sam Hauser | 392 | 35 | -0.63 | +0.41 | +0.41 | +0.82 | +9.22 | +1.53 | +10.75 | +19.90 |
+<!-- forward-contextual-case-study:end -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 <!-- forward-contextual-rankings:start -->
 ## 2026-27 Player Rankings
 
