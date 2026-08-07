@@ -113,17 +113,23 @@ def fit_prior_rapm_experiment(
     weights = stints["possessions"].to_numpy(dtype=float)
     game_ids = stints["game_id"].astype(str).to_numpy()
 
-    cv_results = _cross_validate(
-        stints,
-        matrix,
-        prior,
-        target,
-        weights,
-        game_ids,
-        split_plan,
-        lambda_grid,
-    )
-    selected_lambda = _select_lambda(cv_results)
+    if len(lambda_grid) == 1:
+        selected_lambda = float(lambda_grid[0])
+        cv_results = pd.DataFrame(
+            [{"regularization": selected_lambda, "selection_mode": "fixed"}]
+        )
+    else:
+        cv_results = _cross_validate(
+            stints,
+            matrix,
+            prior,
+            target,
+            weights,
+            game_ids,
+            split_plan,
+            lambda_grid,
+        )
+        selected_lambda = _select_lambda(cv_results)
     train_mask = np.isin(game_ids, split_plan.final_train_game_ids)
     test_mask = np.isin(game_ids, split_plan.final_test_game_ids)
     prior_model = PriorCenteredRidgeLineupModel(selected_lambda).fit(
@@ -248,17 +254,23 @@ def fit_forward_lagged_rapm_season(
     target = stints["target_home_net_rating"].to_numpy(dtype=float)
     weights = stints["possessions"].to_numpy(dtype=float)
     game_ids = stints["game_id"].astype(str).to_numpy()
-    cv_results = _cross_validate(
-        stints,
-        matrix,
-        prior,
-        target,
-        weights,
-        game_ids,
-        split_plan,
-        lambda_grid,
-    )
-    selected_lambda = _select_lambda(cv_results)
+    if len(lambda_grid) == 1:
+        selected_lambda = float(lambda_grid[0])
+        cv_results = pd.DataFrame(
+            [{"regularization": selected_lambda, "selection_mode": "fixed"}]
+        )
+    else:
+        cv_results = _cross_validate(
+            stints,
+            matrix,
+            prior,
+            target,
+            weights,
+            game_ids,
+            split_plan,
+            lambda_grid,
+        )
+        selected_lambda = _select_lambda(cv_results)
     fitted = PriorCenteredRidgeLineupModel(selected_lambda).fit(
         matrix,
         target,
@@ -871,7 +883,7 @@ def _validate_inputs(
     if not np.isfinite(priors[PRIOR_MEAN_COLUMN].to_numpy(dtype=float)).all():
         raise ValueError("Player prior means must be finite")
     if (
-        len(lambda_grid) < 2
+        len(lambda_grid) < 1
         or any(value < 0 for value in lambda_grid)
         or len(set(lambda_grid)) != len(lambda_grid)
     ):
