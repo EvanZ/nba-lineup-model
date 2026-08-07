@@ -26,6 +26,8 @@ interactions.
 | Exposure-gated cold-start prior | Continuous draft-rate/replacement blend for first-year players |
 | Exposure-gated O/D cold starts | Separate O/D draft-rate/replacement blend for first-year players |
 | Forward exposure-gated RAPM | Recursive regular-only preseason RAPM state with cold starts |
+| Student-t forward RAPM | Robust stint-error likelihood for the same recursive forward state |
+| Student-t talent-prior RAPM | Heavy-tailed player adjustments with Gaussian stint errors |
 | Additive neural RAPM | Possession-level signed scalar player embeddings |
 | Deep Sets | Nonlinear permutation-invariant lineup aggregation |
 | CatBoost | Categorical player states and boosted-tree interactions |
@@ -70,3 +72,11 @@ replacement number.
 
 [Forward Exposure-Gated RAPM](forward-exposure-gated-rapm.md) applies that
 one-number cold-start prior recursively across completed seasons.
+
+[Student-t Forward RAPM](student-t-forward-rapm.md) holds that state and its
+lambda schedule fixed while replacing the Gaussian stint-error likelihood with
+a robust Student-t alternative.
+
+[Student-t Talent-Prior RAPM](student-t-talent-forward-rapm.md) reverses that
+ablation: it keeps Gaussian stint errors and uses a heavy-tailed Student-t
+prior for player departures from the forward state.

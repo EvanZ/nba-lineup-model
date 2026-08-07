@@ -105,6 +105,21 @@ It is the production-state candidate, while the simpler frozen blend remains
 the regular-season metric leader on this single target holdout. See [Forward
 Exposure-Gated RAPM](forward-exposure-gated-rapm.md).
 
+### Student-t Recursive Candidate
+
+The Student-t candidate preserves the recursive exposure-gated forward state,
+cold-start policy, and per-season ridge lambdas. It changes only the
+regular-season stint-error likelihood from Gaussian to Student-t with five
+degrees of freedom, solved by IRLS. This is a controlled robustness ablation;
+see [Student-t Forward RAPM](student-t-forward-rapm.md).
+
+### Student-t Talent-Prior Candidate
+
+This candidate restores Gaussian stint errors and keeps the recursive
+exposure-gated state and lambda schedule fixed. Only player departures from
+their forward prior receive a Student-t \(\nu=3\) penalty, with a three-point
+RAPM tail scale. See [Student-t Talent-Prior RAPM](student-t-talent-forward-rapm.md).
+
 ## Possession And Game Results
 
 Regular season and playoffs are evaluated separately. Possession metrics use
@@ -121,6 +136,8 @@ the home-team frame.
 | Frozen exposure-gated cold-start prior | Regular season | 1,230 | 218,810 | 1.198952 | **1.141943** | **14.7413** | 0.0886% | **13.3410%** |
 | Frozen exposure-gated O/D cold-start prior | Regular season | 1,230 | 218,810 | **1.198792** | 1.142422 | 14.7631 | **0.1193%** | 13.0714% |
 | Recursive exposure-gated RAPM | Regular season | 1,230 | 218,810 | 1.198993 | 1.142055 | 14.8225 | 0.0817% | 12.3830% |
+| Student-t recursive RAPM | Regular season | 1,230 | 218,810 | 1.199014 | 1.142242 | 14.8908 | 0.0782% | 11.5747% |
+| Student-t talent-prior RAPM | Regular season | 1,230 | 218,810 | 1.198989 | 1.141996 | 14.7993 | 0.0825% | 12.6578% |
 | Frozen lagged RAPM | Playoffs | 85 | 14,253 | 1.192895 | **1.136163** | 17.5409 | -0.0774% | -9.6446% |
 | Frozen aging prior | Playoffs | 85 | 14,253 | **1.192332** | 1.136455 | **16.4946** | **0.0170%** | **3.0460%** |
 | Frozen O/D RAPM | Playoffs | 85 | 14,253 | 1.194642 | 1.139203 | 17.8037 | -0.3924% | -12.9804% |
@@ -128,6 +145,8 @@ the home-team frame.
 | Frozen exposure-gated cold-start prior | Playoffs | 85 | 14,253 | 1.192980 | 1.136174 | 17.6725 | -0.0917% | -11.2952% |
 | Frozen exposure-gated O/D cold-start prior | Playoffs | 85 | 14,253 | 1.194678 | 1.139209 | 17.8562 | -0.3984% | -13.6482% |
 | Recursive exposure-gated RAPM | Playoffs | 85 | 14,253 | 1.192821 | **1.136096** | 17.4188 | -0.0649% | -8.1231% |
+| Student-t recursive RAPM | Playoffs | 85 | 14,253 | 1.192621 | 1.136193 | 17.1300 | -0.0314% | -4.5672% |
+| Student-t talent-prior RAPM | Playoffs | 85 | 14,253 | 1.192895 | 1.136105 | 17.4713 | -0.0774% | -8.7752% |
 
 Bolding marks the better value within each cohort and metric. Future frozen
 priors must use these exact cohorts.
@@ -142,12 +161,14 @@ team margins are then summed and divided by team possessions.
 | Model | Teams | Net-rating RMSE | Net-rating MAE | Pearson correlation | Spearman correlation |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Frozen lagged RAPM | 30 | 4.8538 | 3.9606 | 0.6113 | 0.5493 |
-| Frozen aging prior | 30 | 5.0366 | 4.2395 | **0.6484** | **0.6111** |
+| Frozen aging prior | 30 | 5.0366 | 4.2395 | 0.6484 | 0.6111 |
 | Frozen O/D RAPM | 30 | 4.8740 | 3.9380 | 0.6113 | 0.5626 |
 | Frozen draft cold-start prior | 30 | 4.8473 | 3.8653 | 0.6163 | 0.5528 |
-| Frozen exposure-gated cold-start prior | 30 | **4.6989** | **3.6020** | 0.6480 | 0.5844 |
+| Frozen exposure-gated cold-start prior | 30 | 4.6989 | **3.6020** | 0.6480 | 0.5844 |
 | Frozen exposure-gated O/D cold-start prior | 30 | 4.7113 | 3.6999 | 0.6454 | 0.6018 |
-| Recursive exposure-gated RAPM | 30 | **4.6680** | 3.8199 | 0.6471 | **0.6236** |
+| Recursive exposure-gated RAPM | 30 | 4.6680 | 3.8199 | 0.6471 | 0.6236 |
+| Student-t recursive RAPM | 30 | 4.8263 | 3.9928 | 0.6159 | 0.6147 |
+| Student-t talent-prior RAPM | 30 | **4.6069** | 3.7344 | **0.6587** | **0.6383** |
 
 ## Team Win Totals
 
@@ -183,9 +204,11 @@ error below also includes error in the preseason NetRtg prediction itself.
 | Frozen aging prior | 30 | 10.9632 | 9.6337 | 0.1337 | 0.6394 |
 | Frozen O/D RAPM | 30 | 10.9640 | 8.9734 | 0.1337 | 0.6078 |
 | Frozen draft cold-start prior | 30 | 10.6718 | 8.7037 | 0.1301 | 0.6245 |
-| Frozen exposure-gated cold-start prior | 30 | **10.2466** | **8.0307** | **0.1250** | **0.6586** |
+| Frozen exposure-gated cold-start prior | 30 | 10.2466 | **8.0307** | 0.1250 | 0.6586 |
 | Frozen exposure-gated O/D cold-start prior | 30 | 10.5096 | 8.4409 | 0.1282 | 0.6483 |
-| Recursive exposure-gated RAPM | 30 | 10.2778 | 8.4776 | 0.1253 | **0.6829** |
+| Recursive exposure-gated RAPM | 30 | 10.2778 | 8.4776 | 0.1253 | 0.6829 |
+| Student-t recursive RAPM | 30 | 10.6358 | 8.7390 | 0.1297 | 0.6608 |
+| Student-t talent-prior RAPM | 30 | **10.1176** | 8.3473 | **0.1234** | **0.6935** |
 
 As a diagnostic, the artifact also retains the raw count obtained by awarding
 each game to the team with the positive predicted margin. That deterministic
@@ -282,3 +305,15 @@ The exposure-gated O/D cold-start evaluation is
 pins the 2024-25 O/D source and exposure-gate artifacts, separately records
 the 29-season offense and defense replacement-token means, and declares that
 no 2025-26 outcomes formed the prior.
+
+The Student-t recursive artifact is
+`student-t-forward-rapm-2025-26-20260806T131834Z-b1cc6592` under
+`artifacts/models/student_t_forward_rapm/2025-26/`. It records the frozen
+player vector, all season-level IRLS diagnostics, and the same possession,
+game, team NetRtg, and Pythagorean-win files as the Gaussian recursive model.
+
+The Student-t talent-prior artifact is
+`student-t-talent-forward-rapm-2025-26-20260806T203508Z-8e8a2698` under
+`artifacts/models/student_t_talent_forward_rapm/2025-26/`. It records the
+Gaussian observation contract, Student-t coefficient-prior settings,
+season-level convergence diagnostics, and the full frozen evaluation output.
