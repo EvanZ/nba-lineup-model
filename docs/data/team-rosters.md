@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Team Rosters
 
 Preseason active-roster profiles come directly from NBA Stats

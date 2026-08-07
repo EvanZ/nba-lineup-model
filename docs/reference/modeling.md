@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-30"
+---
+
 # Modeling API
 
 ::: nba_lineup_model.modeling.schema

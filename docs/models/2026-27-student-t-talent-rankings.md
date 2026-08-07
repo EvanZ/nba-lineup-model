@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-06"
+---
+
 # 2026-27 Student-t Talent-Prior Rankings
 
 These are the top 100 returning-player preseason values from the completed 2025-26 Gaussian-error RAPM fit with a Student-t talent prior. They are 2026-27 priors, not retrospective 2025-26 evaluations.

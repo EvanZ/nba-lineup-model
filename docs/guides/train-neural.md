@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-29"
+---
+
 # Train Neural Models
 
 The initial command builds the single-lineup possession dataset and trains the

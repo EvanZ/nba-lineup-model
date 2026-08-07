@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 # Box-Score RAPM Prior
 
 ## First Forecast: Returning Players

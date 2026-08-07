@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Fetch Draft History
 
 Fetch one official NBA draft class directly from the `drafthistory` Stats

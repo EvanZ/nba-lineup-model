@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-01"
+---
+
 # Decision Log
 
 Architecture decisions record choices that affect data interpretation or future

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-27"
+---
+
 # Season Catalog and Storage
 
 Season processing uses separate contracts for discovery, game-level execution,

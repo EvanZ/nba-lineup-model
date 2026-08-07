@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-06"
+---
+
 # Train Student-t Talent-Prior RAPM
 
 Train the Gaussian-error, heavy-tailed-talent version of the recursive forward

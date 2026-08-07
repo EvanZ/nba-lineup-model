@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-03"
+---
+
 # Compact a Season
 
 The compaction flow publishes the six per-game processed tables as

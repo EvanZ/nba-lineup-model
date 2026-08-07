@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 # Calibrate Forward RAPM To Wins
 
 This command builds a retrospective, **usage-conditional** team-win calibration.

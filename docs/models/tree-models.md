@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-29"
+---
+
 # Tree Models
 
 CatBoost provides an orthogonal nonlinear baseline for the lineup problem. It

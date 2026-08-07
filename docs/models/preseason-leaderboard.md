@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-07"
+---
+
 # Frozen Preseason Leaderboard
 
 This leaderboard evaluates models as true preseason forecasts. Every player

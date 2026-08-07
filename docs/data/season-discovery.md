@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-27"
+---
+
 # Season Discovery
 
 Season discovery creates the canonical game inventory before any game-level

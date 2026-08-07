@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # 2026-27 Drafted Rookie Rankings
 
 These are preseason cold-start RAPM priors for the 60 players in the official 2026 NBA Draft History response. They are not retrospective player evaluations and they do not include undrafted free agents, two-way signings, or other late entrants.

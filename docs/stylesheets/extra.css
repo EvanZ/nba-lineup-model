@@ -208,6 +208,17 @@ body {
   content: "\2193";
 }
 
+.md-content__inner > .page-last-updated {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.72rem;
+  margin: -0.65rem 0 1.75rem;
+}
+
+.page-last-updated time {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
 .md-typeset .mermaid {
   margin: 1.5rem 0;
   padding: 1.25rem 0;

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-03"
+---
+
 # Train the RAPM Aging Model
 
 The aging trainer consumes the validated multi-season player transition panel

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-29"
+---
+
 <p class="project-kicker">Model contract / exact inference</p>
 
 # Bayesian RAPM Methodology

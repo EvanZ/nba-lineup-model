@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Build the Exposure-Gated Cold-Start Prior
 
 Build the immutable first-year prior after the draft-rate study, exposure gate,

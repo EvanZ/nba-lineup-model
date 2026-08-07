@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 # Train The Box-Score RAPM Prior
 
 Build the validated possession-native panel first:

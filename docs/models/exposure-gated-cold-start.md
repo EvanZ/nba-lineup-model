@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Exposure-Gated Cold-Start Prior
 
 This frozen preseason prior applies only to first-NBA-season players. It keeps

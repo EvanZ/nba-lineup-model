@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-29"
+---
+
 # Train CatBoost
 
 Train the categorical player-state baseline with:

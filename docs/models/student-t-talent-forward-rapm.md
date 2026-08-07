@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-06"
+---
+
 # Student-t Talent-Prior RAPM
 
 This experiment restores the canonical Gaussian error model for lineup stints

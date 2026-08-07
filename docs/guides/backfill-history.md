@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-03"
+---
+
 # Backfill Historical Seasons
 
 The historical runner composes the existing season operations into one

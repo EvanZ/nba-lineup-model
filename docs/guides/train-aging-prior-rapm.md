@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-01"
+---
+
 # Train Age-Informed Prior RAPM
 
 This command fits possession-level prior-centered RAPM using the frozen output

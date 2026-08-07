@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-06"
+---
+
 # Student-t Talent-Prior Lambda Sensitivity
 
 This controlled post-season refit holds every 2025-26 entering player prior, the Gaussian stint-error model, and the Student-t talent-prior settings fixed. It changes only the final-season ridge lambda from `0.03` to `0.1`.

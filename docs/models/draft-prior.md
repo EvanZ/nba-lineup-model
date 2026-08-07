@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Draft-Informed Cold Starts
 
 This is an interpretable diagnostic for the cold-start problem: what can draft

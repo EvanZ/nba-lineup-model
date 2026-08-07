@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-29"
+---
+
 <p class="project-kicker">Bayesian model review / 2025-26</p>
 
 # What Bayesian RAPM Adds to the Same Ridge Ranking

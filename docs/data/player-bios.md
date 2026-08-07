@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-02"
+---
+
 # Player Bios
 
 Player reference data comes directly from the NBA Stats service. It uses bulk

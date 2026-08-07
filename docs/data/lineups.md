@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-26"
+---
+
 # Lineups
 
 Lineup reconstruction combines boxscore starters with ordered substitution

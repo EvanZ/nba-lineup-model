@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-26"
+---
+
 # ADR-0003: Validation Before Modeling
 
 <p class="adr-status"><strong>Decision status</strong><span>Accepted</span></p>

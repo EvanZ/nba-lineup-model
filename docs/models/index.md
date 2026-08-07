@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-07"
+---
+
 # Models
 
 The modeling program starts with transparent predictive baselines before adding

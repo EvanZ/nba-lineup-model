@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Train Forward Exposure-Gated RAPM
 
 Train the recursive regular-season-only state through the latest completed

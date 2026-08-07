@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Replacement-Level Exposure Study
 
 This study documents a rejected attempt to estimate replacement level by

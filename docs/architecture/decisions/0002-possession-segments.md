@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-26"
+---
+
 # ADR-0002: Separate Possessions and Lineup Segments
 
 <p class="adr-status"><strong>Decision status</strong><span>Accepted</span></p>

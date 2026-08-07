@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block content %}
+  {{ super() }}
+  {% if page and page.meta and page.meta.last_updated %}
+    <aside class="page-last-updated" aria-label="Page metadata">
+      Last updated <time datetime="{{ page.meta.last_updated }}">{{ page.meta.last_updated }}</time>
+    </aside>
+  {% endif %}
+{% endblock %}

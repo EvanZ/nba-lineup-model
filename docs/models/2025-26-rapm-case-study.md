@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-27"
+---
+
 <p class="project-kicker">Model review / 2025-26</p>
 
 # What a One-Season RAPM Can Establish

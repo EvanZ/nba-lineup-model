@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Validate Forward Cold Starts
 
 Validate frozen first-year priors against the completed forward RAPM refit for

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-27"
+---
+
 # Collect Player Bios
 
 Collect the historical player index and one season bio table:

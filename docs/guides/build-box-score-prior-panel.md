@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 # Build The Box-Score Prior Panel
 
 Build the validated player-season panel first, then run:

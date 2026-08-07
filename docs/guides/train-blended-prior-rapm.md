@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-01"
+---
+
 # Train Blended Prior RAPM
 
 This model chooses a convex combination of frozen lagged-RAPM and aging-model

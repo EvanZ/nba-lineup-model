@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-30"
+---
+
 # Neural Networks
 
 The neural modeling program is intended to measure lineup interactions rather

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # 2026-27 Exposure-Gated Player Rankings
 
 These are the top 100 returning-player preseason values from the completed

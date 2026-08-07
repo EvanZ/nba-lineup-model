@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-27"
+---
+
 # RAPM Modeling Stints
 
 The first analytical modeling contract combines curated lineup stints with

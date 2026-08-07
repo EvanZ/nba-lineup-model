@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-03"
+---
+
 # Raw Responses
 
 The raw cache is the reproducibility boundary between external NBA services and

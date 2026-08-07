@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-29"
+---
+
 # Train the RAPM Baselines
 
 The first training command runs three regular-season models:

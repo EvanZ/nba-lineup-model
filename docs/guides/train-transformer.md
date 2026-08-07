@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-30"
+---
+
 # Train RAPM + Transformer
 
 Train the single-season frozen-RAPM residual model with:

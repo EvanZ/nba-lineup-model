@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Exposure-Gated O/D Cold Starts
 
 This model applies the [cold-start exposure gate](cold-start-exposure.md) to

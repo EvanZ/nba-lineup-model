@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 <p class="project-kicker">Player priors / forward filtering</p>
 
 # RAPM Aging Model

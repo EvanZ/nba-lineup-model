@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-03"
+---
+
 # Process a Season
 
 The season processing flow converts validated local raw responses into

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-27"
+---
+
 # Architecture Overview
 
 The repository is organized around transformations from immutable source

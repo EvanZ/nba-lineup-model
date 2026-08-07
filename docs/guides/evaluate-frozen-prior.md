@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Evaluate A Frozen Preseason Prior
 
 Evaluate the lagged-RAPM baseline with:

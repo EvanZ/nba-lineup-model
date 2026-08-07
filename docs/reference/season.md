@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-31"
+---
+
 # Season Data API
 
 ::: nba_lineup_model.season.schedule

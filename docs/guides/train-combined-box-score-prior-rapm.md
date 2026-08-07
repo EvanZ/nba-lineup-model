@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 # Train The Combined Box-Score Prior RAPM
 
 After both component forecasts have been built for a target season, run:

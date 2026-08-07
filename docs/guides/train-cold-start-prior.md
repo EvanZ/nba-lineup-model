@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 # Train The Cold-Start RAPM Prior
 
 The cold-start experiment forecasts players without an immediately preceding

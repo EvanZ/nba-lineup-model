@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Build Exposure-Gated O/D Cold Starts
 
 Build the frozen O/D cold-start model after the frozen O/D RAPM source and the

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-27"
+---
+
 # Promoted Rankings
 
 No model run has been promoted yet.

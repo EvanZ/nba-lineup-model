@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-06"
+---
+
 # Train Student-t Forward RAPM
 
 Train the robust-likelihood counterpart to the recursive forward

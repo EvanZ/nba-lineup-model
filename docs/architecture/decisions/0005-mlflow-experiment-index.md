@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-29"
+---
+
 # ADR-0005: MLflow Experiment Index
 
 <p class="adr-status"><strong>Decision status</strong><span>Accepted</span></p>

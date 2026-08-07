@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Build the Replacement-Level Study
 
 This command builds the descriptive all-player low-exposure study used to

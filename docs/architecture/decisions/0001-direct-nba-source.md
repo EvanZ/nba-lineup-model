@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-27"
+---
+
 # ADR-0001: Direct NBA Source Data
 
 <p class="adr-status"><strong>Decision status</strong><span>Accepted</span></p>

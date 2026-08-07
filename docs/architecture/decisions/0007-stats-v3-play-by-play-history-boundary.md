@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-01"
+---
+
 # ADR-0007: Stats V3 Play-By-Play History Boundary
 
 <p class="adr-status"><strong>Decision status</strong><span>Accepted</span></p>

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Build the Replacement-Token Study
 
 This retrospective diagnostic replaces every cataloged low-exposure player in

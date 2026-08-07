@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-03"
+---
+
 # Fetch Historical NBA Stats Responses
 
 The historical Stats flow preserves archived game responses directly from

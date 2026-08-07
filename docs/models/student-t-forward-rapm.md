@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-06"
+---
+
 # Student-t Forward RAPM
 
 This model is the first robust-likelihood version of the recursive,

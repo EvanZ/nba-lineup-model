@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-31"
+---
+
 # Events
 
 The canonical event stream is the first project-owned basketball contract. One

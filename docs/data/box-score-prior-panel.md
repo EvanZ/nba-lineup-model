@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 # Box-Score Prior Panel
 
 The box-score prior panel is the possession-native feature boundary for the

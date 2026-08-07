@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Build The Draft-Prior Study
 
 This diagnostic uses the validated player-season panel to estimate a simple,

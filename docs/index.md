@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-30"
+---
+
 <p class="project-kicker">Possession-level modeling infrastructure</p>
 
 # NBA Lineup Model

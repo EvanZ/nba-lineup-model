@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Pooled Replacement-Token RAPM
 
 This diagnostic estimates a replacement-player group effect directly in the

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Cold-Start Exposure Gate
 
 This study separates two questions that were previously conflated in the

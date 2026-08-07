@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-27"
+---
+
 # Baseline Methodology
 
 ## Null model

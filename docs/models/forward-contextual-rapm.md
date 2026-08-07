@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-07"
+---
+
 # Forward Contextual RAPM
 
 Forward Contextual RAPM is the current gold-standard preseason model in this

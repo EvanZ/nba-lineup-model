@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-26"
+---
+
 # ADR-0004: Hybrid Season Storage
 
 <p class="adr-status"><strong>Decision status</strong><span>Accepted</span></p>

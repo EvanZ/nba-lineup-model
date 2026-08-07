@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Forward Exposure-Gated RAPM
 
 This is the recursive one-number preseason RAPM state. Each completed regular

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-30"
+---
+
 # RAPM Base Predictions
 
 The RAPM + Transformer model does not estimate its additive baseline inside

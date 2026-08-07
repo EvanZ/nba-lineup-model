@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-31"
+---
+
 # ADR-0006: Stats V3-First Historical Game Archive
 
 <p class="adr-status"><strong>Decision status</strong><span>Accepted</span></p>

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Forward Cold-Start Validation
 
 This study tests the first-year branch of the forward exposure-gated RAPM model. It compares every 2025-26 rookie's frozen preseason prior to the coefficient from the completed 2025-26 forward RAPM refit.

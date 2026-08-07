@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 <p class="project-kicker">Forward priors / regularized adjusted plus-minus</p>
 
 # Prior-Centered RAPM

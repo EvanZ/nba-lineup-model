@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
@@ -41,6 +43,9 @@ jobs:
 
       - name: Install documentation dependencies
         run: uv sync --locked --group docs
+
+      - name: Update documentation dates
+        run: uv run python scripts/update_doc_dates.py
 
       - name: Build documentation
         run: uv run --group docs zensical build --clean --strict

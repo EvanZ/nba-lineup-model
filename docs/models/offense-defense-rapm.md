@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Offense/Defense RAPM
 
 This model separates each player's offensive contribution from their defensive

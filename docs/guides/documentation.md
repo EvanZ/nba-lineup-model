@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Build and Serve the Documentation
 
 The project documentation is a Zensical static site configured by
@@ -36,6 +40,14 @@ Pass `--open` to open the preview in the default browser automatically.
 
 ## Build the static site
 
+Before a build, update each page's displayed date from its most recent Git
+commit. The deployment workflow performs the same step using full repository
+history:
+
+```bash
+uv run python scripts/update_doc_dates.py
+```
+
 Build with strict validation:
 
 ```bash
@@ -59,6 +71,9 @@ uv run --group docs zensical build --clean --strict
 | `zensical.toml` | Site metadata, navigation, theme, extensions, and plugins |
 | `docs/` | Markdown source pages |
 | `docs/stylesheets/extra.css` | Project-specific visual styling |
+| `docs/javascripts/last-updated.js` | Places each page's update date below its main heading |
+| `overrides/main.html` | Shared page metadata element containing the Git-derived update date |
+| `scripts/update_doc_dates.py` | Writes per-page `last_updated` metadata from Git history |
 | `src/nba_lineup_model/` | Python API source consumed by MkDocstrings |
 | `site/` | Generated static site |
 

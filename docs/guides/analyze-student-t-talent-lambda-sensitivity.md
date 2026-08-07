@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-06"
+---
+
 # Analyze Student-t Talent Lambda Sensitivity
 
 Refit the completed 2025-26 Student-t talent-prior model using a fixed final

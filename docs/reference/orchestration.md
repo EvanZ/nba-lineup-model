@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-30"
+---
+
 # Orchestration API
 
 ::: nba_lineup_model.flows.fetch_season

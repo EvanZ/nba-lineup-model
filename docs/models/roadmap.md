@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Modeling Roadmap
 
 This page records approved model designs that should remain visible but are not

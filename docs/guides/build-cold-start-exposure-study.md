@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Build the Cold-Start Exposure Gate
 
 This study predicts whether a first-NBA-season player will finish below a

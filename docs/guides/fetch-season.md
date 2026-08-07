@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-30"
+---
+
 # Fetch a Season
 
 The season fetch flow downloads byte-preserved play-by-play and boxscore

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 # Compare RAPM Across Eras
 
 This report standardizes each completed season's full-season forward-prior RAPM

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 # Leaderboard
 
 This page is the cross-model scoreboard. Every row within a cohort uses the

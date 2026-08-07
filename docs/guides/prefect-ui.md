@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-27"
+---
+
 # Use the Prefect Web UI
 
 Prefect's local web UI displays flow runs, individual tasks, timing, retries,

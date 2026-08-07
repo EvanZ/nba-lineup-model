@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-26"
+---
+
 # Cross-Season Audit
 
 The audit evaluates reconstruction behavior across a versioned game manifest.

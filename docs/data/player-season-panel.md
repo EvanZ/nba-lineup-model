@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-04"
+---
+
 # Player-Season Panel
 
 The player-season panel is the shared historical feature boundary for RAPM

@@ -1,3 +1,7 @@
+---
+last_updated: "2026-08-05"
+---
+
 # Train Frozen Offense/Defense RAPM
 
 Run the full forward regular-season chain and frozen 2025-26 evaluation with:

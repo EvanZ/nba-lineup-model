@@ -1,3 +1,7 @@
+---
+last_updated: "2026-07-29"
+---
+
 # Possessions
 
 Possession reconstruction is a finite-state process over canonical events. It
