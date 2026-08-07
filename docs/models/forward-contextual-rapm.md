@@ -55,6 +55,39 @@ profile. The blend weight is the same forward exposure-gate probability used
 by the cold-start RAPM prior. Thus cold-start profiles are explicit estimates,
 not silent zero fills.
 
+## How This Differs From A Typical Box-Score Prior
+
+Most box-score RAPM priors predict a single prior value for each player:
+
+\[
+\mu_{i,t} = f(\text{box-score profile of player }i).
+\]
+
+That scalar becomes the prior mean for player \(i\)'s RAPM coefficient. The
+box score is therefore answering a player-level question: how valuable should
+this player be expected to be in an average lineup context?
+
+Forward Contextual RAPM does not turn these rates into another permanent player
+rating. It preserves the forward RAPM and cold-start state as the additive
+player prior, then uses the rate profiles only to construct a lineup-level
+term:
+
+\[
+g_t\bigl(\phi(H),\phi(A)\bigr).
+\]
+
+The correction belongs to the combination of five players, not to a single
+player. It can therefore represent diminishing returns and complements. A
+second high-usage player may have a different correction beside four shooters
+than beside another ball-dominant creator; an extra shooter may matter more in
+a lineup whose bottom two shooters are weak; and rebounding can saturate rather
+than rising linearly with each player's individual rebound rate.
+
+This makes the box-score layer a structured lineup-synergy model rather than a
+conventional box-score prior. The distinction also preserves interpretability:
+the published player ranking remains the additive RAPM state, while \(g_t\) is
+reported and applied only when evaluating a concrete lineup.
+
 ## Lineup Context Function
 
 For a home lineup \(H\) and away lineup \(A\), \(z=\phi(H,A)\) contains
