@@ -13,6 +13,8 @@ extra_javascript = [
   "javascripts/star-rapm-chart.js",
   "javascripts/sortable-tables.js",
   "javascripts/last-updated.js",
+  "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js",
+  "javascripts/model-tree.js",
   "https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js",
 ]
 nav = [
@@ -81,6 +83,8 @@ nav = [
     {"Train cold-start RAPM prior" = "guides/train-cold-start-prior.md"},
     {"Train combined box-score prior RAPM" = "guides/train-combined-box-score-prior-rapm.md"},
     {"Evaluate a frozen preseason prior" = "guides/evaluate-frozen-prior.md"},
+    {"Evaluate frozen no-prior window RAPM" = "guides/evaluate-frozen-window-rapm.md"},
+    {"Report frozen full-game outcomes" = "guides/report-frozen-game-outcomes.md"},
     {"Train frozen offense/defense RAPM" = "guides/train-offense-defense-rapm.md"},
     {"Calibrate forward RAPM to wins" = "guides/calibrate-forward-rapm.md"},
     {"Compare RAPM across eras" = "guides/compare-eras.md"},
@@ -91,6 +95,7 @@ nav = [
   ]},
   {"Models" = [
     {"Overview" = "models/index.md"},
+    {"Frozen Preseason Leaderboard" = "models/preseason-leaderboard.md"},
     {"Baseline methodology" = "models/baselines.md"},
     {"Bayesian RAPM methodology" = "models/bayesian-rapm.md"},
     {"RAPM Aging Model" = "models/aging-model.md"},
@@ -104,6 +109,7 @@ nav = [
     {"Exposure-Gated Cold-Start Prior" = "models/exposure-gated-cold-start.md"},
     {"Exposure-Gated O/D Cold Starts" = "models/exposure-gated-offense-defense.md"},
     {"Forward Exposure-Gated RAPM" = "models/forward-exposure-gated-rapm.md"},
+    {"Frozen No-Prior Window RAPM" = "models/frozen-window-rapm.md"},
     {"Forward Contextual RAPM" = "models/forward-contextual-rapm.md"},
     {"Student-t Forward RAPM" = "models/student-t-forward-rapm.md"},
     {"Student-t Talent-Prior RAPM" = "models/student-t-talent-forward-rapm.md"},
@@ -117,7 +123,6 @@ nav = [
     {"Neural Networks" = "models/neural-networks.md"},
     {"Tree Models" = "models/tree-models.md"},
     {"Leaderboard" = "models/leaderboard.md"},
-    {"Frozen Preseason Leaderboard" = "models/preseason-leaderboard.md"},
     {"2025-26 RAPM case study" = "models/2025-26-rapm-case-study.md"},
     {"2025-26 Bayesian RAPM case study" = "models/2025-26-bayesian-rapm-case-study.md"},
     {"Promoted rankings" = "models/rankings.md"},

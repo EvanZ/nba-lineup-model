@@ -8,6 +8,51 @@ The modeling program starts with transparent predictive baselines before adding
 player priors, separate offensive and defensive effects, or nonlinear lineup
 interactions.
 
+## Model Evolution
+
+This view organizes the modeling program as a primary-parent tree. A branch
+represents a deliberate change to its parent, not a claim that every model is
+strictly nested. The selector redraws the vertical ordering by the selected
+out-of-sample metric; rank 1 is best among models eligible for that metric.
+The exact score and parent delta remain visible on every node.
+
+The default view uses frozen 2025-26 regular-season game-margin RMSE because it
+matches the project’s preseason forecasting contract. Models without a result
+under the selected contract remain visible in the unranked lane to preserve the
+full methodological lineage. Use the in-season choices to compare the
+one-season neural and tree branches on their separate chronological holdout.
+
+<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json">
+  <div class="model-tree__loading" role="status">Loading model evolution…</div>
+</div>
+
+### Reading The Tree
+
+- **Horizontal position** is the number of primary-parent changes from the
+  one-season ridge RAPM trunk.
+- **Vertical position** is rank for the selected metric, not the raw metric
+  scale. This prevents very small RMSE differences from producing an unreadable
+  chart while preserving their exact values in node labels and tooltips.
+- **Solid links** identify the primary parent used for the teaching-oriented
+  lineage. A model can share components with other branches; its model page is
+  the authoritative implementation record.
+- **Unranked nodes** were not evaluated under the selected cohort. They are not
+  treated as zeroes or assigned an artificial score.
+
+The canonical metric definitions, evaluation boundaries, and full tables are
+maintained in the [Frozen Preseason Leaderboard](preseason-leaderboard.md) and
+the [in-season Leaderboard](leaderboard.md).
+
+### Registry
+
+The visualization is driven by
+[`docs/assets/data/model-tree.json`](../assets/data/model-tree.json). Add a
+new node only after its evaluation artifact and model documentation exist.
+Each node must identify one primary parent, its documented change, a model-page
+link, and only metrics produced under their named evaluation contract. The
+registry integrity test prevents duplicate IDs, dangling parents, unknown
+metrics, and malformed metric values.
+
 ## Baseline ladder
 
 | Model | Information available |
@@ -19,6 +64,8 @@ interactions.
 | RAPM aging model | Forward player-season priors from prior RAPM and age |
 | Age-informed prior RAPM | Lineup RAPM centered on the frozen aging forecast |
 | Forward RAPM calibration | Frozen lagged RAPM mapped to team wins using realized lineup seconds |
+| Frozen 1-year no-prior RAPM | Completed 2024-25 zero-centered RAPM scored on 2025-26 oracle lineups |
+| Frozen pooled 3-year no-prior RAPM | One zero-centered coefficient fit across 2022-23 through 2024-25 |
 | Frozen lagged RAPM | Preseason 2024-25 player values scored on all 2025-26 oracle lineups |
 | Frozen aging prior | Preseason age, experience, prior RAPM, draft, and physical-profile values scored on the same oracle lineups |
 | Frozen O/D RAPM | Forward offense and defense player values scored on the same oracle lineups |
@@ -89,3 +136,7 @@ prior for player departures from the forward state.
 [Forward Contextual RAPM](forward-contextual-rapm.md) carries the completed
 lineup-composition state into the next season's RAPM target before updating its
 player coefficients.
+
+[Frozen No-Prior Window RAPM](frozen-window-rapm.md) records the one-year and
+pooled three-year controls that distinguish historical pooling from an explicit
+forward player prior.

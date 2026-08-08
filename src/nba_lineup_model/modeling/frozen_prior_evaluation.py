@@ -65,10 +65,11 @@ class FrozenPriorEvaluationManifest(BaseModel):
     season: str = Field(pattern=SEASON_PATTERN)
     model: Literal[
         "frozen_regular_only_lagged_rapm",
+        "frozen_one_year_rapm_no_priors",
+        "frozen_three_year_rapm_no_priors",
         "frozen_aging_prior",
         "frozen_combined_box_score_prior",
         "frozen_draft_cold_start_prior",
-        "frozen_exposure_gated_cold_start_prior",
         "frozen_exposure_gated_cold_start_prior",
     ]
     source_season: str = Field(pattern=SEASON_PATTERN)
@@ -1418,9 +1419,12 @@ def _write_run(
     run_prefix: str = "frozen-lagged-prior",
     manifest_model: Literal[
         "frozen_regular_only_lagged_rapm",
+        "frozen_one_year_rapm_no_priors",
+        "frozen_three_year_rapm_no_priors",
         "frozen_aging_prior",
         "frozen_combined_box_score_prior",
         "frozen_draft_cold_start_prior",
+        "frozen_exposure_gated_cold_start_prior",
     ] = "frozen_regular_only_lagged_rapm",
 ) -> tuple[FrozenPriorEvaluationManifest, Path]:
     now = datetime.now(UTC)

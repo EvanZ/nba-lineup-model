@@ -1,0 +1,357 @@
+{
+  "version": 1,
+  "updated": "2026-08-07",
+  "default_metric": "frozen_regular_game_margin_rmse",
+  "metrics": [
+    {
+      "id": "frozen_regular_possession_rmse",
+      "label": "Frozen regular: possession RMSE",
+      "direction": "lower",
+      "decimals": 6
+    },
+    {
+      "id": "frozen_regular_game_margin_rmse",
+      "label": "Frozen regular: game-margin RMSE",
+      "direction": "lower",
+      "decimals": 4
+    },
+    {
+      "id": "frozen_regular_full_game_margin_rmse",
+      "label": "Frozen regular: full-game margin RMSE",
+      "direction": "lower",
+      "decimals": 4
+    },
+    {
+      "id": "frozen_regular_game_winner_accuracy",
+      "label": "Frozen regular: game-winner accuracy",
+      "direction": "higher",
+      "decimals": 4
+    },
+    {
+      "id": "frozen_regular_team_net_rating_rmse",
+      "label": "Frozen regular: team NetRtg RMSE",
+      "direction": "lower",
+      "decimals": 4
+    },
+    {
+      "id": "frozen_regular_pythagorean_wins_rmse",
+      "label": "Frozen regular: Pythagorean-wins RMSE",
+      "direction": "lower",
+      "decimals": 4
+    },
+    {
+      "id": "frozen_playoff_possession_rmse",
+      "label": "Frozen playoffs: possession RMSE",
+      "direction": "lower",
+      "decimals": 6
+    },
+    {
+      "id": "frozen_playoff_game_margin_rmse",
+      "label": "Frozen playoffs: game-margin RMSE",
+      "direction": "lower",
+      "decimals": 4
+    },
+    {
+      "id": "in_season_regular_possession_rmse",
+      "label": "In-season regular holdout: possession RMSE",
+      "direction": "lower",
+      "decimals": 6
+    },
+    {
+      "id": "in_season_regular_game_margin_rmse",
+      "label": "In-season regular holdout: game-margin RMSE",
+      "direction": "lower",
+      "decimals": 4
+    }
+  ],
+  "models": [
+    {
+      "id": "one-season-ridge-rapm",
+      "name": "One-season ridge RAPM",
+      "short_name": "One-season ridge RAPM",
+      "parent": null,
+      "change": "Trunk: signed player identities with ridge regularization.",
+      "docs": "../baselines/",
+      "metrics": {
+        "in_season_regular_possession_rmse": 1.199460,
+        "in_season_regular_game_margin_rmse": 14.7107
+      }
+    },
+    {
+      "id": "bayesian-rapm",
+      "name": "One-season Bayesian RAPM",
+      "short_name": "Bayesian RAPM",
+      "parent": "one-season-ridge-rapm",
+      "change": "+ posterior uncertainty; same ridge posterior mean.",
+      "docs": "../bayesian-rapm/",
+      "metrics": {
+        "in_season_regular_possession_rmse": 1.199460,
+        "in_season_regular_game_margin_rmse": 14.7107
+      }
+    },
+    {
+      "id": "additive-neural-rapm",
+      "name": "One-season additive neural RAPM",
+      "short_name": "Additive neural RAPM",
+      "parent": "one-season-ridge-rapm",
+      "change": "+ learned scalar player embeddings.",
+      "docs": "../neural-networks/",
+      "metrics": {
+        "in_season_regular_possession_rmse": 1.199453,
+        "in_season_regular_game_margin_rmse": 14.7181
+      }
+    },
+    {
+      "id": "deep-sets",
+      "name": "One-season Deep Sets",
+      "short_name": "Deep Sets",
+      "parent": "one-season-ridge-rapm",
+      "change": "+ nonlinear permutation-invariant lineup aggregation.",
+      "docs": "../neural-networks/",
+      "metrics": {
+        "in_season_regular_possession_rmse": 1.199759,
+        "in_season_regular_game_margin_rmse": 15.1073
+      }
+    },
+    {
+      "id": "categorical-catboost",
+      "name": "One-season categorical CatBoost",
+      "short_name": "Categorical CatBoost",
+      "parent": "one-season-ridge-rapm",
+      "change": "+ boosted categorical player and lineup interactions.",
+      "docs": "../tree-models/",
+      "metrics": {
+        "in_season_regular_possession_rmse": 1.199911,
+        "in_season_regular_game_margin_rmse": 15.8389
+      }
+    },
+    {
+      "id": "rapm-transformer",
+      "name": "One-season RAPM + Transformer",
+      "short_name": "RAPM + Transformer",
+      "parent": "one-season-ridge-rapm",
+      "change": "+ attention residual on a frozen ridge prediction.",
+      "docs": "../neural-networks/",
+      "metrics": {
+        "in_season_regular_possession_rmse": 1.199526,
+        "in_season_regular_game_margin_rmse": 14.7182
+      }
+    },
+    {
+      "id": "frozen-lagged-rapm",
+      "name": "Frozen lagged RAPM",
+      "short_name": "Forward lagged RAPM",
+      "parent": "one-season-ridge-rapm",
+      "change": "+ completed prior-season player RAPM as a preseason prior.",
+      "docs": "../prior-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.199000,
+        "frozen_regular_game_margin_rmse": 14.8894,
+        "frozen_regular_full_game_margin_rmse": 15.3211,
+        "frozen_regular_game_winner_accuracy": 0.656911,
+        "frozen_regular_team_net_rating_rmse": 4.8538,
+        "frozen_regular_pythagorean_wins_rmse": 10.7006,
+        "frozen_playoff_possession_rmse": 1.192895,
+        "frozen_playoff_game_margin_rmse": 17.5409
+      }
+    },
+    {
+      "id": "frozen-one-year-no-prior-rapm",
+      "name": "Frozen 1-year no-prior RAPM",
+      "short_name": "Frozen 1-year RAPM",
+      "parent": "one-season-ridge-rapm",
+      "change": "Freeze a zero-centered 2024-25 RAPM fit before 2025-26.",
+      "docs": "../frozen-window-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.199061,
+        "frozen_regular_game_margin_rmse": 15.0694,
+        "frozen_regular_full_game_margin_rmse": 15.5605,
+        "frozen_regular_game_winner_accuracy": 0.631707,
+        "frozen_regular_team_net_rating_rmse": 4.9792,
+        "frozen_regular_pythagorean_wins_rmse": 11.5828,
+        "frozen_playoff_possession_rmse": 1.192713,
+        "frozen_playoff_game_margin_rmse": 17.1867
+      }
+    },
+    {
+      "id": "frozen-three-year-no-prior-rapm",
+      "name": "Frozen pooled 3-year no-prior RAPM",
+      "short_name": "Frozen pooled 3-year RAPM",
+      "parent": "frozen-one-year-no-prior-rapm",
+      "change": "+ pool 2022-23 through 2024-25 into one player coefficient.",
+      "docs": "../frozen-window-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198919,
+        "frozen_regular_game_margin_rmse": 14.7820,
+        "frozen_regular_full_game_margin_rmse": 15.1944,
+        "frozen_regular_game_winner_accuracy": 0.652033,
+        "frozen_regular_team_net_rating_rmse": 4.6618,
+        "frozen_regular_pythagorean_wins_rmse": 10.7999,
+        "frozen_playoff_possession_rmse": 1.192614,
+        "frozen_playoff_game_margin_rmse": 16.9988
+      }
+    },
+    {
+      "id": "frozen-aging-prior",
+      "name": "Frozen aging prior",
+      "short_name": "Aging prior",
+      "parent": "frozen-lagged-rapm",
+      "change": "+ age, experience, draft, and physical-profile prior.",
+      "docs": "../aging-model/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.199062,
+        "frozen_regular_game_margin_rmse": 15.0203,
+        "frozen_regular_full_game_margin_rmse": 15.5090,
+        "frozen_regular_game_winner_accuracy": 0.650407,
+        "frozen_regular_team_net_rating_rmse": 5.0366,
+        "frozen_regular_pythagorean_wins_rmse": 10.9632,
+        "frozen_playoff_possession_rmse": 1.192332,
+        "frozen_playoff_game_margin_rmse": 16.4946
+      }
+    },
+    {
+      "id": "frozen-od-rapm",
+      "name": "Frozen offense/defense RAPM",
+      "short_name": "Frozen O/D RAPM",
+      "parent": "frozen-lagged-rapm",
+      "change": "+ separate offense and defense player ratings.",
+      "docs": "../offense-defense-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198853,
+        "frozen_regular_game_margin_rmse": 14.8901,
+        "frozen_regular_full_game_margin_rmse": 15.4015,
+        "frozen_regular_game_winner_accuracy": 0.650407,
+        "frozen_regular_team_net_rating_rmse": 4.8740,
+        "frozen_regular_pythagorean_wins_rmse": 10.9640,
+        "frozen_playoff_possession_rmse": 1.194642,
+        "frozen_playoff_game_margin_rmse": 17.8037
+      }
+    },
+    {
+      "id": "frozen-draft-cold-start",
+      "name": "Frozen draft cold-start prior",
+      "short_name": "Draft cold start",
+      "parent": "frozen-lagged-rapm",
+      "change": "+ draft profile for first-NBA-season players.",
+      "docs": "../draft-prior/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198986,
+        "frozen_regular_game_margin_rmse": 14.8590,
+        "frozen_regular_full_game_margin_rmse": 15.3025,
+        "frozen_regular_game_winner_accuracy": 0.651220,
+        "frozen_regular_team_net_rating_rmse": 4.8473,
+        "frozen_regular_pythagorean_wins_rmse": 10.6718,
+        "frozen_playoff_possession_rmse": 1.192971,
+        "frozen_playoff_game_margin_rmse": 17.6339
+      }
+    },
+    {
+      "id": "frozen-exposure-gated-cold-start",
+      "name": "Frozen exposure-gated cold-start prior",
+      "short_name": "Exposure-gated cold start",
+      "parent": "frozen-draft-cold-start",
+      "change": "+ first-year exposure gate and replacement-token blend.",
+      "docs": "../exposure-gated-cold-start/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198952,
+        "frozen_regular_game_margin_rmse": 14.7413,
+        "frozen_regular_full_game_margin_rmse": 15.1594,
+        "frozen_regular_game_winner_accuracy": 0.657724,
+        "frozen_regular_team_net_rating_rmse": 4.6989,
+        "frozen_regular_pythagorean_wins_rmse": 10.2466,
+        "frozen_playoff_possession_rmse": 1.192980,
+        "frozen_playoff_game_margin_rmse": 17.6725
+      }
+    },
+    {
+      "id": "frozen-exposure-gated-od",
+      "name": "Frozen exposure-gated O/D cold-start prior",
+      "short_name": "Exposure-gated O/D",
+      "parent": "frozen-od-rapm",
+      "change": "+ O/D cold starts with separate replacement tokens.",
+      "docs": "../exposure-gated-offense-defense/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198792,
+        "frozen_regular_game_margin_rmse": 14.7631,
+        "frozen_regular_full_game_margin_rmse": 15.2474,
+        "frozen_regular_game_winner_accuracy": 0.652846,
+        "frozen_regular_team_net_rating_rmse": 4.7113,
+        "frozen_regular_pythagorean_wins_rmse": 10.5096,
+        "frozen_playoff_possession_rmse": 1.194678,
+        "frozen_playoff_game_margin_rmse": 17.8562
+      }
+    },
+    {
+      "id": "recursive-exposure-gated-rapm",
+      "name": "Recursive exposure-gated RAPM",
+      "short_name": "Recursive exposure-gated",
+      "parent": "frozen-exposure-gated-cold-start",
+      "change": "+ leakage-safe recursive cold-start state by season.",
+      "docs": "../forward-exposure-gated-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198993,
+        "frozen_regular_game_margin_rmse": 14.8225,
+        "frozen_regular_full_game_margin_rmse": 15.1802,
+        "frozen_regular_game_winner_accuracy": 0.666667,
+        "frozen_regular_team_net_rating_rmse": 4.6680,
+        "frozen_regular_pythagorean_wins_rmse": 10.2778,
+        "frozen_playoff_possession_rmse": 1.192821,
+        "frozen_playoff_game_margin_rmse": 17.4188
+      }
+    },
+    {
+      "id": "student-t-recursive-rapm",
+      "name": "Student-t recursive RAPM",
+      "short_name": "Student-t errors",
+      "parent": "recursive-exposure-gated-rapm",
+      "change": "Gaussian stint errors replaced by Student-t errors.",
+      "docs": "../student-t-forward-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.199014,
+        "frozen_regular_game_margin_rmse": 14.8908,
+        "frozen_regular_full_game_margin_rmse": 15.2758,
+        "frozen_regular_game_winner_accuracy": 0.656911,
+        "frozen_regular_team_net_rating_rmse": 4.8263,
+        "frozen_regular_pythagorean_wins_rmse": 10.6358,
+        "frozen_playoff_possession_rmse": 1.192621,
+        "frozen_playoff_game_margin_rmse": 17.1300
+      }
+    },
+    {
+      "id": "student-t-talent-prior",
+      "name": "Student-t talent-prior RAPM",
+      "short_name": "Student-t talent prior",
+      "parent": "recursive-exposure-gated-rapm",
+      "change": "+ heavy-tailed player departures from the prior.",
+      "docs": "../student-t-talent-forward-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198989,
+        "frozen_regular_game_margin_rmse": 14.7993,
+        "frozen_regular_full_game_margin_rmse": 15.1499,
+        "frozen_regular_game_winner_accuracy": 0.675610,
+        "frozen_regular_team_net_rating_rmse": 4.6069,
+        "frozen_regular_pythagorean_wins_rmse": 10.1176,
+        "frozen_playoff_possession_rmse": 1.192895,
+        "frozen_playoff_game_margin_rmse": 17.4713
+      }
+    },
+    {
+      "id": "forward-contextual-rapm",
+      "name": "Forward contextual RAPM",
+      "short_name": "Forward contextual RAPM",
+      "parent": "recursive-exposure-gated-rapm",
+      "change": "+ lagged nonlinear lineup-composition offset on the recursive exposure-gated state.",
+      "docs": "../forward-contextual-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.199008,
+        "frozen_regular_game_margin_rmse": 14.6525,
+        "frozen_regular_full_game_margin_rmse": 15.0190,
+        "frozen_regular_game_winner_accuracy": 0.678862,
+        "frozen_regular_team_net_rating_rmse": 4.1572,
+        "frozen_regular_pythagorean_wins_rmse": 9.3153,
+        "frozen_playoff_possession_rmse": 1.192898,
+        "frozen_playoff_game_margin_rmse": 17.5493
+      }
+    }
+  ]
+}

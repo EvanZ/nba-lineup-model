@@ -74,6 +74,22 @@ uv run --group docs zensical build --clean --strict
 | `docs/javascripts/last-updated.js` | Places each page's update date below its main heading |
 | `overrides/main.html` | Shared page metadata element containing the Git-derived update date |
 | `scripts/update_doc_dates.py` | Writes per-page `last_updated` metadata from Git history |
+
+## Interactive Model Evolution
+
+The [Model Evolution](../models/#model-evolution) section is a static D3
+visualization. Its versioned data registry is
+`docs/assets/data/model-tree.json`; update it after a model has both an
+evaluation artifact and a documentation page. Run the focused registry check
+after editing it:
+
+```bash
+uv run --group dev pytest tests/test_model_tree_registry.py
+```
+
+The docs configuration loads D3 before `docs/javascripts/model-tree.js`.
+Both local serving and the GitHub Pages build use the same static assets; no
+separate visualization service is required.
 | `src/nba_lineup_model/` | Python API source consumed by MkDocstrings |
 | `site/` | Generated static site |
 

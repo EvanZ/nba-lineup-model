@@ -523,3 +523,213 @@ body {
   stroke: var(--md-default-fg-color--lighter);
   stroke-dasharray: 4 4;
 }
+
+.model-tree {
+  position: relative;
+  margin: 1.5rem 0 2rem;
+  border-top: 1px solid var(--lineup-line);
+  border-bottom: 1px solid var(--lineup-line);
+  background: var(--lineup-surface);
+}
+
+.model-tree__loading {
+  padding: 1rem;
+  color: var(--lineup-muted);
+}
+
+.model-tree__controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--lineup-line);
+  background: var(--lineup-header);
+}
+
+.model-tree__controls label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--md-default-fg-color);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.model-tree__controls select {
+  min-width: 17rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--lineup-line);
+  border-radius: 4px;
+  background: var(--lineup-surface);
+  color: var(--md-default-fg-color);
+  font: inherit;
+}
+
+.model-tree__eligible-count {
+  color: var(--lineup-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.model-tree__chart {
+  display: block;
+  width: 100%;
+  min-width: 42.5rem;
+  overflow: visible;
+}
+
+.model-tree {
+  overflow-x: auto;
+}
+
+.model-tree__axis-row line {
+  stroke: var(--lineup-line);
+  stroke-dasharray: 2 4;
+}
+
+.model-tree__axis-row text,
+.model-tree__unranked-label {
+  fill: var(--lineup-muted);
+  font-family: var(--md-code-font-family);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.model-tree__unranked-rule {
+  stroke: var(--lineup-muted);
+  stroke-dasharray: 5 4;
+}
+
+.model-tree__link {
+  fill: none;
+  stroke: var(--lineup-muted);
+  stroke-width: 1.35;
+  opacity: 0.68;
+}
+
+.model-tree__node {
+  cursor: pointer;
+  outline: none;
+}
+
+.model-tree__node rect {
+  fill: var(--lineup-header);
+  stroke: var(--lineup-blue);
+  stroke-width: 1.3;
+  transition: stroke 120ms ease, fill 120ms ease;
+}
+
+.model-tree__node:hover rect,
+.model-tree__node:focus rect {
+  fill: var(--md-accent-fg-color--transparent);
+  stroke: var(--lineup-orange);
+  stroke-width: 2;
+}
+
+.model-tree__node.is-unranked rect {
+  fill: var(--lineup-surface-strong);
+  stroke: var(--lineup-muted);
+  stroke-dasharray: 3 3;
+}
+
+.model-tree__node-name {
+  fill: var(--md-default-fg-color);
+  font-family: var(--md-text-font-family);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.model-tree__node-value {
+  fill: var(--lineup-muted);
+  font-family: var(--md-code-font-family);
+  font-size: 0.68rem;
+}
+
+.model-tree__tooltip {
+  position: fixed;
+  z-index: 20;
+  width: min(19rem, calc(100vw - 1.75rem));
+  padding: 0.8rem;
+  border: 1px solid var(--lineup-line);
+  border-left: 3px solid var(--lineup-orange);
+  border-radius: 4px;
+  background: var(--lineup-header);
+  box-shadow: 0 8px 24px rgb(24 59 99 / 0.18);
+  color: var(--md-default-fg-color);
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+
+.model-tree__tooltip strong,
+.model-tree__tooltip span,
+.model-tree__tooltip em {
+  display: block;
+}
+
+.model-tree__tooltip strong {
+  color: var(--lineup-navy);
+  font-size: 0.82rem;
+}
+
+[data-md-color-scheme="slate"] .model-tree__tooltip strong {
+  color: #f2f4f7;
+}
+
+.model-tree__tooltip span {
+  margin-top: 0.22rem;
+  color: var(--lineup-muted);
+  line-height: 1.45;
+}
+
+.model-tree__tooltip dl {
+  margin: 0.7rem 0;
+}
+
+.model-tree__tooltip dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.18rem 0;
+  border-top: 1px solid var(--lineup-line);
+}
+
+.model-tree__tooltip dt {
+  color: var(--lineup-muted);
+}
+
+.model-tree__tooltip dd {
+  margin: 0;
+  font-family: var(--md-code-font-family);
+  font-weight: 700;
+  text-align: right;
+}
+
+.model-tree__tooltip em {
+  color: var(--lineup-orange);
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+@media screen and (max-width: 44.984375em) {
+  .model-tree__controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .model-tree__controls label {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .model-tree__controls select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .model-tree__eligible-count {
+    white-space: normal;
+  }
+}

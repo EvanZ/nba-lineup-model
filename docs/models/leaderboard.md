@@ -10,6 +10,10 @@ after the cohort's training cutoff. Training objectives remain model-specific.
 **Bold values are best at the displayed precision.** Lower error is better;
 higher skill is better.
 
+[Model Evolution](index.md#model-evolution) presents the same evaluated model
+families as an interactive primary-parent tree and lets readers reorder it by
+metric.
+
 This board measures **in-season** prediction after fitting target-season
 games. The [Frozen Preseason Leaderboard](preseason-leaderboard.md) separately
 holds out the entire regular season and playoffs with player values fixed
