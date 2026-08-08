@@ -2227,6 +2227,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "catboost" },
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "joblib" },
     { name = "lightning" },
@@ -2239,6 +2240,7 @@ dependencies = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "torch" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -2255,6 +2257,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "catboost", specifier = ">=1.2.7,<2" },
+    { name = "fastapi", specifier = ">=0.140.7" },
     { name = "httpx", specifier = ">=0.27.2" },
     { name = "joblib", specifier = ">=1.4" },
     { name = "lightning", specifier = ">=2.5,<3" },
@@ -2266,6 +2269,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.5.2" },
     { name = "scipy", specifier = ">=1.14.1" },
     { name = "torch", specifier = ">=2.6" },
+    { name = "uvicorn", specifier = ">=0.51.0" },
 ]
 
 [package.metadata.requires-dev]

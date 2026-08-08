@@ -17,6 +17,8 @@ dependencies = [
     "torch>=2.6",
     "lightning>=2.5,<3",
     "mlflow>=3.5,<4",
+    "fastapi>=0.140.7",
+    "uvicorn>=0.51.0",
 ]
 
 [project.scripts]
@@ -90,6 +92,7 @@ nba-rank-lagged-rapm = "nba_lineup_model.modeling.prior_rapm:rankings_main"
 nba-calibrate-forward-rapm-wins = "nba_lineup_model.modeling.forward_calibration:main"
 nba-train-rapm = "nba_lineup_model.modeling.train:main"
 nba-train-rapm-transformer = "nba_lineup_model.modeling.transformer:main"
+nba-gestalt-api = "nba_lineup_model.web_api.app:main"
 
 [dependency-groups]
 dev = [

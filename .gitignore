@@ -6,6 +6,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 site/
+apps/lineup-explorer/node_modules/
+apps/lineup-explorer/dist/
 
 data/raw/*
 !data/raw/.gitkeep
