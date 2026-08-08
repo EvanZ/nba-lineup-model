@@ -80,6 +80,7 @@ metrics, and malformed metric values.
 | Student-t forward RAPM | Robust stint-error likelihood for the same recursive forward state |
 | Student-t talent-prior RAPM | Heavy-tailed player adjustments with Gaussian stint errors |
 | Forward contextual RAPM | Recursive RAPM with the prior season's contextual offset |
+| Student-t talent-prior contextual RAPM | Contextual RAPM with heavy-tailed player-prior departures |
 | Additive neural RAPM | Possession-level signed scalar player embeddings |
 | Deep Sets | Nonlinear permutation-invariant lineup aggregation |
 | CatBoost | Categorical player states and boosted-tree interactions |

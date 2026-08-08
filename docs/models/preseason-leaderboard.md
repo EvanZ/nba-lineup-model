@@ -206,7 +206,8 @@ the home-team frame.
 | [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | Regular season | 1,230 | 218,810 | 1.198993 | 1.142055 | 14.8225 | 0.0817% | 12.3830% |
 | [Student-t recursive RAPM][student-t-recursive-rapm] | Regular season | 1,230 | 218,810 | 1.199014 | 1.142242 | 14.8908 | 0.0782% | 11.5747% |
 | [Student-t talent-prior RAPM][student-t-talent-prior] | Regular season | 1,230 | 218,810 | 1.198989 | 1.141996 | 14.7993 | 0.0825% | 12.6578% |
-| [Forward contextual RAPM][forward-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199008 | **1.141571** | **14.6525** | 0.0793% | **14.3817%** |
+| [Forward contextual RAPM][forward-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199008 | 1.141571 | **14.6525** | 0.0793% | **14.3817%** |
+| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199026 | **1.141556** | 14.6770 | 0.0762% | 14.0952% |
 | [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | Playoffs | 85 | 14,253 | 1.192713 | 1.136139 | 17.1867 | -0.0468% | -5.2607% |
 | [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | Playoffs | 85 | 14,253 | 1.192614 | 1.135787 | 16.9988 | -0.0302% | -2.9720% |
 | [Frozen lagged RAPM][frozen-lagged-rapm] | Playoffs | 85 | 14,253 | 1.192895 | 1.136163 | 17.5409 | -0.0774% | -9.6446% |
@@ -219,6 +220,7 @@ the home-team frame.
 | [Student-t recursive RAPM][student-t-recursive-rapm] | Playoffs | 85 | 14,253 | 1.192621 | 1.136193 | 17.1300 | -0.0314% | -4.5672% |
 | [Student-t talent-prior RAPM][student-t-talent-prior] | Playoffs | 85 | 14,253 | 1.192895 | 1.136105 | 17.4713 | -0.0774% | -8.7752% |
 | [Forward contextual RAPM][forward-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192898 | **1.135625** | 17.5493 | -0.0778% | -9.7486% |
+| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192959 | 1.135643 | 17.6146 | -0.0881% | -10.5673% |
 
 Bolding marks the better value within each cohort and metric. Future frozen
 priors must use these exact cohorts.
@@ -243,9 +245,10 @@ receives half credit rather than being arbitrarily assigned to the away team.
 | [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | 1,230 | 15.1802 | 12.0162 | 66.67% | 0 |
 | [Student-t recursive RAPM][student-t-recursive-rapm] | 1,230 | 15.2758 | 12.1226 | 65.69% | 0 |
 | [Student-t talent-prior RAPM][student-t-talent-prior] | 1,230 | 15.1499 | 11.9941 | 67.56% | 0 |
-| [Forward contextual RAPM][forward-contextual-rapm] | 1,230 | **15.0190** | 11.8474 | **67.89%** | 0 |
+| [Forward contextual RAPM][forward-contextual-rapm] | 1,230 | **15.0190** | **11.8474** | **67.89%** | 0 |
+| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | 1,230 | 15.0487 | 11.8634 | 67.32% | 0 |
 
-Source report: `artifacts/models/frozen_game_outcomes/2025-26/frozen_game_outcomes-2025-26-20260808T001515Z-ae33ff0f`. The retained `game_outcome_predictions.parquet`
+Source report: `artifacts/models/frozen_game_outcomes/2025-26/frozen_game_outcomes-2025-26-20260808T013307Z-cd16e832`. The retained `game_outcome_predictions.parquet`
 contains one final-margin prediction per model and game, and `sources.parquet`
 pins every upstream immutable manifest.
 <!-- frozen-full-game-outcomes:end -->
@@ -271,6 +274,7 @@ team margins are then summed and divided by team possessions.
 | [Student-t recursive RAPM][student-t-recursive-rapm] | 30 | 4.8263 | 3.9928 | 0.6159 | 0.6147 |
 | [Student-t talent-prior RAPM][student-t-talent-prior] | 30 | 4.6069 | 3.7344 | 0.6587 | 0.6383 |
 | [Forward contextual RAPM][forward-contextual-rapm] | 30 | **4.1572** | **3.1821** | **0.7427** | **0.7219** |
+| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | 30 | 4.1771 | 3.1699 | 0.7412 | 0.7077 |
 
 ## Team Win Totals
 
@@ -314,6 +318,7 @@ error below also includes error in the preseason NetRtg prediction itself.
 | [Student-t recursive RAPM][student-t-recursive-rapm] | 30 | 10.6358 | 8.7390 | 0.1297 | 0.6608 |
 | [Student-t talent-prior RAPM][student-t-talent-prior] | 30 | 10.1176 | 8.3473 | 0.1234 | 0.6935 |
 | [Forward contextual RAPM][forward-contextual-rapm] | 30 | **9.3153** | **7.0364** | **0.1136** | **0.7604** |
+| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | 30 | 9.3594 | 7.0082 | 0.1141 | 0.7521 |
 
 As a diagnostic, the artifact also retains the raw count obtained by awarding
 each game to the team with the positive predicted margin. That deterministic
@@ -440,3 +445,4 @@ season-level convergence diagnostics, and the full frozen evaluation output.
 [student-t-recursive-rapm]: student-t-forward-rapm.md "Recursive exposure-gated RAPM with Student-t stint errors."
 [student-t-talent-prior]: student-t-talent-forward-rapm.md "Recursive RAPM with a heavy-tailed player-prior departure penalty."
 [forward-contextual-rapm]: forward-contextual-rapm.md "Recursive RAPM plus a lagged nonlinear lineup-composition offset."
+[student-t-talent-contextual-rapm]: student-t-talent-contextual-rapm.md "Contextual RAPM with heavy-tailed player-prior departures."

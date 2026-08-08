@@ -91,6 +91,11 @@ PROMOTED_MODELS: tuple[FrozenOutcomeModel, ...] = (
         "forward-contextual-rapm",
         "Forward contextual RAPM",
     ),
+    FrozenOutcomeModel(
+        "student_t_talent_forward_contextual_rapm",
+        "student-t-talent-contextual-rapm",
+        "Student-t talent-prior contextual RAPM",
+    ),
 )
 
 
@@ -349,6 +354,7 @@ def _update_docs(path: Path, outcomes: pd.DataFrame, run_dir: Path) -> None:
     if start_index < 0 or end_index < 0 or start_index >= end_index:
         raise ValueError("Frozen leaderboard is missing full-game outcome section markers")
     best_margin = outcomes["full_game_margin_rmse"].min()
+    best_mae = outcomes["full_game_margin_mae"].min()
     best_accuracy = outcomes["game_winner_accuracy"].max()
     lines = [
         SECTION_START,
@@ -368,11 +374,11 @@ def _update_docs(path: Path, outcomes: pd.DataFrame, run_dir: Path) -> None:
     ]
     for row in outcomes.itertuples(index=False):
         margin = _bold_if_best(row.full_game_margin_rmse, best_margin, 4)
+        mae = _bold_if_best(row.full_game_margin_mae, best_mae, 4)
         accuracy = _bold_if_best(row.game_winner_accuracy, best_accuracy, 2, percent=True)
         lines.append(
             f"| {_markdown_model_link(row.model_id, row.model)} | {row.regular_game_count:,} | "
-            f"{margin} | "
-            f"{row.full_game_margin_mae:.4f} | {accuracy} | {row.predicted_tie_count:,} |"
+            f"{margin} | {mae} | {accuracy} | {row.predicted_tie_count:,} |"
         )
     lines.extend(
         [

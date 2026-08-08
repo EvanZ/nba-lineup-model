@@ -19,7 +19,7 @@ def test_model_tree_registry_has_valid_primary_lineage_and_metrics() -> None:
     for model in models:
         parent = model["parent"]
         assert parent is None or parent in by_id
-        assert model["docs"].startswith("../")
+        assert model["docs"].startswith("./")
         assert model["change"]
         assert set(model["metrics"]) <= metric_ids
         assert all(isinstance(value, (int, float)) for value in model["metrics"].values())

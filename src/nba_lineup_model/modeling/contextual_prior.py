@@ -323,6 +323,7 @@ def _evaluate_target(
     coefficients: pd.DataFrame,
     analytical_dir: Path,
     curated_dir: Path,
+    evaluation_model: str = MODEL_NAME,
 ) -> dict[str, pd.DataFrame | dict[str, object]]:
     source = _previous_season(target)
     prior_frame = priors.loc[priors["season"].eq(target), ["player_id", "prior_rapm"]].rename(
@@ -362,8 +363,16 @@ def _evaluate_target(
     )
     cohort_metrics = pd.concat(
         [
-            score_possession_cohort(regular_predictions, source_mean=source_mean, model=MODEL_NAME),
-            score_possession_cohort(playoff_predictions, source_mean=source_mean, model=MODEL_NAME),
+            score_possession_cohort(
+                regular_predictions,
+                source_mean=source_mean,
+                model=evaluation_model,
+            ),
+            score_possession_cohort(
+                playoff_predictions,
+                source_mean=source_mean,
+                model=evaluation_model,
+            ),
         ],
         ignore_index=True,
     )
@@ -375,14 +384,14 @@ def _evaluate_target(
         priors=prior_frame,
         source_home_intercept=source_home_intercept,
     )
-    team_metrics = _team_net_rating_metrics(team_predictions, model=MODEL_NAME)
+    team_metrics = _team_net_rating_metrics(team_predictions, model=evaluation_model)
     calibration = _historical_team_seasons(analytical_dir=analytical_dir, through_season=source)
     pythagorean = fit_pythagorean_win_model(calibration)
     team_wins, team_win_metrics = _team_win_evaluation(
         regular_games,
         team_predictions,
         pythagorean,
-        model=MODEL_NAME,
+        model=evaluation_model,
     )
     source_state: dict[str, object] = {
         "target_season": target,
