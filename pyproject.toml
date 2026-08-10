@@ -49,6 +49,7 @@ nba-train-forward-portable-matchup-contextual-rapm = "nba_lineup_model.modeling.
 nba-train-forward-hierarchical-pspline-contextual-rapm = "nba_lineup_model.modeling.forward_hierarchical_pspline_contextual_rapm:main"
 nba-train-forward-bounded-hierarchical-contextual-rapm = "nba_lineup_model.modeling.forward_bounded_hierarchical_contextual_rapm:main"
 nba-train-forward-bounded-hierarchical-portable-matchup-contextual-rapm = "nba_lineup_model.modeling.forward_bounded_hierarchical_portable_matchup_contextual_rapm:main"
+nba-train-forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm = "nba_lineup_model.modeling.forward_aging_bounded_hierarchical_portable_matchup_contextual_rapm:main"
 nba-train-student-t-talent-contextual-rapm = "nba_lineup_model.modeling.student_t_talent_contextual_rapm:main"
 nba-build-forward-contextual-rankings = "nba_lineup_model.modeling.forward_contextual_rapm:rankings_main"
 nba-build-forward-contextual-case-study = "nba_lineup_model.modeling.lineup_context_case_study:main"

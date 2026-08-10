@@ -6,10 +6,10 @@ import argparse
 import hashlib
 import json
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 from uuid import uuid4
 
 import joblib
@@ -74,6 +74,8 @@ def train_forward_portable_matchup_contextual_rapm(
     context_temporal_alpha: float = 0.0,
     model_name: str = MODEL_NAME,
     run_prefix: str = RUN_PREFIX,
+    player_prior_builder: Callable[..., tuple[pd.DataFrame, dict[str, object]]] | None = None,
+    player_prior_description: str = "forward exposure-gated RAPM plus portable-matchup context",
     context_fit: Callable[..., MatchupContextualModel] = fit_matchup_contextual_model,
     context_metadata: Callable[[MatchupContextualModel], dict[str, object]] = model_metadata,
     player_season_panel_path: Path | str = DEFAULT_PANEL_PATH,
@@ -108,10 +110,12 @@ def train_forward_portable_matchup_contextual_rapm(
     priors_by_season: list[pd.DataFrame] = []
     exposure_history: list[pd.DataFrame] = []
     replacement_tokens: list[dict[str, object]] = []
+    prior_metadata: list[dict[str, object]] = []
     contextual_models: dict[str, MatchupContextualModel] = {}
     contextual_metadata: list[dict[str, object]] = []
     target_priors: pd.DataFrame | None = None
     target_profiles: pd.DataFrame | None = None
+    prior_builder = player_prior_builder or _exposure_gated_player_priors
 
     for season in seasons:
         print(f"Fitting portable-plus-matchup context state for {season}", flush=True)
@@ -138,14 +142,14 @@ def train_forward_portable_matchup_contextual_rapm(
         adjusted_stints["target_home_net_rating"] = (
             raw_stints["target_home_net_rating"].to_numpy(dtype=float) - offset
         )
-        cold, _ = _cold_start_priors(
+        priors, prior_row = prior_builder(
             season=season,
             panel=panel,
             completed_results=results,
             exposure_history=exposure_history,
             replacement_tokens=replacement_tokens,
         )
-        priors = _combine_priors(_returning_priors(results), cold)
+        prior_metadata.append(prior_row)
         prior_rows = priors.rename(columns={PRIOR_MEAN_COLUMN: "prior_rapm"}).copy()
         prior_rows["season"] = season
         prior_rows["context_offset_source_season"] = (
@@ -211,7 +215,7 @@ def train_forward_portable_matchup_contextual_rapm(
     )
     evaluation["source_state"] = {
         **evaluation["source_state"],  # type: ignore[arg-type]
-        "player_prior_method": "forward exposure-gated RAPM plus portable-matchup context",
+        "player_prior_method": player_prior_description,
         "context_contract": "C_(t-1)(home, away) = h(home) - h(away) + q(home, away)",
         "reference_context_source_season": source,
     }
@@ -221,6 +225,7 @@ def train_forward_portable_matchup_contextual_rapm(
         priors=state_priors,
         contextual_models=contextual_models,
         contextual_metadata=pd.DataFrame(contextual_metadata),
+        prior_metadata=pd.DataFrame(prior_metadata),
         target_priors=target_priors,
         target_profiles=target_profiles,
         forecast_reference=forecast_model.reference_features.assign(
@@ -246,6 +251,30 @@ def _context_offset(
         stints["away_player_ids"].tolist(),
         profiles,
     )
+
+
+def _exposure_gated_player_priors(
+    *,
+    season: str,
+    panel: pd.DataFrame,
+    completed_results: list[ForwardLaggedRapmSeason],
+    exposure_history: list[pd.DataFrame],
+    replacement_tokens: list[dict[str, object]],
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Preserve the established lagged-returner and cold-start prior state."""
+
+    cold, cold_metadata = _cold_start_priors(
+        season=season,
+        panel=panel,
+        completed_results=completed_results,
+        exposure_history=exposure_history,
+        replacement_tokens=replacement_tokens,
+    )
+    return _combine_priors(_returning_priors(completed_results), cold), {
+        "season": season,
+        "player_prior_method": "lagged_rapm_plus_exposure_gated_cold_start",
+        "cold_start": cold_metadata,
+    }
 
 
 def _fit_matchup_contextual_season(
@@ -304,6 +333,7 @@ def _write_run(
     priors: pd.DataFrame,
     contextual_models: dict[str, MatchupContextualModel],
     contextual_metadata: pd.DataFrame,
+    prior_metadata: pd.DataFrame,
     target_priors: pd.DataFrame,
     target_profiles: pd.DataFrame,
     forecast_reference: pd.DataFrame,
@@ -329,6 +359,7 @@ def _write_run(
             ),
             "season_player_priors.parquet": priors,
             "season_context_metadata.parquet": contextual_metadata,
+            "season_player_prior_metadata.parquet": prior_metadata,
             "frozen_2025_26_player_priors.parquet": target_priors,
             "target_player_profiles.parquet": target_profiles,
             "forecast_reference_units.parquet": forecast_reference,

@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from nba_lineup_model.modeling import (
-    forward_bounded_hierarchical_portable_matchup_contextual_rapm as portable_model,
+    forward_aging_bounded_hierarchical_portable_matchup_contextual_rapm as portable_model,
 )
 from nba_lineup_model.modeling.contextual_features import (
     contextual_feature_columns,
@@ -33,7 +33,7 @@ from nba_lineup_model.modeling.matchup_contextual import (
 
 DEFAULT_ARTIFACTS_DIR = Path("artifacts/models")
 DEFAULT_RESPONSE_CACHE_DIR = Path("artifacts/web/response_curve_cache")
-MODEL_ARTIFACT = "forward_bounded_hierarchical_portable_matchup_contextual_rapm"
+MODEL_ARTIFACT = "forward_aging_bounded_hierarchical_portable_matchup_contextual_rapm"
 DISPLAY_SEASON = "2025-26"
 RESPONSE_CURVE_POINTS = 33
 # The client renders the same 33-point polyline, so a denser server cache only
@@ -71,7 +71,7 @@ class LineupEvaluator:
         latest_path = root / "latest.json"
         if not latest_path.is_file():
             raise FileNotFoundError(
-                "No published bounded hierarchical portable-matchup artifact for "
+                "No published aging bounded hierarchical portable-matchup artifact for "
                 f"{season}: {latest_path}"
             )
         run_id = str(json.loads(latest_path.read_text())["run_id"])
@@ -79,7 +79,7 @@ class LineupEvaluator:
         metadata = json.loads((run_dir / "metadata.json").read_text())
         if metadata.get("model") != portable_model.MODEL_NAME:
             raise LineupEvaluationError(
-                "The selected artifact is not forward bounded hierarchical portable-matchup "
+                "The selected artifact is not forward aging bounded hierarchical portable-matchup "
                 "contextual RAPM"
             )
         if str(metadata.get("target_season")) != season:
@@ -101,7 +101,7 @@ class LineupEvaluator:
         context_model = models.get(season)
         if context_model is None:
             raise LineupEvaluationError(
-                "The artifact has no completed hierarchical portable-matchup function"
+                "The artifact has no completed aging hierarchical portable-matchup function"
             )
         if not isinstance(context_model, MatchupContextualModel):
             raise LineupEvaluationError("The artifact has an incompatible contextual model")

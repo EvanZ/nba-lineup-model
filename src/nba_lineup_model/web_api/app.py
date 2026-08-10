@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from nba_lineup_model.modeling.forward_bounded_hierarchical_portable_matchup_contextual_rapm import (
+from nba_lineup_model.modeling.forward_aging_bounded_hierarchical_portable_matchup_contextual_rapm import (
     MODEL_NAME,
 )
 from nba_lineup_model.web_api.inference import LineupEvaluationError, LineupEvaluator

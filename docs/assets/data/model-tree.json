@@ -460,6 +460,24 @@
         "frozen_playoff_possession_rmse": 1.192935,
         "frozen_playoff_game_margin_rmse": 17.4742
       }
+    },
+    {
+      "id": "forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "name": "Forward aging bounded hierarchical portable-matchup contextual RAPM",
+      "short_name": "Aging bounded portable context",
+      "parent": "forward-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "change": "+ recursively selected aging transition for returning-player priors; retain exposure-gated rookie cold starts.",
+      "docs": "./forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198831,
+        "frozen_regular_game_margin_rmse": 14.3654,
+        "frozen_regular_full_game_margin_rmse": 14.6265,
+        "frozen_regular_game_winner_accuracy": 0.673984,
+        "frozen_regular_team_net_rating_rmse": 3.7737,
+        "frozen_regular_pythagorean_wins_rmse": 7.7289,
+        "frozen_playoff_possession_rmse": 1.192544,
+        "frozen_playoff_game_margin_rmse": 16.5388
+      }
     }
   ]
 }

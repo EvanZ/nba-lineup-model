@@ -16,6 +16,7 @@ import {
 import type { ContextFeature, FeatureResponseCurve, Matchup, Player } from "./types";
 
 type Side = "unit" | "opponent";
+type AppView = "lab" | "about";
 
 const SIDE_LABELS: Record<Side, string> = { unit: "Your unit", opponent: "Opponent" };
 const MATERIAL_COMPONENT_CONTRIBUTION = 0.05;
@@ -56,7 +57,21 @@ function Rating({ value, className }: { value: number; className?: string }) {
   );
 }
 
+function useAppView(): AppView {
+  const getView = (): AppView => window.location.hash === "#about" ? "about" : "lab";
+  const [view, setView] = useState<AppView>(getView);
+
+  useEffect(() => {
+    const updateView = () => setView(getView());
+    window.addEventListener("hashchange", updateView);
+    return () => window.removeEventListener("hashchange", updateView);
+  }, []);
+
+  return view;
+}
+
 function App() {
+  const view = useAppView();
   const [unit, setUnit] = useState<Player[]>([]);
   const [opponent, setOpponent] = useState<Player[]>([]);
   const [result, setResult] = useState<Matchup | null>(null);
@@ -142,11 +157,14 @@ function App() {
   return (
     <main>
       <header className="site-header">
-        <a className="wordmark" href="/" aria-label="NBA GESTALT home">
+        <a className="wordmark" href="#lab" aria-label="NBA GESTALT Lineup Lab">
           <span>NBA</span> GESTALT
         </a>
         <div className="header-meta">
-          <span>Lineup Lab</span>
+          <nav className="header-navigation" aria-label="Primary navigation">
+            <a className={view === "lab" ? "active" : ""} href="#lab">Lineup Lab</a>
+            <a className={view === "about" ? "active" : ""} href="#about">About</a>
+          </nav>
           <a
             className="header-link"
             href="https://github.com/EvanZ/nba-lineup-model"
@@ -171,57 +189,198 @@ function App() {
         </div>
       </header>
 
-      <section className="intro" aria-labelledby="page-title">
-        <p className="eyebrow">Gestalt Estimates Situational Teammate-Adjusted Lineup Terms</p>
-        <h1 id="page-title">Build the five.</h1>
-      </section>
+      {view === "about" ? <AboutPage /> : <>
+        <section className="intro" aria-labelledby="page-title">
+          <p className="eyebrow">A lineup is more than the sum of five player ratings.</p>
+          <h1 id="page-title">Build the five.</h1>
+        </section>
 
-      <section className="lab-grid" aria-label="Lineup builder">
-        <div className="builder-panel">
-          <div className="lineup-columns">
-            <LineupSelector
-              side="unit"
-              players={unit}
-              unavailablePlayerIds={allSelectedIds}
-              isLoading={isLoadingUnit}
-              onRefresh={() => void loadRandomLineup("unit")}
-              onAdd={(player) => {
-                setUnit((current) => [...current, player]);
-                setResult(null);
-              }}
-              onRemove={(playerId) => removePlayer("unit", playerId)}
-              onClear={() => clearLineup("unit")}
-              onError={setError}
-            />
-            <LineupSelector
-              side="opponent"
-              players={opponent}
-              unavailablePlayerIds={allSelectedIds}
-              isLoading={isLoadingOpponent}
-              onRefresh={() => void loadRandomLineup("opponent")}
-              onAdd={(player) => {
-                setOpponent((current) => [...current, player]);
-                setResult(null);
-              }}
-              onRemove={(playerId) => removePlayer("opponent", playerId)}
-              onClear={() => clearLineup("opponent")}
-              onError={setError}
-            />
+        <section className="lab-grid" aria-label="Lineup builder">
+          <div className="builder-panel">
+            <div className="lineup-columns">
+              <LineupSelector
+                side="unit"
+                players={unit}
+                unavailablePlayerIds={allSelectedIds}
+                isLoading={isLoadingUnit}
+                onRefresh={() => void loadRandomLineup("unit")}
+                onAdd={(player) => {
+                  setUnit((current) => [...current, player]);
+                  setResult(null);
+                }}
+                onRemove={(playerId) => removePlayer("unit", playerId)}
+                onClear={() => clearLineup("unit")}
+                onError={setError}
+              />
+              <LineupSelector
+                side="opponent"
+                players={opponent}
+                unavailablePlayerIds={allSelectedIds}
+                isLoading={isLoadingOpponent}
+                onRefresh={() => void loadRandomLineup("opponent")}
+                onAdd={(player) => {
+                  setOpponent((current) => [...current, player]);
+                  setResult(null);
+                }}
+                onRemove={(playerId) => removePlayer("opponent", playerId)}
+                onClear={() => clearLineup("opponent")}
+                onError={setError}
+              />
+            </div>
+
+            <button className="evaluate-button" onClick={() => void evaluate()} disabled={!canEvaluate || isEvaluating}>
+              {isEvaluating ? <LoaderCircle className="spin" size={18} /> : <Sparkles size={18} />}
+              {isEvaluating ? "Evaluating" : "Evaluate matchup"}
+              {!isEvaluating && <ArrowUpRight size={17} />}
+            </button>
+            {!canEvaluate && <p className="builder-note">Choose five players for each side to evaluate the matchup.</p>}
+            {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
           </div>
 
-          <button className="evaluate-button" onClick={() => void evaluate()} disabled={!canEvaluate || isEvaluating}>
-            {isEvaluating ? <LoaderCircle className="spin" size={18} /> : <Sparkles size={18} />}
-            {isEvaluating ? "Evaluating" : "Evaluate matchup"}
-            {!isEvaluating && <ArrowUpRight size={17} />}
-          </button>
-          {!canEvaluate && <p className="builder-note">Choose five players for each side to evaluate the matchup.</p>}
-          {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
-        </div>
-
-        <Results result={result} />
-      </section>
-      {result && <ContextCurveExplorer result={result} />}
+          <Results result={result} />
+        </section>
+        {result && <ContextCurveExplorer result={result} />}
+      </>}
     </main>
+  );
+}
+
+function AboutPage() {
+  return (
+    <article className="about-page" aria-labelledby="about-title">
+      <section className="about-hero">
+        <p className="eyebrow">About NBA GESTALT</p>
+        <h1 id="about-title">A forecast built one season at a time.</h1>
+        <p className="about-lede">
+          HIPSTER PM estimates a neutral-court lineup edge per 100 possessions by combining
+          player talent, attributable composition, and matchup-specific context.
+        </p>
+      </section>
+
+      <section className="model-identity" aria-labelledby="model-name-title">
+        <div>
+          <p className="section-kicker">Current model</p>
+          <h2 id="model-name-title">HIPSTER PM</h2>
+        </div>
+        <p className="model-identity-name">Forward age-informed HIPSTER PM</p>
+        <p>
+          <b>H</b>ierarchical <b>I</b>nterpretable <b>P</b>enalized-<b>S</b>pline,
+          <b>T</b>eammate-adjusted, <b>E</b>xposure-gated, <b>R</b>egularized
+          <b>P</b>lus-<b>M</b>inus.
+        </p>
+      </section>
+
+      <section className="about-equation" aria-labelledby="equation-title">
+        <div>
+          <p className="section-kicker">The estimate</p>
+          <h2 id="equation-title">Three terms, one score.</h2>
+        </div>
+        <p className="model-formula">
+          HPM(A, B) = Player(A) - Player(B) + h(Profile(A)) - h(Profile(B)) + q(Profile(A), Profile(B))
+        </p>
+        <p>
+          The player term comes from regularized adjusted plus-minus. The function <i>h</i> assigns
+          an attributable composition rating to either unit. The function <i>q</i> captures the small
+          residual created by this particular matchup.
+        </p>
+      </section>
+
+      <section className="about-section" aria-labelledby="prior-title">
+        <div className="about-section-heading">
+          <p className="section-kicker">Player prior</p>
+          <h2 id="prior-title">Forward RAPM.</h2>
+          <p>Each player estimate begins with only information that was available before the target season.</p>
+        </div>
+        <div className="about-steps two-up">
+          <section>
+            <span>01</span>
+            <h3>Forward</h3>
+            <p>
+              The model rolls from completed season to completed season. A target season never supplies its
+              own possessions, outcomes, or box-score rates to its starting estimate.
+            </p>
+          </section>
+          <section>
+            <span>02</span>
+            <h3>RAPM</h3>
+            <p>
+              Regularized Adjusted Plus-Minus estimates player coefficients from possession outcomes while
+              accounting for the other nine players on the floor and home court. Its ridge penalty stabilizes
+              correlated lineup data by pulling uncertain player estimates toward their preseason priors.
+            </p>
+          </section>
+        </div>
+      </section>
+
+      <section className="about-section" aria-labelledby="aging-title">
+        <div className="about-section-heading">
+          <p className="section-kicker">Season-to-season state</p>
+          <h2 id="aging-title">Aging and cold starts.</h2>
+          <p>Returning players and players without an NBA-season estimate take different, leakage-safe paths.</p>
+        </div>
+        <div className="about-steps two-up">
+          <section>
+            <span>03</span>
+            <h3>Aging</h3>
+            <p>
+              For returning players, an age-spline ridge model forecasts the next RAPM level from the last
+              completed RAPM, on-court possession exposure, age, NBA experience, draft information, and physical profile.
+            </p>
+          </section>
+          <section>
+            <span>04</span>
+            <h3>Exposure-gated cold start</h3>
+            <p>
+              Players without a usable prior-season estimate receive a blend of a draft-profile forecast and a
+              historical replacement estimate. The blend shifts toward replacement when the forward exposure model
+              expects little opportunity.
+            </p>
+          </section>
+        </div>
+      </section>
+
+      <section className="about-section contextual-section" aria-labelledby="context-title">
+        <div className="about-section-heading">
+          <p className="section-kicker">Lineup context</p>
+          <h2 id="context-title">Bounded hierarchical P-spline portable-matchup contextual prior.</h2>
+          <p>These terms use prior-season unit profiles, not target-season results, to describe how five-player composition modifies the player edge.</p>
+        </div>
+        <dl className="model-lexicon">
+          <div>
+            <dt>Bounded</dt>
+            <dd>Feature inputs are capped at their learned support so an unusual hypothetical lineup cannot extrapolate a curve into an unsupported tail.</dd>
+          </div>
+          <div>
+            <dt>Hierarchical</dt>
+            <dd>Each season’s contextual functions are softly anchored to the preceding season’s functions, preserving signal while allowing the league to change.</dd>
+          </div>
+          <div>
+            <dt>P-spline</dt>
+            <dd>Smooth penalized spline functions allow nonlinear effects, such as diminishing rebounding returns, without giving every local fluctuation a new parameter.</dd>
+          </div>
+          <div>
+            <dt>Attributable composition</dt>
+            <dd>The portable function <i>h</i> maps a unit’s own profile to its composition rating, so each side receives a separately visible context term.</dd>
+          </div>
+          <div>
+            <dt>Matchup</dt>
+            <dd>The residual function <i>q</i> measures what remains when those two unit profiles meet: a small, opponent-specific bonus or penalty.</dd>
+          </div>
+          <div>
+            <dt>Contextual prior</dt>
+            <dd>Those profile terms enter the RAPM estimation as prior context. They do not credit a player for the target season’s own rebounds, shooting, or turnovers.</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="about-footer-note">
+        <p className="section-kicker">Current publication</p>
+        <p>
+          The Lineup Lab serves the age-informed 2025-26 completed fit. It is a retrospective model state for
+          exploring lineups, not a live forecast or a causal player-value claim.
+        </p>
+      </section>
+    </article>
   );
 }
 
@@ -419,7 +578,7 @@ function Results({ result }: {
     <aside className="results-panel" aria-live="polite">
       <div className="result-heading">
         <span>Neutral-court estimate</span>
-        <small>2025-26 completed fit</small>
+        <small>HIPSTER PM · 2025-26 completed fit</small>
       </div>
       <div className="gestalt-score">
         <strong className={result.predicted_net_rating < 0 ? "negative" : ""}>

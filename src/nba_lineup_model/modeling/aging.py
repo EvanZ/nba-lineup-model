@@ -466,6 +466,57 @@ def prepare_aging_transitions(transitions: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Returning players require prior RAPM and exposure")
     if frame.loc[returning, "prior_rapm_possessions"].lt(0).any():
         raise ValueError("Prior RAPM possessions cannot be negative")
+    return prepare_aging_prior_features(frame)
+
+
+def prepare_aging_prior_features(rows: pd.DataFrame) -> pd.DataFrame:
+    """Construct label-free aging features for a target-season prior.
+
+    The input may be a labeled historical transition or an upcoming-season
+    returning-player frame.  It deliberately does not require any target RAPM
+    outcome fields, so recursive callers can use the identical feature
+    transformation at inference time.
+    """
+
+    required = {
+        "target_season",
+        "player_id",
+        "target_age",
+        "target_nba_experience_years",
+        "is_rookie",
+        "has_prior_season",
+        "prior_rapm",
+        "prior_rapm_possessions",
+    }
+    missing = required - set(rows)
+    if missing:
+        raise ValueError(f"Aging prior rows missing columns: {sorted(missing)}")
+    frame = rows.copy()
+    for column in ("draft_year", "draft_number", "height_inches", "weight_pounds"):
+        if column not in frame:
+            frame[column] = np.nan
+    if "is_undrafted" not in frame:
+        frame["is_undrafted"] = False
+    frame["target_season"] = frame["target_season"].map(
+        lambda value: validate_season(str(value))
+    )
+    for column in (
+        "target_age",
+        "target_nba_experience_years",
+        "prior_rapm",
+        "prior_rapm_possessions",
+    ):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    required_numeric = ("target_age", "target_nba_experience_years")
+    if frame.loc[:, required_numeric].isna().any().any():
+        raise ValueError("Aging prior rows contain missing target features")
+    frame["has_prior_season"] = frame["has_prior_season"].astype(bool)
+    frame["is_rookie"] = frame["is_rookie"].astype(bool)
+    returning = frame["has_prior_season"]
+    if frame.loc[returning, ["prior_rapm", "prior_rapm_possessions"]].isna().any().any():
+        raise ValueError("Returning players require prior RAPM and exposure")
+    if frame.loc[returning, "prior_rapm_possessions"].lt(0).any():
+        raise ValueError("Prior RAPM possessions cannot be negative")
     frame["prior_rapm_filled"] = frame["prior_rapm"].fillna(0.0)
     frame["prior_rapm_possessions"] = frame["prior_rapm_possessions"].fillna(0.0)
     frame["log1p_prior_rapm_possessions"] = np.log1p(frame["prior_rapm_possessions"].clip(lower=0))
