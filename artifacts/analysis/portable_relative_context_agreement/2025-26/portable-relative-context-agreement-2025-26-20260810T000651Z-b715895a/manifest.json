@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "run_id": "portable-relative-context-agreement-2025-26-20260810T000651Z-b715895a",
+  "season": "2025-26",
+  "portable_model": "forward_bounded_hierarchical_portable_matchup_contextual_rapm",
+  "portable_run_id": "forward-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260809T215819Z-4deb25f0",
+  "relative_model": "forward_bounded_hierarchical_pspline_contextual_rapm",
+  "relative_run_id": "forward-bounded-hierarchical-pspline-contextual-rapm-2025-26-20260809T152421Z-658f4071",
+  "evaluation_population": "Observed regular-season RAPM stints",
+  "weighting": "Stint possessions",
+  "comparison_contract": "portable player edge versus relative player edge; portable total context C(A,B)=h(A)-h(B)+q(A,B) versus relative context g(x(A)-x(B))",
+  "feature_comparison_contract": "For each original contextual feature, compare portable composition plus matchup contribution against the relative-model total contribution",
+  "created_at": "2026-08-10T00:06:51.741586+00:00",
+  "code_version": "sha256:fb2e45d1a6648cd3e9702724fb6be5ccb95a02545c8c56a60e01af01c596e31a",
+  "artifacts": [
+    {
+      "filename": "agreement-scatter.png",
+      "byte_count": 235994,
+      "sha256": "603d2a196df2317739e925311492ea1498f5d9db082d24e4b239fef9667708b6"
+    },
+    {
+      "filename": "agreement_metrics.parquet",
+      "byte_count": 7384,
+      "sha256": "4807f2f0b2162a3a77b5629759a1afb0bf03b7dd262f4f6819643111acb31c6a"
+    },
+    {
+      "filename": "feature-agreement-composition.png",
+      "byte_count": 529618,
+      "sha256": "a53ee4dd553b5fb6e8e2c7146024d13c49f4686a4c39d098e239707ec3f7aad3"
+    },
+    {
+      "filename": "feature-agreement-main.png",
+      "byte_count": 572544,
+      "sha256": "cfd07c887c26df5eec375745efb33c6c6ec198371196d918ab0a133d2944d72f"
+    },
+    {
+      "filename": "feature_agreement_metrics.parquet",
+      "byte_count": 10522,
+      "sha256": "0d195586a68d96fce6eadceee556d6ea98522d00bb0d50fc066a1bdb1b2945e4"
+    },
+    {
+      "filename": "metadata.json",
+      "byte_count": 1110,
+      "sha256": "fa7f20e6e618176b47ea6971cd509db64f2be2028250337952f02b3ea20ade4f"
+    },
+    {
+      "filename": "reference_matchup_predictions.parquet",
+      "byte_count": 13556596,
+      "sha256": "5645abd71e62d81825713a1efbc117d399bdd28364183cbe51f7c4fd2321be65"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import shutil
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,6 +52,9 @@ DEFAULT_ALPHA_GRID = (1.0, 10.0, 100.0, 1_000.0, 10_000.0)
 DEFAULT_TRAINING_START_SEASON = "2019-20"
 MODEL_NAME = "frozen_contextual_prior_spline_ridge"
 RUN_PREFIX = "contextual-prior"
+ContextPredictor = Callable[
+    [Sequence[Sequence[int]], Sequence[Sequence[int]], pd.DataFrame], np.ndarray
+]
 
 
 @dataclass(frozen=True)
@@ -324,6 +328,7 @@ def _evaluate_target(
     analytical_dir: Path,
     curated_dir: Path,
     evaluation_model: str = MODEL_NAME,
+    context_predictor: ContextPredictor | None = None,
 ) -> dict[str, pd.DataFrame | dict[str, object]]:
     source = _previous_season(target)
     prior_frame = priors.loc[priors["season"].eq(target), ["player_id", "prior_rapm"]].rename(
@@ -340,11 +345,12 @@ def _evaluate_target(
     source_mean = float(source_possessions["target_offense_margin"].mean())
     regular = read_neural_possessions(target, analytical_dir=analytical_dir)
     playoffs, _ = _read_playoff_possessions(target, curated_dir)
+    predictor = context_predictor or _pipeline_context_predictor(model)
     regular_predictions = _score_possessions(
         regular,
         cohort="regular_season",
         profiles=profiles,
-        model=model,
+        context_predictor=predictor,
         priors=prior_frame,
         source_mean=source_mean,
         source_home_intercept=source_home_intercept,
@@ -353,7 +359,7 @@ def _evaluate_target(
         playoffs,
         cohort="playoffs",
         profiles=profiles,
-        model=model,
+        context_predictor=predictor,
         priors=prior_frame,
         source_mean=source_mean,
         source_home_intercept=source_home_intercept,
@@ -380,7 +386,7 @@ def _evaluate_target(
     regular_games, team_predictions = _contextual_stint_predictions(
         target_stints,
         profiles=profiles,
-        model=model,
+        context_predictor=predictor,
         priors=prior_frame,
         source_home_intercept=source_home_intercept,
     )
@@ -418,12 +424,28 @@ def _evaluate_target(
     }
 
 
+def _pipeline_context_predictor(model: Pipeline) -> ContextPredictor:
+    """Adapt the original relative-feature pipeline to the shared evaluator contract."""
+
+    def predict(
+        home_lineups: Sequence[Sequence[int]],
+        away_lineups: Sequence[Sequence[int]],
+        profiles: pd.DataFrame,
+    ) -> np.ndarray:
+        return np.asarray(
+            model.predict(lineup_context_features(home_lineups, away_lineups, profiles)),
+            dtype=float,
+        )
+
+    return predict
+
+
 def _score_possessions(
     possessions: pd.DataFrame,
     *,
     cohort: str,
     profiles: pd.DataFrame,
-    model: Pipeline,
+    context_predictor: ContextPredictor,
     priors: pd.DataFrame,
     source_mean: float,
     source_home_intercept: float,
@@ -454,9 +476,7 @@ def _score_possessions(
         )
     ]
     pairs = pd.DataFrame({"home": home_lineups, "away": away_lineups}).drop_duplicates()
-    pair_prediction = model.predict(
-        lineup_context_features(pairs["home"].tolist(), pairs["away"].tolist(), profiles)
-    )
+    pair_prediction = context_predictor(pairs["home"].tolist(), pairs["away"].tolist(), profiles)
     correction_map = dict(
         zip(zip(pairs["home"], pairs["away"], strict=True), pair_prediction, strict=True)
     )
@@ -480,18 +500,16 @@ def _contextual_stint_predictions(
     stints: pd.DataFrame,
     *,
     profiles: pd.DataFrame,
-    model: Pipeline,
+    context_predictor: ContextPredictor,
     priors: pd.DataFrame,
     source_home_intercept: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     prior_map = dict(zip(priors["player_id"].astype(int), priors["prior_rapm_mean"], strict=True))
     effects, _ = _lineup_effects(stints, prior_map)
-    correction = model.predict(
-        lineup_context_features(
-            stints["home_player_ids"].tolist(),
-            stints["away_player_ids"].tolist(),
-            profiles,
-        )
+    correction = context_predictor(
+        stints["home_player_ids"].tolist(),
+        stints["away_player_ids"].tolist(),
+        profiles,
     )
     base = stints.loc[
         :,

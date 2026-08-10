@@ -44,9 +44,16 @@ nba-build-exposure-gated-offense-defense = "nba_lineup_model.modeling.exposure_g
 nba-train-forward-exposure-gated-rapm = "nba_lineup_model.modeling.forward_exposure_gated_rapm:main"
 nba-train-contextual-prior = "nba_lineup_model.modeling.contextual_prior:main"
 nba-train-forward-contextual-rapm = "nba_lineup_model.modeling.forward_contextual_rapm:main"
+nba-train-forward-decomposed-contextual-rapm = "nba_lineup_model.modeling.forward_decomposed_contextual_rapm:main"
+nba-train-forward-portable-matchup-contextual-rapm = "nba_lineup_model.modeling.forward_portable_matchup_contextual_rapm:main"
+nba-train-forward-hierarchical-pspline-contextual-rapm = "nba_lineup_model.modeling.forward_hierarchical_pspline_contextual_rapm:main"
+nba-train-forward-bounded-hierarchical-contextual-rapm = "nba_lineup_model.modeling.forward_bounded_hierarchical_contextual_rapm:main"
+nba-train-forward-bounded-hierarchical-portable-matchup-contextual-rapm = "nba_lineup_model.modeling.forward_bounded_hierarchical_portable_matchup_contextual_rapm:main"
 nba-train-student-t-talent-contextual-rapm = "nba_lineup_model.modeling.student_t_talent_contextual_rapm:main"
 nba-build-forward-contextual-rankings = "nba_lineup_model.modeling.forward_contextual_rapm:rankings_main"
 nba-build-forward-contextual-case-study = "nba_lineup_model.modeling.lineup_context_case_study:main"
+nba-build-context-function-audit = "nba_lineup_model.modeling.context_function_audit:main"
+nba-build-portable-relative-context-agreement-audit = "nba_lineup_model.modeling.portable_relative_context_agreement:main"
 nba-train-student-t-forward-rapm = "nba_lineup_model.modeling.student_t_forward_rapm:main"
 nba-train-student-t-talent-forward-rapm = "nba_lineup_model.modeling.student_t_talent_forward_rapm:main"
 nba-analyze-student-t-talent-lambda-sensitivity = "nba_lineup_model.modeling.student_t_talent_lambda_sensitivity:main"
@@ -93,6 +100,7 @@ nba-calibrate-forward-rapm-wins = "nba_lineup_model.modeling.forward_calibration
 nba-train-rapm = "nba_lineup_model.modeling.train:main"
 nba-train-rapm-transformer = "nba_lineup_model.modeling.transformer:main"
 nba-gestalt-api = "nba_lineup_model.web_api.app:main"
+nba-build-gestalt-response-cache = "nba_lineup_model.web_api.warm_response_cache:main"
 
 [dependency-groups]
 dev = [

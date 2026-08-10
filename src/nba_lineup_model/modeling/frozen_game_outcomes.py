@@ -92,6 +92,31 @@ PROMOTED_MODELS: tuple[FrozenOutcomeModel, ...] = (
         "Forward contextual RAPM",
     ),
     FrozenOutcomeModel(
+        "forward_decomposed_contextual_rapm",
+        "forward-decomposed-contextual-rapm",
+        "Forward decomposed contextual RAPM",
+    ),
+    FrozenOutcomeModel(
+        "forward_portable_matchup_contextual_rapm",
+        "forward-portable-matchup-contextual-rapm",
+        "Forward portable-matchup contextual RAPM",
+    ),
+    FrozenOutcomeModel(
+        "forward_hierarchical_pspline_contextual_rapm",
+        "forward-hierarchical-pspline-contextual-rapm",
+        "Forward hierarchical P-spline contextual RAPM",
+    ),
+    FrozenOutcomeModel(
+        "forward_bounded_hierarchical_pspline_contextual_rapm",
+        "forward-bounded-hierarchical-pspline-contextual-rapm",
+        "Forward bounded hierarchical P-spline contextual RAPM",
+    ),
+    FrozenOutcomeModel(
+        "forward_bounded_hierarchical_portable_matchup_contextual_rapm",
+        "forward-bounded-hierarchical-portable-matchup-contextual-rapm",
+        "Forward bounded hierarchical portable-matchup contextual RAPM",
+    ),
+    FrozenOutcomeModel(
         "student_t_talent_forward_contextual_rapm",
         "student-t-talent-contextual-rapm",
         "Student-t talent-prior contextual RAPM",

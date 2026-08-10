@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-07"
+last_updated: "2026-08-09"
 ---
 
 # Models
@@ -22,7 +22,7 @@ under the selected contract remain visible in the unranked lane to preserve the
 full methodological lineage. Use the in-season choices to compare the
 one-season neural and tree branches on their separate chronological holdout.
 
-<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json">
+<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260809-bounded-portable-context">
   <div class="model-tree__loading" role="status">Loading model evolution…</div>
 </div>
 
@@ -80,6 +80,11 @@ metrics, and malformed metric values.
 | Student-t forward RAPM | Robust stint-error likelihood for the same recursive forward state |
 | Student-t talent-prior RAPM | Heavy-tailed player adjustments with Gaussian stint errors |
 | Forward contextual RAPM | Recursive RAPM with the prior season's contextual offset |
+| Forward decomposed contextual RAPM | Identifiable home-side minus away-side contextual offset |
+| Forward portable-matchup contextual RAPM | Antisymmetric total context decomposed into portable units and matchups |
+| Forward hierarchical P-spline contextual RAPM | Portable-matchup context with curvature and projected prior-season function shrinkage |
+| Forward bounded hierarchical P-spline contextual RAPM | Original relative-context model with bounded feature support, P-spline curvature, and a projected prior-season function hierarchy |
+| Forward bounded hierarchical portable-matchup contextual RAPM | Portable composition and matchup context with model-level bounded feature support, P-spline curvature, and a projected prior-season function hierarchy |
 | Student-t talent-prior contextual RAPM | Contextual RAPM with heavy-tailed player-prior departures |
 | Additive neural RAPM | Possession-level signed scalar player embeddings |
 | Deep Sets | Nonlinear permutation-invariant lineup aggregation |
@@ -137,6 +142,29 @@ prior for player departures from the forward state.
 [Forward Contextual RAPM](forward-contextual-rapm.md) carries the completed
 lineup-composition state into the next season's RAPM target before updating its
 player coefficients.
+
+[Forward Decomposed Contextual RAPM](forward-decomposed-contextual-rapm.md)
+constrains that state to an identifiable home-side minus away-side score. It is
+currently an interpretability ablation: the less constrained relative-context
+function has stronger frozen predictive results.
+
+[Forward Portable-Matchup Contextual RAPM](forward-portable-matchup-contextual-rapm.md)
+retains an antisymmetric total contextual state while identifying a
+reference-anchored portable unit score and a centered opponent-specific matchup
+residual.
+
+[Forward Hierarchical P-spline Contextual RAPM](forward-hierarchical-pspline-contextual-rapm.md)
+extends that portable-matchup state with second-difference spline shrinkage and
+a forward-projected prior-season context-function prior.
+
+[Forward Bounded Hierarchical P-spline Contextual RAPM](forward-bounded-hierarchical-pspline-contextual-rapm.md)
+returns to the original relative-context function, clips each feature to its
+forward-safe 5th--95th percentile support, and combines P-spline curvature
+regularization with a projected prior-season function hierarchy.
+
+[Forward Bounded Hierarchical Portable-Matchup Contextual RAPM](forward-bounded-hierarchical-portable-matchup-contextual-rapm.md)
+applies the same forward-safe clipping contract to the portable-unit plus
+matchup decomposition used by the Lineup Lab.
 
 [Frozen No-Prior Window RAPM](frozen-window-rapm.md) records the one-year and
 pooled three-year controls that distinguish historical pooling from an explicit

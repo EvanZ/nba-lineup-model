@@ -37,31 +37,57 @@ def lineup_context_features(
         raise ValueError(f"Contextual player profiles missing columns: {sorted(missing)}")
     if profiles["player_id"].duplicated().any():
         raise ValueError("Contextual player profiles contain duplicate player IDs")
-    values = profiles.set_index("player_id")
-    rows: list[dict[str, float]] = []
-    for home, away in zip(home_lineups, away_lineups, strict=True):
-        home_values = _lineup_values(home, values)
-        away_values = _lineup_values(away, values)
-        rows.append(_feature_row(home_values, away_values))
-    return pd.DataFrame(rows, columns=contextual_feature_columns())
+    home = lineup_side_context_features(home_lineups, profiles)
+    away = lineup_side_context_features(away_lineups, profiles)
+    return pd.DataFrame(
+        {
+            f"home_minus_away_{column}": home[column].to_numpy(dtype=float)
+            - away[column].to_numpy(dtype=float)
+            for column in side_context_feature_columns()
+        },
+        columns=contextual_feature_columns(),
+    )
 
 
 def contextual_feature_columns() -> tuple[str, ...]:
     """Return the fixed feature order used by the contextual residual model."""
 
+    return tuple(f"home_minus_away_{column}" for column in side_context_feature_columns())
+
+
+def lineup_side_context_features(
+    lineups: Sequence[Sequence[int]],
+    profiles: pd.DataFrame,
+) -> pd.DataFrame:
+    """Encode each five-player unit using the contextual model's original features."""
+
+    required = {"player_id", *PROFILE_RATE_COLUMNS, "profile_imputed", "profile_replacement_weight"}
+    missing = required - set(profiles)
+    if missing:
+        raise ValueError(f"Contextual player profiles missing columns: {sorted(missing)}")
+    if profiles["player_id"].duplicated().any():
+        raise ValueError("Contextual player profiles contain duplicate player IDs")
+    values = profiles.set_index("player_id")
+    rows = [_side_feature_row(_lineup_values(lineup, values)) for lineup in lineups]
+    return pd.DataFrame(rows, columns=side_context_feature_columns())
+
+
+def side_context_feature_columns() -> tuple[str, ...]:
+    """Return the per-lineup form of every published contextual feature."""
+
     return (
-        *(f"home_minus_away_{column}" for column in PROFILE_RATE_COLUMNS),
-        "home_minus_away_bottom_two_three_pm",
-        "home_minus_away_credible_shooter_count",
-        "home_minus_away_top_two_assists",
-        "home_minus_away_usage_concentration",
-        "home_minus_away_sqrt_offensive_rebounds",
-        "home_minus_away_sqrt_defensive_rebounds",
-        "home_minus_away_imputed_count",
-        "home_minus_away_replacement_weight",
-        "home_minus_away_shooting_usage_interaction",
-        "home_minus_away_shooter_passing_interaction",
-        "home_minus_away_rebounding_usage_interaction",
+        *PROFILE_RATE_COLUMNS,
+        "bottom_two_three_pm",
+        "credible_shooter_count",
+        "top_two_assists",
+        "usage_concentration",
+        "sqrt_offensive_rebounds",
+        "sqrt_defensive_rebounds",
+        "imputed_count",
+        "replacement_weight",
+        "shooting_usage_interaction",
+        "shooter_passing_interaction",
+        "rebounding_usage_interaction",
     )
 
 
@@ -75,15 +101,9 @@ def _lineup_values(lineup: Sequence[int], values: pd.DataFrame) -> pd.DataFrame:
     return values.loc[player_ids]
 
 
-def _feature_row(home: pd.DataFrame, away: pd.DataFrame) -> dict[str, float]:
-    result = {
-        f"home_minus_away_{column}": float(home[column].sum() - away[column].sum())
-        for column in PROFILE_RATE_COLUMNS
-    }
-    home_summary = _summary(home)
-    away_summary = _summary(away)
-    for name, home_value in home_summary.items():
-        result[f"home_minus_away_{name}"] = float(home_value - away_summary[name])
+def _side_feature_row(lineup: pd.DataFrame) -> dict[str, float]:
+    result = {column: float(lineup[column].sum()) for column in PROFILE_RATE_COLUMNS}
+    result.update(_summary(lineup))
     return result
 
 

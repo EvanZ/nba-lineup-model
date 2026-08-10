@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from nba_lineup_model.modeling.forward_bounded_hierarchical_portable_matchup_contextual_rapm import (
+    MODEL_NAME,
+)
 from nba_lineup_model.web_api.inference import LineupEvaluationError, LineupEvaluator
 
 
@@ -18,6 +21,9 @@ class MatchupRequest(BaseModel):
 
     unit_player_ids: list[int] = Field(min_length=5, max_length=5)
     opponent_player_ids: list[int] = Field(min_length=5, max_length=5)
+    include_response_curves: bool = False
+    response_curve_feature_id: str | None = None
+    response_curve_kind: Literal["composition", "matchup"] | None = None
 
 
 def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
@@ -40,6 +46,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         state = get_evaluator()
         return {
             "status": "ok",
+            "model": MODEL_NAME,
             "season": state.season,
             "run_id": state.run_id,
             "player_count": len(state.players),
@@ -74,7 +81,13 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     @app.post("/api/matchups")
     def matchup(request: MatchupRequest) -> dict[str, object]:
         try:
-            return get_evaluator().evaluate(request.unit_player_ids, request.opponent_player_ids)
+            return get_evaluator().evaluate(
+                request.unit_player_ids,
+                request.opponent_player_ids,
+                include_response_curves=request.include_response_curves,
+                response_curve_feature_id=request.response_curve_feature_id,
+                response_curve_kind=request.response_curve_kind,
+            )
         except LineupEvaluationError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 

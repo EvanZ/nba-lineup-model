@@ -5,28 +5,31 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
-from sklearn.linear_model import Ridge
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import SplineTransformer, StandardScaler
 
+from nba_lineup_model.modeling.contextual_features import lineup_side_context_features
+from nba_lineup_model.modeling.matchup_contextual import (
+    fit_bounded_hierarchical_matchup_contextual_model,
+    fit_matchup_contextual_model,
+)
 from nba_lineup_model.web_api.app import create_app
-from nba_lineup_model.web_api.inference import LineupEvaluator
+from nba_lineup_model.web_api.inference import LineupEvaluator, _warm_response_cache
 
 
-def _evaluator() -> LineupEvaluator:
+def _evaluator(*, bounded: bool = False) -> LineupEvaluator:
     player_ids = list(range(1, 11))
+    profile_offset = player_ids if bounded else [0] * len(player_ids)
     profiles = pd.DataFrame(
         {
             "player_id": player_ids,
-            "three_pa_per_100": [6.0] * 10,
-            "three_pm_per_100": [2.0] * 10,
-            "assists_per_100": [5.0] * 10,
-            "turnovers_per_100": [2.0] * 10,
-            "usage_per_100": [20.0] * 10,
-            "offensive_rebounds_per_100": [2.0] * 10,
-            "defensive_rebounds_per_100": [6.0] * 10,
-            "steals_per_100": [1.0] * 10,
-            "blocks_per_100": [1.0] * 10,
+            "three_pa_per_100": [5.0 + value / 10 for value in profile_offset],
+            "three_pm_per_100": [1.0 + value / 20 for value in profile_offset],
+            "assists_per_100": [3.0 + value / 10 for value in profile_offset],
+            "turnovers_per_100": [1.0 + value / 25 for value in profile_offset],
+            "usage_per_100": [15.0 + value / 2 for value in profile_offset],
+            "offensive_rebounds_per_100": [1.0 + value / 10 for value in profile_offset],
+            "defensive_rebounds_per_100": [4.0 + value / 5 for value in profile_offset],
+            "steals_per_100": [0.5 + value / 20 for value in profile_offset],
+            "blocks_per_100": [0.25 + value / 25 for value in profile_offset],
             "profile_imputed": [0] * 10,
             "profile_replacement_weight": [0.0] * 10,
         }
@@ -40,38 +43,32 @@ def _evaluator() -> LineupEvaluator:
         games=50,
         profile_source="prior_season",
     )
-    training_features = pd.DataFrame(
-        np.arange(100, dtype=float).reshape(5, 20),
-        columns=[
-            "home_minus_away_three_pa_per_100",
-            "home_minus_away_three_pm_per_100",
-            "home_minus_away_assists_per_100",
-            "home_minus_away_turnovers_per_100",
-            "home_minus_away_usage_per_100",
-            "home_minus_away_offensive_rebounds_per_100",
-            "home_minus_away_defensive_rebounds_per_100",
-            "home_minus_away_steals_per_100",
-            "home_minus_away_blocks_per_100",
-            "home_minus_away_bottom_two_three_pm",
-            "home_minus_away_credible_shooter_count",
-            "home_minus_away_top_two_assists",
-            "home_minus_away_usage_concentration",
-            "home_minus_away_sqrt_offensive_rebounds",
-            "home_minus_away_sqrt_defensive_rebounds",
-            "home_minus_away_imputed_count",
-            "home_minus_away_replacement_weight",
-            "home_minus_away_shooting_usage_interaction",
-            "home_minus_away_shooter_passing_interaction",
-            "home_minus_away_rebounding_usage_interaction",
-        ],
+    home_lineups = [
+        [1, 2, 3, 4, 5],
+        [2, 3, 4, 5, 6],
+        [3, 4, 5, 6, 7],
+        [4, 5, 6, 7, 8],
+        [5, 6, 7, 8, 9],
+    ]
+    away_lineups = [
+        [6, 7, 8, 9, 10],
+        [1, 7, 8, 9, 10],
+        [1, 2, 8, 9, 10],
+        [1, 2, 3, 9, 10],
+        [1, 2, 3, 4, 10],
+    ]
+    fit = (
+        fit_bounded_hierarchical_matchup_contextual_model
+        if bounded
+        else fit_matchup_contextual_model
     )
-    model = Pipeline(
-        [
-            ("spline", SplineTransformer(n_knots=4, degree=2, extrapolation="linear")),
-            ("scale", StandardScaler()),
-            ("ridge", Ridge(alpha=1.0)),
-        ]
-    ).fit(training_features, np.arange(5, dtype=float))
+    model = fit(
+        lineup_side_context_features(home_lineups, profiles),
+        lineup_side_context_features(away_lineups, profiles),
+        np.arange(5, dtype=float),
+        np.ones(5, dtype=float),
+        alpha=1.0,
+    )
     return LineupEvaluator(
         season="2025-26",
         run_id="test-run",
@@ -79,6 +76,7 @@ def _evaluator() -> LineupEvaluator:
         profiles=profiles,
         players=players,
         context_model=model,
+        response_cache=_warm_response_cache(model),
     )
 
 
@@ -100,12 +98,53 @@ def test_search_and_matchup_endpoints() -> None:
 
     response = client.post(
         "/api/matchups",
-        json={"unit_player_ids": [1, 2, 3, 4, 5], "opponent_player_ids": [6, 7, 8, 9, 10]},
+        json={
+            "unit_player_ids": [1, 2, 3, 4, 5],
+            "opponent_player_ids": [6, 7, 8, 9, 10],
+            "include_response_curves": True,
+        },
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["additive_margin"] == -2.5
+    assert "relative_context_reference" not in payload
     assert len(payload["feature_contributions"]) == 20
+    assert np.isclose(
+        payload["contextual_adjustment"],
+        payload["portable_composition_margin"] + payload["matchup_adjustment"],
+    )
+    assert np.isclose(
+        payload["additive_margin"],
+        payload["unit"]["additive_rating"] - payload["opponent"]["additive_rating"],
+    )
+    assert len(payload["composition_feature_contributions"]) == 20
+    assert len(payload["matchup_feature_contributions"]) == 20
+    composition_curves = payload["composition_response_curves"]
+    matchup_curves = payload["matchup_response_curves"]
+    assert len(composition_curves) == 20
+    assert len(matchup_curves) == 20
+    assert all(len(curve["points"]) == 33 for curve in composition_curves + matchup_curves)
+    composition_by_id = {
+        row["id"]: row["contribution"] for row in payload["composition_feature_contributions"]
+    }
+    matchup_by_id = {
+        row["id"]: row["contribution"] for row in payload["matchup_feature_contributions"]
+    }
+    for curve in composition_curves:
+        assert np.isclose(
+            curve["unit_contribution"] - curve["opponent_contribution"],
+            composition_by_id[curve["id"]],
+        )
+    for curve in matchup_curves:
+        assert np.isclose(curve["unit_contribution"], matchup_by_id[curve["id"]])
+    assert np.isclose(
+        sum(row["contribution"] for row in payload["composition_feature_contributions"]),
+        payload["portable_composition_margin"],
+    )
+    assert np.isclose(
+        sum(row["contribution"] for row in payload["matchup_feature_contributions"]),
+        payload["matchup_adjustment"],
+    )
 
 
 def test_matchup_rejects_player_on_both_sides() -> None:
@@ -118,3 +157,26 @@ def test_matchup_rejects_player_on_both_sides() -> None:
 
     assert response.status_code == 422
     assert "both sides" in response.json()["detail"]
+
+
+def test_bounded_matchup_chart_contributions_match_the_model_cards() -> None:
+    client = TestClient(create_app(_evaluator(bounded=True)))
+
+    response = client.post(
+        "/api/matchups",
+        json={
+            "unit_player_ids": [1, 2, 3, 4, 5],
+            "opponent_player_ids": [6, 7, 8, 9, 10],
+            "include_response_curves": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    cards = {
+        row["id"]: row["contribution"] for row in payload["matchup_feature_contributions"]
+    }
+    curves = {row["id"]: row["unit_contribution"] for row in payload["matchup_response_curves"]}
+    assert np.isclose(sum(cards.values()), payload["matchup_adjustment"])
+    for feature_id, contribution in cards.items():
+        assert np.isclose(curves[feature_id], contribution, atol=0.01)

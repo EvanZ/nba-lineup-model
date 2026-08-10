@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "updated": "2026-08-07",
+  "version": 3,
+  "updated": "2026-08-09",
   "default_metric": "frozen_regular_game_margin_rmse",
   "metrics": [
     {
@@ -354,6 +354,42 @@
       }
     },
     {
+      "id": "forward-decomposed-contextual-rapm",
+      "name": "Forward decomposed contextual RAPM",
+      "short_name": "Decomposed contextual RAPM",
+      "parent": "forward-contextual-rapm",
+      "change": "Ablation: replace relative context with identifiable home-side minus away-side context.",
+      "docs": "./forward-decomposed-contextual-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.199259,
+        "frozen_regular_game_margin_rmse": 14.9769,
+        "frozen_regular_full_game_margin_rmse": 15.3555,
+        "frozen_regular_game_winner_accuracy": 0.674797,
+        "frozen_regular_team_net_rating_rmse": 4.7470,
+        "frozen_regular_pythagorean_wins_rmse": 11.0387,
+        "frozen_playoff_possession_rmse": 1.193395,
+        "frozen_playoff_game_margin_rmse": 18.4522
+      }
+    },
+    {
+      "id": "forward-portable-matchup-contextual-rapm",
+      "name": "Forward portable-matchup contextual RAPM",
+      "short_name": "Portable + matchup context",
+      "parent": "forward-contextual-rapm",
+      "change": "+ exact antisymmetry and an identified portable-unit plus matchup decomposition.",
+      "docs": "./forward-portable-matchup-contextual-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.199030,
+        "frozen_regular_game_margin_rmse": 14.6349,
+        "frozen_regular_full_game_margin_rmse": 14.9602,
+        "frozen_regular_game_winner_accuracy": 0.677236,
+        "frozen_regular_team_net_rating_rmse": 4.1864,
+        "frozen_regular_pythagorean_wins_rmse": 9.3999,
+        "frozen_playoff_possession_rmse": 1.192994,
+        "frozen_playoff_game_margin_rmse": 17.5261
+      }
+    },
+    {
       "id": "student-t-talent-contextual-rapm",
       "name": "Student-t talent-prior contextual RAPM",
       "short_name": "Student-t contextual RAPM",
@@ -369,6 +405,60 @@
         "frozen_regular_pythagorean_wins_rmse": 9.3594,
         "frozen_playoff_possession_rmse": 1.192959,
         "frozen_playoff_game_margin_rmse": 17.6146
+      }
+    },
+    {
+      "id": "forward-hierarchical-pspline-contextual-rapm",
+      "name": "Forward hierarchical P-spline contextual RAPM",
+      "short_name": "Hierarchical P-spline context",
+      "parent": "forward-portable-matchup-contextual-rapm",
+      "change": "+ P-spline curvature regularization and a projected prior-season context-function hierarchy.",
+      "docs": "./forward-hierarchical-pspline-contextual-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198859,
+        "frozen_regular_game_margin_rmse": 14.5410,
+        "frozen_regular_full_game_margin_rmse": 14.8516,
+        "frozen_regular_game_winner_accuracy": 0.676423,
+        "frozen_regular_team_net_rating_rmse": 4.1883,
+        "frozen_regular_pythagorean_wins_rmse": 9.3959,
+        "frozen_playoff_possession_rmse": 1.192857,
+        "frozen_playoff_game_margin_rmse": 17.4003
+      }
+    },
+    {
+      "id": "forward-bounded-hierarchical-pspline-contextual-rapm",
+      "name": "Forward bounded hierarchical P-spline contextual RAPM",
+      "short_name": "Bounded hierarchical context",
+      "parent": "forward-contextual-rapm",
+      "change": "+ 5th-95th percentile feature bounds, P-spline curvature regularization, and a projected prior-season function hierarchy.",
+      "docs": "./forward-bounded-hierarchical-pspline-contextual-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198894,
+        "frozen_regular_game_margin_rmse": 14.5485,
+        "frozen_regular_full_game_margin_rmse": 14.8706,
+        "frozen_regular_game_winner_accuracy": 0.678049,
+        "frozen_regular_team_net_rating_rmse": 4.1799,
+        "frozen_regular_pythagorean_wins_rmse": 9.2772,
+        "frozen_playoff_possession_rmse": 1.192872,
+        "frozen_playoff_game_margin_rmse": 17.4604
+      }
+    },
+    {
+      "id": "forward-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "name": "Forward bounded hierarchical portable-matchup contextual RAPM",
+      "short_name": "Bounded portable context",
+      "parent": "forward-hierarchical-pspline-contextual-rapm",
+      "change": "+ model-level 5th-95th percentile side and symmetric matchup bounds.",
+      "docs": "./forward-bounded-hierarchical-portable-matchup-contextual-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198917,
+        "frozen_regular_game_margin_rmse": 14.5953,
+        "frozen_regular_full_game_margin_rmse": 14.9224,
+        "frozen_regular_game_winner_accuracy": 0.673984,
+        "frozen_regular_team_net_rating_rmse": 4.2546,
+        "frozen_regular_pythagorean_wins_rmse": 9.4360,
+        "frozen_playoff_possession_rmse": 1.192935,
+        "frozen_playoff_game_margin_rmse": 17.4742
       }
     }
   ]

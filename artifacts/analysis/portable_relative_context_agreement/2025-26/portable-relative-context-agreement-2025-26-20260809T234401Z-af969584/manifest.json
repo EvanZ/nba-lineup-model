@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "run_id": "portable-relative-context-agreement-2025-26-20260809T234401Z-af969584",
+  "season": "2025-26",
+  "portable_model": "forward_bounded_hierarchical_portable_matchup_contextual_rapm",
+  "portable_run_id": "forward-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260809T215819Z-4deb25f0",
+  "relative_model": "forward_bounded_hierarchical_pspline_contextual_rapm",
+  "relative_run_id": "forward-bounded-hierarchical-pspline-contextual-rapm-2025-26-20260809T152421Z-658f4071",
+  "evaluation_population": "Observed regular-season RAPM stints",
+  "weighting": "Stint possessions",
+  "comparison_contract": "portable player edge versus relative player edge; portable total context C(A,B)=h(A)-h(B)+q(A,B) versus relative context g(x(A)-x(B))",
+  "created_at": "2026-08-09T23:44:01.761196+00:00",
+  "code_version": "sha256:ff067ef7e9d171c3d5c336747032ed42e38b6123452ba4a747d85c978e63e1aa",
+  "artifacts": [
+    {
+      "filename": "agreement-scatter.png",
+      "byte_count": 265839,
+      "sha256": "f39303929248b56afd14c0df8fbe25a42c982197d7ecf14614b53b2f77c84475"
+    },
+    {
+      "filename": "agreement_metrics.parquet",
+      "byte_count": 7384,
+      "sha256": "4807f2f0b2162a3a77b5629759a1afb0bf03b7dd262f4f6819643111acb31c6a"
+    },
+    {
+      "filename": "metadata.json",
+      "byte_count": 935,
+      "sha256": "f989372dcf44d15b811b60782ccfcfb8b6b4da2750bbdf911b602a018b96418b"
+    },
+    {
+      "filename": "reference_matchup_predictions.parquet",
+      "byte_count": 2316336,
+      "sha256": "adb3ddb755f4acb02dd786ff73c39a26f85010cb9950f3b9ef17a19dc82b6e08"
+    }
+  ]
+}

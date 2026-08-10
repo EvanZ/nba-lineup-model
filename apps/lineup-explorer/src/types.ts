@@ -23,6 +23,17 @@ export type ContextFeature = {
   contribution: number;
 };
 
+export type FeatureResponseCurve = {
+  id: string;
+  support_low: number;
+  support_high: number;
+  unit_value: number;
+  unit_contribution: number;
+  opponent_value: number;
+  opponent_contribution: number;
+  points: Array<{ value: number; contribution: number }>;
+};
+
 export type Matchup = {
   season: string;
   run_id: string;
@@ -31,7 +42,14 @@ export type Matchup = {
   opponent: { additive_rating: number; players: Player[] };
   additive_margin: number;
   contextual_adjustment: number;
-  contextual_intercept: number;
+  unit_composition_rating: number;
+  opponent_composition_rating: number;
+  portable_composition_margin: number;
+  matchup_adjustment: number;
   predicted_net_rating: number;
   feature_contributions: ContextFeature[];
+  composition_feature_contributions: ContextFeature[];
+  matchup_feature_contributions: ContextFeature[];
+  composition_response_curves: FeatureResponseCurve[];
+  matchup_response_curves: FeatureResponseCurve[];
 };

@@ -75,6 +75,10 @@ def train_forward_contextual_rapm(
     *,
     through_season: str = DEFAULT_TARGET_SEASON,
     context_alpha: float = DEFAULT_CONTEXT_ALPHA,
+    context_fit: object | None = None,
+    model_name: str = MODEL_NAME,
+    run_prefix: str = RUN_PREFIX,
+    artifact_name: str = "forward_contextual_rapm",
     player_season_panel_path: Path | str = DEFAULT_PANEL_PATH,
     analytical_dir: Path | str = DEFAULT_ANALYTICAL_DIR,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
@@ -171,7 +175,9 @@ def train_forward_contextual_rapm(
             _fit_replacement_token(season, adjusted_stints, exposure, fitted, panel)
         )
         if profiles is not None:
-            model, row = _fit_contextual_season(raw_stints, fitted, profiles, context_alpha)
+            model, row = _fit_contextual_season(
+                raw_stints, fitted, profiles, context_alpha, context_fit, previous_model
+            )
             contextual_models[season] = model
             contextual_metadata.append(row)
         if season == target:
@@ -195,6 +201,7 @@ def train_forward_contextual_rapm(
         coefficients=historical_coefficients,
         analytical_dir=Path(analytical_dir),
         curated_dir=Path(curated_dir),
+        evaluation_model=model_name,
     )
     return _write_run(
         target=target,
@@ -206,6 +213,9 @@ def train_forward_contextual_rapm(
         target_profiles=target_profiles,
         evaluation=evaluation,
         context_alpha=context_alpha,
+        model_name=model_name,
+        run_prefix=run_prefix,
+        artifact_name=artifact_name,
         artifacts_dir=artifact_root,
     )
 
@@ -226,6 +236,8 @@ def _fit_contextual_season(
     fitted: ForwardLaggedRapmSeason,
     profiles: pd.DataFrame,
     alpha: float,
+    context_fit: object | None = None,
+    previous_model: object | None = None,
 ) -> tuple[object, dict[str, object]]:
     coefficients = fitted.player_estimates.loc[:, ["player_id", "rapm"]]
     values = dict(zip(coefficients["player_id"].astype(int), coefficients["rapm"], strict=True))
@@ -238,7 +250,11 @@ def _fit_contextual_season(
     frame["target_residual_net_rating"] = (
         stints["target_home_net_rating"].to_numpy(dtype=float) - effects - intercept
     )
-    model = _fit_model(frame, alpha)
+    model = (
+        context_fit(frame, alpha, previous_model)  # type: ignore[operator]
+        if context_fit is not None
+        else _fit_model(frame, alpha)
+    )
     return model, {
         "season": fitted.season,
         "context_alpha": alpha,
@@ -259,11 +275,14 @@ def _write_run(
     target_profiles: pd.DataFrame,
     evaluation: dict[str, pd.DataFrame | dict[str, object]],
     context_alpha: float,
+    model_name: str,
+    run_prefix: str,
+    artifact_name: str,
     artifacts_dir: Path,
 ) -> ForwardContextualRapmRun:
     now = datetime.now(UTC)
-    run_id = f"{RUN_PREFIX}-{target}-{now:%Y%m%dT%H%M%SZ}-{uuid4().hex[:8]}"
-    root = artifacts_dir / "forward_contextual_rapm" / target
+    run_id = f"{run_prefix}-{target}-{now:%Y%m%dT%H%M%SZ}-{uuid4().hex[:8]}"
+    root = artifacts_dir / artifact_name / target
     output = root / run_id
     temporary = root / f".{run_id}.tmp"
     root.mkdir(parents=True, exist_ok=True)
@@ -292,7 +311,7 @@ def _write_run(
         metadata = {
             "schema_version": 1,
             "run_id": run_id,
-            "model": MODEL_NAME,
+            "model": model_name,
             "target_season": target,
             "context_alpha": context_alpha,
             "contextual_offset_contract": "g_(t-1) is subtracted before fitting RAPM in season t",

@@ -1,12 +1,12 @@
 ---
-last_updated: "2026-08-07"
+last_updated: "2026-08-09"
 ---
 
 # Run NBA GESTALT Locally
 
 NBA GESTALT is a local interactive Lineup Lab built around the completed
-2025-26 forward contextual RAPM state. The browser app and API are separate
-processes during development.
+2025-26 Forward Bounded Hierarchical Portable-Matchup Contextual RAPM state.
+The browser app and API are separate processes during development.
 
 ## Install dependencies
 
@@ -32,10 +32,10 @@ uv run nba-gestalt-api --port 8001
 ```
 
 The API listens at `http://127.0.0.1:8001`. It loads the latest published
-`forward_contextual_rapm/2025-26` artifact on its first request, then retains
-the completed player coefficients, player profiles, and contextual spline
-model in memory for the lifetime of the process. It does not read raw
-possession data or retrain a model for each browser session.
+`forward_bounded_hierarchical_portable_matchup_contextual_rapm/2025-26`
+artifact on its first request. It retains that completed portable-model state
+in memory for the lifetime of the process. It does not read raw possession
+data or retrain a model for each browser session.
 
 ## Start the Lineup Lab
 
@@ -50,6 +50,12 @@ Open [http://127.0.0.1:5174](http://127.0.0.1:5174). Vite proxies `/api`
 requests to the local API on port 8001, while the Zensical documentation site
 continues to use port 8000.
 
+Both lineup columns start empty. Each has a dice control that fills that
+side's empty slots with a random sample from the upper possession quartile,
+preserving already selected players and excluding the other side's selected
+players. The dice control disables once the side is full. Its trash control
+clears that side only.
+
 ## Current model contract
 
 The initial Lineup Lab is intentionally defined as a retrospective 2025-26
@@ -59,20 +65,31 @@ explorer. A neutral-court matchup estimate is:
 \widehat{NR}_{A,B} =
 \sum_{i \in A}\hat{r}_i -
 \sum_{j \in B}\hat{r}_j +
-g_{2025\text{-}26}(A,B).
+h_{2025\text{-}26}(A)-h_{2025\text{-}26}(B)+
+q_{2025\text{-}26}(A,B).
 \]
 
-- `\hat{r}_i` is the completed 2025-26 additive forward contextual RAPM
+- `\hat{r}_i` is the completed 2025-26 bounded portable-model player
   coefficient for player `i`.
-- `g_{2025-26}(A,B)` is the completed contextual spline residual, evaluated
-  from the profile inputs used when that model was fitted.
+- `h(A)-h(B)` is the portable composition advantage against the completed
+  2025-26 possession-weighted reference unit field.
+- `q(A,B)` is the opponent-specific matchup adjustment after portable
+  composition has been removed.
 - No home-court term is applied in the Lineup Lab.
 
 This is not a 2026-27 forecast and is not an observed lineup net rating. It is
 a portable, retrospective model estimate for a user-selected matchup. The
-context panel reports exact spline-Ridge contributions grouped by the original
-context features; the contextual intercept is included in the displayed total
-but is not assigned to an individual feature.
+result panel displays additive player value, portable composition, and the
+specific matchup adjustment separately. Its context signals show all material
+feature contributions to each term: lineup composition factors sum to
+`h(A)-h(B)`, while matchup factors sum to `q(A,B)`. They are exact
+orientation-symmetrized spline-Ridge contributions over the original context
+features, with each `h` contribution averaged over the frozen reference-unit
+field. Composition sparklines show the portable per-feature response against
+the reference field, with orange for the selected unit and a dark outlined
+marker for the opponent. Matchup sparklines hold the opponent's feature value
+fixed and vary the selected unit. The shaded band is the fitted
+possession-weighted 5th-to-95th side-feature support.
 
 ## API contract
 
@@ -93,8 +110,11 @@ but is not assigned to an individual feature.
 }
 ```
 
-The response includes the additive margin, contextual adjustment, final net
-rating estimate, player profiles, and feature-level contextual contributions.
+The response includes the additive margin, portable composition margin,
+specific matchup adjustment, total contextual adjustment, final net-rating
+estimate, player profiles, and separate feature-level contributions for the
+composition edge and matchup bonus. Each contribution list reconstructs its
+corresponding displayed context term.
 
 ## Verify changes
 
