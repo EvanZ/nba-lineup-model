@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "run_id": "value-conditioned-aging-reproducibility-2025-26-20260810T174447Z-c3454967",
+  "season": "2025-26",
+  "reference_run": "artifacts/models/forward_centered_value_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm/2025-26/forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260810T142633Z-3e4dd5da",
+  "candidate_run": "artifacts/models/forward_centered_value_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm/2025-26/forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260810T174350Z-fe83eb24",
+  "tolerance": 1e-10,
+  "randomness_contract": "No stochastic training path: this is an exact deterministic rerun audit, not a seed-sensitivity experiment",
+  "created_at": "2026-08-10T17:44:47.174475+00:00",
+  "code_version": "sha256:32c99875c540cbadccb93bf762845740bd9b3b33be3c98776efb7ad3617a2831"
+}

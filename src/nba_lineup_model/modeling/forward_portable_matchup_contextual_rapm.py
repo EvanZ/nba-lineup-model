@@ -45,13 +45,18 @@ from nba_lineup_model.modeling.prior_rapm import (
     HISTORICAL_SEASONS,
     PRIOR_MEAN_COLUMN,
     ForwardLaggedRapmSeason,
+    _available_processed_playoff_game_ids,
     fit_forward_lagged_rapm_season,
 )
 from nba_lineup_model.modeling.replacement_level import (
     player_exposure_shares,
     prepare_player_exposure_cohort,
 )
-from nba_lineup_model.modeling.stints import modeling_code_fingerprint, read_rapm_stints
+from nba_lineup_model.modeling.stints import (
+    build_rapm_stints_from_legacy_processed_games,
+    modeling_code_fingerprint,
+    read_rapm_stints,
+)
 from nba_lineup_model.season.schema import validate_season
 
 MODEL_NAME = "forward_portable_matchup_contextual_rapm"
@@ -72,6 +77,7 @@ def train_forward_portable_matchup_contextual_rapm(
     context_alpha: float = DEFAULT_CONTEXT_ALPHA,
     context_curvature_alpha: float = 0.0,
     context_temporal_alpha: float = 0.0,
+    include_historical_playoffs: bool = False,
     model_name: str = MODEL_NAME,
     run_prefix: str = RUN_PREFIX,
     player_prior_builder: Callable[..., tuple[pd.DataFrame, dict[str, object]]] | None = None,
@@ -83,7 +89,12 @@ def train_forward_portable_matchup_contextual_rapm(
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
     artifacts_dir: Path | str = DEFAULT_ARTIFACTS_DIR,
 ) -> ForwardPortableMatchupContextualRapmRun:
-    """Roll additive RAPM and reference-identified contextual state forward."""
+    """Roll additive RAPM and reference-identified contextual state forward.
+
+    When enabled, completed historical playoffs are appended to the regular
+    season that precedes the next state update. The target-season playoffs are
+    never used here: they remain part of the frozen evaluation contract.
+    """
 
     target = validate_season(through_season)
     if context_alpha <= 0 or context_curvature_alpha < 0 or context_temporal_alpha < 0:
@@ -111,8 +122,11 @@ def train_forward_portable_matchup_contextual_rapm(
     exposure_history: list[pd.DataFrame] = []
     replacement_tokens: list[dict[str, object]] = []
     prior_metadata: list[dict[str, object]] = []
+    aging_models: dict[str, object] = {}
+    aging_curve_grids: list[pd.DataFrame] = []
     contextual_models: dict[str, MatchupContextualModel] = {}
     contextual_metadata: list[dict[str, object]] = []
+    training_metadata: list[dict[str, object]] = []
     target_priors: pd.DataFrame | None = None
     target_profiles: pd.DataFrame | None = None
     prior_builder = player_prior_builder or _exposure_gated_player_priors
@@ -120,6 +134,34 @@ def train_forward_portable_matchup_contextual_rapm(
     for season in seasons:
         print(f"Fitting portable-plus-matchup context state for {season}", flush=True)
         raw_stints = read_rapm_stints(season, analytical_dir=analytical_dir)
+        regular_stint_count = len(raw_stints)
+        playoff_game_count = 0
+        excluded_playoff_game_count = 0
+        if include_historical_playoffs and season != target:
+            playoff_ids = _available_processed_playoff_game_ids(season)
+            if playoff_ids:
+                playoff_stints, excluded_playoff_ids = build_rapm_stints_from_legacy_processed_games(
+                    playoff_ids
+                )
+                raw_stints = pd.concat([raw_stints, playoff_stints], ignore_index=True).sort_values(
+                    ["game_time_utc", "game_id", "stint_index"], kind="stable"
+                ).reset_index(drop=True)
+                playoff_game_count = len(playoff_ids) - len(excluded_playoff_ids)
+                excluded_playoff_game_count = len(excluded_playoff_ids)
+            print(
+                f"  Added {playoff_game_count:,} completed playoff games to {season}",
+                flush=True,
+            )
+        training_metadata.append(
+            {
+                "season": season,
+                "training_regular_stint_count": regular_stint_count,
+                "training_playoff_game_count": playoff_game_count,
+                "training_excluded_playoff_game_count": excluded_playoff_game_count,
+                "training_stint_count": len(raw_stints),
+                "historical_playoffs_included": include_historical_playoffs and season != target,
+            }
+        )
         participants = set().union(*raw_stints["home_player_ids"], *raw_stints["away_player_ids"])
         profiles = (
             build_contextual_player_profiles(
@@ -149,6 +191,13 @@ def train_forward_portable_matchup_contextual_rapm(
             exposure_history=exposure_history,
             replacement_tokens=replacement_tokens,
         )
+        prior_row = dict(prior_row)
+        aging_model = prior_row.pop("_aging_model", None)
+        aging_curve_grid = prior_row.pop("_aging_curve_grid", None)
+        if aging_model is not None:
+            aging_models[season] = aging_model
+        if isinstance(aging_curve_grid, pd.DataFrame):
+            aging_curve_grids.append(aging_curve_grid)
         prior_metadata.append(prior_row)
         prior_rows = priors.rename(columns={PRIOR_MEAN_COLUMN: "prior_rapm"}).copy()
         prior_rows["season"] = season
@@ -237,6 +286,12 @@ def train_forward_portable_matchup_contextual_rapm(
         context_temporal_alpha=context_temporal_alpha,
         model_name=model_name,
         run_prefix=run_prefix,
+        exposure_history=exposure_history,
+        aging_models=aging_models,
+        aging_curve_grid=(
+            pd.concat(aging_curve_grids, ignore_index=True) if aging_curve_grids else pd.DataFrame()
+        ),
+        training_metadata=pd.DataFrame(training_metadata),
         artifacts_dir=artifact_root,
     )
 
@@ -343,6 +398,10 @@ def _write_run(
     context_temporal_alpha: float,
     model_name: str,
     run_prefix: str,
+    exposure_history: list[pd.DataFrame],
+    aging_models: dict[str, object],
+    aging_curve_grid: pd.DataFrame,
+    training_metadata: pd.DataFrame,
     artifacts_dir: Path,
 ) -> ForwardPortableMatchupContextualRapmRun:
     now = datetime.now(UTC)
@@ -353,10 +412,29 @@ def _write_run(
     root.mkdir(parents=True, exist_ok=True)
     temporary.mkdir()
     try:
+        historical_coefficients = pd.concat(
+            [result.player_estimates for result in results], ignore_index=True
+        )
+        player_season_ratings = _player_season_ratings(
+            historical_coefficients,
+            exposure_history=exposure_history,
+        )
+        season_model_metadata = _season_model_metadata(
+            target=target,
+            model_name=model_name,
+            run_id=run_id,
+            results=results,
+            prior_metadata=prior_metadata,
+            contextual_metadata=contextual_metadata,
+            context_alpha=context_alpha,
+            context_curvature_alpha=context_curvature_alpha,
+            context_temporal_alpha=context_temporal_alpha,
+            training_metadata=training_metadata,
+        )
         tables: dict[str, pd.DataFrame] = {
-            "historical_player_coefficients.parquet": pd.concat(
-                [result.player_estimates for result in results], ignore_index=True
-            ),
+            "historical_player_coefficients.parquet": historical_coefficients,
+            "player_season_ratings.parquet": player_season_ratings,
+            "season_model_metadata.parquet": season_model_metadata,
             "season_player_priors.parquet": priors,
             "season_context_metadata.parquet": contextual_metadata,
             "season_player_prior_metadata.parquet": prior_metadata,
@@ -372,9 +450,16 @@ def _write_run(
             "team_win_predictions.parquet": evaluation["team_win_predictions"],  # type: ignore[dict-item]
             "team_win_metrics.parquet": evaluation["team_win_metrics"],  # type: ignore[dict-item]
         }
+        if not aging_curve_grid.empty:
+            tables["aging_curve_grid.parquet"] = aging_curve_grid.assign(
+                run_id=run_id,
+                model=model_name,
+            )
         for filename, frame in tables.items():
             frame.to_parquet(temporary / filename, index=False)
         joblib.dump(contextual_models, temporary / "season_context_models.joblib")
+        if aging_models:
+            joblib.dump(aging_models, temporary / "season_aging_models.joblib")
         metadata = {
             "schema_version": 1,
             "run_id": run_id,
@@ -406,6 +491,123 @@ def _write_run(
         if temporary.exists():
             shutil.rmtree(temporary)
         raise
+
+
+def _player_season_ratings(
+    coefficients: pd.DataFrame,
+    *,
+    exposure_history: list[pd.DataFrame],
+) -> pd.DataFrame:
+    """Normalize annual player estimates with exposure and deterministic ranks."""
+
+    exposure_columns = (
+        "season",
+        "player_id",
+        "player_name",
+        "age",
+        "nba_experience_years",
+        "is_rookie",
+        "rapm_seconds",
+        "rapm_exposure_eligible",
+        "on_court_possessions",
+        "team_opportunity_possessions",
+        "exposure_share",
+        "team_count",
+    )
+    available = [
+        column
+        for column in exposure_columns
+        if any(column in frame.columns for frame in exposure_history)
+    ]
+    exposure = pd.concat(exposure_history, ignore_index=True).loc[:, available]
+    exposure = exposure.drop_duplicates(["season", "player_id"], keep="last")
+    frame = coefficients.merge(
+        exposure,
+        on=["season", "player_id"],
+        how="left",
+        suffixes=("", "_panel"),
+        validate="one_to_one",
+    )
+    if "player_name_panel" in frame:
+        frame["player_name"] = frame["player_name"].fillna(frame.pop("player_name_panel"))
+    frame = frame.sort_values(
+        ["season", "rapm", "player_id"],
+        ascending=[True, False, True],
+        kind="stable",
+    ).reset_index(drop=True)
+    frame["rank_all_players"] = frame.groupby("season", sort=False).cumcount() + 1
+    frame["rank_exposure_eligible"] = pd.Series(pd.NA, index=frame.index, dtype="Int64")
+    eligible = frame["rapm_exposure_eligible"].astype("boolean").fillna(False).to_numpy(dtype=bool)
+    frame.loc[eligible, "rank_exposure_eligible"] = (
+        frame.loc[eligible].groupby("season", sort=False).cumcount() + 1
+    ).astype("Int64")
+    group_sizes = frame.groupby("season")["player_id"].transform("size")
+    denominator = (group_sizes - 1).clip(lower=1)
+    frame["percentile_all_players"] = 1.0 - (frame["rank_all_players"] - 1) / denominator
+    return frame
+
+
+def _season_model_metadata(
+    *,
+    target: str,
+    model_name: str,
+    run_id: str,
+    results: list[ForwardLaggedRapmSeason],
+    prior_metadata: pd.DataFrame,
+    contextual_metadata: pd.DataFrame,
+    context_alpha: float,
+    context_curvature_alpha: float,
+    context_temporal_alpha: float,
+    training_metadata: pd.DataFrame,
+) -> pd.DataFrame:
+    """Write one inspectable row for every recursive seasonal fit."""
+
+    lambdas = pd.DataFrame(
+        {
+            "season": [result.season for result in results],
+            "selected_lambda": [result.selected_lambda for result in results],
+            "estimated_player_count": [len(result.player_estimates) for result in results],
+        }
+    )
+    prior = _serialize_nested_metadata(prior_metadata)
+    context = _serialize_nested_metadata(contextual_metadata)
+    output = lambdas.merge(prior, on="season", how="left", validate="one_to_one")
+    output = output.merge(context, on="season", how="left", validate="one_to_one")
+    output = output.merge(
+        training_metadata,
+        on="season",
+        how="left",
+        validate="one_to_one",
+    )
+    output.insert(0, "model", model_name)
+    output.insert(1, "run_id", run_id)
+    output["source_season"] = output["season"].map(_previous_season)
+    output["information_cutoff"] = output["source_season"].map(lambda season: f"end_of_{season}")
+    output["is_target_completed_refit"] = output["season"].eq(target)
+    output["frozen_forecast_target_season"] = target
+    output["is_frozen_forecast_source_season"] = output["season"].eq(_previous_season(target))
+    output["configured_context_alpha"] = context_alpha
+    output["configured_context_curvature_alpha"] = context_curvature_alpha
+    output["configured_context_temporal_alpha"] = context_temporal_alpha
+    return output.sort_values("season", kind="stable").reset_index(drop=True)
+
+
+def _serialize_nested_metadata(frame: pd.DataFrame) -> pd.DataFrame:
+    """Make list/dict metadata Parquet-friendly without losing its structure."""
+
+    if frame.empty:
+        return frame.copy()
+    output = frame.copy()
+    for column in output:
+        if output[column].map(lambda value: isinstance(value, (dict, list, tuple))).any():
+            output[column] = output[column].map(
+                lambda value: (
+                    json.dumps(value, sort_keys=True)
+                    if isinstance(value, (dict, list, tuple))
+                    else value
+                )
+            )
+    return output
 
 
 def _sha256_file(path: Path) -> str:

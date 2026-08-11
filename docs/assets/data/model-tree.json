@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updated": "2026-08-09",
+  "updated": "2026-08-10",
   "default_metric": "frozen_regular_game_margin_rmse",
   "metrics": [
     {
@@ -477,6 +477,60 @@
         "frozen_regular_pythagorean_wins_rmse": 7.7289,
         "frozen_playoff_possession_rmse": 1.192544,
         "frozen_playoff_game_margin_rmse": 16.5388
+      }
+    },
+    {
+      "id": "forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "name": "Forward centered aging bounded hierarchical portable-matchup contextual RAPM",
+      "short_name": "Centered aging HPM",
+      "parent": "forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "change": "+ possession-weighted centering of every season's complete player-prior vector.",
+      "docs": "./forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198792,
+        "frozen_regular_game_margin_rmse": 14.3615,
+        "frozen_regular_full_game_margin_rmse": 14.6334,
+        "frozen_regular_game_winner_accuracy": 0.681301,
+        "frozen_regular_team_net_rating_rmse": 3.7826,
+        "frozen_regular_pythagorean_wins_rmse": 7.9356,
+        "frozen_playoff_possession_rmse": 1.192464,
+        "frozen_playoff_game_margin_rmse": 16.5018
+      }
+    },
+    {
+      "id": "forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "name": "Value-Conditioned Aging HPM",
+      "short_name": "Value-conditioned aging HPM",
+      "parent": "forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "change": "+ ridge-penalized age-by-prior-RAPM interaction in the forward aging branch.",
+      "docs": "./forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198763,
+        "frozen_regular_game_margin_rmse": 14.3469,
+        "frozen_regular_full_game_margin_rmse": 14.6242,
+        "frozen_regular_game_winner_accuracy": 0.683740,
+        "frozen_regular_team_net_rating_rmse": 3.7568,
+        "frozen_regular_pythagorean_wins_rmse": 8.0346,
+        "frozen_playoff_possession_rmse": 1.192460,
+        "frozen_playoff_game_margin_rmse": 16.4605
+      }
+    },
+    {
+      "id": "forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "name": "Era-Conditioned Aging HPM",
+      "short_name": "Era-conditioned aging HPM",
+      "parent": "forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "change": "+ ridge-penalized era-by-age-spline interaction in the centered value-conditioned aging branch.",
+      "docs": "./forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198799,
+        "frozen_regular_game_margin_rmse": 14.4398,
+        "frozen_regular_full_game_margin_rmse": 14.7481,
+        "frozen_regular_game_winner_accuracy": 0.679675,
+        "frozen_regular_team_net_rating_rmse": 3.9402,
+        "frozen_regular_pythagorean_wins_rmse": 8.3940,
+        "frozen_playoff_possession_rmse": 1.192475,
+        "frozen_playoff_game_margin_rmse": 16.5525
       }
     }
   ]

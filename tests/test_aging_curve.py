@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 
 from nba_lineup_model.modeling.aging import (
+    ERA_CONDITIONED_VALUE_AGING_FEATURE_COLUMNS,
+    fit_aging_pipeline,
+    materialize_aging_curve_grid,
     prepare_aging_transitions,
     run_aging_experiment,
 )
@@ -76,6 +79,28 @@ def test_draft_adjusted_curves_are_centered_at_the_reference_age():
         )
         assert curve.loc[curve["age"].eq(27), "partial_age_effect"].item() == 0.0
         assert curve.loc[curve["age"].eq(27), "annual_change"].notna().item()
+
+
+def test_era_conditioned_pipeline_emits_one_curve_per_prior_profile():
+    transitions = prepare_aging_transitions(synthetic_transitions())
+    model = fit_aging_pipeline(
+        transitions,
+        regularization=0.1,
+        age_spline_knots=3,
+        age_spline_degree=2,
+        feature_columns=ERA_CONDITIONED_VALUE_AGING_FEATURE_COLUMNS,
+    )
+
+    grid = materialize_aging_curve_grid(
+        model,
+        transitions,
+        feature_columns=ERA_CONDITIONED_VALUE_AGING_FEATURE_COLUMNS,
+        fitted_season="2025-26",
+    )
+
+    assert set(grid["prior_rapm_profile"]) == {"prior_p25", "prior_p50", "prior_p75"}
+    assert grid["era_start_year"].eq(2025).all()
+    assert np.isfinite(grid["predicted_rapm"]).all()
 
 
 def synthetic_transitions() -> pd.DataFrame:

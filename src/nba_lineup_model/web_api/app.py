@@ -6,14 +6,17 @@ import argparse
 from functools import lru_cache
 from typing import Annotated, Literal
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from nba_lineup_model.modeling.forward_aging_bounded_hierarchical_portable_matchup_contextual_rapm import (
+from nba_lineup_model.web_api.inference import (
     MODEL_NAME,
+    LineupEvaluationError,
+    LineupEvaluator,
 )
-from nba_lineup_model.web_api.inference import LineupEvaluationError, LineupEvaluator
 
 
 class MatchupRequest(BaseModel):
@@ -24,6 +27,20 @@ class MatchupRequest(BaseModel):
     include_response_curves: bool = False
     response_curve_feature_id: str | None = None
     response_curve_kind: Literal["composition", "matchup"] | None = None
+
+
+@lru_cache(maxsize=1024)
+def _headshot_png(player_id: int) -> bytes:
+    """Fetch one stable NBA player headshot for same-origin SVG embedding."""
+
+    response = httpx.get(
+        f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png",
+        timeout=10.0,
+    )
+    response.raise_for_status()
+    if response.headers.get("content-type", "").split(";", 1)[0] != "image/png":
+        raise ValueError("NBA headshot response was not a PNG")
+    return response.content
 
 
 def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
@@ -62,6 +79,34 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     def player(player_id: int) -> dict[str, object]:
         try:
             return get_evaluator().player(player_id)
+        except LineupEvaluationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/api/headshots/{player_id}.png")
+    def headshot(player_id: int) -> Response:
+        if player_id <= 0:
+            raise HTTPException(status_code=404, detail="Player headshot is unavailable")
+        try:
+            image = _headshot_png(player_id)
+        except (httpx.HTTPError, ValueError) as error:
+            raise HTTPException(status_code=404, detail="Player headshot is unavailable") from error
+        return Response(
+            content=image,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=43200"},
+        )
+
+    @app.get("/api/rankings")
+    def rankings(season: str | None = None) -> dict[str, object]:
+        state = get_evaluator()
+        selected_season = season or state.season
+        try:
+            return {
+                "season": selected_season,
+                "run_id": state.run_id,
+                "available_seasons": state.available_ranking_seasons(),
+                "players": state.rankings(selected_season),
+            }
         except LineupEvaluationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 

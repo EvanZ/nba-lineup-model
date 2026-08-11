@@ -54,6 +54,88 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .model-lexicon dd { margin: 7px 0 0; color: #5d655f; font-size: 13px; line-height: 1.55; }
 .about-footer-note { max-width: 700px; padding: 36px 0 8px; }
 .about-footer-note > p:last-child { margin: 0; color: #5d655f; font-size: 14px; line-height: 1.55; }
+.rankings-page { padding-top: 72px; }
+.player-profile-page { padding-top: 52px; }
+.player-profile-hero { display: grid; grid-template-columns: 112px minmax(0, 1fr) max-content; align-items: center; gap: 24px; padding: 0 0 38px; border-bottom: 2px solid #17201c; }
+.player-profile-hero .player-headshot { width: 112px; height: 112px; flex-basis: 112px; }
+.player-profile-hero h1 { font-size: 56px; }
+.player-profile-meta { margin: 13px 0 0; color: #68716a; font-size: 14px; }
+.profile-hero-rating { display: grid; justify-items: end; gap: 6px; color: #68716a; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.profile-hero-rating .rating-value { font-family: Georgia, "Times New Roman", serif; font-size: 50px; font-weight: 400; line-height: 0.9; }
+.player-profile-section { padding: 32px 0; border-bottom: 1px solid #d9d6ce; }
+.player-profile-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+.player-profile-heading h2 { margin: 0; color: #17201c; font-family: Georgia, "Times New Roman", serif; font-size: 29px; font-weight: 400; text-transform: none; }
+.player-profile-heading .section-kicker { margin: 0; }
+.player-stat-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; border-top: 1px solid #d9d6ce; }
+.player-stat-grid div { padding: 15px 14px 12px 0; border-bottom: 1px solid #e2dfd7; }
+.player-stat-grid dt { color: #68716a; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.player-stat-grid dd { margin: 7px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 21px; font-weight: 700; }
+.player-history-table-wrap { overflow-x: auto; }
+.player-rating-path-note { color: #68716a; font-size: 13px; line-height: 1.45; margin: 0 0 14px; max-width: 720px; }
+.player-aging-chart { max-width: 760px; margin: 0 0 26px; padding: 18px 0 16px; border-top: 1px solid #d9d6ce; border-bottom: 1px solid #d9d6ce; }
+.player-aging-chart-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.player-aging-chart-actions { display: flex; align-items: center; gap: 6px; }
+.player-aging-chart-toolbar button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border: 1px solid #a6aaa4; border-radius: 3px; background: #f6f3ec; color: #245a47; font-size: 11px; font-weight: 700; }
+.player-aging-chart-toolbar button:hover { border-color: #245a47; background: #dce8db; }
+.player-aging-chart-toolbar .chart-layer-toggle { height: 27px; justify-content: space-between; gap: 7px; padding: 0 5px 0 8px; }
+.chart-layer-toggle-track { width: 22px; height: 13px; display: flex; align-items: center; padding: 1px; border-radius: 8px; background: #9aa19b; transition: background 120ms ease; }
+.chart-layer-toggle-track span { width: 11px; height: 11px; border-radius: 50%; background: #fffefa; box-shadow: 0 1px 2px rgb(23 32 28 / 0.24); transition: transform 120ms ease; }
+.chart-layer-toggle[aria-checked="true"] .chart-layer-toggle-track { background: #187052; }
+.chart-layer-toggle[aria-checked="true"] .chart-layer-toggle-track span { transform: translateX(9px); }
+.player-aging-chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.player-aging-chart figcaption { margin-top: 10px; color: #68716a; font-size: 12px; line-height: 1.45; }
+.aging-chart-grid { stroke: #d9d6ce; stroke-width: 1; }
+.aging-chart-title { fill: #17201c; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 13px; font-weight: 800; }
+.aging-chart-zero { stroke: #838a83; stroke-width: 1; stroke-dasharray: 5 4; }
+.aging-chart-leader-fallback { fill: #f6f3ec; stroke: #8e968f; stroke-width: 1; }
+.aging-chart-leader-headshot { overflow: visible; }
+.aging-chart-leader-value { fill: #7a827b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; font-weight: 700; }
+.aging-chart-leader-tooltip rect { fill: #17201c; opacity: 0.96; }
+.aging-chart-leader-tooltip text { fill: #fffefa; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; font-weight: 700; }
+.aging-chart-player-point { cursor: help; }
+.aging-chart-player-tooltip rect { fill: #17201c; opacity: 0.96; }
+.aging-chart-player-tooltip text { fill: #fffefa; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; font-weight: 700; }
+.aging-chart-line { fill: none; stroke: #174d3d; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+.aging-chart-point { fill: #e8502f; stroke: #fffefa; stroke-width: 1.5; }
+.aging-chart-point.negative-point { fill: #b33b25; }
+.aging-chart-team-logo { overflow: visible; }
+.aging-chart-player-ring { fill: #fffefa; stroke: #174d3d; stroke-width: 1.8; }
+.aging-chart-y-label, .aging-chart-x-label { fill: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.aging-chart-tick { stroke: #737a73; stroke-width: 1; }
+.aging-chart-value { fill: #187052; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
+.aging-chart-value.negative { fill: #b33b25; }
+.player-history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.player-history-table th, .player-history-table td { padding: 10px 8px; border-bottom: 1px solid #e2dfd7; text-align: left; }
+.player-history-table th { color: #68716a; font-size: 10px; text-transform: uppercase; }
+.player-history-table td:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
+.profile-loading, .profile-error { min-height: 300px; display: flex; align-items: center; justify-content: center; gap: 9px; }
+.rankings-hero { max-width: 760px; padding-bottom: 48px; }
+.rankings-hero > p:last-child { max-width: 690px; margin: 23px 0 0; color: #4f5851; font-family: Georgia, "Times New Roman", serif; font-size: 21px; line-height: 1.35; }
+.rankings-table-section { border-top: 2px solid #17201c; }
+.rankings-table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 0; border-bottom: 1px solid #d9d6ce; }
+.rankings-table-toolbar p { margin: 0; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
+.rankings-table-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.rankings-season { display: flex; align-items: center; gap: 7px; color: #69716b; }
+.rankings-season span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.rankings-season select { height: 38px; border: 1px solid #a6aaa4; border-radius: 0; padding: 0 28px 0 10px; background: #fffefa; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
+.rankings-season select:focus { outline: 2px solid #bde5d0; outline-offset: 2px; }
+.rankings-search { width: min(300px, 100%); height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #a6aaa4; background: #fffefa; color: #68716a; }
+.rankings-search:focus-within { outline: 2px solid #bde5d0; outline-offset: 2px; }
+.rankings-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #17201c; font-size: 13px; }
+.rankings-table-wrap { overflow-x: auto; }
+.rankings-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
+.rankings-table th, .rankings-table td { padding: 10px 8px; border-bottom: 1px solid #e2dfd7; text-align: left; }
+.rankings-table thead th { padding-top: 13px; padding-bottom: 12px; color: #68716a; font-size: 10px; text-transform: uppercase; }
+.rankings-table thead button { display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; font-size: inherit; font-weight: 800; text-transform: inherit; }
+.rankings-table thead button:hover { color: #245a47; }
+.rankings-table tbody tr:hover { background: #edf2e9; }
+.rankings-table tbody th { display: flex; align-items: center; gap: 9px; color: #17201c; font-weight: 750; }
+.player-name-link { color: #17201c; font: inherit; font-weight: inherit; text-decoration: none; }
+.player-name-link:hover { color: #245a47; text-decoration: underline; text-decoration-color: #e8502f; text-underline-offset: 3px; }
+.rankings-table .player-headshot { width: 27px; height: 27px; flex-basis: 27px; }
+.rankings-table .numeric { text-align: right; }
+.rankings-table thead .numeric button { justify-content: flex-end; width: 100%; }
+.rank-number, .rating-cell, .rankings-table td.numeric { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
 .eyebrow { margin: 0 0 14px; color: #5d655f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.4; letter-spacing: 0; text-transform: uppercase; }
 h1 { margin: 0; max-width: 720px; font-family: Georgia, "Times New Roman", serif; font-size: clamp(46px, 7vw, 82px); font-weight: 400; line-height: 0.95; letter-spacing: 0; }
 .lab-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(330px, 0.9fr); border-top: 2px solid #17201c; }
@@ -71,16 +153,25 @@ h1 { margin: 0; max-width: 720px; font-family: Georgia, "Times New Roman", serif
 .clear-button:hover:not(:disabled) { background: #f2e6e0; color: #bc3d26; }
 .refresh-button:disabled, .clear-button:disabled { opacity: 0.4; }
 .slot-list { display: grid; gap: 6px; }
-.player-slot { min-height: 55px; display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid #d9d6ce; border-radius: 4px; }
+.player-slot { min-height: 68px; display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid #d9d6ce; border-radius: 4px; }
 .player-slot.empty { color: #8b908b; font-size: 13px; border-style: dashed; }
 .player-slot.filled { background: #fffefa; }
 .slot-number { width: 13px; color: #8b908b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .player-headshot { width: 34px; height: 34px; flex: 0 0 34px; display: block; border: 1px solid #d9d6ce; border-radius: 50%; background: #e8e5de; object-fit: cover; object-position: center top; }
 .player-headshot-fallback { display: grid; place-items: center; color: #58635b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
+.slot-avatar { width: 42px; flex: 0 0 42px; display: grid; justify-items: center; gap: 1px; }
+.slot-avatar small { width: 100%; color: #69716b; font-size: 8px; line-height: 1; text-align: center; white-space: nowrap; }
 .player-in-slot { display: grid; gap: 2px; flex: 1; min-width: 0; }
 .player-in-slot strong, .search-result strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-in-slot .player-name-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 small { color: #6b736d; font-size: 12px; }
 .slot-rating { margin-left: auto; color: #245a47; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
+.player-rating-sparkline { width: 94px; height: 24px; display: block; overflow: visible; }
+.player-rating-rookie-label { fill: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
+.player-rating-zero { stroke: #c5c4bc; stroke-width: 0.8; stroke-dasharray: 2 2; }
+.player-rating-line { fill: none; stroke: #245a47; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.player-rating-point { fill: #e8502f; }
+.player-rating-point.negative-point { fill: #b33b25; }
 .icon-button { width: 29px; height: 29px; display: grid; place-items: center; border: 0; background: transparent; color: #69716b; }
 .icon-button:hover { color: #bc3d26; background: #f2e6e0; }
 .search-area { position: relative; z-index: 2; margin-top: 14px; }
@@ -187,6 +278,13 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 @media (max-width: 780px) {
   main { padding: 16px 20px 42px; }
   .about-page { padding-top: 52px; }
+  .rankings-page { padding-top: 52px; }
+  .player-profile-page { padding-top: 38px; }
+  .player-profile-hero { grid-template-columns: 82px minmax(0, 1fr); gap: 16px; }
+  .player-profile-hero .player-headshot { width: 82px; height: 82px; flex-basis: 82px; }
+  .player-profile-hero h1 { font-size: 40px; }
+  .profile-hero-rating { grid-column: 1 / -1; justify-items: start; }
+  .player-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .model-identity { grid-template-columns: minmax(170px, 0.55fr) 1fr; }
   .model-identity > p:last-child { grid-column: 1 / -1; }
   .about-equation { grid-template-columns: 1fr; gap: 20px; }
@@ -214,6 +312,11 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .curve-columns, .curve-grid { grid-template-columns: 1fr; }
   .about-hero { padding-bottom: 42px; }
   .about-lede { font-size: 20px; }
+  .rankings-hero > p:last-child { font-size: 19px; }
+  .rankings-table-toolbar { align-items: stretch; flex-direction: column; }
+  .rankings-table-controls { align-items: stretch; flex-direction: column; }
+  .rankings-season { justify-content: space-between; }
+  .rankings-search { width: 100%; }
   .model-identity { grid-template-columns: 1fr; gap: 12px; }
   .model-identity > p:last-child { grid-column: auto; }
   .about-equation h2, .about-section-heading h2 { font-size: 27px; }

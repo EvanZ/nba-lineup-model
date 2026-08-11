@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
   BookOpen,
+  ChevronDown,
+  ChevronUp,
   CircleAlert,
   Dices,
+  Download,
   GitBranch,
   Info,
   LoaderCircle,
@@ -13,10 +16,11 @@ import {
   X,
 } from "lucide-react";
 
-import type { ContextFeature, FeatureResponseCurve, Matchup, Player } from "./types";
+import type { ContextFeature, FeatureResponseCurve, Matchup, Player, RankedPlayer } from "./types";
 
 type Side = "unit" | "opponent";
-type AppView = "lab" | "about";
+type AppView = "lab" | "rankings" | "about" | "player";
+type AppRoute = { view: AppView; playerId?: number };
 
 const SIDE_LABELS: Record<Side, string> = { unit: "Your unit", opponent: "Opponent" };
 const MATERIAL_COMPONENT_CONTRIBUTION = 0.05;
@@ -44,9 +48,27 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
 };
 
 const number = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+const wholeNumber = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 function formatRating(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
+}
+
+function formatChartRating(value: number) {
+  return value.toFixed(1);
+}
+
+const TEAM_LOGO_SLUGS: Record<string, string> = {
+  UTA: "utah",
+};
+
+function teamLogoUrl(team: string) {
+  const slug = TEAM_LOGO_SLUGS[team] ?? team.toLowerCase();
+  return `https://a.espncdn.com/i/teamlogos/nba/500/${slug}.png`;
+}
+
+function playerHeadshotUrl(playerId: number) {
+  return `/api/headshots/${playerId}.png`;
 }
 
 function Rating({ value, className }: { value: number; className?: string }) {
@@ -57,9 +79,15 @@ function Rating({ value, className }: { value: number; className?: string }) {
   );
 }
 
-function useAppView(): AppView {
-  const getView = (): AppView => window.location.hash === "#about" ? "about" : "lab";
-  const [view, setView] = useState<AppView>(getView);
+function useAppView(): AppRoute {
+  const getView = (): AppRoute => {
+    const playerMatch = window.location.hash.match(/^#player\/(\d+)$/);
+    if (playerMatch) return { view: "player", playerId: Number(playerMatch[1]) };
+    if (window.location.hash === "#about") return { view: "about" };
+    if (window.location.hash === "#rankings") return { view: "rankings" };
+    return { view: "lab" };
+  };
+  const [view, setView] = useState<AppRoute>(getView);
 
   useEffect(() => {
     const updateView = () => setView(getView());
@@ -70,8 +98,351 @@ function useAppView(): AppView {
   return view;
 }
 
+function playerProfileHref(playerId: number) {
+  return `#player/${playerId}`;
+}
+
+function PlayerProfilePage({ playerId }: { playerId: number }) {
+  const [player, setPlayer] = useState<Player | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setPlayer(null);
+    setError(null);
+    void (async () => {
+      try {
+        const response = await fetch(`/api/players/${playerId}`, { signal: controller.signal });
+        if (!response.ok) throw new Error("Player profile is unavailable.");
+        setPlayer((await response.json()) as Player);
+      } catch (profileError) {
+        if ((profileError as Error).name !== "AbortError") setError((profileError as Error).message);
+      }
+    })();
+    return () => controller.abort();
+  }, [playerId]);
+
+  if (error) return <p className="error profile-error"><CircleAlert size={16} /> {error}</p>;
+  if (!player) return <div className="profile-loading"><LoaderCircle className="spin" size={20} /> Loading player profile</div>;
+  const contextInputs = [
+    player.three_pm_per_100,
+    player.assists_per_100,
+    player.usage_per_100,
+    player.offensive_rebounds_per_100,
+    player.defensive_rebounds_per_100,
+  ];
+  const hasContextInputs = contextInputs.every((value) => value !== null);
+
+  return (
+    <article className="player-profile-page" aria-labelledby="player-profile-title">
+      <section className="player-profile-hero">
+        <PlayerHeadshot player={player} />
+        <div>
+          <p className="eyebrow">{player.team} · {player.position} · Age {player.age === null ? "-" : number.format(player.age)}</p>
+          <h1 id="player-profile-title">{player.player_name}</h1>
+          <p className="player-profile-meta">Rookie season {player.rookie_season ?? "-"} · {wholeNumber.format(player.games)} games · {wholeNumber.format(player.possessions)} possessions</p>
+        </div>
+        <div className="profile-hero-rating">
+          <span>{player.rating_season ?? "Latest"} HIPSTER PM</span>
+          <Rating value={player.rapm} />
+        </div>
+      </section>
+
+      {hasContextInputs && <section className="player-profile-section" aria-labelledby="profile-rates-title">
+        <div className="player-profile-heading">
+          <p className="section-kicker">Prior-season profile</p>
+          <h2 id="profile-rates-title">Context inputs.</h2>
+        </div>
+        <dl className="player-stat-grid">
+          <div><dt>3PM / 100</dt><dd>{number.format(player.three_pm_per_100!)}</dd></div>
+          <div><dt>Assists / 100</dt><dd>{number.format(player.assists_per_100!)}</dd></div>
+          <div><dt>Usage / 100</dt><dd>{number.format(player.usage_per_100!)}</dd></div>
+          <div><dt>OREB / 100</dt><dd>{number.format(player.offensive_rebounds_per_100!)}</dd></div>
+          <div><dt>DREB / 100</dt><dd>{number.format(player.defensive_rebounds_per_100!)}</dd></div>
+        </dl>
+      </section>}
+
+      <section className="player-profile-section" aria-labelledby="rating-history-title">
+        <div className="player-profile-heading">
+          <p className="section-kicker">Completed fits</p>
+          <h2 id="rating-history-title">HIPSTER PM history.</h2>
+        </div>
+        <PlayerAgingChart player={player} />
+        <p className="player-rating-path-note">Prior context edge is the possession-weighted lineup-versus-opponent context predicted from the previous season. It is shared unit exposure, not credit divided among teammates.</p>
+        <div className="player-history-table-wrap">
+          <table className="player-history-table">
+            <thead><tr><th>Season</th><th>Team</th><th>Age</th><th>GP</th><th>GS</th><th>Possessions</th><th>Prior</th><th>Prior context edge</th><th>Season update</th><th>HIPSTER PM</th></tr></thead>
+            <tbody>{[...player.rating_history].reverse().map((point) => (
+              <tr key={point.season}>
+                <td>{point.season}</td><td>{point.team}</td><td>{point.age === null ? "-" : number.format(point.age)}</td>
+                <td>{wholeNumber.format(point.games)}</td><td>{wholeNumber.format(point.games_started)}</td>
+                <td>{wholeNumber.format(point.possessions)}</td>
+                <td>{point.prior_rating === null ? "-" : <Rating value={point.prior_rating} />}</td>
+                <td>{point.prior_context_unit_edge === null ? "-" : <Rating value={point.prior_context_unit_edge} />}</td>
+                <td>{point.season_update === null ? "-" : <Rating value={point.season_update} />}</td>
+                <td><Rating value={point.rating} /></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </section>
+    </article>
+  );
+}
+
+function PlayerAgingChart({ player }: { player: Player }) {
+  const chartRef = useRef<SVGSVGElement>(null);
+  const [showLeagueLeaders, setShowLeagueLeaders] = useState(true);
+  const [hoveredLeader, setHoveredLeader] = useState<{
+    name: string;
+    rating: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [hoveredPlayerPoint, setHoveredPlayerPoint] = useState<{
+    season: string;
+    rating: number;
+    games: number;
+    gamesStarted: number;
+    possessions: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const points = player.rating_history.filter((point) => point.age !== null);
+  if (points.length < 2) return null;
+  const width = 720;
+  const height = 266;
+  const margin = { top: 38, right: 34, bottom: 54, left: 48 };
+  const ages = points.map((point) => point.age!);
+  const ratings = points.map((point) => point.rating);
+  const seasonMaxes = points.map((point) => point.season_max_rating ?? point.rating);
+  const minAge = Math.min(...ages);
+  const maxAge = Math.max(...ages);
+  const lowerBound = Math.floor(Math.min(0, ...ratings));
+  const upperBound = Math.ceil(Math.max(0, ...ratings, ...seasonMaxes));
+  const ratingRange = Math.max(1, upperBound - lowerBound);
+  const x = (age: number) => margin.left + ((age - minAge) / Math.max(1, maxAge - minAge)) * (width - margin.left - margin.right);
+  const y = (rating: number) => margin.top + ((upperBound - rating) / ratingRange) * (height - margin.top - margin.bottom);
+  const zeroY = y(0);
+  const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${x(point.age!)},${y(point.rating)}`).join(" ");
+  async function downloadPng() {
+    const svg = chartRef.current;
+    if (!svg) return;
+    const copy = svg.cloneNode(true) as SVGSVGElement;
+    copy.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    copy.querySelectorAll("[data-export-exclude]").forEach((element) => element.remove());
+    await inlineSvgImages(copy);
+    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+    style.textContent = `
+      .aging-chart-grid { stroke: #d9d6ce; stroke-width: 1; }
+      .aging-chart-title { fill: #17201c; font-family: sans-serif; font-size: 13px; font-weight: 800; }
+      .aging-chart-zero { stroke: #838a83; stroke-width: 1; stroke-dasharray: 5 4; }
+      .aging-chart-leader-fallback { fill: #f6f3ec; stroke: #8e968f; stroke-width: 1; }
+      .aging-chart-leader-headshot { overflow: visible; }
+      .aging-chart-leader-value { fill: #7a827b; font-family: monospace; font-size: 8px; font-weight: 700; }
+      .aging-chart-line { fill: none; stroke: #174d3d; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+      .aging-chart-point { fill: #e8502f; stroke: #fffefa; stroke-width: 1.5; }
+      .aging-chart-point.negative-point { fill: #b33b25; }
+      .aging-chart-team-logo { overflow: visible; }
+      .aging-chart-player-ring { fill: #fffefa; stroke: #174d3d; stroke-width: 1.8; }
+      .aging-chart-y-label, .aging-chart-x-label, .aging-chart-value { fill: #68716a; font-family: monospace; font-size: 11px; }
+      .aging-chart-value { fill: #187052; font-size: 10px; font-weight: 700; }
+      .aging-chart-value.negative { fill: #b33b25; }
+    `;
+    copy.prepend(style);
+    const image = new Image();
+    const svgUrl = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(copy)], { type: "image/svg+xml" }));
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      const scale = 2;
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.fillStyle = "#f6f3ec";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(svgUrl);
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `${player.player_name.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "")}-hipster-pm-aging.png`;
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(link.href), 0);
+      }, "image/png");
+    };
+    image.src = svgUrl;
+  }
+
+  function toggleLeagueLeaders() {
+    setShowLeagueLeaders((visible) => !visible);
+    setHoveredLeader(null);
+  }
+
+  return (
+    <figure className="player-aging-chart">
+      <div className="player-aging-chart-toolbar">
+        <span>Age trajectory</span>
+        <div className="player-aging-chart-actions">
+          <button
+            className="chart-layer-toggle"
+            type="button"
+            role="switch"
+            onClick={toggleLeagueLeaders}
+            title={showLeagueLeaders ? "Hide league leaders" : "Show league leaders"}
+            aria-label={showLeagueLeaders ? "Hide league leaders" : "Show league leaders"}
+            aria-checked={showLeagueLeaders}
+          >
+            <span>League maxima</span>
+            <span className="chart-layer-toggle-track" aria-hidden="true"><span /></span>
+          </button>
+          <button type="button" onClick={downloadPng} title="Download chart as PNG" aria-label={`Download ${player.player_name} age trajectory as PNG`}><Download size={14} /> Download PNG</button>
+        </div>
+      </div>
+      <svg ref={chartRef} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${player.player_name} completed-fit HIPSTER PM by age`}>
+        <text className="aging-chart-title" x={margin.left} y="17">{player.player_name} · HIPSTER PM age trajectory</text>
+        <line className="aging-chart-grid" x1={margin.left} x2={width - margin.right} y1={margin.top} y2={margin.top} />
+        <line className="aging-chart-zero" x1={margin.left} x2={width - margin.right} y1={zeroY} y2={zeroY} />
+        <line className="aging-chart-grid" x1={margin.left} x2={width - margin.right} y1={height - margin.bottom} y2={height - margin.bottom} />
+        <text className="aging-chart-y-label" x={margin.left - 10} y={margin.top + 4} textAnchor="end">{formatChartRating(upperBound)}</text>
+        <text className="aging-chart-y-label" x={margin.left - 10} y={zeroY + 4} textAnchor="end">0.0</text>
+        <text className="aging-chart-y-label" x={margin.left - 10} y={height - margin.bottom + 4} textAnchor="end">{formatChartRating(lowerBound)}</text>
+        {showLeagueLeaders && points.map((point) => {
+          const leaderRating = point.season_max_rating ?? point.rating;
+          const leaderId = point.season_max_player_id;
+          const leaderName = point.season_max_player_name ?? "League leader";
+          return <g key={`leader-${point.season}`}>
+            {leaderId !== undefined && (
+              <a
+                href={playerProfileHref(leaderId)}
+                aria-label={`${leaderName}, ${formatChartRating(leaderRating)} HIPSTER PM`}
+                onMouseEnter={() => setHoveredLeader({ name: leaderName, rating: leaderRating, x: x(point.age!), y: y(leaderRating) })}
+                onMouseLeave={() => setHoveredLeader(null)}
+                onFocus={() => setHoveredLeader({ name: leaderName, rating: leaderRating, x: x(point.age!), y: y(leaderRating) })}
+                onBlur={() => setHoveredLeader(null)}
+              >
+                <title>{leaderName} · {formatChartRating(leaderRating)} HIPSTER PM</title>
+                <circle className="aging-chart-leader-fallback" cx={x(point.age!)} cy={y(leaderRating)} r="10" />
+                <image
+                  className="aging-chart-leader-headshot"
+                  href={playerHeadshotUrl(leaderId)}
+                  x={x(point.age!) - 9}
+                  y={y(leaderRating) - 9}
+                  width="18"
+                  height="18"
+                  preserveAspectRatio="xMidYMid slice"
+                  onError={(event) => { event.currentTarget.style.display = "none"; }}
+                />
+              </a>
+            )}
+            <text className="aging-chart-leader-value" x={x(point.age!)} y={Math.max(29, y(leaderRating) - 14)} textAnchor="middle" pointerEvents="none">{formatChartRating(leaderRating)}</text>
+          </g>;
+        })}
+        <path className="aging-chart-line" d={path} />
+        {points.map((point) => {
+          const pointX = x(point.age!);
+          const pointY = y(point.rating);
+          return <g
+            key={point.season}
+            className="aging-chart-player-point"
+            onMouseEnter={() => setHoveredPlayerPoint({
+              season: point.season,
+              rating: point.rating,
+              games: point.games,
+              gamesStarted: point.games_started,
+              possessions: point.possessions,
+              x: pointX,
+              y: pointY,
+            })}
+            onMouseLeave={() => setHoveredPlayerPoint(null)}
+          >
+            {point.team !== "-" && <circle className="aging-chart-player-ring" cx={pointX} cy={pointY} r="9" />}
+            <circle className={point.rating < 0 ? "aging-chart-point negative-point" : "aging-chart-point"} cx={pointX} cy={pointY} r="4.5" />
+            {point.team !== "-" && (
+              <image
+                className="aging-chart-team-logo"
+                href={teamLogoUrl(point.team)}
+                x={pointX - 8}
+                y={pointY - 8}
+                width="16"
+                height="16"
+                preserveAspectRatio="xMidYMid meet"
+                crossOrigin="anonymous"
+                onError={(event) => { event.currentTarget.style.display = "none"; }}
+              >
+                <title>{point.team}</title>
+              </image>
+            )}
+            <text className={point.rating < 0 ? "aging-chart-value negative" : "aging-chart-value"} x={pointX} y={pointY + 17} textAnchor="middle">{formatChartRating(point.rating)}</text>
+          </g>;
+        })}
+        {points.map((point) => <g key={`age-${point.season}`}>
+          <line className="aging-chart-tick" x1={x(point.age!)} x2={x(point.age!)} y1={height - margin.bottom} y2={height - margin.bottom + 5} />
+          <text className="aging-chart-x-label" x={x(point.age!)} y={height - 27} textAnchor="middle">
+            <tspan x={x(point.age!)}>{point.season.slice(-2)}</tspan>
+            <tspan x={x(point.age!)} dy="11">{number.format(point.age!)}</tspan>
+          </text>
+        </g>)}
+        {showLeagueLeaders && hoveredLeader && (
+          <g
+            className="aging-chart-leader-tooltip"
+            data-export-exclude="true"
+            pointerEvents="none"
+            transform={`translate(${Math.min(width - 146, hoveredLeader.x + 14)}, ${Math.max(margin.top + 4, hoveredLeader.y - 33)})`}
+          >
+            <rect width="132" height="29" rx="3" />
+            <text x="7" y="12">{hoveredLeader.name}</text>
+            <text x="7" y="23">{formatChartRating(hoveredLeader.rating)} HIPSTER PM</text>
+          </g>
+        )}
+        {hoveredPlayerPoint && (
+          <g
+            className="aging-chart-player-tooltip"
+            data-export-exclude="true"
+            pointerEvents="none"
+            transform={`translate(${Math.min(width - 154, hoveredPlayerPoint.x + 11)}, ${Math.max(margin.top + 3, hoveredPlayerPoint.y - 49)})`}
+          >
+            <rect width="144" height="43" rx="3" />
+            <text x="7" y="12">{hoveredPlayerPoint.season} · {formatChartRating(hoveredPlayerPoint.rating)} HIPSTER PM</text>
+            <text x="7" y="24">G {wholeNumber.format(hoveredPlayerPoint.games)} · GS {wholeNumber.format(hoveredPlayerPoint.gamesStarted)}</text>
+            <text x="7" y="36">{wholeNumber.format(hoveredPlayerPoint.possessions)} possessions</text>
+          </g>
+        )}
+      </svg>
+      <figcaption>{showLeagueLeaders
+        ? "Completed-fit HIPSTER PM by age. The green line is the player; headshots mark the league’s highest completed-fit player rating in each season."
+        : "Completed-fit HIPSTER PM by age. The green line is the player."}
+      </figcaption>
+    </figure>
+  );
+}
+
+async function inlineSvgImages(svg: SVGSVGElement) {
+  const images = Array.from(svg.querySelectorAll("image[href]"));
+  await Promise.all(images.map(async (image) => {
+    const source = image.getAttribute("href");
+    if (!source || (!source.startsWith("https://") && !source.startsWith("/"))) return;
+    try {
+      const response = await fetch(source, { mode: "cors" });
+      if (!response.ok) throw new Error(`Logo request failed: ${response.status}`);
+      const blob = await response.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+      image.setAttribute("href", dataUrl);
+    } catch {
+      image.remove();
+    }
+  }));
+}
+
 function App() {
-  const view = useAppView();
+  const route = useAppView();
+  const view = route.view;
   const [unit, setUnit] = useState<Player[]>([]);
   const [opponent, setOpponent] = useState<Player[]>([]);
   const [result, setResult] = useState<Matchup | null>(null);
@@ -163,6 +534,7 @@ function App() {
         <div className="header-meta">
           <nav className="header-navigation" aria-label="Primary navigation">
             <a className={view === "lab" ? "active" : ""} href="#lab">Lineup Lab</a>
+            <a className={view === "rankings" ? "active" : ""} href="#rankings">Rankings</a>
             <a className={view === "about" ? "active" : ""} href="#about">About</a>
           </nav>
           <a
@@ -189,7 +561,7 @@ function App() {
         </div>
       </header>
 
-      {view === "about" ? <AboutPage /> : <>
+      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
         <section className="intro" aria-labelledby="page-title">
           <p className="eyebrow">A lineup is more than the sum of five player ratings.</p>
           <h1 id="page-title">Build the five.</h1>
@@ -384,6 +756,136 @@ function AboutPage() {
   );
 }
 
+type RankingColumn = "rank" | "player_name" | "team" | "position" | "rapm" | "possessions" | "games";
+
+function RankingsPage() {
+  const [players, setPlayers] = useState<RankedPlayer[]>([]);
+  const [selectedSeason, setSelectedSeason] = useState("2025-26");
+  const [availableSeasons, setAvailableSeasons] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [sortColumn, setSortColumn] = useState<RankingColumn>("rank");
+  const [sortDirection, setSortDirection] = useState<"ascending" | "descending">("ascending");
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        setIsLoading(true);
+        const response = await fetch(`/api/rankings?season=${encodeURIComponent(selectedSeason)}`, { signal: controller.signal });
+        if (!response.ok) throw new Error("HIPSTER PM rankings are unavailable.");
+        const payload = (await response.json()) as {
+          available_seasons: string[];
+          players: RankedPlayer[];
+        };
+        setPlayers(payload.players);
+        setAvailableSeasons(payload.available_seasons);
+      } catch (rankingError) {
+        if ((rankingError as Error).name !== "AbortError") setError((rankingError as Error).message);
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [selectedSeason]);
+
+  const visiblePlayers = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    const rows = normalized
+      ? players.filter((player) => [player.player_name, player.team, player.position]
+        .some((value) => value.toLocaleLowerCase().includes(normalized)))
+      : players;
+    const direction = sortDirection === "ascending" ? 1 : -1;
+    return [...rows].sort((left, right) => {
+      const leftValue = left[sortColumn];
+      const rightValue = right[sortColumn];
+      if (typeof leftValue === "number" && typeof rightValue === "number") {
+        return direction * (leftValue - rightValue) || left.rank - right.rank;
+      }
+      return direction * String(leftValue).localeCompare(String(rightValue)) || left.rank - right.rank;
+    });
+  }, [players, query, sortColumn, sortDirection]);
+
+  function changeSort(column: RankingColumn) {
+    if (column === sortColumn) {
+      setSortDirection((direction) => direction === "ascending" ? "descending" : "ascending");
+      return;
+    }
+    setSortColumn(column);
+    setSortDirection(column === "player_name" || column === "team" || column === "position" ? "ascending" : "descending");
+  }
+
+  const columns: Array<{ key: RankingColumn; label: string; numeric?: boolean }> = [
+    { key: "rank", label: "Rank", numeric: true },
+    { key: "player_name", label: "Player" },
+    { key: "team", label: "Team" },
+    { key: "position", label: "Pos" },
+    { key: "rapm", label: "HIPSTER PM", numeric: true },
+    { key: "possessions", label: "Possessions", numeric: true },
+    { key: "games", label: "Games", numeric: true },
+  ];
+
+  return (
+    <article className="rankings-page" aria-labelledby="rankings-title">
+      <section className="rankings-hero">
+        <p className="eyebrow">HIPSTER PM · {selectedSeason} completed fit</p>
+        <h1 id="rankings-title">Player rankings.</h1>
+        <p>
+          Completed-fit HIPSTER PM coefficients per 100 possessions for the selected season. Each table is intended
+          for within-season comparison, not an era-neutral all-time ranking.
+        </p>
+      </section>
+
+      <section className="rankings-table-section" aria-label="HIPSTER PM player rankings">
+        <div className="rankings-table-toolbar">
+          <p>{isLoading ? "Loading rankings" : `Showing ${visiblePlayers.length} of ${players.length} players`}</p>
+          <div className="rankings-table-controls">
+            <label className="rankings-season">
+              <span>Season</span>
+              <select value={selectedSeason} onChange={(event) => setSelectedSeason(event.target.value)}>
+                {(availableSeasons.length ? availableSeasons : [selectedSeason]).map((season) => (
+                  <option key={season} value={season}>{season}</option>
+                ))}
+              </select>
+            </label>
+            <label className="rankings-search">
+              <Search size={17} aria-hidden="true" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search player or team" />
+            </label>
+          </div>
+        </div>
+        {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
+        {!error && <div className="rankings-table-wrap">
+          <table className="rankings-table">
+            <thead>
+              <tr>
+                {columns.map((column) => <th className={column.numeric ? "numeric" : ""} scope="col" key={column.key}>
+                  <button type="button" onClick={() => changeSort(column.key)}>
+                    {column.label}
+                    {sortColumn === column.key && (sortDirection === "ascending" ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                  </button>
+                </th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {visiblePlayers.map((player) => <tr key={player.player_id}>
+                <td className="rank-number">{player.rank}</td>
+                <th scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>
+                <td>{player.team}</td>
+                <td>{player.position}</td>
+                <td className={player.rapm < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(player.rapm)}</td>
+                <td className="numeric">{wholeNumber.format(player.possessions)}</td>
+                <td className="numeric">{player.games}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>}
+      </section>
+    </article>
+  );
+}
+
 type LineupSelectorProps = {
   side: Side;
   players: Player[];
@@ -484,10 +986,14 @@ function LineupSelector({
           return player ? (
             <div className="player-slot filled" key={player.player_id}>
               <span className="slot-number">{slot + 1}</span>
-              <PlayerHeadshot player={player} />
-              <span className="player-in-slot">
-                <strong>{player.player_name}</strong>
+              <span className="slot-avatar">
+                <PlayerHeadshot player={player} />
                 <small>{player.team} · {player.position}</small>
+                {player.age !== null && <small>Age {number.format(player.age)}</small>}
+              </span>
+              <span className="player-in-slot">
+                <a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a>
+                <PlayerRatingSparkline player={player} />
               </span>
               <Rating className="slot-rating" value={player.rapm} />
               <button
@@ -526,6 +1032,7 @@ function LineupSelector({
                 <PlayerHeadshot player={player} />
                 <span className="search-result-details">
                   <strong>{player.player_name}</strong>
+                  <PlayerRatingSparkline player={player} />
                   <small>{player.team} · {player.position} · {number.format(player.possessions)} poss.</small>
                 </span>
                 <Rating value={player.rapm} />
@@ -535,6 +1042,37 @@ function LineupSelector({
         )}
       </div>
     </section>
+  );
+}
+
+function PlayerRatingSparkline({ player }: { player: Player }) {
+  const points = player.rating_history ?? [];
+  if (points.length < 2) return null;
+  const labelWidth = 18;
+  const chartWidth = 64;
+  const width = labelWidth + chartWidth;
+  const height = 24;
+  const padding = 2;
+  const values = points.map((point) => point.rating);
+  const extent = Math.max(1, ...values.map((value) => Math.abs(value)));
+  const x = (index: number) => labelWidth + padding + (index * (chartWidth - padding * 2)) / (points.length - 1);
+  const y = (value: number) => height / 2 - (value / extent) * (height / 2 - padding);
+  const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${x(index)},${y(point.rating)}`).join(" ");
+  const latest = points.at(-1)!;
+  const rookieYear = (player.rookie_season ?? points[0].season).slice(-2);
+  return (
+    <svg
+      className="player-rating-sparkline"
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label={`${player.player_name} completed-fit HPM ratings from ${points[0].season} through ${latest.season}`}
+    >
+      <title>Completed-fit HPM trajectory: {points[0].season} to {latest.season}</title>
+      <text className="player-rating-rookie-label" x={labelWidth - 2} y={height / 2 + 3} textAnchor="end">{rookieYear}</text>
+      <line className="player-rating-zero" x1={labelWidth} x2={width} y1={height / 2} y2={height / 2} />
+      <path className="player-rating-line" d={path} />
+      <circle className={latest.rating < 0 ? "player-rating-point negative-point" : "player-rating-point"} cx={x(points.length - 1)} cy={y(latest.rating)} r="2.5" />
+    </svg>
   );
 }
 
@@ -554,7 +1092,7 @@ function PlayerHeadshot({ player }: { player: Player }) {
   return (
     <img
       className="player-headshot"
-      src={`https://cdn.nba.com/headshots/nba/latest/1040x760/${player.player_id}.png`}
+      src={playerHeadshotUrl(player.player_id)}
       alt=""
       onError={() => setFailed(true)}
     />

@@ -10,7 +10,10 @@ import pandas as pd
 from nba_lineup_model.modeling.aging import (
     AGING_FEATURE_COLUMNS,
     DEFAULT_AGING_REGULARIZATION_GRID,
+    ERA_CONDITIONED_VALUE_AGING_FEATURE_COLUMNS,
+    VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
     fit_aging_pipeline,
+    materialize_aging_curve_grid,
     prepare_aging_prior_features,
     prepare_aging_transitions,
     run_aging_experiment,
@@ -48,6 +51,8 @@ def build_aging_exposure_gated_priors(
     completed_results: list[ForwardLaggedRapmSeason],
     exposure_history: list[pd.DataFrame],
     replacement_tokens: list[dict[str, object]],
+    feature_columns: tuple[str, ...] = AGING_FEATURE_COLUMNS,
+    model_name: str = "forward_aging_ridge",
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """Return a forward aging prior for returners plus the existing rookie branch.
 
@@ -78,6 +83,8 @@ def build_aging_exposure_gated_priors(
         experiment = run_aging_experiment(
             transitions,
             regularization_grid=DEFAULT_AGING_REGULARIZATION_GRID,
+            feature_columns=feature_columns,
+            model_name=model_name,
         )
         training = prepare_aging_transitions(transitions)
         model = fit_aging_pipeline(
@@ -85,6 +92,7 @@ def build_aging_exposure_gated_priors(
             regularization=experiment.selected_regularization,
             age_spline_knots=5,
             age_spline_degree=2,
+            feature_columns=feature_columns,
         )
         target = _target_returning_features(
             panel,
@@ -93,7 +101,7 @@ def build_aging_exposure_gated_priors(
             latest_exposure=exposure_history[-1],
         )
         target = prepare_aging_prior_features(target)
-        predicted = model.predict(target.loc[:, AGING_FEATURE_COLUMNS])
+        predicted = model.predict(target.loc[:, feature_columns])
         age_returning = target.loc[:, ["player_id"]].copy()
         age_returning[PRIOR_MEAN_COLUMN] = np.asarray(predicted, dtype=float)
         metadata.update(
@@ -105,12 +113,143 @@ def build_aging_exposure_gated_priors(
                 "aging_training_target_seasons": list(experiment.training_target_seasons),
                 "aging_selection_holdout_target_season": experiment.holdout_target_season,
                 "aging_returning_player_count": int(len(age_returning)),
+                "aging_feature_columns": list(feature_columns),
+                "aging_value_conditioned": "age_by_prior_rapm" in feature_columns,
+                "aging_era_conditioned": "era_year_centered" in feature_columns,
+                "_aging_model": model,
+                "_aging_curve_grid": materialize_aging_curve_grid(
+                    model,
+                    training,
+                    feature_columns=feature_columns,
+                    fitted_season=season,
+                ),
             }
         )
         return _combine_priors(age_returning, cold), metadata
     except ValueError as error:
         metadata["aging_reason"] = str(error)
         return _combine_priors(returning, cold), metadata
+
+
+def build_centered_aging_exposure_gated_priors(
+    *,
+    season: str,
+    panel: pd.DataFrame,
+    completed_results: list[ForwardLaggedRapmSeason],
+    exposure_history: list[pd.DataFrame],
+    replacement_tokens: list[dict[str, object]],
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Return the aging/cold-start prior on a documented pre-season zero point.
+
+    A common player-coefficient translation cancels from every five-versus-five
+    RAPM row.  Centering the full prior vector on prior-season player exposure
+    therefore fixes an interpretable coordinate without using target outcomes.
+    """
+
+    priors, metadata = build_aging_exposure_gated_priors(
+        season=season,
+        panel=panel,
+        completed_results=completed_results,
+        exposure_history=exposure_history,
+        replacement_tokens=replacement_tokens,
+    )
+    centered, center_metadata = center_player_priors(
+        priors,
+        previous_exposure=exposure_history[-1] if exposure_history else None,
+    )
+    return centered, {**metadata, **center_metadata}
+
+
+def build_centered_value_conditioned_aging_exposure_gated_priors(
+    *,
+    season: str,
+    panel: pd.DataFrame,
+    completed_results: list[ForwardLaggedRapmSeason],
+    exposure_history: list[pd.DataFrame],
+    replacement_tokens: list[dict[str, object]],
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Return a centered aging prior with a learned age-by-prior-value term."""
+
+    priors, metadata = build_aging_exposure_gated_priors(
+        season=season,
+        panel=panel,
+        completed_results=completed_results,
+        exposure_history=exposure_history,
+        replacement_tokens=replacement_tokens,
+        feature_columns=VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
+        model_name="forward_value_conditioned_aging_ridge",
+    )
+    centered, center_metadata = center_player_priors(
+        priors,
+        previous_exposure=exposure_history[-1] if exposure_history else None,
+    )
+    return centered, {**metadata, **center_metadata}
+
+
+def build_centered_era_conditioned_aging_exposure_gated_priors(
+    *,
+    season: str,
+    panel: pd.DataFrame,
+    completed_results: list[ForwardLaggedRapmSeason],
+    exposure_history: list[pd.DataFrame],
+    replacement_tokens: list[dict[str, object]],
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Return a centered prior with a smooth, season-conditioned aging curve."""
+
+    priors, metadata = build_aging_exposure_gated_priors(
+        season=season,
+        panel=panel,
+        completed_results=completed_results,
+        exposure_history=exposure_history,
+        replacement_tokens=replacement_tokens,
+        feature_columns=ERA_CONDITIONED_VALUE_AGING_FEATURE_COLUMNS,
+        model_name="forward_era_conditioned_value_aging_ridge",
+    )
+    centered, center_metadata = center_player_priors(
+        priors,
+        previous_exposure=exposure_history[-1] if exposure_history else None,
+    )
+    return centered, {**metadata, **center_metadata}
+
+
+def center_player_priors(
+    priors: pd.DataFrame,
+    *,
+    previous_exposure: pd.DataFrame | None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Translate a prior vector to a possession-weighted pre-season reference."""
+
+    if priors.empty:
+        return priors.copy(), {
+            "player_prior_centering": "empty",
+            "player_prior_center_offset": 0.0,
+            "player_prior_center_weight_total": 0.0,
+        }
+    output = priors.copy()
+    values = pd.to_numeric(output[PRIOR_MEAN_COLUMN], errors="raise")
+    if previous_exposure is None:
+        weights = np.ones(len(output), dtype=float)
+        method = "uniform_first_season"
+    else:
+        exposure = _exposure_frame(previous_exposure).rename(
+            columns={"on_court_possessions": "prior_center_weight"}
+        )
+        weighted = output.loc[:, ["player_id"]].merge(
+            exposure, on="player_id", how="left", validate="one_to_one"
+        )
+        weights = weighted["prior_center_weight"].fillna(0.0).to_numpy(dtype=float)
+        if not np.any(weights > 0):
+            weights = np.ones(len(output), dtype=float)
+            method = "uniform_no_returning_exposure"
+        else:
+            method = "prior_season_possession_weighted"
+    center = float(np.average(values.to_numpy(dtype=float), weights=weights))
+    output[PRIOR_MEAN_COLUMN] = values - center
+    return output, {
+        "player_prior_centering": method,
+        "player_prior_center_offset": center,
+        "player_prior_center_weight_total": float(weights.sum()),
+    }
 
 
 def _aging_transition_history(
@@ -165,9 +304,11 @@ def _aging_transition_history(
         rows.append(transition)
     if not rows:
         raise ValueError("Aging prior requires at least one completed transition")
-    return pd.concat(rows, ignore_index=True).sort_values(
-        ["target_season", "player_id"], kind="stable"
-    ).reset_index(drop=True)
+    return (
+        pd.concat(rows, ignore_index=True)
+        .sort_values(["target_season", "player_id"], kind="stable")
+        .reset_index(drop=True)
+    )
 
 
 def _target_returning_features(
@@ -219,9 +360,7 @@ def _exposure_frame(exposure: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(f"Player exposure history missing columns: {sorted(missing)}")
     output = exposure.loc[:, ["player_id", "on_court_possessions"]].copy()
     output["player_id"] = output["player_id"].astype(int)
-    output["on_court_possessions"] = pd.to_numeric(
-        output["on_court_possessions"], errors="raise"
-    )
+    output["on_court_possessions"] = pd.to_numeric(output["on_court_possessions"], errors="raise")
     if output["player_id"].duplicated().any() or not output["on_court_possessions"].gt(0).all():
         raise ValueError("Player exposure history is invalid")
     return output

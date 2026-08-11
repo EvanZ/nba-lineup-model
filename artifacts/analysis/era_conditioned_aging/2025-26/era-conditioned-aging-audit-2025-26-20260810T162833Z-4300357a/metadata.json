@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "run_id": "era-conditioned-aging-audit-2025-26-20260810T162833Z-4300357a",
+  "season": "2025-26",
+  "value_model": "forward_centered_value_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm",
+  "value_run_id": "forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260810T142633Z-3e4dd5da",
+  "era_model": "forward_centered_era_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm",
+  "era_run_id": "forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260810T154501Z-76a5fad1",
+  "curve_contract": "Population partial-age-effect curves, each anchored at its recorded reference age and evaluated at the model's p25, p50, and p75 prior-RAPM profiles",
+  "veteran_error_contract": "Possession-weighted difference between frozen 2025-26 player prior and that model's completed 2025-26 refit coefficient, restricted to players present in the completed 2024-25 coefficient state",
+  "created_at": "2026-08-10T16:28:33.824830+00:00",
+  "code_version": "sha256:5bbe5857796b92e55282a139662ecee43355eaf0e7fdce36c531f60bda75c274"
+}

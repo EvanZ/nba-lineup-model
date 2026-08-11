@@ -46,6 +46,9 @@ def test_frozen_evaluation_uses_previous_season_portable_matchup_state(
             "away_player_ids": [[2]],
             "target_home_net_rating": [2.0],
             "possessions": [10.0],
+            "game_time_utc": ["2025-01-01T00:00:00Z"],
+            "game_id": ["001"],
+            "stint_index": [0],
         }
     )
     contexts = {
@@ -60,6 +63,18 @@ def test_frozen_evaluation_uses_previous_season_portable_matchup_state(
         portable, "prepare_player_exposure_cohort", lambda *args, **kwargs: pd.DataFrame()
     )
     monkeypatch.setattr(portable, "read_rapm_stints", lambda *args, **kwargs: stints.copy())
+    playoff_seasons: list[str] = []
+
+    def available_playoffs(season: str) -> tuple[str, ...]:
+        playoff_seasons.append(season)
+        return ("004",)
+
+    monkeypatch.setattr(portable, "_available_processed_playoff_game_ids", available_playoffs)
+    monkeypatch.setattr(
+        portable,
+        "build_rapm_stints_from_legacy_processed_games",
+        lambda game_ids: (stints.assign(game_id="004"), ()),
+    )
     monkeypatch.setattr(
         portable,
         "build_contextual_player_profiles",
@@ -135,6 +150,8 @@ def test_frozen_evaluation_uses_previous_season_portable_matchup_state(
         analytical_dir=tmp_path / "analytical",
         curated_dir=tmp_path / "curated",
         artifacts_dir=tmp_path / "artifacts",
+        include_historical_playoffs=True,
     )
 
     assert observed == {"target": target, "model": contexts[source]}
+    assert playoff_seasons == [initial, source]

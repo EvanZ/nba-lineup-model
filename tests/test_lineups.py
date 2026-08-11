@@ -309,6 +309,21 @@ def test_boundary_events_may_precede_delayed_period_start_marker():
     ]
 
 
+def test_duplicate_period_start_marker_at_active_boundary_is_ignored():
+    payload = deepcopy(load_fixture("playbyplay_lineup_scenario.json"))
+    duplicate = deepcopy(payload["game"]["actions"][0])
+    duplicate.update({"actionNumber": 0, "orderNumber": 5000})
+    payload["game"]["actions"].insert(0, duplicate)
+
+    result = reconstruct_lineups(
+        canonical_events(payload),
+        load_fixture("boxscore_lineup_scenario.json"),
+    )
+
+    assert [stint.duration_seconds for stint in result.stints] == [120, 600, 720]
+    assert [issue.code for issue in result.issues] == ["duplicate_period_start_marker"]
+
+
 def test_impossible_period_start_batch_is_reconciled_from_early_actors():
     payload = {
         "game": {

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "run_id": "value-conditioned-aging-reproducibility-2025-26-20260810T174447Z-c3454967",
+  "season": "2025-26",
+  "reference_run": "artifacts/models/forward_centered_value_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm/2025-26/forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260810T142633Z-3e4dd5da",
+  "candidate_run": "artifacts/models/forward_centered_value_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm/2025-26/forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260810T174350Z-fe83eb24",
+  "tolerance": 1e-10,
+  "randomness_contract": "No stochastic training path: this is an exact deterministic rerun audit, not a seed-sensitivity experiment",
+  "created_at": "2026-08-10T17:44:47.174475+00:00",
+  "code_version": "sha256:32c99875c540cbadccb93bf762845740bd9b3b33be3c98776efb7ad3617a2831",
+  "artifacts": [
+    {
+      "filename": "comparison.parquet",
+      "byte_count": 7560,
+      "sha256": "536398b8ca2bae9be75dce7acf1778386bee4019a08207d569718d1479d6a290"
+    },
+    {
+      "filename": "metadata.json",
+      "byte_count": 982,
+      "sha256": "57789d9b2d99f44bb7fc633929ccca93b6099de33939608d51fd8098afaf5e6e"
+    },
+    {
+      "filename": "summary.parquet",
+      "byte_count": 6520,
+      "sha256": "c3bc3e01b5243ae7585cb254d1ab812e59c665ad4fe8e997f4274a3d5c7451cc"
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+2026-08-11 10:41:54 PDT
+78234 uv run nba-process-season 2014-15 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:42:24 PDT
+78578 uv run nba-process-season 2015-16 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:42:54 PDT
+78578 uv run nba-process-season 2015-16 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:43:24 PDT
+78578 uv run nba-process-season 2015-16 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:43:54 PDT
+78578 uv run nba-process-season 2015-16 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:44:24 PDT
+78578 uv run nba-process-season 2015-16 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:44:55 PDT
+78949 uv run nba-process-season 2016-17 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:45:25 PDT
+78949 uv run nba-process-season 2016-17 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:45:55 PDT
+78949 uv run nba-process-season 2016-17 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:46:25 PDT
+78949 uv run nba-process-season 2016-17 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:46:55 PDT
+79232 uv run nba-process-season 2017-18 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:47:26 PDT
+79232 uv run nba-process-season 2017-18 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:47:56 PDT
+79232 uv run nba-process-season 2017-18 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:48:26 PDT
+79232 uv run nba-process-season 2017-18 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:48:56 PDT
+79232 uv run nba-process-season 2017-18 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:49:26 PDT
+79547 uv run nba-process-season 2018-19 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:49:57 PDT
+79547 uv run nba-process-season 2018-19 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:50:27 PDT
+79547 uv run nba-process-season 2018-19 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:50:57 PDT
+79547 uv run nba-process-season 2018-19 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:51:27 PDT
+79547 uv run nba-process-season 2018-19 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:51:57 PDT
+79547 uv run nba-process-season 2018-19 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:52:28 PDT
+80129 uv run nba-process-season 2019-20 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:52:58 PDT
+80129 uv run nba-process-season 2019-20 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:53:28 PDT
+80235 uv run nba-process-season 2020-21 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:53:58 PDT
+80235 uv run nba-process-season 2020-21 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:54:28 PDT
+80235 uv run nba-process-season 2020-21 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:54:58 PDT
+80370 uv run nba-process-season 2021-22 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:55:28 PDT
+80370 uv run nba-process-season 2021-22 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:55:58 PDT
+80370 uv run nba-process-season 2021-22 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:56:28 PDT
+80478 uv run nba-process-season 2022-23 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:56:58 PDT
+80478 uv run nba-process-season 2022-23 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:57:28 PDT
+80478 uv run nba-process-season 2022-23 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:57:58 PDT
+80581 uv run nba-process-season 2023-24 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:58:28 PDT
+80581 uv run nba-process-season 2023-24 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:58:58 PDT
+80581 uv run nba-process-season 2023-24 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:59:28 PDT
+72024 uv run nba-process-season 2024-25 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 10:59:58 PDT
+72024 uv run nba-process-season 2024-25 --season-type playoffs --max-workers 4 --checkpoint-size 25
+2026-08-11 11:00:29 PDT
+playoff processing loop completed

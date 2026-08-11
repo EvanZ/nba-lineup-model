@@ -13,6 +13,7 @@ from uuid import uuid4
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
@@ -60,6 +61,51 @@ AGING_FEATURE_COLUMNS = (
     "age_by_height",
     "age_by_body_mass_index",
 )
+VALUE_CONDITIONED_AGING_FEATURE_COLUMNS = (
+    *AGING_FEATURE_COLUMNS,
+    "age_by_prior_rapm",
+)
+ERA_CONDITIONED_VALUE_AGING_FEATURE_COLUMNS = (
+    *VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
+    "era_year_centered",
+)
+
+
+class EraSplineInteractionTransformer(BaseEstimator, TransformerMixin):
+    """Create an era-scaled age-spline basis for a smooth changing age curve."""
+
+    def __init__(self, *, n_knots: int, degree: int) -> None:
+        self.n_knots = n_knots
+        self.degree = degree
+
+    def fit(
+        self,
+        values: pd.DataFrame,
+        y: np.ndarray | None = None,
+    ) -> EraSplineInteractionTransformer:
+        self.spline_ = SplineTransformer(
+            n_knots=self.n_knots,
+            degree=self.degree,
+            include_bias=False,
+            knots="quantile",
+            extrapolation="linear",
+        ).fit(values.loc[:, ["target_age"]])
+        return self
+
+    def transform(self, values: pd.DataFrame) -> np.ndarray:
+        if not hasattr(self, "spline_"):
+            raise ValueError("Era spline interaction transformer is not fitted")
+        basis = self.spline_.transform(values.loc[:, ["target_age"]])
+        era = values["era_year_centered"].to_numpy(dtype=float)
+        return basis * era[:, np.newaxis]
+
+    def get_feature_names_out(self, input_features: np.ndarray | None = None) -> np.ndarray:
+        if not hasattr(self, "spline_"):
+            raise ValueError("Era spline interaction transformer is not fitted")
+        count = self.spline_.n_features_out_
+        return np.asarray([f"era_by_age_spline_{index}" for index in range(count)])
+
+
 _TARGET_OUTCOME_COLUMNS = {
     "target_rapm",
     "target_rapm_possessions",
@@ -155,6 +201,8 @@ def run_aging_experiment(
     regularization_grid: tuple[float, ...] = DEFAULT_AGING_REGULARIZATION_GRID,
     age_spline_knots: int = 5,
     age_spline_degree: int = 2,
+    feature_columns: tuple[str, ...] = AGING_FEATURE_COLUMNS,
+    model_name: str = "forward_aging_ridge",
 ) -> AgingExperiment:
     """Select and evaluate an aging model without using holdout outcomes."""
 
@@ -164,6 +212,7 @@ def run_aging_experiment(
         age_spline_knots,
         age_spline_degree,
     )
+    _validate_feature_columns(prepared, feature_columns)
     training_seasons, holdout, folds = expanding_target_season_folds(
         prepared,
         holdout_target_season=holdout_target_season,
@@ -185,8 +234,9 @@ def run_aging_experiment(
                 regularization=regularization,
                 age_spline_knots=age_spline_knots,
                 age_spline_degree=age_spline_degree,
+                feature_columns=feature_columns,
             )
-            prediction = model.predict(validation.loc[:, AGING_FEATURE_COLUMNS])
+            prediction = model.predict(validation.loc[:, feature_columns])
             weights = validation["target_rapm_possessions"].to_numpy(dtype=float)
             metrics = _regression_metrics(
                 validation["target_rapm"].to_numpy(dtype=float),
@@ -252,8 +302,9 @@ def run_aging_experiment(
         regularization=selected_regularization,
         age_spline_knots=age_spline_knots,
         age_spline_degree=age_spline_degree,
+        feature_columns=feature_columns,
     )
-    holdout_prediction = fitted_model.predict(holdout_rows.loc[:, AGING_FEATURE_COLUMNS])
+    holdout_prediction = fitted_model.predict(holdout_rows.loc[:, feature_columns])
     training_mean = float(
         np.average(
             training["target_rapm"].to_numpy(dtype=float),
@@ -275,7 +326,7 @@ def run_aging_experiment(
     feature_coefficients = _feature_coefficient_frame(fitted_model)
     sklearn_alpha = float(fitted_model.named_steps["ridge"].alpha)
     model_parameters = {
-        "model": "forward_aging_ridge",
+        "model": model_name,
         "target": "target_rapm",
         "sample_weight": "target_rapm_possessions",
         "regularization_convention": "regularization * training_row_count",
@@ -284,7 +335,7 @@ def run_aging_experiment(
         "age_spline_knots": age_spline_knots,
         "age_spline_degree": age_spline_degree,
         "age_spline_extrapolation": "linear",
-        "feature_columns": list(AGING_FEATURE_COLUMNS),
+        "feature_columns": list(feature_columns),
         "training_target_seasons": list(training_seasons),
         "holdout_target_season": holdout,
         "training_player_season_count": len(training),
@@ -497,9 +548,8 @@ def prepare_aging_prior_features(rows: pd.DataFrame) -> pd.DataFrame:
             frame[column] = np.nan
     if "is_undrafted" not in frame:
         frame["is_undrafted"] = False
-    frame["target_season"] = frame["target_season"].map(
-        lambda value: validate_season(str(value))
-    )
+    frame["target_season"] = frame["target_season"].map(lambda value: validate_season(str(value)))
+    frame["era_year_centered"] = (frame["target_season"].str[:4].astype(float) - 2010.0) / 10.0
     for column in (
         "target_age",
         "target_nba_experience_years",
@@ -543,6 +593,7 @@ def prepare_aging_prior_features(rows: pd.DataFrame) -> pd.DataFrame:
     frame["age_by_undrafted"] = centered_age * frame["is_undrafted"].eq(1.0)
     frame["age_by_height"] = centered_age * frame["height_inches"]
     frame["age_by_body_mass_index"] = centered_age * frame["body_mass_index"]
+    frame["age_by_prior_rapm"] = centered_age * frame["prior_rapm_filled"]
     for column in AGING_FEATURE_COLUMNS:
         frame[column] = pd.to_numeric(frame[column], errors="raise").astype(float)
     return frame.sort_values(
@@ -568,36 +619,86 @@ def _validate_configuration(
         raise ValueError("Aging spline degree must be 1, 2, or 3")
 
 
+def _validate_feature_columns(frame: pd.DataFrame, feature_columns: tuple[str, ...]) -> None:
+    if not feature_columns:
+        raise ValueError("Aging model requires at least one feature column")
+    if len(feature_columns) != len(set(feature_columns)):
+        raise ValueError("Aging feature columns must be unique")
+    missing = set(feature_columns) - set(frame)
+    if missing:
+        raise ValueError(f"Aging model feature columns are missing: {sorted(missing)}")
+
+
 def fit_aging_pipeline(
     frame: pd.DataFrame,
     *,
     regularization: float,
     age_spline_knots: int,
     age_spline_degree: int,
+    feature_columns: tuple[str, ...] = AGING_FEATURE_COLUMNS,
 ) -> Pipeline:
     if frame.empty:
         raise ValueError("Aging model training frame cannot be empty")
-    features = ColumnTransformer(
-        transformers=[
+    _validate_feature_columns(frame, feature_columns)
+    numeric_columns = [
+        "target_nba_experience_years",
+        "prior_rapm_filled",
+        "log1p_prior_rapm_possessions",
+        "draft_age_estimate",
+        "draft_pick",
+        "height_inches",
+        "weight_pounds",
+        "body_mass_index",
+        "age_by_height",
+        "age_by_body_mass_index",
+    ]
+    if "age_by_prior_rapm" in feature_columns:
+        numeric_columns.append("age_by_prior_rapm")
+    if "era_year_centered" in feature_columns:
+        numeric_columns.append("era_year_centered")
+    era_interaction = "era_year_centered" in feature_columns
+    transformers: list[tuple[str, object, list[str]]] = [
+        (
+            "age",
+            Pipeline(
+                steps=[
+                    (
+                        "spline",
+                        SplineTransformer(
+                            n_knots=age_spline_knots,
+                            degree=age_spline_degree,
+                            include_bias=False,
+                            knots="quantile",
+                            extrapolation="linear",
+                        ),
+                    ),
+                    ("scale", StandardScaler()),
+                ]
+            ),
+            ["target_age"],
+        )
+    ]
+    if era_interaction:
+        transformers.append(
             (
-                "age",
+                "era_age",
                 Pipeline(
                     steps=[
                         (
-                            "spline",
-                            SplineTransformer(
+                            "interaction",
+                            EraSplineInteractionTransformer(
                                 n_knots=age_spline_knots,
                                 degree=age_spline_degree,
-                                include_bias=False,
-                                knots="quantile",
-                                extrapolation="linear",
                             ),
                         ),
                         ("scale", StandardScaler()),
                     ]
                 ),
-                ["target_age"],
-            ),
+                ["target_age", "era_year_centered"],
+            )
+        )
+    transformers.extend(
+        [
             (
                 "numeric",
                 Pipeline(
@@ -606,18 +707,7 @@ def fit_aging_pipeline(
                         ("scale", StandardScaler()),
                     ]
                 ),
-                [
-                    "target_nba_experience_years",
-                    "prior_rapm_filled",
-                    "log1p_prior_rapm_possessions",
-                    "draft_age_estimate",
-                    "draft_pick",
-                    "height_inches",
-                    "weight_pounds",
-                    "body_mass_index",
-                    "age_by_height",
-                    "age_by_body_mass_index",
-                ],
+                numeric_columns,
             ),
             (
                 "binary",
@@ -634,7 +724,10 @@ def fit_aging_pipeline(
                     "age_by_undrafted",
                 ],
             ),
-        ],
+        ]
+    )
+    features = ColumnTransformer(
+        transformers=transformers,
         verbose_feature_names_out=True,
     )
     model = Pipeline(
@@ -654,11 +747,100 @@ def fit_aging_pipeline(
     weights = frame["target_rapm_possessions"].to_numpy(dtype=float)
     normalized_weights = weights / np.mean(weights)
     model.fit(
-        frame.loc[:, AGING_FEATURE_COLUMNS],
+        frame.loc[:, feature_columns],
         frame["target_rapm"].to_numpy(dtype=float),
         ridge__sample_weight=normalized_weights,
     )
     return model
+
+
+def materialize_aging_curve_grid(
+    model: Pipeline,
+    training: pd.DataFrame,
+    *,
+    feature_columns: tuple[str, ...],
+    fitted_season: str,
+    reference_age: int = 27,
+) -> pd.DataFrame:
+    """Publish controlled age trajectories from one fitted forward aging model."""
+
+    _validate_feature_columns(training, feature_columns)
+    weights = training["target_rapm_possessions"].to_numpy(dtype=float)
+    reference = {
+        column: _weighted_reference_value(training[column], weights) for column in feature_columns
+    }
+    reference["has_prior_season"] = 1.0
+    reference["is_rookie"] = 0.0
+    reference["target_nba_experience_years"] = _weighted_reference_value(
+        training["target_nba_experience_years"], weights
+    )
+    reference["era_year_centered"] = (int(fitted_season[:4]) - 2010.0) / 10.0
+    ages = np.arange(
+        int(np.floor(training["target_age"].min())),
+        int(np.ceil(training["target_age"].max())) + 1,
+        dtype=float,
+    )
+    effective_reference_age = int(np.clip(reference_age, ages.min(), ages.max()))
+    returning = training.loc[training["has_prior_season"].astype(bool), "prior_rapm_filled"]
+    levels = np.quantile(returning, [0.25, 0.5, 0.75])
+    labels = ("prior_p25", "prior_p50", "prior_p75")
+    rows: list[pd.DataFrame] = []
+    for label, prior_value in zip(labels, levels, strict=True):
+        features = pd.DataFrame(
+            {column: np.repeat(reference[column], len(ages)) for column in feature_columns}
+        )
+        features["target_age"] = ages
+        features["prior_rapm_filled"] = float(prior_value)
+        centered_age = ages - 27.0
+        _set_curve_age_interactions(features, centered_age, reference, float(prior_value))
+        predicted = np.asarray(model.predict(features.loc[:, feature_columns]), dtype=float)
+        baseline = features.iloc[[0]].copy()
+        baseline.loc[:, "target_age"] = float(effective_reference_age)
+        _set_curve_age_interactions(
+            baseline,
+            np.asarray([float(effective_reference_age) - 27.0]),
+            reference,
+            float(prior_value),
+        )
+        baseline_prediction = float(model.predict(baseline.loc[:, feature_columns])[0])
+        curve = pd.DataFrame(
+            {
+                "fitted_season": fitted_season,
+                "era_start_year": int(fitted_season[:4]),
+                "prior_rapm_profile": label,
+                "prior_rapm_reference": float(prior_value),
+                "age": ages.astype(int),
+                "predicted_rapm": predicted,
+                "partial_age_effect": predicted - baseline_prediction,
+                "reference_age": effective_reference_age,
+                "experience_policy": "held_fixed_at_weighted_reference",
+            }
+        )
+        curve["annual_change"] = curve["partial_age_effect"].shift(-1) - curve["partial_age_effect"]
+        rows.append(curve)
+    return pd.concat(rows, ignore_index=True)
+
+
+def _weighted_reference_value(values: pd.Series, weights: np.ndarray) -> float:
+    numeric = pd.to_numeric(values, errors="coerce")
+    return float(np.average(numeric.fillna(numeric.median()), weights=weights))
+
+
+def _set_curve_age_interactions(
+    features: pd.DataFrame,
+    centered_age: np.ndarray,
+    reference: dict[str, float],
+    prior_rapm: float,
+) -> None:
+    for column in ("age_by_early_entry", "age_by_late_entry", "age_by_undrafted"):
+        if column in features:
+            features[column] = centered_age * reference[column]
+    if "age_by_height" in features:
+        features["age_by_height"] = centered_age * reference["height_inches"]
+    if "age_by_body_mass_index" in features:
+        features["age_by_body_mass_index"] = centered_age * reference["body_mass_index"]
+    if "age_by_prior_rapm" in features:
+        features["age_by_prior_rapm"] = centered_age * prior_rapm
 
 
 def _regression_metrics(

@@ -268,11 +268,28 @@ def reconstruct_lineups(
         if event.event_type == "period" and event.event_subtype == "start":
             if period_active:
                 marker = (event.period, event.elapsed_game_seconds)
-                if inferred_period_start != marker:
+                if inferred_period_start == marker:
+                    inferred_period_start = None
+                elif (
+                    open_stint is not None
+                    and event.period == open_stint.period
+                    and event.elapsed_game_seconds == open_stint.start_elapsed_game_seconds
+                ):
+                    issues.append(
+                        LineupIssue(
+                            code="duplicate_period_start_marker",
+                            severity="warning",
+                            detail=(
+                                "A duplicate source period-start marker was ignored "
+                                "at the active period boundary."
+                            ),
+                            event_id=event.event_id,
+                        )
+                    )
+                else:
                     raise LineupReconstructionError(
                         f"Period {event.period} started while period state was already active"
                     )
-                inferred_period_start = None
             else:
                 period_active = True
                 open_stint = _open_stint(event, state, start_reason="period_start")

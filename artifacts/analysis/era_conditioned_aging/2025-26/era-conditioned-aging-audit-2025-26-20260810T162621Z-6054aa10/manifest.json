@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "run_id": "era-conditioned-aging-audit-2025-26-20260810T162621Z-6054aa10",
+  "season": "2025-26",
+  "value_model": "forward_centered_value_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm",
+  "value_run_id": "forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260810T142633Z-3e4dd5da",
+  "era_model": "forward_centered_era_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm",
+  "era_run_id": "forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260810T154501Z-76a5fad1",
+  "curve_contract": "Population partial-age-effect curves, each anchored at its recorded reference age and evaluated at the model's p25, p50, and p75 prior-RAPM profiles",
+  "veteran_error_contract": "Possession-weighted difference between frozen 2025-26 player prior and that model's completed 2025-26 refit coefficient, restricted to players present in the completed 2024-25 coefficient state",
+  "created_at": "2026-08-10T16:26:21.740808+00:00",
+  "code_version": "sha256:b7b77e5f1836bdcefbf79248bae732bec55cdde1d4df8a318269fa826d5f9a73",
+  "artifacts": [
+    {
+      "filename": "curve-delta.png",
+      "byte_count": 95973,
+      "sha256": "774534fa261ff303e7069f3f0afa805e5575e666496cb4671c577a9ecf3d386b"
+    },
+    {
+      "filename": "curve_comparison.parquet",
+      "byte_count": 18036,
+      "sha256": "fcc0901e4ab2dcb54f97a87883ea0320e682cd033c389018600532c5841831bd"
+    },
+    {
+      "filename": "metadata.json",
+      "byte_count": 1190,
+      "sha256": "0d13a66b83a072e3dbab29a16b3c24c630d181b44e5acedd2b773c95fbb2de0a"
+    },
+    {
+      "filename": "veteran_cohort_prior_errors.parquet",
+      "byte_count": 6114,
+      "sha256": "eaa0ec9c49f4093b5f8c6034f18d9a852e4bbed2d7babdd424457cf1c30229d6"
+    }
+  ]
+}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
@@ -11,8 +13,14 @@ from nba_lineup_model.modeling.matchup_contextual import (
     fit_bounded_hierarchical_matchup_contextual_model,
     fit_matchup_contextual_model,
 )
+import nba_lineup_model.web_api.app as web_app
 from nba_lineup_model.web_api.app import create_app
-from nba_lineup_model.web_api.inference import LineupEvaluator, _warm_response_cache
+from nba_lineup_model.web_api.inference import (
+    LineupEvaluator,
+    _historical_ranking_catalog,
+    _player_rating_histories,
+    _warm_response_cache,
+)
 
 
 def _evaluator(*, bounded: bool = False) -> LineupEvaluator:
@@ -42,6 +50,16 @@ def _evaluator(*, bounded: bool = False) -> LineupEvaluator:
         possessions=1000.0,
         games=50,
         profile_source="prior_season",
+        age=26.0,
+        rating_history=[
+            [
+                {"season": "2023-24", "rating": float(player_id) / 20, "age": 24.0, "team_id": 1610612757, "team": "TST"},
+                {"season": "2024-25", "rating": float(player_id) / 15, "age": 25.0, "team_id": 1610612757, "team": "TST"},
+                {"season": "2025-26", "rating": float(player_id) / 10, "age": 26.0, "team_id": 1610612757, "team": "TST"},
+            ]
+            for player_id in player_ids
+        ],
+        rookie_season="2023-24",
     )
     home_lineups = [
         [1, 2, 3, 4, 5],
@@ -86,6 +104,16 @@ def test_search_and_matchup_endpoints() -> None:
     search = client.get("/api/players", params={"q": "Jokic"})
     assert search.status_code == 200
     assert search.json()["players"][0]["player_name"] == "Nikola Jokić"
+    assert len(search.json()["players"][0]["rating_history"]) == 3
+    assert search.json()["players"][0]["rookie_season"] == "2023-24"
+    assert search.json()["players"][0]["age"] == 26.0
+
+    rankings = client.get("/api/rankings")
+    assert rankings.status_code == 200
+    assert rankings.json()["season"] == "2025-26"
+    assert rankings.json()["available_seasons"] == ["2025-26"]
+    assert rankings.json()["players"][0]["rank"] == 1
+    assert rankings.json()["players"][0]["player_id"] == 10
 
     default_opponent = client.get(
         "/api/default-opponent",
@@ -145,6 +173,119 @@ def test_search_and_matchup_endpoints() -> None:
         sum(row["contribution"] for row in payload["matchup_feature_contributions"]),
         payload["matchup_adjustment"],
     )
+
+
+def test_player_rating_histories_include_seasonal_team_tricode(tmp_path) -> None:
+    panel_path = tmp_path / "player_seasons.parquet"
+    pd.DataFrame(
+        {
+            "season": ["2023-24", "2024-25"],
+            "player_id": [77, 77],
+            "primary_team_id": [1610612757, 1610612749],
+            "primary_team_tricode": ["POR", "MIL"],
+            "rapm_possessions": [1200.0, 1100.0],
+            "games": [60, 55],
+            "games_started": [42, 39],
+        }
+    ).to_parquet(panel_path, index=False)
+    ratings = pd.DataFrame(
+        {
+            "season": ["2023-24", "2024-25"],
+            "player_id": [77, 77],
+            "player_name": ["Test Player", "Test Player"],
+            "rapm": [1.0, 2.0],
+            "age": [25.0, 26.0],
+        }
+    )
+
+    history = _player_rating_histories(ratings, panel_path=panel_path)
+
+    assert [point["team"] for point in history[77]] == ["POR", "MIL"]
+    assert [point["team_id"] for point in history[77]] == [1610612757, 1610612749]
+    assert [point["possessions"] for point in history[77]] == [1200.0, 1100.0]
+    assert [point["games"] for point in history[77]] == [60, 55]
+    assert [point["games_started"] for point in history[77]] == [42, 39]
+
+
+def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) -> None:
+    panel_path = tmp_path / "player_seasons.parquet"
+    pd.DataFrame(
+        {
+            "season": ["2023-24", "2024-25"],
+            "player_id": [77, 77],
+            "primary_team_tricode": ["POR", "MIL"],
+            "listed_position": ["G", "G"],
+            "rapm_possessions": [1200.0, 1100.0],
+            "games": [60, 55],
+        }
+    ).to_parquet(panel_path, index=False)
+    ratings = pd.DataFrame(
+        {
+            "season": ["2023-24", "2024-25"],
+            "player_id": [77, 77],
+            "player_name": ["Test Player", "Test Player"],
+            "rapm": [1.0, 2.0],
+        }
+    )
+
+    catalog = _historical_ranking_catalog(ratings, panel_path=panel_path)
+    evaluator = replace(
+        _evaluator(),
+        historical_rankings=catalog,
+        player_rating_histories={
+            77: [
+                {
+                    "season": "2023-24",
+                    "rating": 1.0,
+                    "age": 25.0,
+                    "team": "POR",
+                },
+                {
+                    "season": "2024-25",
+                    "rating": 2.0,
+                    "age": 26.0,
+                    "team": "MIL",
+                },
+            ]
+        },
+    )
+    client = TestClient(create_app(evaluator))
+
+    response = client.get("/api/rankings", params={"season": "2023-24"})
+
+    assert response.status_code == 200
+    assert response.json()["available_seasons"] == ["2024-25", "2023-24"]
+    assert response.json()["players"] == [
+        {
+            "rank": 1,
+            "season": "2023-24",
+            "player_id": 77,
+            "player_name": "Test Player",
+            "team": "POR",
+            "position": "G",
+            "rapm": 1.0,
+            "possessions": 1200.0,
+            "games": 60,
+        }
+    ]
+
+    profile = client.get("/api/players/77")
+    assert profile.status_code == 200
+    assert profile.json()["rating_season"] == "2024-25"
+    assert profile.json()["team"] == "MIL"
+    assert profile.json()["profile_source"] == "career_history"
+    assert profile.json()["three_pm_per_100"] is None
+
+
+def test_headshot_endpoint_uses_cached_same_origin_image(monkeypatch) -> None:
+    monkeypatch.setattr(web_app, "_headshot_png", lambda player_id: b"test-png")
+    client = TestClient(create_app(_evaluator()))
+
+    response = client.get("/api/headshots/201939.png")
+
+    assert response.status_code == 200
+    assert response.content == b"test-png"
+    assert response.headers["content-type"] == "image/png"
 
 
 def test_matchup_rejects_player_on_both_sides() -> None:

@@ -122,6 +122,24 @@ PROMOTED_MODELS: tuple[FrozenOutcomeModel, ...] = (
         "Forward aging bounded hierarchical portable-matchup contextual RAPM",
     ),
     FrozenOutcomeModel(
+        "forward_centered_aging_bounded_hierarchical_portable_matchup_contextual_rapm",
+        "forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+        "Forward centered aging bounded hierarchical portable-matchup contextual RAPM",
+    ),
+    FrozenOutcomeModel(
+        "forward_centered_value_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm",
+        "forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+        "Forward centered value-conditioned aging bounded hierarchical "
+        "portable-matchup contextual RAPM",
+    ),
+    FrozenOutcomeModel(
+        "forward_centered_era_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm",
+        "forward-centered-era-conditioned-aging-bounded-hierarchical-"
+        "portable-matchup-contextual-rapm",
+        "Forward centered era-conditioned aging bounded hierarchical "
+        "portable-matchup contextual RAPM",
+    ),
+    FrozenOutcomeModel(
         "student_t_talent_forward_contextual_rapm",
         "student-t-talent-contextual-rapm",
         "Student-t talent-prior contextual RAPM",
