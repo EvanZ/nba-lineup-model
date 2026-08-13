@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
+from nba_lineup_model.flows.compact_season import build_parser
 from nba_lineup_model.season.compact import (
     CURATED_METADATA_COLUMNS,
     CuratedGameSource,
@@ -118,6 +119,16 @@ def seed_event_sources(
                 "event_index": pd.Series(range(number), dtype="Int64"),
             }
         ).to_parquet(output_dir / f"{source.game.game_id}.parquet", index=False)
+
+
+def test_compact_parser_accepts_quality_eligible_selection() -> None:
+    arguments = build_parser().parse_args(
+        ["2017-18", "--season-type", "regular", "--quality-eligible-only"]
+    )
+
+    assert arguments.season == "2017-18"
+    assert arguments.season_types == ["regular"]
+    assert arguments.quality_eligible_only is True
 
 
 def test_compacts_partition_with_lossless_dataset_read_and_provenance(

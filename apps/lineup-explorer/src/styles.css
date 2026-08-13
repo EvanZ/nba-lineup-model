@@ -108,6 +108,10 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-history-table th, .player-history-table td { padding: 10px 8px; border-bottom: 1px solid #e2dfd7; text-align: left; }
 .player-history-table th { color: #68716a; font-size: 10px; text-transform: uppercase; }
 .player-history-table td:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
+.player-team-splits { display: grid; gap: 3px; min-width: 152px; color: #68716a; font-size: 11px; line-height: 1.25; white-space: nowrap; }
+.player-team-splits .primary { color: #17201c; }
+.player-history-dnp td { color: #8e968f; background: #faf8f3; }
+.dnp-label { color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 700; }
 .profile-loading, .profile-error { min-height: 300px; display: flex; align-items: center; justify-content: center; gap: 9px; }
 .rankings-hero { max-width: 760px; padding-bottom: 48px; }
 .rankings-hero > p:last-child { max-width: 690px; margin: 23px 0 0; color: #4f5851; font-family: Georgia, "Times New Roman", serif; font-size: 21px; line-height: 1.35; }
@@ -115,10 +119,11 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .rankings-table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 0; border-bottom: 1px solid #d9d6ce; }
 .rankings-table-toolbar p { margin: 0; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
 .rankings-table-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-.rankings-season { display: flex; align-items: center; gap: 7px; color: #69716b; }
-.rankings-season span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; text-transform: uppercase; }
-.rankings-season select { height: 38px; border: 1px solid #a6aaa4; border-radius: 0; padding: 0 28px 0 10px; background: #fffefa; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
-.rankings-season select:focus { outline: 2px solid #bde5d0; outline-offset: 2px; }
+.rankings-season, .rankings-minimum-possessions { display: flex; align-items: center; gap: 7px; color: #69716b; }
+.rankings-season span, .rankings-minimum-possessions span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.rankings-season select, .rankings-minimum-possessions input { height: 38px; border: 1px solid #a6aaa4; border-radius: 0; padding: 0 28px 0 10px; background: #fffefa; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
+.rankings-minimum-possessions input { width: 92px; padding-right: 8px; }
+.rankings-season select:focus, .rankings-minimum-possessions input:focus { outline: 2px solid #bde5d0; outline-offset: 2px; }
 .rankings-search { width: min(300px, 100%); height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #a6aaa4; background: #fffefa; color: #68716a; }
 .rankings-search:focus-within { outline: 2px solid #bde5d0; outline-offset: 2px; }
 .rankings-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #17201c; font-size: 13px; }
@@ -136,15 +141,30 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .rankings-table .numeric { text-align: right; }
 .rankings-table thead .numeric button { justify-content: flex-end; width: 100%; }
 .rank-number, .rating-cell, .rankings-table td.numeric { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
+.lineup-rankings-page .rankings-hero { max-width: 900px; }
+.lineup-player-search { width: min(340px, 100%); }
+.lineup-rankings-table { min-width: 1380px; }
+.lineup-rankings-table tbody th.lineup-roster { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 3px 7px; min-width: 290px; max-width: 390px; color: #17201c; font-size: 12px; line-height: 1.25; }
+.lineup-rankings-table .lineup-roster .player-name-link:not(:last-child)::after { content: ","; color: #69716b; }
 .eyebrow { margin: 0 0 14px; color: #5d655f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.4; letter-spacing: 0; text-transform: uppercase; }
 h1 { margin: 0; max-width: 720px; font-family: Georgia, "Times New Roman", serif; font-size: clamp(46px, 7vw, 82px); font-weight: 400; line-height: 0.95; letter-spacing: 0; }
 .lab-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(330px, 0.9fr); border-top: 2px solid #17201c; }
 .builder-panel { padding: 28px 34px 34px 0; border-right: 1px solid #d9d6ce; }
 .lineup-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
 .lineup-column { min-width: 0; }
-.lineup-column-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #17201c; }
+.lineup-column-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #17201c; }
 .lineup-column-header h2 { margin: 0; font-size: 13px; }
 .lineup-column-header span { color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
+.lineup-season { display: flex; align-items: center; gap: 5px; margin-top: 6px; color: #69716b; }
+.lineup-season > span { font-size: 9px; text-transform: uppercase; }
+.lineup-season select { height: 24px; max-width: 98px; padding: 0 20px 0 5px; border: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
+.environment-control { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 22px 0 0; padding: 12px 0; border-top: 1px solid #d9d6ce; border-bottom: 1px solid #d9d6ce; }
+.environment-control > span { color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.environment-toggle { display: flex; border: 1px solid #a6aaa4; }
+.environment-toggle button { min-width: 88px; height: 30px; padding: 0 9px; border: 0; border-right: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #68716a; font-size: 11px; font-weight: 700; }
+.environment-toggle button:last-child { border-right: 0; }
+.environment-toggle button:hover { background: #edf2e9; color: #245a47; }
+.environment-toggle button.active { background: #245a47; color: #fffefa; }
 .lineup-controls { display: inline-flex; align-items: center; gap: 6px; }
 .refresh-button, .clear-button { width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 50%; }
 .refresh-button { background: #dce8db; color: #245a47; }
@@ -303,6 +323,9 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 
 @media (max-width: 580px) {
   .lineup-columns { grid-template-columns: 1fr; gap: 28px; }
+  .environment-control { align-items: flex-start; flex-direction: column; }
+  .environment-toggle { width: 100%; }
+  .environment-toggle button { flex: 1; min-width: 0; }
   .header-meta { gap: 9px; }
   .header-navigation { gap: 9px; }
   .header-navigation a { font-size: 11px; }

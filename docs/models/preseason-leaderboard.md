@@ -16,6 +16,13 @@ game-margin RMSE, with selectors for every leaderboard metric it records.
 This is distinct from the [in-season Leaderboard](leaderboard.md), where models
 fit the first 1,044 regular-season games before predicting the final 186.
 
+> **Rebuild status (2026-08-12):** the historical raw-to-stint recovery
+> changed the source data contract for the forward priors. The tables below are
+> retained as the pre-recovery comparison snapshot until every listed model is
+> rerun. The rebuilt Value-Conditioned Aging HPM and Box-Score Residual HPM are
+> documented on their model pages; their numbers are not ranked against these
+> stale-chain rows.
+
 ## Information Boundary
 
 The initial baseline predicts 2025-26 from the completed 2024-25 regular-only
@@ -195,50 +202,58 @@ the home-team frame.
 
 | Model | Cohort | Games | Possessions | Possession RMSE | Possession MAE | Game-margin RMSE | Possession skill vs frozen mean | Game skill vs frozen mean |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | Regular season | 1,230 | 218,810 | 1.199061 (#19) | 1.142303 (#19) | 15.0694 (#22) | 0.0704% (#20) | 9.4406% (#22) |
-| [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | Regular season | 1,230 | 218,810 | 1.198919 (#9) | 1.142004 (#14) | 14.7820 (#13) | 0.0941% (#10) | 12.8614% (#13) |
-| [Frozen lagged RAPM][frozen-lagged-rapm] | Regular season | 1,230 | 218,810 | 1.199000 (#14) | 1.142154 (#17) | 14.8894 (#17) | 0.0805% (#15) | 11.5905% (#17) |
-| [Frozen aging prior][frozen-aging-prior] | Regular season | 1,230 | 218,810 | 1.199062 (#20) | 1.142736 (#22) | 15.0203 (#21) | 0.0702% (#21) | 10.0297% (#21) |
-| [Frozen O/D RAPM][frozen-od-rapm] | Regular season | 1,230 | 218,810 | 1.198853 (#5) | 1.142664 (#21) | 14.8901 (#18) | 0.1092% (#5) | 11.5692% (#19) |
-| [Frozen draft cold-start prior][frozen-draft-cold-start] | Regular season | 1,230 | 218,810 | 1.198986 (#11) | 1.142088 (#16) | 14.8590 (#16) | 0.0829% (#12) | 11.9512% (#16) |
-| [Frozen exposure-gated cold-start prior][frozen-exposure-gated-cold-start] | Regular season | 1,230 | 218,810 | 1.198952 (#10) | 1.141943 (#12) | 14.7413 (#11) | 0.0886% (#11) | 13.3410% (#11) |
-| [Frozen exposure-gated O/D cold-start prior][frozen-exposure-gated-od] | Regular season | 1,230 | 218,810 | 1.198792 (#2) | 1.142422 (#20) | 14.7631 (#12) | 0.1193% (#2) | 13.0714% (#12) |
-| [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | Regular season | 1,230 | 218,810 | 1.198993 (#13) | 1.142055 (#15) | 14.8225 (#15) | 0.0817% (#14) | 12.3830% (#15) |
-| [Student-t recursive RAPM][student-t-recursive-rapm] | Regular season | 1,230 | 218,810 | 1.199014 (#16) | 1.142242 (#18) | 14.8908 (#19) | 0.0782% (#17) | 11.5747% (#18) |
-| [Student-t talent-prior RAPM][student-t-talent-prior] | Regular season | 1,230 | 218,810 | 1.198989 (#12) | 1.141996 (#13) | 14.7993 (#14) | 0.0825% (#13) | 12.6578% (#14) |
-| [Forward contextual RAPM][forward-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199008 (#15) | 1.141571 (#2) | 14.6525 (#9) | 0.0793% (#16) | 14.3817% (#9) |
-| [Forward decomposed contextual RAPM][forward-decomposed-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199259 (#21) | 1.141636 (#4) | 14.9769 (#20) | 0.0373% (#22) | 10.5488% (#20) |
-| [Forward portable-matchup contextual RAPM][forward-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199030 (#18) | 1.141625 (#3) | 14.6349 (#8) | 0.0755% (#19) | 14.5870% (#8) |
-| [Forward hierarchical P-spline contextual RAPM][forward-hierarchical-pspline-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198859 (#6) | 1.141648 (#5) | 14.5410 (#5) | 0.1041% (#7) | 15.6803% (#5) |
-| [Forward bounded hierarchical P-spline contextual RAPM][forward-bounded-hierarchical-pspline-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198894 (#7) | 1.141695 (#6) | 14.5485 (#6) | 0.0982% (#8) | 15.5932% (#6) |
-| [Forward bounded hierarchical portable-matchup contextual RAPM][forward-bounded-hierarchical-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198917 (#8) | 1.141735 (#8) | 14.5953 (#7) | 0.0945% (#9) | 15.0483% (#7) |
-| [Forward aging bounded hierarchical portable-matchup contextual RAPM][forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198831 (#4) | 1.141770 (#9) | 14.3654 (#3) | 0.1088% (#6) | 17.7044% (#3) |
-| [Forward centered aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198792 (#2) | 1.141805 (#10) | 14.3615 (#2) | 0.1153% (#3) | 17.7490% (#2) |
-| [Value-Conditioned Aging HPM][forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | **1.198763 (#1)** | 1.141698 (#7) | **14.3469 (#1)** | **0.1201% (#1)** | **17.9158% (#1)** |
-| [Era-Conditioned Aging HPM][forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198799 (#3) | 1.141806 (#11) | 14.4398 (#4) | 0.1141% (#4) | 16.8492% (#4) |
-| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199026 (#17) | **1.141556 (#1)** | 14.6770 (#10) | 0.0762% (#18) | 14.0952% (#10) |
-| [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | Playoffs | 85 | 14,253 | 1.192713 (#8) | 1.136139 (#14) | 17.1867 (#8) | -0.0468% (#8) | -5.2607% (#8) |
-| [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | Playoffs | 85 | 14,253 | 1.192614 (#6) | 1.135787 (#4) | 16.9988 (#6) | -0.0302% (#6) | -2.9720% (#6) |
-| [Frozen lagged RAPM][frozen-lagged-rapm] | Playoffs | 85 | 14,253 | 1.192895 (#12) | 1.136163 (#16) | 17.5409 (#15) | -0.0774% (#12) | -9.6446% (#15) |
-| [Frozen aging prior][frozen-aging-prior] | Playoffs | 85 | 14,253 | **1.192332 (#1)** | 1.136455 (#20) | 16.4946 (#2) | **0.0170% (#1)** | 3.0460% (#2) |
-| [Frozen O/D RAPM][frozen-od-rapm] | Playoffs | 85 | 14,253 | 1.194642 (#20) | 1.139203 (#21) | 17.8037 (#20) | -0.3924% (#20) | -12.9804% (#20) |
-| [Frozen draft cold-start prior][frozen-draft-cold-start] | Playoffs | 85 | 14,253 | 1.192971 (#16) | 1.136187 (#18) | 17.6339 (#18) | -0.0901% (#16) | -10.8093% (#18) |
-| [Frozen exposure-gated cold-start prior][frozen-exposure-gated-cold-start] | Playoffs | 85 | 14,253 | 1.192980 (#17) | 1.136174 (#17) | 17.6725 (#19) | -0.0917% (#17) | -11.2952% (#19) |
-| [Frozen exposure-gated O/D cold-start prior][frozen-exposure-gated-od] | Playoffs | 85 | 14,253 | 1.194678 (#21) | 1.139209 (#22) | 17.8562 (#21) | -0.3984% (#21) | -13.6482% (#21) |
-| [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | Playoffs | 85 | 14,253 | 1.192821 (#9) | 1.136096 (#10) | 17.4188 (#10) | -0.0649% (#9) | -8.1231% (#10) |
-| [Student-t recursive RAPM][student-t-recursive-rapm] | Playoffs | 85 | 14,253 | 1.192621 (#7) | 1.136193 (#19) | 17.1300 (#7) | -0.0314% (#7) | -4.5672% (#7) |
-| [Student-t talent-prior RAPM][student-t-talent-prior] | Playoffs | 85 | 14,253 | 1.192895 (#12) | 1.136105 (#12) | 17.4713 (#12) | -0.0774% (#12) | -8.7752% (#12) |
-| [Forward contextual RAPM][forward-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192898 (#13) | **1.135625 (#1)** | 17.5493 (#16) | -0.0778% (#13) | -9.7486% (#16) |
-| [Forward decomposed contextual RAPM][forward-decomposed-contextual-rapm] | Playoffs | 85 | 14,253 | 1.193395 (#19) | 1.136131 (#13) | 18.4522 (#22) | -0.1613% (#19) | -21.3327% (#22) |
-| [Forward portable-matchup contextual RAPM][forward-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192994 (#18) | 1.135701 (#3) | 17.5261 (#14) | -0.0939% (#18) | -9.4596% (#14) |
-| [Forward hierarchical P-spline contextual RAPM][forward-hierarchical-pspline-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192857 (#10) | 1.136067 (#8) | 17.4003 (#9) | -0.0710% (#10) | -7.8941% (#9) |
-| [Forward bounded hierarchical P-spline contextual RAPM][forward-bounded-hierarchical-pspline-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192872 (#11) | 1.136002 (#6) | 17.4604 (#11) | -0.0736% (#11) | -8.6406% (#11) |
-| [Forward bounded hierarchical portable-matchup contextual RAPM][forward-bounded-hierarchical-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192935 (#14) | 1.136059 (#7) | 17.4742 (#13) | -0.0840% (#14) | -8.8115% (#13) |
-| [Forward aging bounded hierarchical portable-matchup contextual RAPM][forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192544 (#5) | 1.136145 (#15) | 16.5388 (#4) | -0.0185% (#5) | 2.5259% (#4) |
-| [Forward centered aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192464 (#3) | 1.136093 (#9) | 16.5018 (#3) | -0.0051% (#3) | 2.9615% (#3) |
-| [Value-Conditioned Aging HPM][forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192460 (#2) | 1.135968 (#5) | **16.4605 (#1)** | -0.0043% (#2) | **3.4461% (#1)** |
-| [Era-Conditioned Aging HPM][forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192475 (#4) | 1.136097 (#11) | 16.5525 (#5) | -0.0069% (#4) | 2.3637% (#5) |
-| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192959 (#15) | 1.135643 (#2) | 17.6146 (#17) | -0.0881% (#15) | -10.5673% (#17) |
+| [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | Regular season | 1,230 | 218,810 | 1.199061 (#23) | 1.142303 (#23) | 15.0694 (#26) | 0.0704% (#23) | 9.4406% (#26) |
+| [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | Regular season | 1,230 | 218,810 | 1.198919 (#13) | 1.142004 (#18) | 14.7820 (#17) | 0.0941% (#13) | 12.8614% (#17) |
+| [Frozen lagged RAPM][frozen-lagged-rapm] | Regular season | 1,230 | 218,810 | 1.199000 (#18) | 1.142154 (#21) | 14.8894 (#21) | 0.0805% (#18) | 11.5905% (#21) |
+| [Frozen aging prior][frozen-aging-prior] | Regular season | 1,230 | 218,810 | 1.199062 (#24) | 1.142736 (#26) | 15.0203 (#25) | 0.0702% (#24) | 10.0297% (#25) |
+| [Frozen O/D RAPM][frozen-od-rapm] | Regular season | 1,230 | 218,810 | 1.198853 (#9) | 1.142664 (#25) | 14.8901 (#22) | 0.1092% (#8) | 11.5692% (#23) |
+| [Frozen draft cold-start prior][frozen-draft-cold-start] | Regular season | 1,230 | 218,810 | 1.198986 (#15) | 1.142088 (#20) | 14.8590 (#20) | 0.0829% (#15) | 11.9512% (#20) |
+| [Frozen exposure-gated cold-start prior][frozen-exposure-gated-cold-start] | Regular season | 1,230 | 218,810 | 1.198952 (#14) | 1.141943 (#15) | 14.7413 (#15) | 0.0886% (#14) | 13.3410% (#15) |
+| [Frozen exposure-gated O/D cold-start prior][frozen-exposure-gated-od] | Regular season | 1,230 | 218,810 | 1.198792 (#5) | 1.142422 (#24) | 14.7631 (#16) | 0.1193% (#2) | 13.0714% (#16) |
+| [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | Regular season | 1,230 | 218,810 | 1.198993 (#17) | 1.142055 (#19) | 14.8225 (#19) | 0.0817% (#17) | 12.3830% (#19) |
+| [Student-t recursive RAPM][student-t-recursive-rapm] | Regular season | 1,230 | 218,810 | 1.199014 (#20) | 1.142242 (#22) | 14.8908 (#23) | 0.0782% (#20) | 11.5747% (#22) |
+| [Student-t talent-prior RAPM][student-t-talent-prior] | Regular season | 1,230 | 218,810 | 1.198989 (#16) | 1.141996 (#17) | 14.7993 (#18) | 0.0825% (#16) | 12.6578% (#18) |
+| [Forward contextual RAPM][forward-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199008 (#19) | 1.141571 (#2) | 14.6525 (#13) | 0.0793% (#19) | 14.3817% (#13) |
+| [Forward decomposed contextual RAPM][forward-decomposed-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199259 (#25) | 1.141636 (#4) | 14.9769 (#24) | 0.0373% (#25) | 10.5488% (#24) |
+| [Forward portable-matchup contextual RAPM][forward-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199030 (#22) | 1.141625 (#3) | 14.6349 (#12) | 0.0755% (#22) | 14.5870% (#12) |
+| [Forward hierarchical P-spline contextual RAPM][forward-hierarchical-pspline-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198859 (#10) | 1.141648 (#5) | 14.5410 (#9) | 0.1041% (#10) | 15.6803% (#9) |
+| [Forward bounded hierarchical P-spline contextual RAPM][forward-bounded-hierarchical-pspline-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198894 (#11) | 1.141695 (#8) | 14.5485 (#10) | 0.0982% (#11) | 15.5932% (#10) |
+| [Forward bounded hierarchical portable-matchup contextual RAPM][forward-bounded-hierarchical-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198917 (#12) | 1.141735 (#11) | 14.5953 (#11) | 0.0945% (#12) | 15.0483% (#11) |
+| [Forward aging bounded hierarchical portable-matchup contextual RAPM][forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198831 (#8) | 1.141770 (#12) | 14.3654 (#6) | 0.1088% (#9) | 17.7044% (#6) |
+| [Forward centered aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198792 (#5) | 1.141805 (#13) | 14.3615 (#5) | 0.1153% (#5) | 17.7490% (#5) |
+| [Value-Conditioned Aging HPM][forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | **1.198763 (#1)** | 1.141698 (#9) | **14.3469 (#1)** | **0.1201% (#1)** | **17.9158% (#1)** |
+| [Controlled no-context value-conditioned RAPM][forward-centered-value-conditioned-aging-no-context-rapm] | Regular season | 1,230 | 218,810 | 1.198800 (#7) | 1.141973 (#16) | 14.4991 (#8) | 0.1139% (#7) | 16.1647% (#8) |
+| [Forward context-reattributed HPM (rho=0.1)][forward-context-reattributed-hpm] | Regular season | 1,230 | 218,810 | 1.198768 (#2) | 1.141706 (#10) | 14.3543 (#2) | 0.1193% (#2) | 17.8308% (#2) |
+| [Forward box-score residual HPM][forward-box-score-residual-hpm] | Regular season | 1,230 | 218,810 | 1.198770 (#3) | 1.141668 (#7) | 14.3548 (#3) | 0.1189% (#3) | 17.8248% (#3) |
+| [Forward box-score interaction HPM][forward-box-score-interaction-hpm] | Regular season | 1,230 | 218,810 | 1.198771 (#4) | 1.141664 (#6) | 14.3577 (#4) | 0.1187% (#4) | 17.7920% (#4) |
+| [Era-Conditioned Aging HPM][forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.198799 (#6) | 1.141806 (#14) | 14.4398 (#7) | 0.1141% (#6) | 16.8492% (#7) |
+| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | Regular season | 1,230 | 218,810 | 1.199026 (#21) | **1.141556 (#1)** | 14.6770 (#14) | 0.0762% (#21) | 14.0952% (#14) |
+| [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | Playoffs | 85 | 14,253 | 1.192713 (#11) | 1.136139 (#17) | 17.1867 (#12) | -0.0468% (#12) | -5.2607% (#12) |
+| [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | Playoffs | 85 | 14,253 | 1.192614 (#9) | 1.135787 (#4) | 16.9988 (#10) | -0.0302% (#10) | -2.9720% (#10) |
+| [Frozen lagged RAPM][frozen-lagged-rapm] | Playoffs | 85 | 14,253 | 1.192895 (#15) | 1.136163 (#19) | 17.5409 (#19) | -0.0774% (#16) | -9.6446% (#19) |
+| [Frozen aging prior][frozen-aging-prior] | Playoffs | 85 | 14,253 | **1.192332 (#1)** | 1.136455 (#23) | 16.4946 (#4) | 0.0170% (#2) | 3.0460% (#4) |
+| [Frozen O/D RAPM][frozen-od-rapm] | Playoffs | 85 | 14,253 | 1.194642 (#23) | 1.139203 (#24) | 17.8037 (#24) | -0.3924% (#24) | -12.9804% (#24) |
+| [Frozen draft cold-start prior][frozen-draft-cold-start] | Playoffs | 85 | 14,253 | 1.192971 (#19) | 1.136187 (#21) | 17.6339 (#22) | -0.0901% (#20) | -10.8093% (#22) |
+| [Frozen exposure-gated cold-start prior][frozen-exposure-gated-cold-start] | Playoffs | 85 | 14,253 | 1.192980 (#20) | 1.136174 (#20) | 17.6725 (#23) | -0.0917% (#21) | -11.2952% (#23) |
+| [Frozen exposure-gated O/D cold-start prior][frozen-exposure-gated-od] | Playoffs | 85 | 14,253 | 1.194678 (#24) | 1.139209 (#25) | 17.8562 (#25) | -0.3984% (#25) | -13.6482% (#25) |
+| [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | Playoffs | 85 | 14,253 | 1.192821 (#12) | 1.136096 (#13) | 17.4188 (#14) | -0.0649% (#13) | -8.1231% (#14) |
+| [Student-t recursive RAPM][student-t-recursive-rapm] | Playoffs | 85 | 14,253 | 1.192621 (#10) | 1.136193 (#22) | 17.1300 (#11) | -0.0314% (#11) | -4.5672% (#11) |
+| [Student-t talent-prior RAPM][student-t-talent-prior] | Playoffs | 85 | 14,253 | 1.192895 (#15) | 1.136105 (#15) | 17.4713 (#16) | -0.0774% (#16) | -8.7752% (#16) |
+| [Forward contextual RAPM][forward-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192898 (#16) | **1.135625 (#1)** | 17.5493 (#20) | -0.0778% (#17) | -9.7486% (#20) |
+| [Forward decomposed contextual RAPM][forward-decomposed-contextual-rapm] | Playoffs | 85 | 14,253 | 1.193395 (#22) | 1.136131 (#16) | 18.4522 (#26) | -0.1613% (#23) | -21.3327% (#26) |
+| [Forward portable-matchup contextual RAPM][forward-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192994 (#21) | 1.135701 (#3) | 17.5261 (#18) | -0.0939% (#22) | -9.4596% (#18) |
+| [Forward hierarchical P-spline contextual RAPM][forward-hierarchical-pspline-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192857 (#13) | 1.136067 (#11) | 17.4003 (#13) | -0.0710% (#14) | -7.8941% (#13) |
+| [Forward bounded hierarchical P-spline contextual RAPM][forward-bounded-hierarchical-pspline-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192872 (#14) | 1.136002 (#9) | 17.4604 (#15) | -0.0736% (#15) | -8.6406% (#15) |
+| [Forward bounded hierarchical portable-matchup contextual RAPM][forward-bounded-hierarchical-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192935 (#17) | 1.136059 (#10) | 17.4742 (#17) | -0.0840% (#18) | -8.8115% (#17) |
+| [Forward aging bounded hierarchical portable-matchup contextual RAPM][forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192544 (#8) | 1.136145 (#18) | 16.5388 (#8) | -0.0185% (#9) | 2.5259% (#8) |
+| [Forward centered aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192464 (#3) | 1.136093 (#12) | 16.5018 (#5) | -0.0051% (#4) | 2.9615% (#5) |
+| [Value-Conditioned Aging HPM][forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192460 (#2) | 1.135968 (#7) | 16.4605 (#2) | -0.0043% (#3) | 3.4461% (#2) |
+| [Controlled no-context value-conditioned RAPM][forward-centered-value-conditioned-aging-no-context-rapm] | Playoffs | 85 | 14,253 | **1.192332 (#1)** | 1.135983 (#8) | **16.2971 (#1)** | **0.0172% (#1)** | **5.3543% (#1)** |
+| [Forward context-reattributed HPM (rho=0.1)][forward-context-reattributed-hpm] | Playoffs | 85 | 14,253 | 1.192470 (#4) | 1.135963 (#6) | 16.4701 (#3) | -0.0060% (#5) | 3.3333% (#3) |
+| [Forward box-score residual HPM][forward-box-score-residual-hpm] | Playoffs | 85 | 14,253 | 1.192508 (#6) | 1.135960 (#5) | 16.5027 (#6) | -0.0124% (#7) | 2.9510% (#6) |
+| [Forward box-score interaction HPM][forward-box-score-interaction-hpm] | Playoffs | 85 | 14,253 | 1.192521 (#7) | 1.135963 (#6) | 16.5138 (#7) | -0.0146% (#8) | 2.8199% (#7) |
+| [Era-Conditioned Aging HPM][forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192475 (#5) | 1.136097 (#14) | 16.5525 (#9) | -0.0069% (#6) | 2.3637% (#9) |
+| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | Playoffs | 85 | 14,253 | 1.192959 (#18) | 1.135643 (#2) | 17.6146 (#21) | -0.0881% (#19) | -10.5673% (#21) |
 
 Bolding marks the better value within each cohort and metric. Future frozen
 priors must use these exact cohorts.
@@ -252,30 +267,34 @@ receives half credit rather than being arbitrarily assigned to the away team.
 
 | Model | Games | Full-game margin RMSE | Full-game margin MAE | Winner accuracy | Predicted ties |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | 1,230 | 15.5605 (#22) | 12.3241 (#22) | 63.17% (#19) | 0 |
-| [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | 1,230 | 15.1944 (#14) | 12.0436 (#14) | 65.20% (#16) | 0 |
-| [Frozen lagged RAPM][frozen-lagged-rapm] | 1,230 | 15.3211 (#18) | 12.1338 (#19) | 65.69% (#14) | 0 |
-| [Frozen aging prior][frozen-aging-prior] | 1,230 | 15.5090 (#21) | 12.2839 (#21) | 65.04% (#18) | 0 |
-| [Frozen O/D RAPM][frozen-od-rapm] | 1,230 | 15.4015 (#20) | 12.2653 (#20) | 65.04% (#18) | 0 |
-| [Frozen draft cold-start prior][frozen-draft-cold-start] | 1,230 | 15.3025 (#17) | 12.1092 (#16) | 65.12% (#17) | 0 |
-| [Frozen exposure-gated cold-start prior][frozen-exposure-gated-cold-start] | 1,230 | 15.1594 (#12) | 11.9812 (#11) | 65.77% (#13) | 0 |
-| [Frozen exposure-gated O/D cold-start prior][frozen-exposure-gated-od] | 1,230 | 15.2474 (#15) | 12.1289 (#18) | 65.28% (#15) | 0 |
-| [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | 1,230 | 15.1802 (#13) | 12.0162 (#13) | 66.67% (#12) | 0 |
-| [Student-t recursive RAPM][student-t-recursive-rapm] | 1,230 | 15.2758 (#16) | 12.1226 (#17) | 65.69% (#14) | 0 |
-| [Student-t talent-prior RAPM][student-t-talent-prior] | 1,230 | 15.1499 (#11) | 11.9941 (#12) | 67.56% (#8) | 0 |
-| [Forward contextual RAPM][forward-contextual-rapm] | 1,230 | 15.0190 (#9) | 11.8474 (#9) | 67.89% (#4) | 0 |
-| [Forward decomposed contextual RAPM][forward-decomposed-contextual-rapm] | 1,230 | 15.3555 (#19) | 12.1046 (#15) | 67.48% (#9) | 0 |
-| [Forward portable-matchup contextual RAPM][forward-portable-matchup-contextual-rapm] | 1,230 | 14.9602 (#8) | 11.7780 (#7) | 67.72% (#6) | 0 |
-| [Forward hierarchical P-spline contextual RAPM][forward-hierarchical-pspline-contextual-rapm] | 1,230 | 14.8516 (#5) | 11.7498 (#5) | 67.64% (#7) | 0 |
-| [Forward bounded hierarchical P-spline contextual RAPM][forward-bounded-hierarchical-pspline-contextual-rapm] | 1,230 | 14.8706 (#6) | 11.7602 (#6) | 67.80% (#5) | 0 |
-| [Forward bounded hierarchical portable-matchup contextual RAPM][forward-bounded-hierarchical-portable-matchup-contextual-rapm] | 1,230 | 14.9224 (#7) | 11.8112 (#8) | 67.40% (#10) | 0 |
-| [Forward aging bounded hierarchical portable-matchup contextual RAPM][forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 1,230 | 14.6265 (#2) | **11.5301 (#1)** | 67.40% (#10) | 0 |
-| [Forward centered aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 1,230 | 14.6334 (#3) | 11.5535 (#3) | 68.13% (#2) | 0 |
+| [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | 1,230 | 15.5605 (#26) | 12.3241 (#26) | 63.17% (#21) | 0 |
+| [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | 1,230 | 15.1944 (#18) | 12.0436 (#18) | 65.20% (#18) | 0 |
+| [Frozen lagged RAPM][frozen-lagged-rapm] | 1,230 | 15.3211 (#22) | 12.1338 (#23) | 65.69% (#16) | 0 |
+| [Frozen aging prior][frozen-aging-prior] | 1,230 | 15.5090 (#25) | 12.2839 (#25) | 65.04% (#20) | 0 |
+| [Frozen O/D RAPM][frozen-od-rapm] | 1,230 | 15.4015 (#24) | 12.2653 (#24) | 65.04% (#20) | 0 |
+| [Frozen draft cold-start prior][frozen-draft-cold-start] | 1,230 | 15.3025 (#21) | 12.1092 (#20) | 65.12% (#19) | 0 |
+| [Frozen exposure-gated cold-start prior][frozen-exposure-gated-cold-start] | 1,230 | 15.1594 (#16) | 11.9812 (#15) | 65.77% (#15) | 0 |
+| [Frozen exposure-gated O/D cold-start prior][frozen-exposure-gated-od] | 1,230 | 15.2474 (#19) | 12.1289 (#22) | 65.28% (#17) | 0 |
+| [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | 1,230 | 15.1802 (#17) | 12.0162 (#17) | 66.67% (#14) | 0 |
+| [Student-t recursive RAPM][student-t-recursive-rapm] | 1,230 | 15.2758 (#20) | 12.1226 (#21) | 65.69% (#16) | 0 |
+| [Student-t talent-prior RAPM][student-t-talent-prior] | 1,230 | 15.1499 (#15) | 11.9941 (#16) | 67.56% (#10) | 0 |
+| [Forward contextual RAPM][forward-contextual-rapm] | 1,230 | 15.0190 (#13) | 11.8474 (#13) | 67.89% (#6) | 0 |
+| [Forward decomposed contextual RAPM][forward-decomposed-contextual-rapm] | 1,230 | 15.3555 (#23) | 12.1046 (#19) | 67.48% (#11) | 0 |
+| [Forward portable-matchup contextual RAPM][forward-portable-matchup-contextual-rapm] | 1,230 | 14.9602 (#12) | 11.7780 (#11) | 67.72% (#8) | 0 |
+| [Forward hierarchical P-spline contextual RAPM][forward-hierarchical-pspline-contextual-rapm] | 1,230 | 14.8516 (#9) | 11.7498 (#9) | 67.64% (#9) | 0 |
+| [Forward bounded hierarchical P-spline contextual RAPM][forward-bounded-hierarchical-pspline-contextual-rapm] | 1,230 | 14.8706 (#10) | 11.7602 (#10) | 67.80% (#7) | 0 |
+| [Forward bounded hierarchical portable-matchup contextual RAPM][forward-bounded-hierarchical-portable-matchup-contextual-rapm] | 1,230 | 14.9224 (#11) | 11.8112 (#12) | 67.40% (#12) | 0 |
+| [Forward aging bounded hierarchical portable-matchup contextual RAPM][forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 1,230 | 14.6265 (#2) | **11.5301 (#1)** | 67.40% (#12) | 0 |
+| [Forward centered aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 1,230 | 14.6334 (#5) | 11.5535 (#6) | 68.13% (#3) | 0 |
 | [Forward centered value-conditioned aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 1,230 | **14.6242 (#1)** | 11.5497 (#2) | **68.37% (#1)** | 0 |
-| [Forward centered era-conditioned aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 1,230 | 14.7481 (#4) | 11.6446 (#4) | 67.97% (#3) | 0 |
-| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | 1,230 | 15.0487 (#10) | 11.8634 (#10) | 67.32% (#11) | 0 |
+| [Controlled no-context value-conditioned aging RAPM][forward-centered-value-conditioned-aging-no-context-rapm] | 1,230 | 14.8026 (#8) | 11.6727 (#8) | 68.21% (#2) | 0 |
+| [Forward context-reattributed HPM (rho=0.1)][forward-context-reattributed-hpm] | 1,230 | 14.6344 (#6) | 11.5522 (#4) | 68.21% (#2) | 0 |
+| [Forward box-score residual HPM][forward-box-score-residual-hpm] | 1,230 | 14.6268 (#3) | 11.5505 (#3) | 68.05% (#4) | 0 |
+| [Forward box-score interaction HPM][forward-box-score-interaction-hpm] | 1,230 | 14.6309 (#4) | 11.5534 (#5) | 68.05% (#4) | 0 |
+| [Forward centered era-conditioned aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 1,230 | 14.7481 (#7) | 11.6446 (#7) | 67.97% (#5) | 0 |
+| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | 1,230 | 15.0487 (#14) | 11.8634 (#14) | 67.32% (#13) | 0 |
 
-Source report: `artifacts/models/frozen_game_outcomes/2025-26/frozen_game_outcomes-2025-26-20260810T154553Z-b2f5b9fa`. The retained `game_outcome_predictions.parquet`
+Source report: `artifacts/models/frozen_game_outcomes/2025-26/frozen_game_outcomes-2025-26-20260812T203203Z-99061904`. The retained `game_outcome_predictions.parquet`
 contains one final-margin prediction per model and game, and `sources.parquet`
 pins every upstream immutable manifest.
 <!-- frozen-full-game-outcomes:end -->
@@ -289,28 +308,32 @@ team margins are then summed and divided by team possessions.
 
 | Model | Teams | Net-rating RMSE | Net-rating MAE | Pearson correlation | Spearman correlation |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | 30 | 4.9792 (#21) | 4.2342 (#21) | 0.5890 (#21) | 0.5444 (#22) |
-| [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | 30 | 4.6618 (#12) | 4.0620 (#20) | 0.6490 (#13) | 0.6271 (#13) |
-| [Frozen lagged RAPM][frozen-lagged-rapm] | 30 | 4.8538 (#19) | 3.9606 (#18) | 0.6113 (#20) | 0.5493 (#21) |
-| [Frozen aging prior][frozen-aging-prior] | 30 | 5.0366 (#22) | 4.2395 (#22) | 0.6484 (#14) | 0.6111 (#16) |
-| [Frozen O/D RAPM][frozen-od-rapm] | 30 | 4.8740 (#20) | 3.9380 (#17) | 0.6113 (#20) | 0.5626 (#19) |
-| [Frozen draft cold-start prior][frozen-draft-cold-start] | 30 | 4.8473 (#18) | 3.8653 (#16) | 0.6163 (#18) | 0.5528 (#20) |
-| [Frozen exposure-gated cold-start prior][frozen-exposure-gated-cold-start] | 30 | 4.6989 (#14) | 3.6020 (#11) | 0.6480 (#15) | 0.5844 (#18) |
-| [Frozen exposure-gated O/D cold-start prior][frozen-exposure-gated-od] | 30 | 4.7113 (#15) | 3.6999 (#13) | 0.6454 (#17) | 0.6018 (#17) |
-| [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | 30 | 4.6680 (#13) | 3.8199 (#15) | 0.6471 (#16) | 0.6236 (#14) |
-| [Student-t recursive RAPM][student-t-recursive-rapm] | 30 | 4.8263 (#17) | 3.9928 (#19) | 0.6159 (#19) | 0.6147 (#15) |
-| [Student-t talent-prior RAPM][student-t-talent-prior] | 30 | 4.6069 (#11) | 3.7344 (#14) | 0.6587 (#12) | 0.6383 (#11) |
-| [Forward contextual RAPM][forward-contextual-rapm] | 30 | 4.1572 (#5) | 3.1821 (#5) | 0.7427 (#5) | 0.7219 (#5) |
-| [Forward decomposed contextual RAPM][forward-decomposed-contextual-rapm] | 30 | 4.7470 (#16) | 3.6765 (#12) | 0.6822 (#11) | 0.6320 (#12) |
-| [Forward portable-matchup contextual RAPM][forward-portable-matchup-contextual-rapm] | 30 | 4.1864 (#8) | 3.1994 (#6) | 0.7394 (#7) | 0.7201 (#6) |
-| [Forward hierarchical P-spline contextual RAPM][forward-hierarchical-pspline-contextual-rapm] | 30 | 4.1883 (#9) | 3.2466 (#8) | 0.7354 (#8) | 0.7041 (#8) |
-| [Forward bounded hierarchical P-spline contextual RAPM][forward-bounded-hierarchical-pspline-contextual-rapm] | 30 | 4.1799 (#7) | 3.3077 (#9) | 0.7338 (#9) | 0.6974 (#9) |
-| [Forward bounded hierarchical portable-matchup contextual RAPM][forward-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 4.2546 (#10) | 3.3952 (#10) | 0.7222 (#10) | 0.6774 (#10) |
-| [Forward aging bounded hierarchical portable-matchup contextual RAPM][forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 3.7737 (#2) | **3.0395 (#1)** | 0.7920 (#2) | 0.7562 (#4) |
-| [Forward centered aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 3.7826 (#3) | 3.0953 (#3) | **0.7921 (#1)** | 0.7682 (#2) |
-| [Value-Conditioned Aging HPM][forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | **3.7568 (#1)** | 3.0401 (#2) | 0.7912 (#3) | **0.7744 (#1)** |
-| [Era-Conditioned Aging HPM][forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 3.9402 (#4) | 3.2381 (#7) | 0.7677 (#4) | 0.7584 (#3) |
-| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | 30 | 4.1771 (#6) | 3.1699 (#4) | 0.7412 (#6) | 0.7077 (#7) |
+| [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | 30 | 4.9792 (#25) | 4.2342 (#25) | 0.5890 (#25) | 0.5444 (#26) |
+| [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | 30 | 4.6618 (#16) | 4.0620 (#24) | 0.6490 (#17) | 0.6271 (#17) |
+| [Frozen lagged RAPM][frozen-lagged-rapm] | 30 | 4.8538 (#23) | 3.9606 (#22) | 0.6113 (#24) | 0.5493 (#25) |
+| [Frozen aging prior][frozen-aging-prior] | 30 | 5.0366 (#26) | 4.2395 (#26) | 0.6484 (#18) | 0.6111 (#20) |
+| [Frozen O/D RAPM][frozen-od-rapm] | 30 | 4.8740 (#24) | 3.9380 (#21) | 0.6113 (#24) | 0.5626 (#23) |
+| [Frozen draft cold-start prior][frozen-draft-cold-start] | 30 | 4.8473 (#22) | 3.8653 (#20) | 0.6163 (#22) | 0.5528 (#24) |
+| [Frozen exposure-gated cold-start prior][frozen-exposure-gated-cold-start] | 30 | 4.6989 (#18) | 3.6020 (#15) | 0.6480 (#19) | 0.5844 (#22) |
+| [Frozen exposure-gated O/D cold-start prior][frozen-exposure-gated-od] | 30 | 4.7113 (#19) | 3.6999 (#17) | 0.6454 (#21) | 0.6018 (#21) |
+| [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | 30 | 4.6680 (#17) | 3.8199 (#19) | 0.6471 (#20) | 0.6236 (#18) |
+| [Student-t recursive RAPM][student-t-recursive-rapm] | 30 | 4.8263 (#21) | 3.9928 (#23) | 0.6159 (#23) | 0.6147 (#19) |
+| [Student-t talent-prior RAPM][student-t-talent-prior] | 30 | 4.6069 (#15) | 3.7344 (#18) | 0.6587 (#16) | 0.6383 (#15) |
+| [Forward contextual RAPM][forward-contextual-rapm] | 30 | 4.1572 (#9) | 3.1821 (#8) | 0.7427 (#9) | 0.7219 (#9) |
+| [Forward decomposed contextual RAPM][forward-decomposed-contextual-rapm] | 30 | 4.7470 (#20) | 3.6765 (#16) | 0.6822 (#15) | 0.6320 (#16) |
+| [Forward portable-matchup contextual RAPM][forward-portable-matchup-contextual-rapm] | 30 | 4.1864 (#12) | 3.1994 (#9) | 0.7394 (#11) | 0.7201 (#10) |
+| [Forward hierarchical P-spline contextual RAPM][forward-hierarchical-pspline-contextual-rapm] | 30 | 4.1883 (#13) | 3.2466 (#11) | 0.7354 (#12) | 0.7041 (#12) |
+| [Forward bounded hierarchical P-spline contextual RAPM][forward-bounded-hierarchical-pspline-contextual-rapm] | 30 | 4.1799 (#11) | 3.3077 (#13) | 0.7338 (#13) | 0.6974 (#13) |
+| [Forward bounded hierarchical portable-matchup contextual RAPM][forward-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 4.2546 (#14) | 3.3952 (#14) | 0.7222 (#14) | 0.6774 (#14) |
+| [Forward aging bounded hierarchical portable-matchup contextual RAPM][forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 3.7737 (#4) | 3.0395 (#3) | 0.7920 (#2) | 0.7562 (#6) |
+| [Forward centered aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 3.7826 (#5) | 3.0953 (#6) | **0.7921 (#1)** | 0.7682 (#2) |
+| [Value-Conditioned Aging HPM][forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 3.7568 (#2) | 3.0401 (#4) | 0.7912 (#3) | **0.7744 (#1)** |
+| [Controlled no-context value-conditioned RAPM][forward-centered-value-conditioned-aging-no-context-rapm] | 30 | 4.0654 (#8) | 3.2645 (#12) | 0.7664 (#8) | 0.7428 (#8) |
+| [Forward context-reattributed HPM (rho=0.1)][forward-context-reattributed-hpm] | 30 | 3.7827 (#6) | 3.0521 (#5) | 0.7879 (#6) | 0.7615 (#4) |
+| [Forward box-score residual HPM][forward-box-score-residual-hpm] | 30 | **3.7536 (#1)** | **3.0236 (#1)** | 0.7910 (#4) | 0.7633 (#3) |
+| [Forward box-score interaction HPM][forward-box-score-interaction-hpm] | 30 | 3.7595 (#3) | 3.0240 (#2) | 0.7901 (#5) | 0.7531 (#7) |
+| [Era-Conditioned Aging HPM][forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 3.9402 (#7) | 3.2381 (#10) | 0.7677 (#7) | 0.7584 (#5) |
+| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | 30 | 4.1771 (#10) | 3.1699 (#7) | 0.7412 (#10) | 0.7077 (#11) |
 
 ## Team Win Totals
 
@@ -342,28 +365,32 @@ error below also includes error in the preseason NetRtg prediction itself.
 
 | Model | Teams | Win-total RMSE | Win-total MAE | Win-percentage RMSE | Spearman correlation |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | 30 | 11.5828 (#22) | 9.9905 (#22) | 0.1413 (#20) | 0.5274 (#21) |
-| [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | 30 | 10.7999 (#18) | 9.2025 (#20) | 0.1317 (#17) | 0.6394 (#17) |
-| [Frozen lagged RAPM][frozen-lagged-rapm] | 30 | 10.7006 (#17) | 8.9333 (#18) | 0.1305 (#16) | 0.6238 (#19) |
-| [Frozen aging prior][frozen-aging-prior] | 30 | 10.9632 (#19) | 9.6337 (#21) | 0.1337 (#18) | 0.6394 (#17) |
-| [Frozen O/D RAPM][frozen-od-rapm] | 30 | 10.9640 (#20) | 8.9734 (#19) | 0.1337 (#18) | 0.6078 (#20) |
-| [Frozen draft cold-start prior][frozen-draft-cold-start] | 30 | 10.6718 (#16) | 8.7037 (#16) | 0.1301 (#15) | 0.6245 (#18) |
-| [Frozen exposure-gated cold-start prior][frozen-exposure-gated-cold-start] | 30 | 10.2466 (#12) | 8.0307 (#11) | 0.1250 (#11) | 0.6586 (#14) |
-| [Frozen exposure-gated O/D cold-start prior][frozen-exposure-gated-od] | 30 | 10.5096 (#14) | 8.4409 (#14) | 0.1282 (#13) | 0.6483 (#16) |
-| [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | 30 | 10.2778 (#13) | 8.4776 (#15) | 0.1253 (#12) | 0.6829 (#12) |
-| [Student-t recursive RAPM][student-t-recursive-rapm] | 30 | 10.6358 (#15) | 8.7390 (#17) | 0.1297 (#14) | 0.6608 (#13) |
-| [Student-t talent-prior RAPM][student-t-talent-prior] | 30 | 10.1176 (#11) | 8.3473 (#13) | 0.1234 (#10) | 0.6935 (#11) |
-| [Forward contextual RAPM][forward-contextual-rapm] | 30 | 9.3153 (#6) | 7.0364 (#6) | 0.1136 (#6) | 0.7604 (#5) |
-| [Forward decomposed contextual RAPM][forward-decomposed-contextual-rapm] | 30 | 11.0387 (#21) | 8.2281 (#12) | 0.1346 (#19) | 0.6548 (#15) |
-| [Forward portable-matchup contextual RAPM][forward-portable-matchup-contextual-rapm] | 30 | 9.3999 (#9) | 7.1117 (#7) | 0.1146 (#8) | 0.7535 (#6) |
-| [Forward hierarchical P-spline contextual RAPM][forward-hierarchical-pspline-contextual-rapm] | 30 | 9.3959 (#8) | 7.1510 (#8) | 0.1146 (#8) | 0.7361 (#9) |
-| [Forward bounded hierarchical P-spline contextual RAPM][forward-bounded-hierarchical-pspline-contextual-rapm] | 30 | 9.2772 (#5) | 7.3575 (#9) | 0.1131 (#5) | 0.7430 (#8) |
-| [Forward bounded hierarchical portable-matchup contextual RAPM][forward-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 9.4360 (#10) | 7.5588 (#10) | 0.1151 (#9) | 0.7171 (#10) |
+| [Frozen 1-year no-prior RAPM][frozen-one-year-no-prior-rapm] | 30 | 11.5828 (#26) | 9.9905 (#26) | 0.1413 (#23) | 0.5274 (#25) |
+| [Frozen pooled 3-year no-prior RAPM][frozen-three-year-no-prior-rapm] | 30 | 10.7999 (#22) | 9.2025 (#24) | 0.1317 (#20) | 0.6394 (#21) |
+| [Frozen lagged RAPM][frozen-lagged-rapm] | 30 | 10.7006 (#21) | 8.9333 (#22) | 0.1305 (#19) | 0.6238 (#23) |
+| [Frozen aging prior][frozen-aging-prior] | 30 | 10.9632 (#23) | 9.6337 (#25) | 0.1337 (#21) | 0.6394 (#21) |
+| [Frozen O/D RAPM][frozen-od-rapm] | 30 | 10.9640 (#24) | 8.9734 (#23) | 0.1337 (#21) | 0.6078 (#24) |
+| [Frozen draft cold-start prior][frozen-draft-cold-start] | 30 | 10.6718 (#20) | 8.7037 (#20) | 0.1301 (#18) | 0.6245 (#22) |
+| [Frozen exposure-gated cold-start prior][frozen-exposure-gated-cold-start] | 30 | 10.2466 (#16) | 8.0307 (#15) | 0.1250 (#14) | 0.6586 (#18) |
+| [Frozen exposure-gated O/D cold-start prior][frozen-exposure-gated-od] | 30 | 10.5096 (#18) | 8.4409 (#18) | 0.1282 (#16) | 0.6483 (#20) |
+| [Recursive exposure-gated RAPM][recursive-exposure-gated-rapm] | 30 | 10.2778 (#17) | 8.4776 (#19) | 0.1253 (#15) | 0.6829 (#16) |
+| [Student-t recursive RAPM][student-t-recursive-rapm] | 30 | 10.6358 (#19) | 8.7390 (#21) | 0.1297 (#17) | 0.6608 (#17) |
+| [Student-t talent-prior RAPM][student-t-talent-prior] | 30 | 10.1176 (#15) | 8.3473 (#17) | 0.1234 (#13) | 0.6935 (#15) |
+| [Forward contextual RAPM][forward-contextual-rapm] | 30 | 9.3153 (#10) | 7.0364 (#10) | 0.1136 (#9) | 0.7604 (#9) |
+| [Forward decomposed contextual RAPM][forward-decomposed-contextual-rapm] | 30 | 11.0387 (#25) | 8.2281 (#16) | 0.1346 (#22) | 0.6548 (#19) |
+| [Forward portable-matchup contextual RAPM][forward-portable-matchup-contextual-rapm] | 30 | 9.3999 (#13) | 7.1117 (#11) | 0.1146 (#11) | 0.7535 (#10) |
+| [Forward hierarchical P-spline contextual RAPM][forward-hierarchical-pspline-contextual-rapm] | 30 | 9.3959 (#12) | 7.1510 (#12) | 0.1146 (#11) | 0.7361 (#13) |
+| [Forward bounded hierarchical P-spline contextual RAPM][forward-bounded-hierarchical-pspline-contextual-rapm] | 30 | 9.2772 (#9) | 7.3575 (#13) | 0.1131 (#8) | 0.7430 (#12) |
+| [Forward bounded hierarchical portable-matchup contextual RAPM][forward-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 9.4360 (#14) | 7.5588 (#14) | 0.1151 (#12) | 0.7171 (#14) |
 | [Forward aging bounded hierarchical portable-matchup contextual RAPM][forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | **7.7289 (#1)** | **6.3771 (#1)** | **0.0943 (#1)** | **0.8129 (#1)** |
-| [Forward centered aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 7.9356 (#2) | 6.4760 (#3) | 0.0968 (#2) | 0.8109 (#3) |
-| [Value-Conditioned Aging HPM][forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 8.0346 (#3) | 6.4224 (#2) | 0.0980 (#3) | 0.8123 (#2) |
-| [Era-Conditioned Aging HPM][forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 8.3940 (#4) | 6.9362 (#4) | 0.1024 (#4) | 0.7969 (#4) |
-| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | 30 | 9.3594 (#7) | 7.0082 (#5) | 0.1141 (#7) | 0.7521 (#7) |
+| [Forward centered aging bounded hierarchical portable-matchup contextual RAPM][forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 7.9356 (#2) | 6.4760 (#6) | 0.0968 (#2) | 0.8109 (#3) |
+| [Value-Conditioned Aging HPM][forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 8.0346 (#5) | 6.4224 (#4) | 0.0980 (#4) | 0.8123 (#2) |
+| [Controlled no-context value-conditioned RAPM][forward-centered-value-conditioned-aging-no-context-rapm] | 30 | 8.6225 (#8) | 7.0174 (#9) | 0.1052 (#7) | 0.7797 (#8) |
+| [Forward context-reattributed HPM (rho=0.1)][forward-context-reattributed-hpm] | 30 | 8.0940 (#6) | 6.4157 (#3) | 0.0987 (#5) | 0.8033 (#5) |
+| [Forward box-score residual HPM][forward-box-score-residual-hpm] | 30 | 7.9943 (#4) | 6.4144 (#2) | 0.0975 (#3) | 0.8056 (#4) |
+| [Forward box-score interaction HPM][forward-box-score-interaction-hpm] | 30 | 7.9928 (#3) | 6.4281 (#5) | 0.0975 (#3) | 0.8013 (#6) |
+| [Era-Conditioned Aging HPM][forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm] | 30 | 8.3940 (#7) | 6.9362 (#7) | 0.1024 (#6) | 0.7969 (#7) |
+| [Student-t talent-prior contextual RAPM][student-t-talent-contextual-rapm] | 30 | 9.3594 (#11) | 7.0082 (#8) | 0.1141 (#10) | 0.7521 (#11) |
 
 As a diagnostic, the artifact also retains the raw count obtained by awarding
 each game to the team with the positive predicted margin. That deterministic
@@ -507,5 +534,9 @@ directories and use only prior-season inputs for every target-season forecast.
 [forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm]: forward-aging-bounded-hierarchical-portable-matchup-contextual-rapm.md "Bounded portable context with a recursively fit age-informed returning-player prior and exposure-gated cold starts."
 [forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm]: forward-centered-aging-bounded-hierarchical-portable-matchup-contextual-rapm.md "Age-informed portable context with a prior-season possession-weighted player-prior reference."
 [forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm]: forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm.md "Centered aging HPM with a learned, ridge-penalized age-by-prior-RAPM interaction."
+[forward-centered-value-conditioned-aging-no-context-rapm]: forward-centered-value-conditioned-aging-no-context-rapm.md "Controlled ablation of Value-Conditioned Aging HPM with the recursive context state fixed at zero."
+[forward-context-reattributed-hpm]: forward-context-reattributed-hpm.md "Experimental HPM candidate that transfers rho=0.1 of the prior season's player-projectable context into the next player prior and leaves the remainder contextual."
+[forward-box-score-residual-hpm]: forward-box-score-residual-hpm.md "Value-Conditioned Aging HPM plus a strictly lagged, possession-native box-score residual for returning players."
+[forward-box-score-interaction-hpm]: forward-box-score-interaction-hpm.md "The box-score residual HPM augmented with six predeclared, lagged player-profile interactions."
 [forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm]: forward-centered-era-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm.md "Centered value-conditioned aging HPM with a ridge-penalized age-spline-by-era interaction."
 [student-t-talent-contextual-rapm]: student-t-talent-contextual-rapm.md "Contextual RAPM with heavy-tailed player-prior departures."

@@ -102,6 +102,19 @@ def test_forward_fills_historical_zero_score_placeholders() -> None:
     assert "negative_score_delta" not in events[3].validation_flags
 
 
+def test_forward_fills_historical_score_regressions() -> None:
+    play_by_play = stats_play_by_play()
+    play_by_play["game"]["actions"][2]["scoreHome"] = "7"
+    play_by_play["game"]["actions"][3]["scoreHome"] = "2"
+
+    adapted, _ = adapt_stats_v3_game(play_by_play, stats_boxscore())
+    events = canonical_events(adapted)
+
+    assert events[2].score_home == 7
+    assert events[3].score_home == 7
+    assert "negative_score_delta" not in events[3].validation_flags
+
+
 def test_supplies_missing_historical_period_start() -> None:
     play_by_play = stats_play_by_play()
     play_by_play["game"]["actions"] = play_by_play["game"]["actions"][1:]

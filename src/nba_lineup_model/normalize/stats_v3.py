@@ -170,7 +170,14 @@ def adapt_stats_v3_play_by_play(
 def _forward_fill_placeholder_scores(
     source_actions: list[Any],
 ) -> list[dict[str, Any]]:
-    """Fill historical non-scoring rows whose score fields revert to ``0``."""
+    """Normalize known historical score placeholders to a monotone scoreboard.
+
+    Some older Stats V3 games attach a score from a later administrative replay
+    record to an earlier clock position. Other non-scoring records revert one
+    side to zero. Neither is a real scoreboard transition. Keeping the last
+    nondecreasing score prevents those administrative rows from manufacturing
+    negative score deltas and corrupting the subsequent possession sequence.
+    """
 
     scores = {"scoreHome": 0, "scoreAway": 0}
     adapted_actions: list[dict[str, Any]] = []
@@ -180,9 +187,9 @@ def _forward_fill_placeholder_scores(
         adapted = copy.deepcopy(dict(action))
         for field, prior_score in scores.items():
             raw_score = _nonnegative_score(adapted.get(field), field)
-            if raw_score is None or (raw_score == 0 and prior_score > 0):
+            if raw_score is None or raw_score < prior_score:
                 adapted[field] = prior_score
-            elif raw_score >= prior_score:
+            else:
                 scores[field] = raw_score
         adapted_actions.append(adapted)
     return adapted_actions

@@ -24,6 +24,9 @@ class MatchupRequest(BaseModel):
 
     unit_player_ids: list[int] = Field(min_length=5, max_length=5)
     opponent_player_ids: list[int] = Field(min_length=5, max_length=5)
+    unit_season: str | None = None
+    opponent_season: str | None = None
+    environment: Literal["unit", "neutral", "opponent"] = "unit"
     include_response_curves: bool = False
     response_curve_feature_id: str | None = None
     response_curve_kind: Literal["composition", "matchup"] | None = None
@@ -67,13 +70,24 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             "season": state.season,
             "run_id": state.run_id,
             "player_count": len(state.players),
+            "lab_seasons": state.available_lab_seasons(),
         }
 
     @app.get("/api/players")
     def search_players(
-        q: str = Query(min_length=1), limit: int = Query(default=12, ge=1, le=25)
+        q: str = Query(min_length=1),
+        season: str | None = None,
+        limit: int = Query(default=12, ge=1, le=25),
     ) -> dict[str, object]:
-        return {"players": get_evaluator().search_players(q, limit=limit)}
+        state = get_evaluator()
+        try:
+            return {
+                "season": season or state.season,
+                "available_seasons": state.available_lab_seasons(),
+                "players": state.search_players(q, season=season, limit=limit),
+            }
+        except LineupEvaluationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get("/api/players/{player_id}")
     def player(player_id: int) -> dict[str, object]:
@@ -110,13 +124,38 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         except LineupEvaluationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
+    @app.get("/api/lineups")
+    def lineups(
+        season: str | None = None,
+        minimum_possessions: float = Query(default=500.0, ge=0.0),
+        player_id: Annotated[tuple[int, ...], Query()] = (),
+    ) -> dict[str, object]:
+        state = get_evaluator()
+        selected_season = season or state.season
+        try:
+            return {
+                "season": selected_season,
+                "run_id": state.run_id,
+                "available_seasons": state.available_lineup_seasons(),
+                "minimum_possessions": minimum_possessions,
+                "lineups": state.lineups(
+                    season=selected_season,
+                    minimum_possessions=minimum_possessions,
+                    player_ids=set(player_id),
+                ),
+            }
+        except LineupEvaluationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
     @app.get("/api/default-opponent")
     def default_opponent(
+        season: str | None = None,
         exclude_player_id: Annotated[tuple[int, ...], Query()] = (),
     ) -> dict[str, object]:
         try:
             return {
                 "players": get_evaluator().default_opponent(
+                    season=season,
                     excluded_player_ids=set(exclude_player_id)
                 )
             }
@@ -129,6 +168,9 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             return get_evaluator().evaluate(
                 request.unit_player_ids,
                 request.opponent_player_ids,
+                unit_season=request.unit_season,
+                opponent_season=request.opponent_season,
+                environment=request.environment,
                 include_response_curves=request.include_response_curves,
                 response_curve_feature_id=request.response_curve_feature_id,
                 response_curve_kind=request.response_curve_kind,

@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-02"
+last_updated: "2026-08-12"
 ---
 
 # Historical Source Coverage
@@ -93,11 +93,11 @@ rewritten.
 The 1996-era archive also uses a few deterministic legacy encodings. When a
 box score has exactly five non-empty position values, those players are its
 starters; when it lists positions for reserves too, the traditional first-five
-box-score ordering defines the starters. Blank score fields and a regressive
-`0-0` score on non-scoring actions carry forward the preceding cumulative
-score. If an otherwise valid period has no start action, the adapter inserts a
-derived period-start boundary. These are representation reconciliations, not
-changes to the preserved source documents.
+box-score ordering defines the starters. Blank score fields and any regressive
+cumulative score on a later historical action carry forward the preceding
+cumulative score. If an otherwise valid period has no start action, the adapter
+inserts a derived period-start boundary. These are representation
+reconciliations, not changes to the preserved source documents.
 
 Older liveData substitutions can encode only the outgoing player. When that
 legacy fallback is selected, the source adapter expands its paired identifiers
@@ -111,13 +111,18 @@ still passes lineup, possession, score-conservation, and period-balance checks.
 Games with contradictory or insufficient evidence remain named failures or
 warnings in the quality report; they are never silently repaired.
 
-The regular-season historical RAPM panel uses the approved pass/warning subset
-recorded in `data/audit/historical_regular/games.parquet`. This processing
-eligibility is intentionally separate from the raw-coverage table above: the
-append-only build ledger and latest `data/quality/games.parquet` rows are the
-authority while the 1996-97 through 2018-19 reconstruction run is in progress.
-Only the approved subset is a model input; raw completeness is never presented
-as a claim that every catalog game is model-ready.
+The [Historical Modeling Coverage](modeling-coverage.md) audit is the
+authoritative report for the resulting RAPM input coverage by season and team.
+It must be consulted before presenting historical player exposure as if it were
+official NBA games played.
+
+The regular-season historical RAPM panel uses the approved pass/warning subset.
+This processing eligibility is intentionally separate from the raw-coverage
+table above: the append-only build ledger and latest
+`data/quality/games.parquet` rows are the authority. Only the approved subset
+is a model input; raw completeness is never presented as a claim that every
+catalog game is model-ready. The current subset and its provenance are
+materialized by the [Historical Modeling Coverage](modeling-coverage.md) audit.
 
 ## Postseason
 

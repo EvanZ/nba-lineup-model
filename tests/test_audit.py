@@ -12,9 +12,11 @@ from nba_lineup_model.audit import (
     AuditGameSpec,
     AuditManifest,
     audit_game_payloads,
+    audit_reconstruction,
     run_audit_manifest,
     sample_audit_manifest,
 )
+from nba_lineup_model.build_game import reconstruct_game_payloads
 from nba_lineup_model.ingest.nba_cdn import CachedResponse, NbaCdnEndpoint
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -126,6 +128,33 @@ def test_audit_fails_when_overtime_expectation_is_wrong():
 
     assert result.status == "fail"
     assert "audit:overtime_expectation_mismatch" in result.issue_codes
+
+
+def test_audit_warns_when_period_possession_counts_are_unbalanced_but_conserve():
+    spec = AuditGameSpec(
+        game_id="0020000001",
+        season="2020-21",
+        season_type="regular",
+    )
+    play_by_play = load_fixture("playbyplay_lineup_scenario.json")
+    reconstruction = reconstruct_game_payloads(play_by_play, audit_boxscore_fixture())
+    first = reconstruction.possessions.possessions[0]
+    second = reconstruction.possessions.possessions[1]
+    reconstruction.possessions.possessions[1] = second.model_copy(
+        update={
+            "offense_team_id": first.offense_team_id,
+            "defense_team_id": first.defense_team_id,
+            "period": first.period,
+            "period_possession_index": 1,
+        }
+    )
+
+    result = audit_reconstruction(spec, reconstruction, audit_boxscore_fixture())
+
+    assert result.status == "warning"
+    assert result.possession_score_conserved is True
+    assert result.segment_score_conserved is True
+    assert "audit:unbalanced_period_possession_counts" in result.issue_codes
 
 
 def test_audit_runner_records_fetch_errors_and_continues(tmp_path: Path):

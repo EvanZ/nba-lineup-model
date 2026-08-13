@@ -1,0 +1,563 @@
+{
+  "schema_version": 1,
+  "run_id": "historical-rapm-rebuild-r1",
+  "created_at": "2026-08-13T03:48:29.736018Z",
+  "seasons": [
+    "1996-97",
+    "1997-98",
+    "1998-99",
+    "1999-00",
+    "2000-01",
+    "2001-02",
+    "2002-03",
+    "2003-04",
+    "2004-05",
+    "2005-06",
+    "2006-07",
+    "2007-08",
+    "2008-09",
+    "2009-10",
+    "2010-11",
+    "2011-12",
+    "2012-13",
+    "2013-14",
+    "2014-15",
+    "2015-16",
+    "2016-17",
+    "2017-18",
+    "2018-19",
+    "2019-20",
+    "2020-21",
+    "2021-22",
+    "2022-23",
+    "2023-24",
+    "2024-25"
+  ],
+  "from_stage": "rapm",
+  "through_stage": "rapm",
+  "season_type": "regular",
+  "records": [
+    {
+      "season": "1996-97",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:48:29.737078Z",
+      "finished_at": "2026-08-13T03:48:59.870596Z",
+      "duration_seconds": 30.133518,
+      "details": {
+        "run_id": "baseline-1996-97-20260813T034859Z-65d3001f",
+        "run_dir": "artifacts/models/rapm/1996-97/baseline-1996-97-20260813T034859Z-65d3001f",
+        "player_count": 441,
+        "game_count": 1156,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "0534d82179834f0c94ca2775b529e758"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "1997-98",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:48:59.871755Z",
+      "finished_at": "2026-08-13T03:49:30.006363Z",
+      "duration_seconds": 30.134608,
+      "details": {
+        "run_id": "baseline-1997-98-20260813T034929Z-47d4cc19",
+        "run_dir": "artifacts/models/rapm/1997-98/baseline-1997-98-20260813T034929Z-47d4cc19",
+        "player_count": 439,
+        "game_count": 1157,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "827b136cfb254569942cafd7ae8ee48f"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "1998-99",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:49:30.006834Z",
+      "finished_at": "2026-08-13T03:49:47.631606Z",
+      "duration_seconds": 17.624772,
+      "details": {
+        "run_id": "baseline-1998-99-20260813T034947Z-820909d2",
+        "run_dir": "artifacts/models/rapm/1998-99/baseline-1998-99-20260813T034947Z-820909d2",
+        "player_count": 441,
+        "game_count": 714,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "c0478bb49b4d4b97b4446fe04f11eb9c"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "1999-00",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:49:47.632119Z",
+      "finished_at": "2026-08-13T03:50:16.731842Z",
+      "duration_seconds": 29.099723,
+      "details": {
+        "run_id": "baseline-1999-00-20260813T035016Z-c0d8eb76",
+        "run_dir": "artifacts/models/rapm/1999-00/baseline-1999-00-20260813T035016Z-c0d8eb76",
+        "player_count": 439,
+        "game_count": 1180,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "2f3e603e443449d4b01bb5937d1654cf"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2000-01",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:50:16.732265Z",
+      "finished_at": "2026-08-13T03:50:45.161632Z",
+      "duration_seconds": 28.429367,
+      "details": {
+        "run_id": "baseline-2000-01-20260813T035044Z-678186b6",
+        "run_dir": "artifacts/models/rapm/2000-01/baseline-2000-01-20260813T035044Z-678186b6",
+        "player_count": 441,
+        "game_count": 1161,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "de7b968ed51e4c58aa863081d314cefa"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2001-02",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:50:45.162136Z",
+      "finished_at": "2026-08-13T03:51:12.247704Z",
+      "duration_seconds": 27.085568,
+      "details": {
+        "run_id": "baseline-2001-02-20260813T035112Z-a7502e7c",
+        "run_dir": "artifacts/models/rapm/2001-02/baseline-2001-02-20260813T035112Z-a7502e7c",
+        "player_count": 443,
+        "game_count": 1178,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "76bfff80dc14434aabf963ed570bd4cf"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2002-03",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:51:12.248169Z",
+      "finished_at": "2026-08-13T03:51:39.047588Z",
+      "duration_seconds": 26.799419,
+      "details": {
+        "run_id": "baseline-2002-03-20260813T035138Z-a7cf4fe0",
+        "run_dir": "artifacts/models/rapm/2002-03/baseline-2002-03-20260813T035138Z-a7cf4fe0",
+        "player_count": 433,
+        "game_count": 1171,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "f689da634eee4d27a1815662ba68467e"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2003-04",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:51:39.048096Z",
+      "finished_at": "2026-08-13T03:52:06.168430Z",
+      "duration_seconds": 27.120334,
+      "details": {
+        "run_id": "baseline-2003-04-20260813T035205Z-f8d47b49",
+        "run_dir": "artifacts/models/rapm/2003-04/baseline-2003-04-20260813T035205Z-f8d47b49",
+        "player_count": 441,
+        "game_count": 1178,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "a596028430284a49b11bf9d76727fc1f"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2004-05",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:52:06.168862Z",
+      "finished_at": "2026-08-13T03:52:34.422825Z",
+      "duration_seconds": 28.253963,
+      "details": {
+        "run_id": "baseline-2004-05-20260813T035234Z-f250bd26",
+        "run_dir": "artifacts/models/rapm/2004-05/baseline-2004-05-20260813T035234Z-f250bd26",
+        "player_count": 464,
+        "game_count": 1209,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "1996d7e4dac74ff289e062e611cff7f3"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2005-06",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:52:34.423433Z",
+      "finished_at": "2026-08-13T03:53:02.662301Z",
+      "duration_seconds": 28.238868,
+      "details": {
+        "run_id": "baseline-2005-06-20260813T035302Z-6719b912",
+        "run_dir": "artifacts/models/rapm/2005-06/baseline-2005-06-20260813T035302Z-6719b912",
+        "player_count": 458,
+        "game_count": 1206,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "8a2bc683dcc24679a9662f76fc19429c"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2006-07",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:53:02.662772Z",
+      "finished_at": "2026-08-13T03:53:30.603136Z",
+      "duration_seconds": 27.940364,
+      "details": {
+        "run_id": "baseline-2006-07-20260813T035330Z-6e90d5a2",
+        "run_dir": "artifacts/models/rapm/2006-07/baseline-2006-07-20260813T035330Z-6e90d5a2",
+        "player_count": 458,
+        "game_count": 1220,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "e8ba1ab4fade418c8768e452dfe409ca"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2007-08",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:53:30.603620Z",
+      "finished_at": "2026-08-13T03:53:58.923165Z",
+      "duration_seconds": 28.319545,
+      "details": {
+        "run_id": "baseline-2007-08-20260813T035358Z-f1292fb7",
+        "run_dir": "artifacts/models/rapm/2007-08/baseline-2007-08-20260813T035358Z-f1292fb7",
+        "player_count": 451,
+        "game_count": 1228,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "3f2013c63d5640569edd4847dc7f7767"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2008-09",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:53:58.923747Z",
+      "finished_at": "2026-08-13T03:54:26.885493Z",
+      "duration_seconds": 27.961746,
+      "details": {
+        "run_id": "baseline-2008-09-20260813T035426Z-e783173e",
+        "run_dir": "artifacts/models/rapm/2008-09/baseline-2008-09-20260813T035426Z-e783173e",
+        "player_count": 445,
+        "game_count": 1217,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "33a70dbb4a01496c981952b3b5e6acdb"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2009-10",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:54:26.886029Z",
+      "finished_at": "2026-08-13T03:54:57.934672Z",
+      "duration_seconds": 31.048643,
+      "details": {
+        "run_id": "baseline-2009-10-20260813T035457Z-5f981bb8",
+        "run_dir": "artifacts/models/rapm/2009-10/baseline-2009-10-20260813T035457Z-5f981bb8",
+        "player_count": 442,
+        "game_count": 1211,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "d23c894359df43a8b6c6885fe148c976"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2010-11",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:54:57.935267Z",
+      "finished_at": "2026-08-13T03:55:28.436624Z",
+      "duration_seconds": 30.501357,
+      "details": {
+        "run_id": "baseline-2010-11-20260813T035528Z-ceb6319d",
+        "run_dir": "artifacts/models/rapm/2010-11/baseline-2010-11-20260813T035528Z-ceb6319d",
+        "player_count": 452,
+        "game_count": 1225,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "7ab6bbaa877944ceb171267263c0c363"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2011-12",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:55:28.437167Z",
+      "finished_at": "2026-08-13T03:55:52.396691Z",
+      "duration_seconds": 23.959524,
+      "details": {
+        "run_id": "baseline-2011-12-20260813T035552Z-58d33d9b",
+        "run_dir": "artifacts/models/rapm/2011-12/baseline-2011-12-20260813T035552Z-58d33d9b",
+        "player_count": 478,
+        "game_count": 972,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "711f6c2c08bc4f8aa222a89e601cbb7e"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2012-13",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:55:52.397333Z",
+      "finished_at": "2026-08-13T03:56:21.131297Z",
+      "duration_seconds": 28.733964,
+      "details": {
+        "run_id": "baseline-2012-13-20260813T035620Z-a790b8e3",
+        "run_dir": "artifacts/models/rapm/2012-13/baseline-2012-13-20260813T035620Z-a790b8e3",
+        "player_count": 469,
+        "game_count": 1201,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "0d03ad6b43fb4496b91197ba418ec881"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2013-14",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:56:21.132001Z",
+      "finished_at": "2026-08-13T03:56:49.785945Z",
+      "duration_seconds": 28.653944,
+      "details": {
+        "run_id": "baseline-2013-14-20260813T035649Z-9a8c2bf1",
+        "run_dir": "artifacts/models/rapm/2013-14/baseline-2013-14-20260813T035649Z-9a8c2bf1",
+        "player_count": 482,
+        "game_count": 1228,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "24eb982e9b034ce282aecab831a1082f"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2014-15",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:56:49.786531Z",
+      "finished_at": "2026-08-13T03:57:18.572824Z",
+      "duration_seconds": 28.786293,
+      "details": {
+        "run_id": "baseline-2014-15-20260813T035718Z-42719b9e",
+        "run_dir": "artifacts/models/rapm/2014-15/baseline-2014-15-20260813T035718Z-42719b9e",
+        "player_count": 492,
+        "game_count": 1218,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "cd8522e050074df38e20e4c2468a7253"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2015-16",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:57:18.573397Z",
+      "finished_at": "2026-08-13T03:57:46.823526Z",
+      "duration_seconds": 28.250129,
+      "details": {
+        "run_id": "baseline-2015-16-20260813T035746Z-d7f0adeb",
+        "run_dir": "artifacts/models/rapm/2015-16/baseline-2015-16-20260813T035746Z-d7f0adeb",
+        "player_count": 476,
+        "game_count": 1223,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "9599ba064571461db51f38fde9b04cd7"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2016-17",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:57:46.824153Z",
+      "finished_at": "2026-08-13T03:58:15.204089Z",
+      "duration_seconds": 28.379936,
+      "details": {
+        "run_id": "baseline-2016-17-20260813T035815Z-a58bb9c4",
+        "run_dir": "artifacts/models/rapm/2016-17/baseline-2016-17-20260813T035815Z-a58bb9c4",
+        "player_count": 486,
+        "game_count": 1215,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "59badacaa256487983b2d8dd6426298b"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2017-18",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:58:15.204959Z",
+      "finished_at": "2026-08-13T03:58:43.050780Z",
+      "duration_seconds": 27.845821,
+      "details": {
+        "run_id": "baseline-2017-18-20260813T035842Z-5d5fe2f1",
+        "run_dir": "artifacts/models/rapm/2017-18/baseline-2017-18-20260813T035842Z-5d5fe2f1",
+        "player_count": 539,
+        "game_count": 1169,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "dddc5cdf96f2464d8f79c6a308b8ce23"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2018-19",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:58:43.051304Z",
+      "finished_at": "2026-08-13T03:59:13.068444Z",
+      "duration_seconds": 30.01714,
+      "details": {
+        "run_id": "baseline-2018-19-20260813T035912Z-358f4ca9",
+        "run_dir": "artifacts/models/rapm/2018-19/baseline-2018-19-20260813T035912Z-358f4ca9",
+        "player_count": 530,
+        "game_count": 1202,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "37f9cc94e63b4667a975a20316b37115"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2019-20",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:59:13.069033Z",
+      "finished_at": "2026-08-13T03:59:35.213896Z",
+      "duration_seconds": 22.144863,
+      "details": {
+        "run_id": "baseline-2019-20-20260813T035935Z-602c0356",
+        "run_dir": "artifacts/models/rapm/2019-20/baseline-2019-20-20260813T035935Z-602c0356",
+        "player_count": 529,
+        "game_count": 940,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "de64a979564049ca9bb7c34484ba164f"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2020-21",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:59:35.214581Z",
+      "finished_at": "2026-08-13T03:59:59.381389Z",
+      "duration_seconds": 24.166808,
+      "details": {
+        "run_id": "baseline-2020-21-20260813T035959Z-5f7d2ae5",
+        "run_dir": "artifacts/models/rapm/2020-21/baseline-2020-21-20260813T035959Z-5f7d2ae5",
+        "player_count": 540,
+        "game_count": 1033,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "bd8b78fd7e2c45379f83b166d26132b7"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2021-22",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T03:59:59.381984Z",
+      "finished_at": "2026-08-13T04:00:26.574890Z",
+      "duration_seconds": 27.192906,
+      "details": {
+        "run_id": "baseline-2021-22-20260813T040026Z-6494e305",
+        "run_dir": "artifacts/models/rapm/2021-22/baseline-2021-22-20260813T040026Z-6494e305",
+        "player_count": 605,
+        "game_count": 1138,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "00891b543f9444f59c199ef0c00edcc4"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2022-23",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T04:00:26.575867Z",
+      "finished_at": "2026-08-13T04:00:54.656029Z",
+      "duration_seconds": 28.080162,
+      "details": {
+        "run_id": "baseline-2022-23-20260813T040054Z-5c6abdc2",
+        "run_dir": "artifacts/models/rapm/2022-23/baseline-2022-23-20260813T040054Z-5c6abdc2",
+        "player_count": 538,
+        "game_count": 1149,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "3b82eb66a64946c6b14fca5933dad1d0"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2023-24",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T04:00:54.656560Z",
+      "finished_at": "2026-08-13T04:01:23.306456Z",
+      "duration_seconds": 28.649896,
+      "details": {
+        "run_id": "baseline-2023-24-20260813T040123Z-fc1b520c",
+        "run_dir": "artifacts/models/rapm/2023-24/baseline-2023-24-20260813T040123Z-fc1b520c",
+        "player_count": 571,
+        "game_count": 1142,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "bae4fd6b762f46d8abaf4c2dd991057f"
+      },
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "season": "2024-25",
+      "stage": "rapm",
+      "status": "completed",
+      "started_at": "2026-08-13T04:01:23.307119Z",
+      "finished_at": "2026-08-13T04:01:51.559882Z",
+      "duration_seconds": 28.252763,
+      "details": {
+        "run_id": "baseline-2024-25-20260813T040151Z-a24587b7",
+        "run_dir": "artifacts/models/rapm/2024-25/baseline-2024-25-20260813T040151Z-a24587b7",
+        "player_count": 567,
+        "game_count": 1139,
+        "selected_rapm_lambda": 0.03,
+        "mlflow_run_id": "c08bba1931cd40b5b50932686df4cf7d"
+      },
+      "error_type": null,
+      "error_message": null
+    }
+  ]
+}

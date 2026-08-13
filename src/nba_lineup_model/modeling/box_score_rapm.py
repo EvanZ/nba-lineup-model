@@ -225,23 +225,39 @@ def prepare_returning_player_rows(features: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def fit_box_score_pipeline(frame: pd.DataFrame, *, regularization: float) -> Pipeline:
+def fit_box_score_pipeline(
+    frame: pd.DataFrame,
+    *,
+    regularization: float,
+    feature_columns: tuple[str, ...] = BOX_SCORE_FEATURE_COLUMNS,
+) -> Pipeline:
     """Fit one possession-weighted ridge specification."""
 
     if frame.empty:
         raise ValueError("Box-score RAPM training frame cannot be empty")
-    features = ColumnTransformer(
-        transformers=[
-            (
-                "numeric",
-                Pipeline(
-                    steps=[
-                        ("impute", SimpleImputer(strategy="median", add_indicator=True)),
-                        ("scale", StandardScaler()),
-                    ]
-                ),
-                list(_NUMERIC_FEATURE_COLUMNS),
+    missing = set(feature_columns) - set(frame)
+    if missing:
+        raise ValueError(f"Box-score RAPM training frame missing features: {sorted(missing)}")
+    categorical_columns = tuple(
+        column for column in feature_columns if column in _CATEGORICAL_FEATURE_COLUMNS
+    )
+    numeric_columns = tuple(
+        column for column in feature_columns if column not in categorical_columns
+    )
+    transformers = [
+        (
+            "numeric",
+            Pipeline(
+                steps=[
+                    ("impute", SimpleImputer(strategy="median", add_indicator=True)),
+                    ("scale", StandardScaler()),
+                ]
             ),
+            list(numeric_columns),
+        )
+    ]
+    if categorical_columns:
+        transformers.append(
             (
                 "position",
                 Pipeline(
@@ -250,9 +266,11 @@ def fit_box_score_pipeline(frame: pd.DataFrame, *, regularization: float) -> Pip
                         ("one_hot", OneHotEncoder(handle_unknown="ignore")),
                     ]
                 ),
-                list(_CATEGORICAL_FEATURE_COLUMNS),
-            ),
-        ],
+                list(categorical_columns),
+            )
+        )
+    features = ColumnTransformer(
+        transformers=transformers,
         verbose_feature_names_out=True,
     )
     model = Pipeline(
@@ -271,7 +289,7 @@ def fit_box_score_pipeline(frame: pd.DataFrame, *, regularization: float) -> Pip
     )
     weights = frame["target_rapm_possessions"].to_numpy(dtype=float)
     model.fit(
-        frame.loc[:, BOX_SCORE_FEATURE_COLUMNS],
+        frame.loc[:, feature_columns],
         frame["target_rapm"].to_numpy(dtype=float),
         ridge__sample_weight=weights / np.mean(weights),
     )

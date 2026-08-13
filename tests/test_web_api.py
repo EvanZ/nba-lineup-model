@@ -8,17 +8,20 @@ import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
 
+import nba_lineup_model.web_api.app as web_app
 from nba_lineup_model.modeling.contextual_features import lineup_side_context_features
 from nba_lineup_model.modeling.matchup_contextual import (
     fit_bounded_hierarchical_matchup_contextual_model,
     fit_matchup_contextual_model,
 )
-import nba_lineup_model.web_api.app as web_app
 from nba_lineup_model.web_api.app import create_app
 from nba_lineup_model.web_api.inference import (
     LineupEvaluator,
+    SeasonLineupState,
     _historical_ranking_catalog,
+    _player_league_leader_histories,
     _player_rating_histories,
+    _player_team_splits_by_season,
     _warm_response_cache,
 )
 
@@ -53,9 +56,27 @@ def _evaluator(*, bounded: bool = False) -> LineupEvaluator:
         age=26.0,
         rating_history=[
             [
-                {"season": "2023-24", "rating": float(player_id) / 20, "age": 24.0, "team_id": 1610612757, "team": "TST"},
-                {"season": "2024-25", "rating": float(player_id) / 15, "age": 25.0, "team_id": 1610612757, "team": "TST"},
-                {"season": "2025-26", "rating": float(player_id) / 10, "age": 26.0, "team_id": 1610612757, "team": "TST"},
+                {
+                    "season": "2023-24",
+                    "rating": float(player_id) / 20,
+                    "age": 24.0,
+                    "team_id": 1610612757,
+                    "team": "TST",
+                },
+                {
+                    "season": "2024-25",
+                    "rating": float(player_id) / 15,
+                    "age": 25.0,
+                    "team_id": 1610612757,
+                    "team": "TST",
+                },
+                {
+                    "season": "2025-26",
+                    "rating": float(player_id) / 10,
+                    "age": 26.0,
+                    "team_id": 1610612757,
+                    "team": "TST",
+                },
             ]
             for player_id in player_ids
         ],
@@ -175,6 +196,102 @@ def test_search_and_matchup_endpoints() -> None:
     )
 
 
+def test_matchup_endpoint_accepts_season_scoped_units_and_neutral_environment() -> None:
+    evaluator = _evaluator()
+    historical_coefficients = pd.concat(
+        [
+            evaluator.coefficients.assign(season="2024-25"),
+            evaluator.coefficients.assign(season="2025-26"),
+        ],
+        ignore_index=True,
+    )
+    seasonal_ratings = historical_coefficients.assign(
+        player_name=lambda frame: frame["player_id"].map(
+            dict(zip(evaluator.players["player_id"], evaluator.players["player_name"], strict=True))
+        ),
+        age=26.0,
+    )
+    seasonal_ratings = pd.concat(
+        [seasonal_ratings.loc[seasonal_ratings["season"].eq("2024-25")], seasonal_ratings],
+        ignore_index=True,
+    )
+    evaluator = replace(
+        evaluator,
+        historical_coefficients=historical_coefficients,
+        seasonal_ratings=seasonal_ratings,
+        season_context_models={
+            "2024-25": evaluator.context_model,
+            "2025-26": evaluator.context_model,
+        },
+    )
+    evaluator.season_states["2024-25"] = SeasonLineupState(
+        "2024-25", evaluator.coefficients, evaluator.profiles, evaluator.players
+    )
+    client = TestClient(create_app(evaluator))
+
+    search = client.get("/api/players", params={"q": "Jokic", "season": "2024-25"})
+    assert search.status_code == 200
+    assert search.json()["season"] == "2024-25"
+
+    response = client.post(
+        "/api/matchups",
+        json={
+            "unit_player_ids": [1, 2, 3, 4, 5],
+            "opponent_player_ids": [6, 7, 8, 9, 10],
+            "unit_season": "2024-25",
+            "opponent_season": "2025-26",
+            "environment": "neutral",
+            "include_response_curves": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unit_season"] == "2024-25"
+    assert payload["opponent_season"] == "2025-26"
+    assert payload["environment"] == "neutral"
+    assert payload["environment_seasons"] == ["2024-25", "2025-26"]
+
+
+def test_lineup_rankings_endpoint_filters_by_possessions_and_players() -> None:
+    evaluator = replace(
+        _evaluator(),
+        observed_lineups=pd.DataFrame(
+            {
+                "team_id": [1, 1],
+                "team": ["TST", "TST"],
+                "lineup_key": ["1|2|3|4|5", "1|6|7|8|9"],
+                "player_ids": [[1, 2, 3, 4, 5], [1, 6, 7, 8, 9]],
+                "player_names": [
+                    ["Nikola Jokić", "Player 2", "Player 3", "Player 4", "Player 5"],
+                    ["Nikola Jokić", "Player 6", "Player 7", "Player 8", "Player 9"],
+                ],
+                "lineup_label": ["Nikola Jokić, Player 2", "Nikola Jokić, Player 6"],
+                "possessions": [650.0, 300.0],
+                "games": [24, 12],
+                "player_rating": [1.5, 2.0],
+                "player_edge": [0.3, 0.1],
+                "composition_rating": [0.4, 0.2],
+                "composition_edge": [0.5, -0.1],
+                "matchup_bonus": [0.2, 0.3],
+                "context_edge": [0.7, 0.2],
+                "gestalt_score": [1.0, 0.3],
+                "actual_net_rating": [4.2, -1.1],
+            }
+        ),
+    )
+    client = TestClient(create_app(evaluator))
+
+    response = client.get("/api/lineups", params=[("minimum_possessions", 500), ("player_id", 1)])
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["season"] == "2025-26"
+    assert len(payload["lineups"]) == 1
+    assert payload["lineups"][0]["rank"] == 1
+    assert payload["lineups"][0]["player_rating"] == 1.5
+    assert payload["lineups"][0]["context_edge"] == 0.7
+
+
 def test_player_rating_histories_include_seasonal_team_tricode(tmp_path) -> None:
     panel_path = tmp_path / "player_seasons.parquet"
     pd.DataFrame(
@@ -198,13 +315,114 @@ def test_player_rating_histories_include_seasonal_team_tricode(tmp_path) -> None
         }
     )
 
-    history = _player_rating_histories(ratings, panel_path=panel_path)
+    team_splits = _player_team_splits_by_season(
+        pd.DataFrame(
+            {
+                "season": ["2023-24", "2023-24", "2024-25"],
+                "player_id": [77, 77, 77],
+                "team_id": [1610612757, 1610612745, 1610612749],
+                "team": ["POR", "HOU", "MIL"],
+                "possessions": [900.0, 300.0, 1100.0],
+                "games": [45, 15, 55],
+            }
+        )
+    )
+    history = _player_rating_histories(
+        ratings, panel_path=panel_path, player_team_splits=team_splits
+    )
 
     assert [point["team"] for point in history[77]] == ["POR", "MIL"]
     assert [point["team_id"] for point in history[77]] == [1610612757, 1610612749]
     assert [point["possessions"] for point in history[77]] == [1200.0, 1100.0]
     assert [point["games"] for point in history[77]] == [60, 55]
     assert [point["games_started"] for point in history[77]] == [42, 39]
+    assert history[77][0]["team_splits"] == [
+        {"team_id": 1610612757, "team": "POR", "possessions": 900.0, "games": 45},
+        {"team_id": 1610612745, "team": "HOU", "possessions": 300.0, "games": 15},
+    ]
+
+
+def test_league_leader_history_retains_missed_player_seasons() -> None:
+    ratings = pd.DataFrame(
+        {
+            "season": [
+                "2018-19",
+                "2018-19",
+                "2019-20",
+                "2019-20",
+                "2020-21",
+                "2020-21",
+            ],
+            "player_id": [7, 9, 9, 10, 7, 10],
+            "player_name": [
+                "Test Player",
+                "Season One Leader",
+                "Missed Season Leader",
+                "Runner Up",
+                "Test Player",
+                "Season Three Leader",
+            ],
+            "rapm": [3.0, 5.0, 6.0, 2.0, 4.0, 7.0],
+        }
+    )
+    histories = {
+        7: [
+            {"season": "2018-19", "rating": 3.0},
+            {"season": "2020-21", "rating": 4.0},
+        ]
+    }
+
+    leaders = _player_league_leader_histories(ratings, histories)
+
+    assert leaders[7] == [
+        {
+            "season": "2018-19",
+            "rating": 5.0,
+            "player_id": 9,
+            "player_name": "Season One Leader",
+        },
+        {
+            "season": "2019-20",
+            "rating": 6.0,
+            "player_id": 9,
+            "player_name": "Missed Season Leader",
+        },
+        {
+            "season": "2020-21",
+            "rating": 7.0,
+            "player_id": 10,
+            "player_name": "Season Three Leader",
+        },
+    ]
+
+
+def test_league_leader_history_retains_active_terminal_dnp_season() -> None:
+    ratings = pd.DataFrame(
+        {
+            "season": ["2023-24", "2023-24", "2024-25", "2024-25", "2025-26"],
+            "player_id": [7, 9, 7, 10, 11],
+            "player_name": [
+                "Active Player",
+                "Season One Leader",
+                "Active Player",
+                "Season Two Leader",
+                "Terminal Leader",
+            ],
+            "rapm": [2.0, 4.0, 3.0, 5.0, 6.0],
+        }
+    )
+    histories = {
+        7: [
+            {"season": "2023-24", "rating": 2.0},
+            {"season": "2024-25", "rating": 3.0},
+        ]
+    }
+
+    leaders = _player_league_leader_histories(
+        ratings, histories, active_through_years={7: 2025}
+    )
+
+    assert [row["season"] for row in leaders[7]] == ["2023-24", "2024-25", "2025-26"]
 
 
 def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) -> None:
@@ -262,9 +480,10 @@ def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) 
             "player_id": 77,
             "player_name": "Test Player",
             "team": "POR",
-            "position": "G",
-            "rapm": 1.0,
-            "possessions": 1200.0,
+                "position": "G",
+                "rapm": 1.0,
+                "prior_context_unit_edge": None,
+                "possessions": 1200.0,
             "games": 60,
         }
     ]

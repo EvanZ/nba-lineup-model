@@ -22,7 +22,7 @@ under the selected contract remain visible in the unranked lane to preserve the
 full methodological lineage. Use the in-season choices to compare the
 one-season neural and tree branches on their separate chronological holdout.
 
-<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260809-bounded-portable-context">
+<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260812-box-score-hpm">
   <div class="model-tree__loading" role="status">Loading model evolution…</div>
 </div>
 
@@ -77,6 +77,9 @@ metrics, and malformed metric values.
 | Exposure-gated cold-start prior | Continuous draft-rate/replacement blend for first-year players |
 | Exposure-gated O/D cold starts | Separate O/D draft-rate/replacement blend for first-year players |
 | Forward exposure-gated RAPM | Recursive regular-only preseason RAPM state with cold starts |
+| Controlled no-context value-conditioned RAPM | HPM's centered value-conditioned aging and cold-start prior with all contextual corrections set to zero |
+| Forward context-reattributed HPM | Experimental recursive transfer of a fixed fraction of player-projectable context into the next-season player prior, retaining residual context |
+| Forward box-score residual HPM | HPM prior plus a strictly lagged box-score residual for returning players |
 | Student-t forward RAPM | Robust stint-error likelihood for the same recursive forward state |
 | Student-t talent-prior RAPM | Heavy-tailed player adjustments with Gaussian stint errors |
 | Forward contextual RAPM | Recursive RAPM with the prior season's contextual offset |
@@ -130,6 +133,27 @@ replacement number.
 
 [Forward Exposure-Gated RAPM](forward-exposure-gated-rapm.md) applies that
 one-number cold-start prior recursively across completed seasons.
+
+[Controlled No-Context Value-Conditioned RAPM](forward-centered-value-conditioned-aging-no-context-rapm.md)
+is the direct HPM ablation: it preserves the current player-prior state but
+removes only the recursive lineup-context state.
+
+[Forward Context-Reattributed HPM](forward-context-reattributed-hpm.md)
+tests whether some player-projectable context should persist in the next-season
+player prior while the remaining context stays lineup-specific. Its first
+\(\rho=0.5\) candidate is retained as a negative predictive ablation.
+
+[Forward Box-Score Residual HPM](forward-box-score-residual-hpm.md) uses the
+existing possession-native box-score panel to predict only what the completed
+HPM prior misses for returning players. Cold starts remain on the exposure-gated
+branch, and the frozen 2025-26 outcome decides whether the residual earns a
+Leaderboard branch.
+
+[Forward Box-Score Interaction HPM](forward-box-score-interaction-hpm.md)
+keeps that residual boundary and adds six declared lagged box-score products
+for high-volume creation, shooting, scoring pressure, rebounding, and
+defensive-event profiles. It is evaluated as a direct additive-residual
+extension, not as a target-season box-score model.
 
 [Student-t Forward RAPM](student-t-forward-rapm.md) holds that state and its
 lambda schedule fixed while replacing the Gaussian stint-error likelihood with

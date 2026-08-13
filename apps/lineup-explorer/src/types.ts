@@ -5,6 +5,7 @@ export type Player = {
   position: string;
   age: number | null;
   rapm: number;
+  prior_context_unit_edge: number | null;
   rating_season?: string;
   possessions: number;
   games: number;
@@ -33,11 +34,42 @@ export type Player = {
     season_max_rating?: number;
     season_max_player_id?: number;
     season_max_player_name?: string;
+    team_splits?: Array<{
+      team_id: number;
+      team: string;
+      possessions: number;
+      games: number;
+    }>;
+  }>;
+  league_leader_history?: Array<{
+    season: string;
+    rating: number;
+    player_id: number;
+    player_name: string;
   }>;
 };
 
 export type RankedPlayer = Player & {
   rank: number;
+};
+
+export type RankedLineup = {
+  rank: number;
+  team_id: number;
+  team: string;
+  player_ids: number[];
+  player_names: string[];
+  lineup_label: string;
+  possessions: number;
+  games: number;
+  player_rating: number;
+  player_edge: number;
+  composition_rating: number;
+  composition_edge: number;
+  matchup_bonus: number;
+  context_edge: number;
+  gestalt_score: number;
+  actual_net_rating: number;
 };
 
 export type ContextFeature = {
@@ -62,6 +94,10 @@ export type Matchup = {
   season: string;
   run_id: string;
   retrospective: boolean;
+  unit_season: string;
+  opponent_season: string;
+  environment: "unit" | "neutral" | "opponent";
+  environment_seasons: string[];
   unit: { additive_rating: number; players: Player[] };
   opponent: { additive_rating: number; players: Player[] };
   additive_margin: number;

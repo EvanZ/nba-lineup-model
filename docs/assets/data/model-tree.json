@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updated": "2026-08-10",
+  "updated": "2026-08-12",
   "default_metric": "frozen_regular_game_margin_rmse",
   "metrics": [
     {
@@ -513,6 +513,78 @@
         "frozen_regular_pythagorean_wins_rmse": 8.0346,
         "frozen_playoff_possession_rmse": 1.192460,
         "frozen_playoff_game_margin_rmse": 16.4605
+      }
+    },
+    {
+      "id": "forward-centered-value-conditioned-aging-no-context-rapm",
+      "name": "Controlled no-context value-conditioned RAPM",
+      "short_name": "No-context HPM control",
+      "parent": "forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "change": "Ablation: retain the centered value-conditioned aging and cold-start prior, but set recursive lineup context to zero.",
+      "docs": "./forward-centered-value-conditioned-aging-no-context-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198800,
+        "frozen_regular_game_margin_rmse": 14.4991,
+        "frozen_regular_full_game_margin_rmse": 14.8026,
+        "frozen_regular_game_winner_accuracy": 0.682114,
+        "frozen_regular_team_net_rating_rmse": 4.0654,
+        "frozen_regular_pythagorean_wins_rmse": 8.6225,
+        "frozen_playoff_possession_rmse": 1.192332,
+        "frozen_playoff_game_margin_rmse": 16.2971
+      }
+    },
+    {
+      "id": "forward-context-reattributed-hpm",
+      "name": "Forward context-reattributed HPM (rho=0.1)",
+      "short_name": "CR-HPM (rho=0.1)",
+      "parent": "forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "change": "Ablation: transfer rho=0.1 of player-projectable context into the next player prior and retain residual context.",
+      "docs": "./forward-context-reattributed-hpm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198768,
+        "frozen_regular_game_margin_rmse": 14.3543,
+        "frozen_regular_full_game_margin_rmse": 14.6344,
+        "frozen_regular_game_winner_accuracy": 0.682114,
+        "frozen_regular_team_net_rating_rmse": 3.7827,
+        "frozen_regular_pythagorean_wins_rmse": 8.0940,
+        "frozen_playoff_possession_rmse": 1.192470,
+        "frozen_playoff_game_margin_rmse": 16.4701
+      }
+    },
+    {
+      "id": "forward-box-score-residual-hpm",
+      "name": "Forward box-score residual HPM",
+      "short_name": "Box-score residual HPM",
+      "parent": "forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "change": "+ strictly lagged possession-native box-score residual for returning players; retain existing exposure-gated cold starts.",
+      "docs": "./forward-box-score-residual-hpm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.19877,
+        "frozen_regular_game_margin_rmse": 14.3548,
+        "frozen_regular_full_game_margin_rmse": 14.6268,
+        "frozen_regular_game_winner_accuracy": 0.680488,
+        "frozen_regular_team_net_rating_rmse": 3.7536,
+        "frozen_regular_pythagorean_wins_rmse": 7.9943,
+        "frozen_playoff_possession_rmse": 1.192508,
+        "frozen_playoff_game_margin_rmse": 16.5027
+      }
+    },
+    {
+      "id": "forward-box-score-interaction-hpm",
+      "name": "Forward box-score interaction HPM",
+      "short_name": "Box-score interaction HPM",
+      "parent": "forward-box-score-residual-hpm",
+      "change": "+ six strictly lagged, ridge-penalized box-score player-profile interactions for returning players.",
+      "docs": "./forward-box-score-interaction-hpm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198771,
+        "frozen_regular_game_margin_rmse": 14.3577,
+        "frozen_regular_full_game_margin_rmse": 14.6309,
+        "frozen_regular_game_winner_accuracy": 0.680488,
+        "frozen_regular_team_net_rating_rmse": 3.7595,
+        "frozen_regular_pythagorean_wins_rmse": 7.9928,
+        "frozen_playoff_possession_rmse": 1.192521,
+        "frozen_playoff_game_margin_rmse": 16.5138
       }
     },
     {

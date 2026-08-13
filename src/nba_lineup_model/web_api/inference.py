@@ -30,6 +30,8 @@ from nba_lineup_model.modeling.stints import read_rapm_stints
 
 DEFAULT_ARTIFACTS_DIR = Path("artifacts/models")
 DEFAULT_RESPONSE_CACHE_DIR = Path("artifacts/web/response_curve_cache")
+DEFAULT_LINEUP_RANKINGS_CACHE_DIR = Path("artifacts/web/lineup_rankings")
+DEFAULT_PLAYER_TEAM_SPLITS_CACHE_DIR = Path("artifacts/web/player_team_splits")
 MODEL_ARTIFACT = (
     "forward_centered_value_conditioned_aging_"
     "bounded_hierarchical_portable_matchup_contextual_rapm"
@@ -43,6 +45,7 @@ RESPONSE_CURVE_POINTS = 33
 # The client renders the same 33-point polyline, so a denser server cache only
 # adds warmup cost without increasing the published curve resolution.
 WARM_RESPONSE_CURVE_POINTS = RESPONSE_CURVE_POINTS
+LINEUP_REFERENCE_SAMPLE_SIZE = 512
 
 _FEATURE_LABELS = {
     "home_minus_away_three_pa_per_100": "Three-point attempt volume",
@@ -73,6 +76,16 @@ class LineupEvaluationError(ValueError):
 
 
 @dataclass(frozen=True)
+class SeasonLineupState:
+    """One historical player pool scored in its completed-fit season."""
+
+    season: str
+    coefficients: pd.DataFrame
+    profiles: pd.DataFrame
+    players: pd.DataFrame
+
+
+@dataclass(frozen=True)
 class LineupEvaluator:
     """Serve one completed contextual RAPM state without reading raw possession data."""
 
@@ -83,8 +96,25 @@ class LineupEvaluator:
     players: pd.DataFrame
     context_model: MatchupContextualModel
     response_cache: dict[int, tuple[np.ndarray, np.ndarray]]
+    lineup_rankings_root: Path | None = None
     player_rating_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    player_league_leader_histories: dict[int, list[dict[str, Any]]] = field(
+        default_factory=dict
+    )
+    player_team_splits: dict[tuple[str, int], list[dict[str, Any]]] = field(
+        default_factory=dict
+    )
     historical_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
+    observed_lineups: pd.DataFrame = field(default_factory=pd.DataFrame)
+    historical_coefficients: pd.DataFrame = field(default_factory=pd.DataFrame)
+    seasonal_ratings: pd.DataFrame = field(default_factory=pd.DataFrame)
+    season_context_models: dict[str, MatchupContextualModel] = field(default_factory=dict)
+    player_season_panel: pd.DataFrame = field(default_factory=pd.DataFrame)
+    exposure_cohort: pd.DataFrame = field(default_factory=pd.DataFrame)
+    season_states: dict[str, SeasonLineupState] = field(default_factory=dict)
+    response_caches: dict[str, dict[int, tuple[np.ndarray, np.ndarray]]] = field(
+        default_factory=dict
+    )
 
     @classmethod
     def from_latest_artifact(
@@ -114,9 +144,11 @@ class LineupEvaluator:
         if str(metadata.get("target_season")) != season:
             raise LineupEvaluationError("The selected artifact has an unexpected target season")
 
-        coefficients = pd.read_parquet(run_dir / "historical_player_coefficients.parquet")
-        coefficients = coefficients.loc[
-            coefficients["season"].eq(season), ["player_id", "rapm"]
+        historical_coefficients = pd.read_parquet(
+            run_dir / "historical_player_coefficients.parquet"
+        )
+        coefficients = historical_coefficients.loc[
+            historical_coefficients["season"].eq(season), ["player_id", "rapm"]
         ].copy()
         if coefficients.empty or coefficients["player_id"].duplicated().any():
             raise LineupEvaluationError("The artifact has invalid completed player coefficients")
@@ -124,6 +156,12 @@ class LineupEvaluator:
         if profiles["player_id"].duplicated().any():
             raise LineupEvaluationError("The artifact has duplicate player profiles")
         seasonal_ratings = pd.read_parquet(run_dir / "player_season_ratings.parquet")
+        team_splits_cache_path = player_team_splits_path(MODEL_ARTIFACT, run_id)
+        player_team_splits = (
+            _player_team_splits_by_season(pd.read_parquet(team_splits_cache_path))
+            if team_splits_cache_path.is_file()
+            else {}
+        )
         context_exposure_path = player_context_exposure_path(MODEL_ARTIFACT, run_id)
         context_exposure = (
             pd.read_parquet(context_exposure_path)
@@ -133,11 +171,18 @@ class LineupEvaluator:
         historical_rankings = _historical_ranking_catalog(
             seasonal_ratings,
             panel_path=Path(panel_path),
+            context_exposure=context_exposure,
         )
         player_rating_histories = _player_rating_histories(
             seasonal_ratings,
             panel_path=Path(panel_path),
             context_exposure=context_exposure,
+            player_team_splits=player_team_splits,
+        )
+        player_league_leader_histories = _player_league_leader_histories(
+            seasonal_ratings,
+            player_rating_histories,
+            active_through_years=_player_active_through_years(Path(panel_path)),
         )
         rookie_seasons = _rookie_seasons(seasonal_ratings)
         players = _player_catalog(
@@ -146,6 +191,9 @@ class LineupEvaluator:
         players["rating_history"] = players["player_id"].map(player_rating_histories).map(
             lambda history: history or []
         )
+        players["league_leader_history"] = players["player_id"].map(
+            player_league_leader_histories
+        ).map(lambda history: history or [])
         players["rookie_season"] = players["player_id"].map(rookie_seasons)
         players["age"] = players["player_id"].map(
             lambda player_id: (
@@ -168,6 +216,17 @@ class LineupEvaluator:
                 f"{cache_path}"
             )
         response_cache = joblib.load(cache_path)
+        player_season_panel = pd.read_parquet(panel_path)
+        exposure_cohort = prepare_player_exposure_cohort(
+            player_season_panel.loc[
+                player_season_panel["season"].astype(str).le(season)
+            ],
+            through_season=season,
+        )
+        rankings_path = lineup_rankings_path(MODEL_ARTIFACT, run_id, season)
+        observed_lineups = (
+            pd.read_parquet(rankings_path) if rankings_path.is_file() else pd.DataFrame()
+        )
         return cls(
             season=season,
             run_id=run_id,
@@ -176,18 +235,44 @@ class LineupEvaluator:
             players=players,
             context_model=context_model,
             response_cache=response_cache,
+            lineup_rankings_root=DEFAULT_LINEUP_RANKINGS_CACHE_DIR / MODEL_ARTIFACT / run_id,
             player_rating_histories=player_rating_histories,
+            player_league_leader_histories=player_league_leader_histories,
+            player_team_splits=player_team_splits,
             historical_rankings=historical_rankings,
+            observed_lineups=observed_lineups,
+            historical_coefficients=historical_coefficients,
+            seasonal_ratings=seasonal_ratings,
+            season_context_models=models,
+            player_season_panel=player_season_panel,
+            exposure_cohort=exposure_cohort,
+            season_states={
+                season: SeasonLineupState(
+                    season=season,
+                    coefficients=coefficients,
+                    profiles=profiles,
+                    players=players,
+                )
+            },
+            response_caches={season: response_cache},
         )
 
-    def search_players(self, query: str, *, limit: int = 12) -> list[dict[str, Any]]:
+    def available_lab_seasons(self) -> list[str]:
+        """Return seasons that have completed player and contextual states."""
+
+        return sorted(self.season_context_models, reverse=True) or [self.season]
+
+    def search_players(
+        self, query: str, *, season: str | None = None, limit: int = 12
+    ) -> list[dict[str, Any]]:
         """Return a short, deterministic player-name search result list."""
 
         normalized = _normalize_search_text(query)
         if not normalized:
             return []
-        names = self.players["player_name"].map(_normalize_search_text)
-        matches = self.players.loc[names.str.contains(normalized, regex=False)]
+        players = self._season_state(season or self.season).players
+        names = players["player_name"].map(_normalize_search_text)
+        matches = players.loc[names.str.contains(normalized, regex=False)]
         return _records(matches.head(max(1, min(limit, 25))))
 
     def player(self, player_id: int) -> dict[str, Any]:
@@ -197,6 +282,9 @@ class LineupEvaluator:
         if not row.empty:
             player = _records(row)[0]
             player["rating_season"] = self.season
+            player["league_leader_history"] = self.player_league_leader_histories.get(
+                player_id, player.get("league_leader_history", [])
+            )
             return player
 
         history = self.player_rating_histories.get(player_id, [])
@@ -227,6 +315,7 @@ class LineupEvaluator:
             "defensive_rebounds_per_100": None,
             "rookie_season": history[0]["season"] if history else None,
             "rating_history": history,
+            "league_leader_history": self.player_league_leader_histories.get(player_id, []),
         }
 
     def available_ranking_seasons(self) -> list[str]:
@@ -262,15 +351,69 @@ class LineupEvaluator:
         ranked.insert(0, "rank", np.arange(1, len(ranked) + 1, dtype=int))
         return _records(ranked)
 
+    def lineups(
+        self,
+        *,
+        season: str | None = None,
+        minimum_possessions: float = 500.0,
+        player_ids: set[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return observed target-season five-man units for lineup-context ranking."""
+
+        if minimum_possessions < 0:
+            raise LineupEvaluationError("Minimum possessions cannot be negative")
+        selected_season = season or self.season
+        if selected_season == self.season:
+            source = self.observed_lineups
+        elif self.lineup_rankings_root is not None:
+            path = self.lineup_rankings_root / f"{selected_season}.parquet"
+            source = pd.read_parquet(path) if path.is_file() else pd.DataFrame()
+        else:
+            source = pd.DataFrame()
+        if source.empty:
+            raise LineupEvaluationError(
+                f"Observed lineup rankings are not materialized for {selected_season}"
+            )
+        rows = source.loc[source["possessions"].ge(float(minimum_possessions))].copy()
+        selected = player_ids or set()
+        if selected:
+            rows = rows.loc[
+                rows["player_ids"].map(
+                    lambda lineup: selected.issubset({int(player_id) for player_id in lineup})
+                )
+            ]
+        ranked = rows.sort_values(
+            ["context_edge", "possessions", "team", "lineup_label"],
+            ascending=[False, False, True, True],
+            kind="stable",
+        ).reset_index(drop=True)
+        ranked.insert(0, "rank", np.arange(1, len(ranked) + 1, dtype=int))
+        for column in ("player_ids", "player_names"):
+            ranked[column] = ranked[column].map(
+                lambda values: values.tolist()
+                if isinstance(values, np.ndarray)
+                else list(values)
+            )
+        return _records(ranked)
+
+    def available_lineup_seasons(self) -> list[str]:
+        """Return materialized completed-fit lineup-ranking seasons, newest first."""
+
+        seasons = {self.season} if not self.observed_lineups.empty else set()
+        if self.lineup_rankings_root is not None and self.lineup_rankings_root.is_dir():
+            seasons.update(path.stem for path in self.lineup_rankings_root.glob("*.parquet"))
+        return sorted(seasons, reverse=True)
+
     def default_opponent(
-        self, *, excluded_player_ids: set[int] | None = None
+        self, *, season: str | None = None, excluded_player_ids: set[int] | None = None
     ) -> list[dict[str, Any]]:
         """Sample a plausible baseline opponent from high-possession players."""
 
         excluded = excluded_player_ids or set()
-        eligible = self.players.loc[
-            self.players["possessions"].ge(self.players["possessions"].quantile(0.75))
-            & ~self.players["player_id"].isin(excluded)
+        players = self._season_state(season or self.season).players
+        eligible = players.loc[
+            players["possessions"].ge(players["possessions"].quantile(0.75))
+            & ~players["player_id"].isin(excluded)
         ]
         if len(eligible) < 5:
             raise LineupEvaluationError(
@@ -288,39 +431,136 @@ class LineupEvaluator:
         unit_player_ids: list[int],
         opponent_player_ids: list[int],
         *,
+        unit_season: str | None = None,
+        opponent_season: str | None = None,
+        environment: str = "unit",
         include_response_curves: bool = False,
         response_curve_feature_id: str | None = None,
         response_curve_kind: str | None = None,
     ) -> dict[str, Any]:
-        """Score a neutral-court five-player unit against a five-player opponent."""
+        """Score two season-scoped units in a selected historical environment."""
+
+        selected_unit_season = unit_season or self.season
+        selected_opponent_season = opponent_season or self.season
+        if environment not in {"unit", "opponent", "neutral"}:
+            raise LineupEvaluationError("Environment must be unit, neutral, or opponent")
+        unit_state = self._season_state(selected_unit_season)
+        opponent_state = self._season_state(selected_opponent_season)
+        if environment == "unit":
+            result = self._evaluate_in_environment(
+                unit_player_ids,
+                opponent_player_ids,
+                unit_state=unit_state,
+                opponent_state=opponent_state,
+                environment_season=selected_unit_season,
+                include_response_curves=include_response_curves,
+                response_curve_feature_id=response_curve_feature_id,
+                response_curve_kind=response_curve_kind,
+            )
+            environment_seasons = [selected_unit_season]
+        elif environment == "opponent":
+            result = self._evaluate_in_environment(
+                unit_player_ids,
+                opponent_player_ids,
+                unit_state=unit_state,
+                opponent_state=opponent_state,
+                environment_season=selected_opponent_season,
+                include_response_curves=include_response_curves,
+                response_curve_feature_id=response_curve_feature_id,
+                response_curve_kind=response_curve_kind,
+            )
+            environment_seasons = [selected_opponent_season]
+        else:
+            unit_environment = self._evaluate_in_environment(
+                unit_player_ids,
+                opponent_player_ids,
+                unit_state=unit_state,
+                opponent_state=opponent_state,
+                environment_season=selected_unit_season,
+                include_response_curves=include_response_curves,
+                response_curve_feature_id=response_curve_feature_id,
+                response_curve_kind=response_curve_kind,
+            )
+            opponent_environment = self._evaluate_in_environment(
+                unit_player_ids,
+                opponent_player_ids,
+                unit_state=unit_state,
+                opponent_state=opponent_state,
+                environment_season=selected_opponent_season,
+                include_response_curves=include_response_curves,
+                response_curve_feature_id=response_curve_feature_id,
+                response_curve_kind=response_curve_kind,
+            )
+            result = _mean_evaluation(unit_environment, opponent_environment)
+            environment_seasons = [selected_unit_season, selected_opponent_season]
+        result.update(
+            {
+                "unit_season": selected_unit_season,
+                "opponent_season": selected_opponent_season,
+                "environment": environment,
+                "environment_seasons": environment_seasons,
+            }
+        )
+        return result
+
+    def _evaluate_in_environment(
+        self,
+        unit_player_ids: list[int],
+        opponent_player_ids: list[int],
+        *,
+        unit_state: SeasonLineupState,
+        opponent_state: SeasonLineupState,
+        environment_season: str,
+        include_response_curves: bool,
+        response_curve_feature_id: str | None,
+        response_curve_kind: str | None,
+    ) -> dict[str, Any]:
+        """Apply one season's contextual surface to two season-scoped player pools."""
 
         _validate_lineup("unit", unit_player_ids)
         _validate_lineup("opponent", opponent_player_ids)
         overlap = set(unit_player_ids) & set(opponent_player_ids)
         if overlap:
             raise LineupEvaluationError("A player cannot appear on both sides of a matchup")
-        available = set(self.players["player_id"].astype(int))
-        missing = sorted((set(unit_player_ids) | set(opponent_player_ids)) - available)
-        if missing:
-            raise LineupEvaluationError(f"Players are unavailable in {self.season}: {missing}")
+        unit_available = set(unit_state.players["player_id"].astype(int))
+        opponent_available = set(opponent_state.players["player_id"].astype(int))
+        missing_unit = sorted(set(unit_player_ids) - unit_available)
+        missing_opponent = sorted(set(opponent_player_ids) - opponent_available)
+        if missing_unit:
+            raise LineupEvaluationError(
+                f"Players are unavailable in your unit's {unit_state.season} pool: {missing_unit}"
+            )
+        if missing_opponent:
+            raise LineupEvaluationError(
+                "Players are unavailable in the opponent's "
+                f"{opponent_state.season} pool: {missing_opponent}"
+            )
 
-        coefficient_map = dict(
+        unit_coefficient_map = dict(
             zip(
-                self.coefficients["player_id"].astype(int),
-                self.coefficients["rapm"].astype(float),
+                unit_state.coefficients["player_id"].astype(int),
+                unit_state.coefficients["rapm"].astype(float),
                 strict=True,
             )
         )
-        raw_unit_features = lineup_side_context_features([unit_player_ids], self.profiles)
-        raw_opponent_features = lineup_side_context_features(
-            [opponent_player_ids], self.profiles
+        opponent_coefficient_map = dict(
+            zip(
+                opponent_state.coefficients["player_id"].astype(int),
+                opponent_state.coefficients["rapm"].astype(float),
+                strict=True,
+            )
         )
+        raw_unit_features = lineup_side_context_features([unit_player_ids], unit_state.profiles)
+        raw_opponent_features = lineup_side_context_features(
+            [opponent_player_ids], opponent_state.profiles
+        )
+        context_model = self._context_model(environment_season)
         unit_features, opponent_features, features = _model_feature_inputs(
-            self.context_model,
+            context_model,
             raw_unit_features,
             raw_opponent_features,
         )
-        components = self.context_model.decompose_side_pairs(
+        components = context_model.decompose_side_pairs(
             unit_features, opponent_features
         ).iloc[0]
         contextual_adjustment = float(components["total_context_net_rating"])
@@ -331,20 +571,20 @@ class LineupEvaluator:
         matchup_adjustment = float(components["matchup_context_net_rating"])
         unit_composition_rating = float(components["home_portable_context_net_rating"])
         opponent_composition_rating = float(components["away_portable_context_net_rating"])
-        total_contributions = _antisymmetric_feature_contributions(self.context_model, features)[0]
+        total_contributions = _antisymmetric_feature_contributions(context_model, features)[0]
         unit_composition_contributions = _side_feature_contributions(
-            self.context_model, unit_features
+            context_model, unit_features
         )[0]
         opponent_composition_contributions = _side_feature_contributions(
-            self.context_model, opponent_features
+            context_model, opponent_features
         )[0]
         composition_contributions = (
             unit_composition_contributions - opponent_composition_contributions
         )
         matchup_contributions = total_contributions - composition_contributions
-        additive_unit = float(sum(coefficient_map[player_id] for player_id in unit_player_ids))
+        additive_unit = float(sum(unit_coefficient_map[player_id] for player_id in unit_player_ids))
         additive_opponent = float(
-            sum(coefficient_map[player_id] for player_id in opponent_player_ids)
+            sum(opponent_coefficient_map[player_id] for player_id in opponent_player_ids)
         )
         additive_margin = additive_unit - additive_opponent
         feature_rows = _feature_rows(features, total_contributions)
@@ -364,8 +604,8 @@ class LineupEvaluator:
                     "A response curve kind is required for a selected feature"
                 )
         composition_response_curves = _composition_response_curves(
-            self.context_model,
-            self.response_cache,
+            context_model,
+            self._response_cache(environment_season),
             unit_features,
             opponent_features,
             unit_composition_contributions,
@@ -373,19 +613,21 @@ class LineupEvaluator:
             feature_ids=composition_feature_ids,
         ) if include_response_curves else []
         matchup_response_curves = _matchup_response_curves(
-            self.context_model,
-            self.response_cache,
+            context_model,
+            self._response_cache(environment_season),
             unit_features,
             opponent_features,
             opponent_composition_contributions,
             feature_ids=matchup_feature_ids,
         ) if include_response_curves else []
         response = {
-            "season": self.season,
+            "season": environment_season,
             "run_id": self.run_id,
             "retrospective": True,
-            "unit": self._side(unit_player_ids, coefficient_map),
-            "opponent": self._side(opponent_player_ids, coefficient_map),
+            "unit": self._side(unit_player_ids, unit_coefficient_map, unit_state.players),
+            "opponent": self._side(
+                opponent_player_ids, opponent_coefficient_map, opponent_state.players
+            ),
             "additive_margin": additive_margin,
             "contextual_adjustment": contextual_adjustment,
             "unit_composition_rating": unit_composition_rating,
@@ -402,12 +644,160 @@ class LineupEvaluator:
             response["matchup_response_curves"] = matchup_response_curves
         return response
 
-    def _side(self, player_ids: list[int], coefficient_map: dict[int, float]) -> dict[str, Any]:
-        rows = self.players.set_index("player_id").loc[player_ids].reset_index()
+    def _side(
+        self,
+        player_ids: list[int],
+        coefficient_map: dict[int, float],
+        players: pd.DataFrame,
+    ) -> dict[str, Any]:
+        rows = players.set_index("player_id").loc[player_ids].reset_index()
         players = _records(rows)
         for player in players:
             player["rapm"] = coefficient_map[int(player["player_id"])]
         return {"additive_rating": sum(player["rapm"] for player in players), "players": players}
+
+    def _season_state(self, season: str) -> SeasonLineupState:
+        """Build and cache a selected historical player pool on first use."""
+
+        cached = self.season_states.get(season)
+        if cached is not None:
+            return cached
+        if season == self.season:
+            state = SeasonLineupState(season, self.coefficients, self.profiles, self.players)
+            self.season_states[season] = state
+            return state
+        if season not in self.season_context_models:
+            raise LineupEvaluationError(f"The completed HPM state is unavailable for {season}")
+        coefficients = self.historical_coefficients.loc[
+            self.historical_coefficients["season"].eq(season), ["player_id", "rapm"]
+        ].copy()
+        if coefficients.empty:
+            raise LineupEvaluationError(f"Completed player ratings are unavailable for {season}")
+        exposure_cohort = prepare_player_exposure_cohort(
+            self.player_season_panel.loc[
+                self.player_season_panel["season"].astype(str).le(season)
+            ],
+            through_season=season,
+        )
+        profiles = build_contextual_player_profiles(
+            self.player_season_panel,
+            target_season=season,
+            target_player_ids=set(coefficients["player_id"].astype(int)),
+            exposure_cohort=exposure_cohort,
+        )
+        players = _player_catalog(
+            coefficients,
+            profiles,
+            panel_path=Path("data/analytical/player_season_panel/player_seasons.parquet"),
+            season=season,
+        )
+        season_ratings = self.seasonal_ratings.loc[
+            self.seasonal_ratings["season"].eq(season), ["player_id", "age"]
+        ]
+        players["age"] = players["player_id"].map(
+            dict(zip(season_ratings["player_id"], season_ratings["age"], strict=True))
+        )
+        players["rating_history"] = players["player_id"].map(
+            lambda player_id: [
+                point
+                for point in self.player_rating_histories.get(int(player_id), [])
+                if str(point["season"]) <= season
+            ]
+        )
+        rookie_seasons = _rookie_seasons(self.seasonal_ratings)
+        players["rookie_season"] = players["player_id"].map(rookie_seasons)
+        state = SeasonLineupState(season, coefficients, profiles, players)
+        self.season_states[season] = state
+        return state
+
+    def _context_model(self, season: str) -> MatchupContextualModel:
+        """Return a completed historical contextual model for one environment."""
+
+        if season == self.season:
+            return self.context_model
+        try:
+            return self.season_context_models[season]
+        except KeyError as error:
+            raise LineupEvaluationError(
+                f"The contextual environment is unavailable for {season}"
+            ) from error
+
+    def _response_cache(self, season: str) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+        """Warm the small per-environment response cache only once per API process."""
+
+        cache = self.response_caches.get(season)
+        if cache is None:
+            path = response_cache_path(MODEL_ARTIFACT, self.run_id, season)
+            cache = joblib.load(path) if path.is_file() else _warm_response_cache(
+                self._context_model(season)
+            )
+            self.response_caches[season] = cache
+        return cache
+
+
+def _mean_evaluation(
+    first: dict[str, Any], second: dict[str, Any]
+) -> dict[str, Any]:
+    """Average two directional historical-environment evaluations for neutral mode."""
+
+    result = first.copy()
+    for key in (
+        "contextual_adjustment",
+        "unit_composition_rating",
+        "opponent_composition_rating",
+        "portable_composition_margin",
+        "matchup_adjustment",
+        "predicted_net_rating",
+    ):
+        result[key] = (float(first[key]) + float(second[key])) / 2.0
+    for key in (
+        "feature_contributions",
+        "composition_feature_contributions",
+        "matchup_feature_contributions",
+    ):
+        result[key] = _mean_feature_rows(first[key], second[key])
+    for key in ("composition_response_curves", "matchup_response_curves"):
+        result[key] = _mean_response_curves(first.get(key, []), second.get(key, []))
+    return result
+
+
+def _mean_feature_rows(
+    first: list[dict[str, Any]], second: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    second_by_id = {str(row["id"]): row for row in second}
+    rows = []
+    for row in first:
+        partner = second_by_id[str(row["id"])]
+        combined = row.copy()
+        combined["contribution"] = (
+            float(row["contribution"]) + float(partner["contribution"])
+        ) / 2.0
+        rows.append(combined)
+    return sorted(rows, key=lambda row: abs(float(row["contribution"])), reverse=True)
+
+
+def _mean_response_curves(
+    first: list[dict[str, Any]], second: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    second_by_id = {str(curve["id"]): curve for curve in second}
+    curves = []
+    for curve in first:
+        partner = second_by_id[str(curve["id"])]
+        combined = curve.copy()
+        for key in ("unit_contribution", "opponent_contribution"):
+            combined[key] = (float(curve[key]) + float(partner[key])) / 2.0
+        combined["points"] = [
+            {
+                "value": float(first_point["value"]),
+                "contribution": (
+                    float(first_point["contribution"]) + float(second_point["contribution"])
+                )
+                / 2.0,
+            }
+            for first_point, second_point in zip(curve["points"], partner["points"], strict=True)
+        ]
+        curves.append(combined)
+    return curves
 
 
 def _player_catalog(
@@ -489,6 +879,7 @@ def _historical_ranking_catalog(
     ratings: pd.DataFrame,
     *,
     panel_path: Path,
+    context_exposure: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Attach season-specific display metadata to completed player ratings."""
 
@@ -528,6 +919,15 @@ def _historical_ranking_catalog(
         how="left",
         validate="one_to_one",
     )
+    if context_exposure is not None and not context_exposure.empty:
+        catalog = catalog.merge(
+            context_exposure.loc[:, ["season", "player_id", "prior_context_unit_edge"]],
+            on=["season", "player_id"],
+            how="left",
+            validate="one_to_one",
+        )
+    else:
+        catalog["prior_context_unit_edge"] = np.nan
     catalog["team"] = catalog.get(
         "primary_team_tricode", pd.Series(index=catalog.index, dtype="object")
     ).fillna("-")
@@ -541,7 +941,18 @@ def _historical_ranking_catalog(
         "games", pd.Series(index=catalog.index, dtype="float64")
     ).fillna(0).astype(int)
     return catalog.loc[
-        :, ["season", "player_id", "player_name", "team", "position", "rapm", "possessions", "games"]
+        :,
+        [
+            "season",
+            "player_id",
+            "player_name",
+            "team",
+            "position",
+            "rapm",
+            "prior_context_unit_edge",
+            "possessions",
+            "games",
+        ],
     ]
 
 
@@ -550,6 +961,7 @@ def _player_rating_histories(
     *,
     panel_path: Path,
     context_exposure: pd.DataFrame | None = None,
+    player_team_splits: dict[tuple[str, int], list[dict[str, Any]]] | None = None,
 ) -> dict[int, list[dict[str, Any]]]:
     """Package completed-fit seasonal ratings into compact browser sparklines."""
 
@@ -662,6 +1074,7 @@ def _player_rating_histories(
     ordered = ordered.sort_values(
         ["player_id", "season"], kind="stable"
     )
+    team_splits = player_team_splits or {}
     return {
         int(player_id): [
             {
@@ -681,7 +1094,12 @@ def _player_rating_histories(
                 "age": None if pd.isna(row.age) else float(row.age),
                 "team_id": None if pd.isna(row.primary_team_id) else int(row.primary_team_id),
                 "team": "-" if pd.isna(row.primary_team_tricode) else str(row.primary_team_tricode),
-                "possessions": 0.0 if pd.isna(row.rapm_possessions) else float(row.rapm_possessions),
+                "team_splits": team_splits.get(
+                    (str(row.season), int(row.player_id)), []
+                ),
+                "possessions": (
+                    0.0 if pd.isna(row.rapm_possessions) else float(row.rapm_possessions)
+                ),
                 "games": 0 if pd.isna(row.games) else int(row.games),
                 "games_started": 0 if pd.isna(row.games_started) else int(row.games_started),
                 "season_min_rating": float(row.season_min_rating),
@@ -692,6 +1110,171 @@ def _player_rating_histories(
             for row in rows.itertuples(index=False)
         ]
         for player_id, rows in ordered.groupby("player_id", sort=False)
+    }
+
+
+def _player_league_leader_histories(
+    ratings: pd.DataFrame,
+    player_histories: dict[int, list[dict[str, Any]]],
+    *,
+    active_through_years: dict[int, int] | None = None,
+) -> dict[int, list[dict[str, Any]]]:
+    """Return the completed-fit league leader for every season in each player's career span."""
+
+    required = {"season", "player_id", "player_name", "rapm"}
+    missing = required - set(ratings.columns)
+    if missing:
+        raise LineupEvaluationError(
+            "Player-season rating artifact is missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+    leaders = (
+        ratings.loc[:, ["season", "player_id", "player_name", "rapm"]]
+        .sort_values(
+            ["season", "rapm", "player_name", "player_id"],
+            ascending=[True, False, True, True],
+            kind="stable",
+        )
+        .drop_duplicates("season", keep="first")
+        .sort_values("season", kind="stable")
+    )
+    records = [
+        {
+            "season": str(row.season),
+            "rating": float(row.rapm),
+            "player_id": int(row.player_id),
+            "player_name": str(row.player_name),
+        }
+        for row in leaders.itertuples(index=False)
+    ]
+    latest_completed_year = max(int(record["season"][:4]) for record in records)
+    active_through = active_through_years or {}
+    histories: dict[int, list[dict[str, Any]]] = {}
+    for player_id, history in player_histories.items():
+        if not history:
+            continue
+        start = str(history[0]["season"])
+        last_observed_year = int(str(history[-1]["season"])[:4])
+        end_year = max(
+            last_observed_year,
+            min(latest_completed_year, active_through.get(player_id, last_observed_year)),
+        )
+        histories[player_id] = [
+            record
+            for record in records
+            if start <= record["season"] and int(record["season"][:4]) <= end_year
+        ]
+    return histories
+
+
+def _player_active_through_years(panel_path: Path) -> dict[int, int]:
+    """Return the final season-start year implied by each player's catalog endpoint."""
+
+    panel = pd.read_parquet(panel_path)
+    required = {"player_id", "to_year"}
+    missing = required - set(panel.columns)
+    if missing:
+        return {}
+    values = panel.loc[:, ["player_id", "to_year"]].dropna()
+    return {
+        int(row.player_id): int(row.to_year) - 1
+        for row in values.itertuples(index=False)
+    }
+
+
+def build_player_team_splits(
+    ratings: pd.DataFrame,
+    *,
+    analytical_dir: Path | str = Path("data/analytical"),
+) -> pd.DataFrame:
+    """Aggregate every rated player's regular-season on-court exposure by team."""
+
+    required = {"season", "player_id"}
+    missing = required - set(ratings.columns)
+    if missing:
+        raise LineupEvaluationError(
+            "Player-season rating artifact is missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+    frames: list[pd.DataFrame] = []
+    for season in sorted(ratings["season"].astype(str).unique()):
+        player_ids = set(
+            ratings.loc[ratings["season"].astype(str).eq(season), "player_id"]
+            .astype(int)
+            .tolist()
+        )
+        stints = read_rapm_stints(season, analytical_dir=analytical_dir)
+        for side in ("home", "away"):
+            side_rows = stints.loc[
+                :,
+                [
+                    "game_id",
+                    f"{side}_team_id",
+                    f"{side}_team_tricode",
+                    f"{side}_player_ids",
+                    "possessions",
+                ],
+            ].explode(f"{side}_player_ids", ignore_index=True)
+            side_rows = side_rows.rename(
+                columns={
+                    f"{side}_team_id": "team_id",
+                    f"{side}_team_tricode": "team",
+                    f"{side}_player_ids": "player_id",
+                }
+            )
+            side_rows["player_id"] = side_rows["player_id"].astype(int)
+            frames.append(
+                side_rows.loc[side_rows["player_id"].isin(player_ids)].assign(season=season)
+            )
+    if not frames:
+        return pd.DataFrame(
+            columns=["season", "player_id", "team_id", "team", "possessions", "games"]
+        )
+    rows = pd.concat(frames, ignore_index=True)
+    splits = (
+        rows.groupby(["season", "player_id", "team_id", "team"], as_index=False, sort=False)
+        .agg(possessions=("possessions", "sum"), games=("game_id", "nunique"))
+        .sort_values(
+            ["season", "player_id", "possessions", "team_id"],
+            ascending=[True, True, False, True],
+            kind="stable",
+        )
+        .reset_index(drop=True)
+    )
+    splits["player_id"] = splits["player_id"].astype("int64")
+    splits["team_id"] = splits["team_id"].astype("int64")
+    splits["games"] = splits["games"].astype("int64")
+    return splits
+
+
+def _player_team_splits_by_season(
+    splits: pd.DataFrame,
+) -> dict[tuple[str, int], list[dict[str, Any]]]:
+    """Package persisted team splits for the browser's player-season history."""
+
+    required = {"season", "player_id", "team_id", "team", "possessions", "games"}
+    missing = required - set(splits.columns)
+    if missing:
+        raise LineupEvaluationError(
+            "Player-team split artifact is missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+    ordered = splits.sort_values(
+        ["season", "player_id", "possessions", "team_id"],
+        ascending=[True, True, False, True],
+        kind="stable",
+    )
+    return {
+        (str(season), int(player_id)): [
+            {
+                "team_id": int(row.team_id),
+                "team": str(row.team),
+                "possessions": float(row.possessions),
+                "games": int(row.games),
+            }
+            for row in rows.itertuples(index=False)
+        ]
+        for (season, player_id), rows in ordered.groupby(["season", "player_id"], sort=False)
     }
 
 
@@ -962,16 +1545,262 @@ def _warm_response_cache(
     return cache
 
 
-def response_cache_path(model_artifact: str, run_id: str) -> Path:
-    """Return the immutable web cache location for one completed model run."""
+def response_cache_path(
+    model_artifact: str, run_id: str, season: str | None = None
+) -> Path:
+    """Return the immutable response cache location for one completed model season."""
 
-    return DEFAULT_RESPONSE_CACHE_DIR / model_artifact / f"{run_id}.joblib"
+    suffix = f"-{season}" if season is not None else ""
+    return DEFAULT_RESPONSE_CACHE_DIR / model_artifact / f"{run_id}{suffix}.joblib"
 
 
 def player_context_exposure_path(model_artifact: str, run_id: str) -> Path:
     """Return the cached annual unit-context exposure table for one model run."""
 
     return DEFAULT_RESPONSE_CACHE_DIR / model_artifact / f"{run_id}-player-context.parquet"
+
+
+def player_team_splits_path(model_artifact: str, run_id: str) -> Path:
+    """Return the persisted player-season team exposure table for one model run."""
+
+    return DEFAULT_PLAYER_TEAM_SPLITS_CACHE_DIR / model_artifact / f"{run_id}.parquet"
+
+
+def lineup_rankings_path(model_artifact: str, run_id: str, season: str) -> Path:
+    """Return the immutable observed-five lineup table for one completed model run."""
+
+    return DEFAULT_LINEUP_RANKINGS_CACHE_DIR / model_artifact / run_id / f"{season}.parquet"
+
+
+def build_observed_lineup_rankings(
+    *,
+    season: str,
+    profiles: pd.DataFrame,
+    players: pd.DataFrame,
+    coefficients: pd.DataFrame,
+    context_model: MatchupContextualModel,
+    analytical_dir: Path | str = Path("data/analytical"),
+) -> pd.DataFrame:
+    """Materialize regular-season five-man ratings against actual opponents.
+
+    Each row represents one observed team-unit. Player totals are sums of the
+    five completed-fit coefficients. Edges and GESTALT scores use the opponents
+    that unit actually faced, weighted by stint possessions.
+    """
+
+    stints = read_rapm_stints(season, analytical_dir=analytical_dir)
+    required = {
+        "game_id",
+        "home_team_id",
+        "away_team_id",
+        "home_team_tricode",
+        "away_team_tricode",
+        "home_player_ids",
+        "away_player_ids",
+        "possessions",
+        "target_home_net_rating",
+    }
+    missing = required - set(stints)
+    if missing:
+        raise LineupEvaluationError(
+            "Observed lineup source is missing required columns: " + ", ".join(sorted(missing))
+        )
+    coefficient_map = dict(
+        zip(
+            coefficients["player_id"].astype(int),
+            coefficients["rapm"].astype(float),
+            strict=True,
+        )
+    )
+    home_lineups = [_lineup_key(lineup) for lineup in stints["home_player_ids"]]
+    away_lineups = [_lineup_key(lineup) for lineup in stints["away_player_ids"]]
+    all_lineups = list(dict.fromkeys([*home_lineups, *away_lineups]))
+    raw_side_features = lineup_side_context_features(all_lineups, profiles)
+    side_features, _, _ = _model_feature_inputs(
+        context_model, raw_side_features, raw_side_features
+    )
+    side_scores = _sampled_side_scores(context_model, side_features)
+    side_score_map = dict(zip(all_lineups, side_scores, strict=True))
+    home_raw = lineup_side_context_features(home_lineups, profiles)
+    away_raw = lineup_side_context_features(away_lineups, profiles)
+    home_features, away_features, _ = _model_feature_inputs(context_model, home_raw, away_raw)
+    total_context = context_model.predict_side_pairs(home_features, away_features)
+    home_scores = np.asarray([side_score_map[lineup] for lineup in home_lineups], dtype=float)
+    away_scores = np.asarray([side_score_map[lineup] for lineup in away_lineups], dtype=float)
+    matchup_bonus = total_context - home_scores + away_scores
+    home_player_ratings = np.asarray(
+        [_lineup_rating(lineup, coefficient_map) for lineup in home_lineups], dtype=float
+    )
+    away_player_ratings = np.asarray(
+        [_lineup_rating(lineup, coefficient_map) for lineup in away_lineups], dtype=float
+    )
+    possessions = stints["possessions"].to_numpy(dtype=float)
+    actual_home = stints["target_home_net_rating"].to_numpy(dtype=float)
+
+    home = _observed_lineup_side_rows(
+        team_ids=stints["home_team_id"].to_numpy(),
+        teams=stints["home_team_tricode"].astype(str).to_numpy(),
+        lineups=home_lineups,
+        game_ids=stints["game_id"].astype(str).to_numpy(),
+        possessions=possessions,
+        player_rating=home_player_ratings,
+        opponent_player_rating=away_player_ratings,
+        composition_rating=home_scores,
+        opponent_composition_rating=away_scores,
+        matchup_bonus=matchup_bonus,
+        actual_net_rating=actual_home,
+    )
+    away = _observed_lineup_side_rows(
+        team_ids=stints["away_team_id"].to_numpy(),
+        teams=stints["away_team_tricode"].astype(str).to_numpy(),
+        lineups=away_lineups,
+        game_ids=stints["game_id"].astype(str).to_numpy(),
+        possessions=possessions,
+        player_rating=away_player_ratings,
+        opponent_player_rating=home_player_ratings,
+        composition_rating=away_scores,
+        opponent_composition_rating=home_scores,
+        matchup_bonus=-matchup_bonus,
+        actual_net_rating=-actual_home,
+    )
+    names = dict(
+        zip(players["player_id"].astype(int), players["player_name"].astype(str), strict=True)
+    )
+    return _aggregate_observed_lineups(pd.concat([home, away], ignore_index=True), names)
+
+
+def _observed_lineup_side_rows(
+    *,
+    team_ids: np.ndarray,
+    teams: np.ndarray,
+    lineups: list[tuple[int, ...]],
+    game_ids: np.ndarray,
+    possessions: np.ndarray,
+    player_rating: np.ndarray,
+    opponent_player_rating: np.ndarray,
+    composition_rating: np.ndarray,
+    opponent_composition_rating: np.ndarray,
+    matchup_bonus: np.ndarray,
+    actual_net_rating: np.ndarray,
+) -> pd.DataFrame:
+    """Return one orientation's observed-unit contributions in the unit frame."""
+
+    composition_edge = composition_rating - opponent_composition_rating
+    player_edge = player_rating - opponent_player_rating
+    context_edge = composition_edge + matchup_bonus
+    return pd.DataFrame(
+        {
+            "team_id": team_ids.astype(int),
+            "team": teams,
+            "lineup_key": ["|".join(str(player_id) for player_id in lineup) for lineup in lineups],
+            "game_id": game_ids,
+            "possessions": possessions,
+            "player_rating": player_rating,
+            "player_edge": player_edge,
+            "composition_rating": composition_rating,
+            "composition_edge": composition_edge,
+            "matchup_bonus": matchup_bonus,
+            "context_edge": context_edge,
+            "gestalt_score": player_edge + context_edge,
+            "actual_net_rating": actual_net_rating,
+        }
+    )
+
+
+def _aggregate_observed_lineups(
+    rows: pd.DataFrame, names: dict[int, str]) -> pd.DataFrame:
+    """Possession-weight aggregate stint-level ratings into an observed five-man table."""
+
+    metrics = (
+        "player_rating",
+        "player_edge",
+        "composition_rating",
+        "composition_edge",
+        "matchup_bonus",
+        "context_edge",
+        "gestalt_score",
+        "actual_net_rating",
+    )
+    weighted = rows.copy()
+    for metric in metrics:
+        values = weighted[metric].to_numpy(dtype=float)
+        weighted[metric] = values * weighted["possessions"].to_numpy(dtype=float)
+    aggregated = (
+        weighted.groupby(["team_id", "team", "lineup_key"], as_index=False, sort=False)
+        .agg(
+            possessions=("possessions", "sum"),
+            games=("game_id", "nunique"),
+            **{metric: (metric, "sum") for metric in metrics},
+        )
+        .reset_index(drop=True)
+    )
+    for metric in metrics:
+        aggregated[metric] /= aggregated["possessions"]
+    aggregated["player_ids"] = aggregated["lineup_key"].map(
+        lambda key: [int(player_id) for player_id in key.split("|")]
+    )
+    aggregated["player_names"] = aggregated["player_ids"].map(
+        lambda lineup: [names.get(player_id, f"Player {player_id}") for player_id in lineup]
+    )
+    aggregated["lineup_label"] = aggregated["player_names"].map(", ".join)
+    return aggregated.sort_values(
+        ["context_edge", "possessions", "team", "lineup_label"],
+        ascending=[False, False, True, True],
+        kind="stable",
+    ).reset_index(drop=True)
+
+
+def _lineup_key(lineup: list[int] | tuple[int, ...] | np.ndarray) -> tuple[int, ...]:
+    """Return an order-invariant five-player identity key."""
+
+    return tuple(sorted(int(player_id) for player_id in lineup))
+
+
+def _lineup_rating(lineup: tuple[int, ...], coefficients: dict[int, float]) -> float:
+    """Sum completed-fit player ratings, failing rather than silently dropping a player."""
+
+    missing = [player_id for player_id in lineup if player_id not in coefficients]
+    if missing:
+        raise LineupEvaluationError(f"Observed lineup contains players without ratings: {missing}")
+    return float(sum(coefficients[player_id] for player_id in lineup))
+
+
+def _sampled_side_scores(
+    context_model: MatchupContextualModel,
+    side_features: pd.DataFrame,
+    *,
+    sample_size: int = LINEUP_REFERENCE_SAMPLE_SIZE,
+) -> np.ndarray:
+    """Approximate h(U) with a deterministic weighted reference subsample.
+
+    The observed-lineup table may include thousands of rare units. Exact h(U)
+    for every one would create hundreds of millions of spline evaluations. The
+    total C(U,O) remains exact; this numerical approximation is used only to
+    partition that total into composition and matchup components.
+    """
+
+    reference = context_model.reference_features.loc[:, side_context_feature_columns()]
+    weights = np.asarray(context_model.reference_weights, dtype=float)
+    count = min(sample_size, len(reference))
+    cumulative = np.cumsum(weights)
+    sample_positions = (np.arange(count, dtype=float) + 0.5) / count
+    indices = np.searchsorted(cumulative, sample_positions, side="left")
+    sample = reference.iloc[indices].reset_index(drop=True)
+    output = np.empty(len(side_features), dtype=float)
+    for start in range(0, len(side_features), 64):
+        chunk = side_features.iloc[start : start + 64].reset_index(drop=True)
+        home = pd.DataFrame(
+            np.repeat(chunk.to_numpy(dtype=float), count, axis=0),
+            columns=side_context_feature_columns(),
+        )
+        away = pd.DataFrame(
+            np.tile(sample.to_numpy(dtype=float), (len(chunk), 1)),
+            columns=side_context_feature_columns(),
+        )
+        output[start : start + len(chunk)] = context_model.predict_side_pairs(home, away).reshape(
+            len(chunk), count
+        ).mean(axis=1)
+    return output
 
 
 def warm_player_context_exposure(

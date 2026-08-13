@@ -16,6 +16,10 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from nba_lineup_model.modeling.context_reattributed_rapm import (
+    ContextProjection,
+    fit_context_projection,
+)
 from nba_lineup_model.modeling.contextual_features import lineup_side_context_features
 from nba_lineup_model.modeling.contextual_prior import _evaluate_target, _lineup_effects
 from nba_lineup_model.modeling.contextual_profiles import build_contextual_player_profiles
@@ -77,7 +81,9 @@ def train_forward_portable_matchup_contextual_rapm(
     context_alpha: float = DEFAULT_CONTEXT_ALPHA,
     context_curvature_alpha: float = 0.0,
     context_temporal_alpha: float = 0.0,
+    context_reattribution_weight: float = 0.0,
     include_historical_playoffs: bool = False,
+    use_context: bool = True,
     model_name: str = MODEL_NAME,
     run_prefix: str = RUN_PREFIX,
     player_prior_builder: Callable[..., tuple[pd.DataFrame, dict[str, object]]] | None = None,
@@ -97,8 +103,14 @@ def train_forward_portable_matchup_contextual_rapm(
     """
 
     target = validate_season(through_season)
-    if context_alpha <= 0 or context_curvature_alpha < 0 or context_temporal_alpha < 0:
+    if use_context and (
+        context_alpha <= 0 or context_curvature_alpha < 0 or context_temporal_alpha < 0
+    ):
         raise ValueError("Contextual penalties must be non-negative, with alpha positive")
+    if not 0.0 <= context_reattribution_weight <= 1.0:
+        raise ValueError("context_reattribution_weight must be between zero and one")
+    if context_reattribution_weight and not use_context:
+        raise ValueError("Context reattribution requires context_enabled")
     panel = pd.read_parquet(player_season_panel_path)
     artifact_root = Path(artifacts_dir)
     reference_root = _latest_run(artifact_root / "forward_exposure_gated_rapm" / target)
@@ -112,6 +124,10 @@ def train_forward_portable_matchup_contextual_rapm(
     if target not in seasons:
         seasons = (*seasons, target)
     source = _previous_season(target)
+    print(
+        f"Preparing exposure cohort through {target} for {len(seasons):,} seasonal fits",
+        flush=True,
+    )
     exposure_cohort = prepare_player_exposure_cohort(
         panel.loc[panel["season"].astype(str).le(target)],
         through_season=target,
@@ -124,8 +140,12 @@ def train_forward_portable_matchup_contextual_rapm(
     prior_metadata: list[dict[str, object]] = []
     aging_models: dict[str, object] = {}
     aging_curve_grids: list[pd.DataFrame] = []
+    box_score_residual_models: dict[str, object] = {}
+    box_score_residual_selections: list[pd.DataFrame] = []
     contextual_models: dict[str, MatchupContextualModel] = {}
     contextual_metadata: list[dict[str, object]] = []
+    context_reattributions: dict[str, ContextProjection] = {}
+    context_reattribution_metadata: list[dict[str, object]] = []
     training_metadata: list[dict[str, object]] = []
     target_priors: pd.DataFrame | None = None
     target_profiles: pd.DataFrame | None = None
@@ -140,9 +160,10 @@ def train_forward_portable_matchup_contextual_rapm(
         if include_historical_playoffs and season != target:
             playoff_ids = _available_processed_playoff_game_ids(season)
             if playoff_ids:
-                playoff_stints, excluded_playoff_ids = build_rapm_stints_from_legacy_processed_games(
-                    playoff_ids
-                )
+                (
+                    playoff_stints,
+                    excluded_playoff_ids,
+                ) = build_rapm_stints_from_legacy_processed_games(playoff_ids)
                 raw_stints = pd.concat([raw_stints, playoff_stints], ignore_index=True).sort_values(
                     ["game_time_utc", "game_id", "stint_index"], kind="stable"
                 ).reset_index(drop=True)
@@ -171,15 +192,25 @@ def train_forward_portable_matchup_contextual_rapm(
                 analytical_dir=str(analytical_dir),
                 exposure_cohort=exposure_cohort,
             )
-            if season != seasons[0]
+            if use_context and season != seasons[0]
             else None
         )
         previous_model = contextual_models.get(_previous_season(season))
-        offset = (
-            _context_offset(raw_stints, previous_model, profiles)
-            if previous_model is not None and profiles is not None
-            else np.zeros(len(raw_stints), dtype=float)
-        )
+        previous_reattribution = context_reattributions.get(_previous_season(season))
+        if use_context and previous_model is not None and profiles is not None:
+            offset = (
+                _context_offset(
+                    raw_stints,
+                    previous_model,
+                    profiles,
+                    reattribution=previous_reattribution,
+                    reattribution_weight=context_reattribution_weight,
+                )
+                if context_reattribution_weight
+                else _context_offset(raw_stints, previous_model, profiles)
+            )
+        else:
+            offset = np.zeros(len(raw_stints), dtype=float)
         adjusted_stints = raw_stints.copy()
         adjusted_stints["target_home_net_rating"] = (
             raw_stints["target_home_net_rating"].to_numpy(dtype=float) - offset
@@ -191,13 +222,27 @@ def train_forward_portable_matchup_contextual_rapm(
             exposure_history=exposure_history,
             replacement_tokens=replacement_tokens,
         )
+        priors, reattribution_prior_metadata = _add_context_reattribution_to_priors(
+            priors,
+            previous_reattribution,
+            reattribution_weight=context_reattribution_weight,
+        )
         prior_row = dict(prior_row)
+        prior_row.update(reattribution_prior_metadata)
         aging_model = prior_row.pop("_aging_model", None)
         aging_curve_grid = prior_row.pop("_aging_curve_grid", None)
+        box_score_residual_model = prior_row.pop("_box_score_residual_model", None)
+        box_score_residual_selection = prior_row.pop("box_score_residual_selection", None)
         if aging_model is not None:
             aging_models[season] = aging_model
         if isinstance(aging_curve_grid, pd.DataFrame):
             aging_curve_grids.append(aging_curve_grid)
+        if box_score_residual_model is not None:
+            box_score_residual_models[season] = box_score_residual_model
+        if isinstance(box_score_residual_selection, list):
+            box_score_residual_selections.append(
+                pd.DataFrame(box_score_residual_selection).assign(season=season)
+            )
         prior_metadata.append(prior_row)
         prior_rows = priors.rename(columns={PRIOR_MEAN_COLUMN: "prior_rapm"}).copy()
         prior_rows["season"] = season
@@ -224,7 +269,7 @@ def train_forward_portable_matchup_contextual_rapm(
         replacement_tokens.append(
             _fit_replacement_token(season, adjusted_stints, exposure, fitted, panel)
         )
-        if profiles is not None:
+        if use_context and profiles is not None:
             model, row = _fit_matchup_contextual_season(
                 raw_stints,
                 fitted,
@@ -238,14 +283,27 @@ def train_forward_portable_matchup_contextual_rapm(
             )
             contextual_models[season] = model
             contextual_metadata.append(row)
+            if context_reattribution_weight:
+                full_context = _context_offset(raw_stints, model, profiles)
+                projection = fit_context_projection(raw_stints, full_context, season_lambda)
+                context_reattributions[season] = projection
+                context_reattribution_metadata.append(
+                    _context_reattribution_metadata(
+                        season=season,
+                        stints=raw_stints,
+                        full_context=full_context,
+                        projection=projection,
+                        reattribution_weight=context_reattribution_weight,
+                    )
+                )
         if season == target:
             target_priors = priors.rename(columns={PRIOR_MEAN_COLUMN: "prior_rapm_mean"})
-            target_profiles = profiles
+            target_profiles = profiles if profiles is not None else pd.DataFrame()
 
     if target_priors is None or target_profiles is None:
-        raise ValueError("Portable-matchup contextual RAPM did not create the target state")
-    forecast_model = contextual_models.get(source)
-    if forecast_model is None:
+        raise ValueError("Forward RAPM did not create the target state")
+    forecast_model = contextual_models.get(source) if use_context else None
+    if use_context and forecast_model is None:
         raise ValueError("Portable-matchup contextual RAPM has no source context state")
     historical_coefficients = pd.concat(
         [result.player_estimates for result in results], ignore_index=True
@@ -260,13 +318,30 @@ def train_forward_portable_matchup_contextual_rapm(
         analytical_dir=Path(analytical_dir),
         curated_dir=Path(curated_dir),
         evaluation_model=model_name,
-        context_predictor=forecast_model.predict_lineups,
+        context_predictor=(
+            _context_predictor_with_reattribution(
+                forecast_model,
+                context_reattributions.get(source),
+                context_reattribution_weight,
+            )
+            if forecast_model is not None and context_reattribution_weight
+            else forecast_model.predict_lineups
+            if forecast_model is not None
+            else _zero_context_predictor
+        ),
     )
     evaluation["source_state"] = {
         **evaluation["source_state"],  # type: ignore[arg-type]
         "player_prior_method": player_prior_description,
-        "context_contract": "C_(t-1)(home, away) = h(home) - h(away) + q(home, away)",
-        "reference_context_source_season": source,
+        "context_enabled": use_context,
+        "context_contract": (
+            "C_(t-1)(home, away) = h(home) - h(away) + q(home, away)"
+            if not context_reattribution_weight
+            else "C_residual_(t-1) = C_(t-1) - rho X gamma_(t-1)"
+            if use_context
+            else "C_(t-1)(home, away) = 0"
+        ),
+        "reference_context_source_season": source if use_context else None,
     }
     return _write_run(
         target=target,
@@ -277,19 +352,31 @@ def train_forward_portable_matchup_contextual_rapm(
         prior_metadata=pd.DataFrame(prior_metadata),
         target_priors=target_priors,
         target_profiles=target_profiles,
-        forecast_reference=forecast_model.reference_features.assign(
-            reference_weight=forecast_model.reference_weights
+        forecast_reference=(
+            forecast_model.reference_features.assign(reference_weight=forecast_model.reference_weights)
+            if forecast_model is not None
+            else pd.DataFrame()
         ),
         evaluation=evaluation,
         context_alpha=context_alpha,
         context_curvature_alpha=context_curvature_alpha,
         context_temporal_alpha=context_temporal_alpha,
+        context_enabled=use_context,
+        context_reattribution_weight=context_reattribution_weight,
+        context_reattributions=context_reattributions,
+        context_reattribution_metadata=pd.DataFrame(context_reattribution_metadata),
         model_name=model_name,
         run_prefix=run_prefix,
         exposure_history=exposure_history,
         aging_models=aging_models,
         aging_curve_grid=(
             pd.concat(aging_curve_grids, ignore_index=True) if aging_curve_grids else pd.DataFrame()
+        ),
+        box_score_residual_models=box_score_residual_models,
+        box_score_residual_selection=(
+            pd.concat(box_score_residual_selections, ignore_index=True)
+            if box_score_residual_selections
+            else pd.DataFrame()
         ),
         training_metadata=pd.DataFrame(training_metadata),
         artifacts_dir=artifact_root,
@@ -300,12 +387,140 @@ def _context_offset(
     stints: pd.DataFrame,
     model: MatchupContextualModel,
     profiles: pd.DataFrame,
+    *,
+    reattribution: ContextProjection | None = None,
+    reattribution_weight: float = 0.0,
 ) -> np.ndarray:
-    return model.predict_lineups(
+    full_context = model.predict_lineups(
         stints["home_player_ids"].tolist(),
         stints["away_player_ids"].tolist(),
         profiles,
     )
+    if reattribution is None or not reattribution_weight:
+        return full_context
+    projected = _project_reattributed_player_context(stints, reattribution)
+    return full_context - reattribution_weight * projected
+
+
+def _context_predictor_with_reattribution(
+    model: MatchupContextualModel,
+    reattribution: ContextProjection | None,
+    reattribution_weight: float,
+) -> Callable[[object, object, object], np.ndarray]:
+    """Return residual context after its transferred player component is removed."""
+
+    def predict(home_lineups: object, away_lineups: object, profiles: object) -> np.ndarray:
+        full_context = model.predict_lineups(home_lineups, away_lineups, profiles)  # type: ignore[arg-type]
+        if reattribution is None or not reattribution_weight:
+            return full_context
+        stints = pd.DataFrame(
+            {"home_player_ids": home_lineups, "away_player_ids": away_lineups}
+        )
+        return full_context - reattribution_weight * _project_reattributed_player_context(
+            stints, reattribution
+        )
+
+    return predict
+
+
+def _project_reattributed_player_context(
+    stints: pd.DataFrame,
+    reattribution: ContextProjection,
+) -> np.ndarray:
+    """Evaluate one fitted player projection on lineups with no unseen-player credit."""
+
+    values = dict(zip(reattribution.player_ids, reattribution.coefficients, strict=True))
+    home = np.fromiter(
+        (
+            sum(values.get(int(player_id), 0.0) for player_id in lineup)
+            for lineup in stints["home_player_ids"]
+        ),
+        dtype=float,
+        count=len(stints),
+    )
+    away = np.fromiter(
+        (
+            sum(values.get(int(player_id), 0.0) for player_id in lineup)
+            for lineup in stints["away_player_ids"]
+        ),
+        dtype=float,
+        count=len(stints),
+    )
+    # The projection intercept is not portable player value. It remains in the
+    # context residual so transferring gamma cannot shift every matchup.
+    return home - away
+
+
+def _add_context_reattribution_to_priors(
+    priors: pd.DataFrame,
+    reattribution: ContextProjection | None,
+    *,
+    reattribution_weight: float,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Promote a fixed fraction of completed context into returning-player priors."""
+
+    output = priors.copy()
+    metadata: dict[str, object] = {
+        "context_reattribution_enabled": bool(reattribution_weight),
+        "context_reattribution_weight": reattribution_weight,
+        "context_reattribution_source_available": reattribution is not None,
+        "context_reattribution_returning_player_count": 0,
+    }
+    if reattribution is None or not reattribution_weight:
+        return output, metadata
+    values = pd.DataFrame(
+        {
+            "player_id": reattribution.player_ids,
+            "context_reattribution": reattribution.coefficients,
+        }
+    )
+    output = output.merge(values, on="player_id", how="left", validate="one_to_one")
+    available = output["context_reattribution"].notna()
+    output.loc[available, PRIOR_MEAN_COLUMN] += (
+        reattribution_weight * output.loc[available, "context_reattribution"]
+    )
+    metadata["context_reattribution_returning_player_count"] = int(available.sum())
+    metadata["context_reattribution_intercept_not_transferred"] = reattribution.intercept
+    return output.drop(columns="context_reattribution"), metadata
+
+
+def _context_reattribution_metadata(
+    *,
+    season: str,
+    stints: pd.DataFrame,
+    full_context: np.ndarray,
+    projection: ContextProjection,
+    reattribution_weight: float,
+) -> dict[str, object]:
+    weights = stints["possessions"].to_numpy(dtype=float)
+    mean = float(np.average(full_context, weights=weights))
+    total = float(np.sum(weights * np.square(full_context - mean)))
+    residual = projection.residual
+    residual_sum = float(np.sum(weights * np.square(residual)))
+    return {
+        "season": season,
+        "context_reattribution_weight": reattribution_weight,
+        "context_reattribution_lambda": projection.selected_lambda,
+        "context_reattribution_intercept": projection.intercept,
+        "context_reattribution_player_count": len(projection.player_ids),
+        "context_reattribution_weighted_r_squared": (
+            1.0 - residual_sum / total if total else float("nan")
+        ),
+        "context_reattribution_residual_rmse": float(
+            np.sqrt(np.average(np.square(residual), weights=weights))
+        ),
+    }
+
+
+def _zero_context_predictor(
+    home_lineups: object,
+    away_lineups: object,
+    profiles: object,
+) -> np.ndarray:
+    """Provide the player-only control with a compatible zero context state."""
+
+    del away_lineups, profiles
+    return np.zeros(len(home_lineups), dtype=float)  # type: ignore[arg-type]
 
 
 def _exposure_gated_player_priors(
@@ -396,11 +611,17 @@ def _write_run(
     context_alpha: float,
     context_curvature_alpha: float,
     context_temporal_alpha: float,
+    context_enabled: bool,
+    context_reattribution_weight: float,
+    context_reattributions: dict[str, ContextProjection],
+    context_reattribution_metadata: pd.DataFrame,
     model_name: str,
     run_prefix: str,
     exposure_history: list[pd.DataFrame],
     aging_models: dict[str, object],
     aging_curve_grid: pd.DataFrame,
+    box_score_residual_models: dict[str, object],
+    box_score_residual_selection: pd.DataFrame,
     training_metadata: pd.DataFrame,
     artifacts_dir: Path,
 ) -> ForwardPortableMatchupContextualRapmRun:
@@ -437,6 +658,7 @@ def _write_run(
             "season_model_metadata.parquet": season_model_metadata,
             "season_player_priors.parquet": priors,
             "season_context_metadata.parquet": contextual_metadata,
+            "season_context_reattribution_metadata.parquet": context_reattribution_metadata,
             "season_player_prior_metadata.parquet": prior_metadata,
             "frozen_2025_26_player_priors.parquet": target_priors,
             "target_player_profiles.parquet": target_profiles,
@@ -455,11 +677,34 @@ def _write_run(
                 run_id=run_id,
                 model=model_name,
             )
+        if not box_score_residual_selection.empty:
+            tables["season_box_score_residual_selection.parquet"] = box_score_residual_selection
+        if context_reattributions:
+            reattribution_rows = [
+                pd.DataFrame(
+                    {
+                        "season": season,
+                        "player_id": projection.player_ids,
+                        "context_reattribution": projection.coefficients,
+                        "context_reattribution_intercept": projection.intercept,
+                        "context_reattribution_lambda": projection.selected_lambda,
+                    }
+                )
+                for season, projection in context_reattributions.items()
+            ]
+            tables["season_context_reattributions.parquet"] = pd.concat(
+                reattribution_rows, ignore_index=True
+            )
         for filename, frame in tables.items():
             frame.to_parquet(temporary / filename, index=False)
         joblib.dump(contextual_models, temporary / "season_context_models.joblib")
         if aging_models:
             joblib.dump(aging_models, temporary / "season_aging_models.joblib")
+        if box_score_residual_models:
+            joblib.dump(
+                box_score_residual_models,
+                temporary / "season_box_score_residual_models.joblib",
+            )
         metadata = {
             "schema_version": 1,
             "run_id": run_id,
@@ -468,7 +713,14 @@ def _write_run(
             "context_alpha": context_alpha,
             "context_curvature_alpha": context_curvature_alpha,
             "context_temporal_alpha": context_temporal_alpha,
-            "contextual_offset_contract": "C_(t-1)(home, away) is subtracted before season t RAPM",
+            "context_enabled": context_enabled,
+            "context_reattribution_weight": context_reattribution_weight,
+            "contextual_offset_contract": (
+                "C_(t-1)(home, away) less its transferred player projection is subtracted "
+                "before season t RAPM"
+                if context_enabled
+                else "C_(t-1)(home, away) is identically zero in the controlled ablation"
+            ),
             "created_at": now.isoformat(),
             "code_version": modeling_code_fingerprint(
                 (Path(__file__), Path(__file__).with_name("matchup_contextual.py"))
@@ -572,7 +824,8 @@ def _season_model_metadata(
     prior = _serialize_nested_metadata(prior_metadata)
     context = _serialize_nested_metadata(contextual_metadata)
     output = lambdas.merge(prior, on="season", how="left", validate="one_to_one")
-    output = output.merge(context, on="season", how="left", validate="one_to_one")
+    if not context.empty:
+        output = output.merge(context, on="season", how="left", validate="one_to_one")
     output = output.merge(
         training_metadata,
         on="season",

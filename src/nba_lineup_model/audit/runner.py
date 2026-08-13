@@ -254,12 +254,17 @@ def _audit_reconstruction(
     if not segment_duration_conserved:
         failure_codes.add("audit:segment_duration_conservation_failed")
     if not balanced_possession_counts:
-        if unbalanced_possession_periods <= nonmonotonic_clock_periods:
-            warning_codes.add(
-                "audit:unbalanced_period_possession_counts_with_clock_anomaly"
-            )
-        else:
-            failure_codes.add("audit:unbalanced_period_possession_counts")
+        # A period may legitimately differ by more than one possession because
+        # of a quarter-ending score or timing edge. It remains a useful
+        # reconstruction diagnostic, but it is not a reason to discard a game
+        # whose events, possession segments, scores, and durations all
+        # conserve exactly. Hard data-integrity failures remain above.
+        code = (
+            "audit:unbalanced_period_possession_counts_with_clock_anomaly"
+            if unbalanced_possession_periods <= nonmonotonic_clock_periods
+            else "audit:unbalanced_period_possession_counts"
+        )
+        warning_codes.add(code)
     if spec.expected_overtime is not None and spec.expected_overtime != is_overtime:
         failure_codes.add("audit:overtime_expectation_mismatch")
     if (

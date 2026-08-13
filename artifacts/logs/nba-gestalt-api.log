@@ -1,0 +1,42 @@
+INFO:     Started server process [52503]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+INFO:     127.0.0.1:62944 - "GET /api/players?q=Curry&season=2017-18&limit=3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62970 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62955 - "POST /api/matchups HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63037 - "POST /api/matchups HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64030 - "GET /api/players/204001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64121 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64122 - "GET /api/players/204001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65151 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65152 - "GET /api/players/204001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65200 - "GET /api/default-opponent?season=2016-17 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65214 - "GET /api/default-opponent?season=2025-26 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65224 - "POST /api/matchups HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65232 - "POST /api/matchups HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65238 - "POST /api/matchups HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65247 - "POST /api/matchups HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65254 - "POST /api/matchups HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65267 - "POST /api/matchups HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65337 - "GET /api/lineups?season=2025-26&minimum_possessions=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65345 - "GET /api/rankings?season=2025-26 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65352 - "GET /api/players/204001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65366 - "GET /api/players/204001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65368 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65369 - "GET /api/players/204001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49162 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49163 - "GET /api/players/204001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49175 - "GET /api/headshots/1628983.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49174 - "GET /api/headshots/203497.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49167 - "GET /api/headshots/2544.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49169 - "GET /api/headshots/203999.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49171 - "GET /api/headshots/1628369.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49165 - "GET /api/headshots/201142.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49187 - "GET /api/headshots/204001.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49191 - "GET /api/headshots/1641705.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49206 - "GET /api/players/204001 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [52503]

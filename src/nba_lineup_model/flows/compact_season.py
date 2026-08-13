@@ -399,14 +399,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Rebuild partitions even when inputs and manifests match",
     )
-    parser.add_argument(
-        "--quality-eligible-only",
-        action="store_true",
-        help=(
-            "Publish only successful pass/warning games; intended for the "
-            "documented historical modeling subset"
-        ),
-    )
     parser.add_argument("--run-id", help="Optional caller-owned run identifier")
     return parser
 

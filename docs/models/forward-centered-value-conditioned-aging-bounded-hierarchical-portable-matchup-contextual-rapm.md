@@ -28,25 +28,29 @@ hierarchical portable-matchup contextual term:
 C(A,B)=h(x(A))-h(x(B))+q(x(A),x(B)).
 \]
 
-## Frozen 2025-26 Evaluation
+## Rebuilt Frozen 2025-26 Evaluation
 
-The completed strictly forward run is
-`forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260810T142633Z-3e4dd5da`.
-The final-season aging branch selected regularization `0.01` and recorded the
-value-conditioned feature in its season metadata.
+The historical raw-to-stint recovery rebuilt the one-season RAPM layer and the
+player-season panel before this strictly forward rerun:
+`forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm-2025-26-20260813T050955Z-c9b2e37d`.
+The final-season aging branch again selected regularization `0.01` and recorded
+the value-conditioned feature in its season metadata.
 
-| Metric | Centered Aging HPM | Value-Conditioned Aging HPM |
-| --- | ---: | ---: |
-| Regular possession RMSE | 1.198792 | **1.198763** |
-| Regular eligible game-margin RMSE | 14.3615 | **14.3469** |
-| Full-game margin RMSE | 14.6334 | **14.6242** |
-| Full-game winner accuracy | 68.13% | **68.37%** |
-| Team NetRtg RMSE | 3.7826 | **3.7568** |
-| Pythagorean wins RMSE | **7.9356** | 8.0346 |
+| Metric | Rebuilt Value-Conditioned Aging HPM |
+| --- | ---: |
+| Regular possession RMSE | **1.198736** |
+| Regular eligible game-margin RMSE | **14.3214** |
+| Full-game margin RMSE | **14.5898** |
+| Full-game winner accuracy | 68.46% |
+| Playoff possession RMSE | 1.192465 |
+| Playoff eligible game-margin RMSE | 16.4069 |
+| Team NetRtg RMSE | 3.5858 |
+| Pythagorean wins RMSE | 7.6300 |
 
-The candidate improves several lineup and team-rating metrics, but loses on
-the win-total metrics. It remains an evaluated candidate rather than an
-automatic production replacement.
+This is the current primary lineup-prediction reference: it has the best
+regular possession and eligible game-margin performance among the models
+rerun on the recovered history. The frozen leaderboard will be regenerated
+only after its full candidate set is rebuilt on the same data contract.
 
 See [the training guide](../guides/train-forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm.md)
 for the reproducible command and artifact contract.

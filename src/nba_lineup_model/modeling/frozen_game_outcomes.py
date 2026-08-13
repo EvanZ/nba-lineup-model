@@ -133,6 +133,26 @@ PROMOTED_MODELS: tuple[FrozenOutcomeModel, ...] = (
         "portable-matchup contextual RAPM",
     ),
     FrozenOutcomeModel(
+        "forward_centered_value_conditioned_aging_no_context_rapm",
+        "forward-centered-value-conditioned-aging-no-context-rapm",
+        "Controlled no-context value-conditioned aging RAPM",
+    ),
+    FrozenOutcomeModel(
+        "forward_context_reattributed_hpm",
+        "forward-context-reattributed-hpm",
+        "Forward context-reattributed HPM (rho=0.1)",
+    ),
+    FrozenOutcomeModel(
+        "forward_box_score_residual_hpm",
+        "forward-box-score-residual-hpm",
+        "Forward box-score residual HPM",
+    ),
+    FrozenOutcomeModel(
+        "forward_box_score_interaction_hpm",
+        "forward-box-score-interaction-hpm",
+        "Forward box-score interaction HPM",
+    ),
+    FrozenOutcomeModel(
         "forward_centered_era_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm",
         "forward-centered-era-conditioned-aging-bounded-hierarchical-"
         "portable-matchup-contextual-rapm",

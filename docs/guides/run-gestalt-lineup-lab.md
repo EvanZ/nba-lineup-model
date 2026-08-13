@@ -1,11 +1,11 @@
 ---
-last_updated: "2026-08-09"
+last_updated: "2026-08-13"
 ---
 
 # Run NBA GESTALT Locally
 
 NBA GESTALT is a local interactive Lineup Lab built around the completed
-2025-26 Forward Bounded Hierarchical Portable-Matchup Contextual RAPM state.
+2025-26 Value-Conditioned Aging HPM state.
 The browser app and API are separate processes during development.
 
 ## Install dependencies
@@ -32,10 +32,30 @@ uv run nba-gestalt-api --port 8001
 ```
 
 The API listens at `http://127.0.0.1:8001`. It loads the latest published
-`forward_bounded_hierarchical_portable_matchup_contextual_rapm/2025-26`
+`forward_centered_value_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm/2025-26`
 artifact on its first request. It retains that completed portable-model state
 in memory for the lifetime of the process. It does not read raw possession
 data or retrain a model for each browser session.
+
+## Materialize observed lineup rankings
+
+The **Lineups** page reads precomputed, retrospective regular-season five-man
+tables. Build the current season with:
+
+```bash
+uv run nba-build-gestalt-lineup-rankings --season 2025-26
+```
+
+Build the historical archive, from 1997-98 through 2025-26, with:
+
+```bash
+uv run nba-build-gestalt-lineup-rankings --all-seasons
+```
+
+Each table uses that season's completed-fit player ratings and contextual
+model, while player and context edges are weighted by the opponents a unit
+actually faced. The initial 1996-97 fit is excluded because it initializes the
+forward context state and has no completed contextual model.
 
 ## Start the Lineup Lab
 
@@ -55,6 +75,44 @@ side's empty slots with a random sample from the upper possession quartile,
 preserving already selected players and excluding the other side's selected
 players. The dice control disables once the side is full. Its trash control
 clears that side only.
+
+## Historical and mixed-era matchups
+
+Each lineup column has an independent **Season** selector. A selected unit is
+always drawn from exactly one completed-fit season, but the two units may come
+from different seasons. The **Evaluation era** control chooses which
+season's contextual functions score their profiles:
+
+- **Your unit** applies your unit's season-specific composition and matchup
+  functions.
+- **Opponent unit** applies the opponent's season-specific functions.
+- **Neutral** averages those two directional estimates. It is symmetric, but
+  is not yet a separately trained era-neutral model.
+
+Player ratings and prior-season profile inputs remain tied to each unit's own
+selected season. The environment changes only the contextual response surface.
+This makes the era assumption visible rather than silently comparing raw
+historical profiles on one fixed season's scale.
+
+Warm all completed historical response surfaces once with:
+
+```bash
+uv run nba-build-gestalt-response-cache --all-seasons
+```
+
+## Materialize player-team splits
+
+Player profile histories show the regular-season team split for players who
+appeared for more than one club. The primary label remains the team with the
+most reconstructed on-court possessions, but the table lists every team with
+its on-court possessions and games. Build the cached profile metadata with:
+
+```bash
+uv run nba-build-gestalt-player-team-splits
+```
+
+This is a display artifact only: a player's HIPSTER PM remains one completed
+season-wide estimate across all of that player's team stints.
 
 ## Current model contract
 
@@ -96,9 +154,11 @@ possession-weighted 5th-to-95th side-feature support.
 | Route | Purpose |
 | --- | --- |
 | `GET /api/health` | Loaded artifact identity and player count. |
-| `GET /api/players?q=<query>` | Accent-insensitive player search over the current model universe. |
+| `GET /api/players?q=<query>&season=<season>` | Accent-insensitive player search over one completed-fit season pool. |
 | `GET /api/players/{player_id}` | One display profile. |
-| `GET /api/default-opponent` | Random five-player sample from the upper possession quartile. |
+| `GET /api/rankings` | Completed-fit player rankings. |
+| `GET /api/lineups` | Materialized observed five-man rankings; accepts `season`, `minimum_possessions`, and repeated `player_id` parameters. |
+| `GET /api/default-opponent?season=<season>` | Random five-player sample from that season's upper possession quartile. |
 | `POST /api/matchups` | Score two distinct five-player units. |
 
 `POST /api/matchups` accepts:
@@ -106,7 +166,10 @@ possession-weighted 5th-to-95th side-feature support.
 ```json
 {
   "unit_player_ids": [203999, 201939, 202691, 203110, 202710],
-  "opponent_player_ids": [2544, 1629029, 1630162, 203507, 203954]
+  "opponent_player_ids": [2544, 1629029, 1630162, 203507, 203954],
+  "unit_season": "2017-18",
+  "opponent_season": "2025-26",
+  "environment": "neutral"
 }
 ```
 
