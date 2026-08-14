@@ -9,6 +9,8 @@ low-exposure replacement population used by the forward cold-start RAPM.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -47,6 +49,11 @@ PROFILE_COUNTS = {
     "blocks": "blocks",
 }
 PROFILE_RATE_COLUMNS = tuple(f"{trait}_per_100" for trait in PROFILE_COUNTS)
+PROFILE_REBOUND_PERCENT_COLUMNS = (
+    "offensive_rebound_pct",
+    "defensive_rebound_pct",
+)
+PROFILE_COLUMNS = (*PROFILE_RATE_COLUMNS, *PROFILE_REBOUND_PERCENT_COLUMNS)
 PROFILE_PSEUDO_POSSESSIONS = 300.0
 REPLACEMENT_SHARE_CUTOFF = 0.05
 
@@ -57,6 +64,7 @@ def build_contextual_player_profiles(
     target_season: str,
     target_player_ids: Iterable[int],
     analytical_dir: str = "data/analytical",
+    curated_dir: str = "data/curated",
     exposure_cohort: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build target player profiles using information available before a season.
@@ -106,15 +114,25 @@ def build_contextual_player_profiles(
         target_bios = pd.concat([target_bios, placeholders], ignore_index=True)
 
     reference = _league_reference_rates(history)
-    historical_rates = _rate_frame(history, reference)
+    historical_rates = _rate_frame(history, reference).merge(
+        _rebound_percentage_frame(
+            tuple(sorted(history["season"].astype(str).unique(), key=lambda value: int(value[:4]))),
+            curated_dir=curated_dir,
+        ),
+        on=["season", "player_id"],
+        how="left",
+        validate="one_to_one",
+    )
+    if historical_rates.loc[:, list(PROFILE_REBOUND_PERCENT_COLUMNS)].isna().any(axis=None):
+        raise ValueError("Contextual rebound percentage profiles are incomplete")
     previous = historical_rates.loc[historical_rates["season"].eq(source)].copy()
     returners = target_bios.merge(
-        previous.loc[:, ["player_id", *PROFILE_RATE_COLUMNS]],
+        previous.loc[:, ["player_id", *PROFILE_COLUMNS]],
         on="player_id",
         how="left",
         validate="one_to_one",
     )
-    has_prior_profile = returners.loc[:, list(PROFILE_RATE_COLUMNS)].notna().all(axis=1)
+    has_prior_profile = returners.loc[:, list(PROFILE_COLUMNS)].notna().all(axis=1)
 
     cohort_profiles = _rookie_cohort_profiles(
         historical_rates,
@@ -143,7 +161,7 @@ def build_contextual_player_profiles(
         )
         cold["profile_replacement_weight"] = probability
         cold_profiles = _cold_profiles(cold, cohort_profiles, replacement_profile)
-        for column in PROFILE_RATE_COLUMNS:
+        for column in PROFILE_COLUMNS:
             output.loc[~has_prior_profile, column] = cold_profiles[column].to_numpy(dtype=float)
         output.loc[~has_prior_profile, "profile_replacement_weight"] = probability
         output.loc[~has_prior_profile, "profile_source"] = np.where(
@@ -152,7 +170,7 @@ def build_contextual_player_profiles(
             "replacement_profile",
         )
 
-    if output.loc[:, list(PROFILE_RATE_COLUMNS)].isna().any(axis=None):
+    if output.loc[:, list(PROFILE_COLUMNS)].isna().any(axis=None):
         raise ValueError("Contextual profile construction left missing trait values")
     output["player_id"] = output["player_id"].astype("int64")
     output["target_season"] = target
@@ -167,7 +185,7 @@ def build_contextual_player_profiles(
                 "profile_source",
                 "profile_imputed",
                 "profile_replacement_weight",
-                *PROFILE_RATE_COLUMNS,
+                *PROFILE_COLUMNS,
             ],
         ]
         .sort_values("player_id", kind="stable")
@@ -218,12 +236,12 @@ def _rookie_cohort_profiles(rates: pd.DataFrame, bios: pd.DataFrame) -> pd.DataF
     for group, members in rookies.groupby("draft_profile_group", sort=True):
         row: dict[str, object] = {"draft_profile_group": group}
         weights = members["_possessions"].to_numpy(dtype=float)
-        for column in PROFILE_RATE_COLUMNS:
+        for column in PROFILE_COLUMNS:
             row[column] = float(np.average(members[column], weights=weights))
         rows.append(row)
     fallback = {"draft_profile_group": "all_rookies"}
     weights = rookies["_possessions"].to_numpy(dtype=float)
-    for column in PROFILE_RATE_COLUMNS:
+    for column in PROFILE_COLUMNS:
         fallback[column] = float(np.average(rookies[column], weights=weights))
     return pd.concat([pd.DataFrame(rows), pd.DataFrame([fallback])], ignore_index=True)
 
@@ -253,7 +271,7 @@ def _replacement_profile(
         raise ValueError("Contextual profiles found no historical replacement candidates")
     weights = keyed["_possessions"].to_numpy(dtype=float)
     return {
-        column: float(np.average(keyed[column], weights=weights)) for column in PROFILE_RATE_COLUMNS
+        column: float(np.average(keyed[column], weights=weights)) for column in PROFILE_COLUMNS
     }
 
 
@@ -266,7 +284,7 @@ def _cold_profiles(
     fallback = groups.loc["all_rookies"]
     output = pd.DataFrame(index=cold.index)
     profile_groups = _draft_profile_group(cold)
-    for column in PROFILE_RATE_COLUMNS:
+    for column in PROFILE_COLUMNS:
         draft = profile_groups.map(groups[column]).fillna(float(fallback[column]))
         output[column] = (
             1.0 - cold["profile_replacement_weight"].to_numpy(dtype=float)
@@ -372,6 +390,88 @@ def _count_columns() -> tuple[str, ...]:
         else:
             columns.add(value)
     return tuple(sorted(columns))
+
+
+def _rebound_percentage_frame(seasons: tuple[str, ...], *, curated_dir: str) -> pd.DataFrame:
+    frames = [_season_rebound_percentage(season, curated_dir) for season in seasons]
+    return pd.concat(frames, ignore_index=True)
+
+
+@lru_cache(maxsize=None)
+def _season_rebound_percentage(season: str, curated_dir: str) -> pd.DataFrame:
+    """Calculate standard player ORB% and DRB% from game-level opportunities."""
+
+    path = Path(curated_dir) / "players" / season / "regular"
+    players = pd.read_parquet(path)
+    required = {
+        "game_id",
+        "team_side",
+        "personId",
+        "statistics_minutes",
+        "statistics_reboundsOffensive",
+        "statistics_reboundsDefensive",
+    }
+    missing = required - set(players)
+    if missing:
+        raise ValueError(f"Player boxscores missing rebound percentage columns: {sorted(missing)}")
+    players = players.copy()
+    players["minutes"] = pd.to_timedelta(
+        players["statistics_minutes"], errors="coerce"
+    ).dt.total_seconds() / 60.0
+    players = players.loc[players["minutes"].gt(0)].copy()
+    players["player_id"] = pd.to_numeric(players["personId"], errors="raise").astype("int64")
+    players["offensive_rebounds"] = pd.to_numeric(
+        players["statistics_reboundsOffensive"], errors="raise"
+    ).astype(float)
+    players["defensive_rebounds"] = pd.to_numeric(
+        players["statistics_reboundsDefensive"], errors="raise"
+    ).astype(float)
+    team = players.groupby(["game_id", "team_side"], as_index=False).agg(
+        team_minutes=("minutes", "sum"),
+        team_offensive_rebounds=("offensive_rebounds", "sum"),
+        team_defensive_rebounds=("defensive_rebounds", "sum"),
+    )
+    other = team.rename(
+        columns={
+            "team_side": "opponent_side",
+            "team_offensive_rebounds": "opponent_offensive_rebounds",
+            "team_defensive_rebounds": "opponent_defensive_rebounds",
+        }
+    ).drop(columns=["team_minutes"])
+    players["opponent_side"] = np.where(players["team_side"].eq("home"), "away", "home")
+    players = players.merge(team, on=["game_id", "team_side"], how="left", validate="many_to_one")
+    players = players.merge(
+        other,
+        on=["game_id", "opponent_side"],
+        how="left",
+        validate="many_to_one",
+    )
+    defensive_opportunities = (
+        players["team_defensive_rebounds"] + players["opponent_offensive_rebounds"]
+    )
+    offensive_opportunities = (
+        players["team_offensive_rebounds"] + players["opponent_defensive_rebounds"]
+    )
+    if defensive_opportunities.le(0).any() or offensive_opportunities.le(0).any():
+        raise ValueError(f"Invalid rebound opportunities in {season}")
+    player_minutes_share = players["team_minutes"] / (5.0 * players["minutes"])
+    players["offensive_rebound_pct"] = (
+        100.0 * players["offensive_rebounds"] * player_minutes_share / offensive_opportunities
+    )
+    players["defensive_rebound_pct"] = (
+        100.0 * players["defensive_rebounds"] * player_minutes_share / defensive_opportunities
+    )
+    weighted = players.assign(
+        weighted_orb=players["offensive_rebound_pct"] * players["minutes"],
+        weighted_drb=players["defensive_rebound_pct"] * players["minutes"],
+    ).groupby("player_id", as_index=False).agg(
+        minutes=("minutes", "sum"),
+        weighted_orb=("weighted_orb", "sum"),
+        weighted_drb=("weighted_drb", "sum"),
+    )
+    weighted["offensive_rebound_pct"] = weighted["weighted_orb"] / weighted["minutes"]
+    weighted["defensive_rebound_pct"] = weighted["weighted_drb"] / weighted["minutes"]
+    return weighted.loc[:, ["player_id", *PROFILE_REBOUND_PERCENT_COLUMNS]].assign(season=season)
 
 
 def _bio_columns() -> list[str]:

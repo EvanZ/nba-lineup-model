@@ -1,0 +1,65 @@
+2026-08-13 12:30:24,242 INFO Starting Forward 1-year RAPM-prior baseline (1-season RAPM memory) through 2025-26
+2026-08-13 12:30:26,754 INFO Forward 1-year RAPM-prior baseline: fitted 1996-97; lambda=0.03; prior_players=0; fitted_players=441
+2026-08-13 12:30:29,514 INFO Forward 1-year RAPM-prior baseline: fitted 1997-98; lambda=0.1; prior_players=441; fitted_players=439
+2026-08-13 12:30:31,250 INFO Forward 1-year RAPM-prior baseline: fitted 1998-99; lambda=0.1; prior_players=439; fitted_players=441
+2026-08-13 12:30:34,580 INFO Forward 1-year RAPM-prior baseline: fitted 1999-00; lambda=0.03; prior_players=441; fitted_players=439
+2026-08-13 12:30:37,990 INFO Forward 1-year RAPM-prior baseline: fitted 2000-01; lambda=0.03; prior_players=439; fitted_players=441
+2026-08-13 12:30:40,889 INFO Forward 1-year RAPM-prior baseline: fitted 2001-02; lambda=0.03; prior_players=441; fitted_players=443
+2026-08-13 12:30:44,047 INFO Forward 1-year RAPM-prior baseline: fitted 2002-03; lambda=0.03; prior_players=443; fitted_players=433
+2026-08-13 12:30:47,793 INFO Forward 1-year RAPM-prior baseline: fitted 2003-04; lambda=0.1; prior_players=433; fitted_players=441
+2026-08-13 12:30:52,220 INFO Forward 1-year RAPM-prior baseline: fitted 2004-05; lambda=0.1; prior_players=441; fitted_players=464
+2026-08-13 12:30:56,252 INFO Forward 1-year RAPM-prior baseline: fitted 2005-06; lambda=0.1; prior_players=464; fitted_players=458
+2026-08-13 12:30:59,953 INFO Forward 1-year RAPM-prior baseline: fitted 2006-07; lambda=0.1; prior_players=458; fitted_players=458
+2026-08-13 12:31:03,890 INFO Forward 1-year RAPM-prior baseline: fitted 2007-08; lambda=0.1; prior_players=458; fitted_players=451
+2026-08-13 12:31:07,105 INFO Forward 1-year RAPM-prior baseline: fitted 2008-09; lambda=0.03; prior_players=451; fitted_players=445
+2026-08-13 12:31:10,116 INFO Forward 1-year RAPM-prior baseline: fitted 2009-10; lambda=0.03; prior_players=445; fitted_players=442
+2026-08-13 12:31:13,225 INFO Forward 1-year RAPM-prior baseline: fitted 2010-11; lambda=0.1; prior_players=442; fitted_players=452
+2026-08-13 12:31:15,409 INFO Forward 1-year RAPM-prior baseline: fitted 2011-12; lambda=0.1; prior_players=452; fitted_players=478
+2026-08-13 12:31:18,401 INFO Forward 1-year RAPM-prior baseline: fitted 2012-13; lambda=0.03; prior_players=478; fitted_players=469
+2026-08-13 12:31:21,333 INFO Forward 1-year RAPM-prior baseline: fitted 2013-14; lambda=0.1; prior_players=469; fitted_players=482
+2026-08-13 12:31:24,539 INFO Forward 1-year RAPM-prior baseline: fitted 2014-15; lambda=0.1; prior_players=482; fitted_players=492
+2026-08-13 12:31:27,484 INFO Forward 1-year RAPM-prior baseline: fitted 2015-16; lambda=0.03; prior_players=492; fitted_players=476
+2026-08-13 12:31:30,564 INFO Forward 1-year RAPM-prior baseline: fitted 2016-17; lambda=0.1; prior_players=476; fitted_players=486
+2026-08-13 12:31:33,852 INFO Forward 1-year RAPM-prior baseline: fitted 2017-18; lambda=0.03; prior_players=486; fitted_players=539
+2026-08-13 12:31:37,483 INFO Forward 1-year RAPM-prior baseline: fitted 2018-19; lambda=0.1; prior_players=539; fitted_players=530
+2026-08-13 12:31:41,114 INFO Forward 1-year RAPM-prior baseline: fitted 2019-20; lambda=0.1; prior_players=530; fitted_players=529
+2026-08-13 12:31:43,947 INFO Forward 1-year RAPM-prior baseline: fitted 2020-21; lambda=0.1; prior_players=529; fitted_players=540
+2026-08-13 12:31:47,181 INFO Forward 1-year RAPM-prior baseline: fitted 2021-22; lambda=0.1; prior_players=540; fitted_players=605
+2026-08-13 12:31:50,255 INFO Forward 1-year RAPM-prior baseline: fitted 2022-23; lambda=0.1; prior_players=605; fitted_players=538
+2026-08-13 12:32:02,609 INFO Forward 1-year RAPM-prior baseline: fitted 2023-24; lambda=0.1; prior_players=538; fitted_players=571
+2026-08-13 12:32:12,325 INFO Forward 1-year RAPM-prior baseline: fitted 2024-25; lambda=0.1; prior_players=571; fitted_players=567
+2026-08-13 12:32:23,311 INFO Forward 1-year RAPM-prior baseline: fitted 2025-26; lambda=0.03; prior_players=567; fitted_players=582
+2026-08-13 12:32:23,313 INFO Starting Forward 3-year RAPM-prior baseline (3-season RAPM memory) through 2025-26
+2026-08-13 12:32:25,817 INFO Forward 3-year RAPM-prior baseline: fitted 1996-97; lambda=0.03; prior_players=0; fitted_players=441
+2026-08-13 12:32:28,627 INFO Forward 3-year RAPM-prior baseline: fitted 1997-98; lambda=0.1; prior_players=441; fitted_players=439
+2026-08-13 12:32:30,934 INFO Forward 3-year RAPM-prior baseline: fitted 1998-99; lambda=0.1; prior_players=529; fitted_players=441
+2026-08-13 12:32:34,209 INFO Forward 3-year RAPM-prior baseline: fitted 1999-00; lambda=0.03; prior_players=606; fitted_players=439
+2026-08-13 12:32:37,685 INFO Forward 3-year RAPM-prior baseline: fitted 2000-01; lambda=0.03; prior_players=594; fitted_players=441
+2026-08-13 12:32:40,413 INFO Forward 3-year RAPM-prior baseline: fitted 2001-02; lambda=0.03; prior_players=599; fitted_players=443
+2026-08-13 12:32:42,997 INFO Forward 3-year RAPM-prior baseline: fitted 2002-03; lambda=0.03; prior_players=600; fitted_players=433
+2026-08-13 12:32:45,762 INFO Forward 3-year RAPM-prior baseline: fitted 2003-04; lambda=0.1; prior_players=594; fitted_players=441
+2026-08-13 12:32:48,866 INFO Forward 3-year RAPM-prior baseline: fitted 2004-05; lambda=0.03; prior_players=589; fitted_players=464
+2026-08-13 12:32:52,450 INFO Forward 3-year RAPM-prior baseline: fitted 2005-06; lambda=0.1; prior_players=601; fitted_players=458
+2026-08-13 12:32:55,876 INFO Forward 3-year RAPM-prior baseline: fitted 2006-07; lambda=0.1; prior_players=614; fitted_players=458
+2026-08-13 12:32:59,040 INFO Forward 3-year RAPM-prior baseline: fitted 2007-08; lambda=0.1; prior_players=640; fitted_players=451
+2026-08-13 12:33:02,171 INFO Forward 3-year RAPM-prior baseline: fitted 2008-09; lambda=0.03; prior_players=614; fitted_players=445
+2026-08-13 12:33:05,135 INFO Forward 3-year RAPM-prior baseline: fitted 2009-10; lambda=0.03; prior_players=604; fitted_players=442
+2026-08-13 12:33:08,403 INFO Forward 3-year RAPM-prior baseline: fitted 2010-11; lambda=0.1; prior_players=592; fitted_players=452
+2026-08-13 12:33:10,555 INFO Forward 3-year RAPM-prior baseline: fitted 2011-12; lambda=0.1; prior_players=593; fitted_players=478
+2026-08-13 12:33:13,556 INFO Forward 3-year RAPM-prior baseline: fitted 2012-13; lambda=0.03; prior_players=611; fitted_players=469
+2026-08-13 12:33:16,739 INFO Forward 3-year RAPM-prior baseline: fitted 2013-14; lambda=0.1; prior_players=635; fitted_players=482
+2026-08-13 12:33:22,033 INFO Forward 3-year RAPM-prior baseline: fitted 2014-15; lambda=0.1; prior_players=657; fitted_players=492
+2026-08-13 12:33:27,073 INFO Forward 3-year RAPM-prior baseline: fitted 2015-16; lambda=0.03; prior_players=654; fitted_players=476
+2026-08-13 12:33:31,993 INFO Forward 3-year RAPM-prior baseline: fitted 2016-17; lambda=0.1; prior_players=655; fitted_players=486
+2026-08-13 12:33:36,997 INFO Forward 3-year RAPM-prior baseline: fitted 2017-18; lambda=0.03; prior_players=665; fitted_players=539
+2026-08-13 12:33:41,281 INFO Forward 3-year RAPM-prior baseline: fitted 2018-19; lambda=0.1; prior_players=713; fitted_players=530
+2026-08-13 12:33:43,919 INFO Forward 3-year RAPM-prior baseline: fitted 2019-20; lambda=0.1; prior_players=744; fitted_players=529
+2026-08-13 12:33:46,426 INFO Forward 3-year RAPM-prior baseline: fitted 2020-21; lambda=0.1; prior_players=778; fitted_players=540
+2026-08-13 12:33:49,692 INFO Forward 3-year RAPM-prior baseline: fitted 2021-22; lambda=0.1; prior_players=756; fitted_players=605
+2026-08-13 12:33:52,781 INFO Forward 3-year RAPM-prior baseline: fitted 2022-23; lambda=0.1; prior_players=775; fitted_players=538
+2026-08-13 12:34:05,871 INFO Forward 3-year RAPM-prior baseline: fitted 2023-24; lambda=0.03; prior_players=783; fitted_players=571
+2026-08-13 12:34:15,816 INFO Forward 3-year RAPM-prior baseline: fitted 2024-25; lambda=0.1; prior_players=817; fitted_players=567
+2026-08-13 12:34:27,323 INFO Forward 3-year RAPM-prior baseline: fitted 2025-26; lambda=0.03; prior_players=768; fitted_players=582
+/Users/evanzamir/projects/nba-lineup-model/src/nba_lineup_model/modeling/forward_rapm_memory_baselines.py:289: FutureWarning: The behavior of DataFrame concatenation with empty or all-NA entries is deprecated. In a future version, this will no longer exclude empty or all-NA columns when determining the result dtypes. To retain the old behavior, exclude the relevant entries before the concat operation.
+  outputs["season_player_priors"] = pd.concat(prior_frames, ignore_index=True)
+Forward RAPM memory baselines: run=artifacts/models/forward_rapm_memory_prior_baselines/2023-24_to_2025-26/forward-rapm-memory-baselines-2023-24-to-2025-26-20260813T193428Z-799a1976; mlflow_run_id=133a889abde14e5782932196d4b53760

@@ -1,8 +1,8 @@
 (() => {
   function value(cell) {
     const text = cell.textContent.trim().replaceAll(",", "");
-    const numeric = Number(text);
-    return Number.isFinite(numeric) ? numeric : text.toLocaleLowerCase();
+    const numeric = text.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))%?(?:\s*\(\d+\))?$/);
+    return numeric ? Number(numeric[1]) : text.toLocaleLowerCase();
   }
 
   function sortTable(table, column, direction) {
@@ -47,8 +47,11 @@
     if (!headerRow || !table.tBodies[0]) return false;
 
     const headers = [...headerRow.cells].map((header) => header.textContent.trim());
+    const isModelLeaderboard = headers.some((header) => /^model$/i.test(header))
+      && headers.some((header) => /\b(?:rmse|mae|skill|accuracy)\b/i.test(header));
     return headers.some((header) => /\brank\b/i.test(header))
-      || /\brankings?\b/i.test(nearestHeading(table));
+      || /\b(?:rankings?|leaderboard)\b/i.test(nearestHeading(table))
+      || isModelLeaderboard;
   }
 
   function enhance(table) {

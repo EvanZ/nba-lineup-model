@@ -80,8 +80,9 @@ uv run --group docs zensical build --clean --strict
 The [Model Evolution](../models/#model-evolution) section is a static D3
 visualization. Its versioned data registry is
 `docs/assets/data/model-tree.json`; update it after a model has both an
-evaluation artifact and a documentation page. Run the focused registry check
-after editing it:
+evaluation artifact and a documentation page. Each node must use metrics from
+the same declared data-recovery and evaluation contract as its parent branch.
+Run the focused registry check after editing it:
 
 ```bash
 uv run --group dev pytest tests/test_model_tree_registry.py
@@ -95,12 +96,14 @@ separate visualization service is required.
 
 ## Sortable rankings
 
-Ranking tables are enhanced by `docs/javascripts/sortable-tables.js` at page
-load. Any table with a rank-style column heading, or located under a heading
-containing "ranking", receives sortable column headers automatically. Keep
-the source table as ordinary Markdown; no per-page HTML or JavaScript is
-required. In draft tables, an undrafted `Pick` value (`-`) remains after all
-numeric draft picks in either sort direction.
+Ranking tables and model leaderboards are enhanced by
+`docs/javascripts/sortable-tables.js` at page load. Any table with a rank-style
+column heading, located under a ranking/leaderboard heading, or with a `Model`
+column plus a standard evaluation metric receives sortable column headers.
+Metric cells may append a rank such as `1.198010 (1)` and still sort by the
+metric value. Keep the source table as ordinary Markdown; no per-page HTML or
+JavaScript is required. In draft tables, an undrafted `Pick` value (`-`)
+remains after all numeric draft picks in either sort direction.
 
 Before committing documentation changes, run the strict build and inspect the
 affected pages in the preview server.

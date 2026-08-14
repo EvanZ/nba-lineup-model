@@ -1,62 +1,45 @@
 ---
-last_updated: "2026-08-12"
+last_updated: "2026-08-13"
 ---
 
-# Three-Season Frozen Backtest
+# Three-Season Frozen Leaderboard
 
-This backtest replays 2023-24, 2024-25, and 2025-26 from the completed
-recursive states already retained by each model artifact. It does **not** train
-three new HPM models.
+Every candidate forecasts 2023-24, 2024-25, and 2025-26 from information
+available before each target season begins. Target-season lineup allocation is
+an oracle input; target outcomes never enter the frozen forecast. Bold values
+are pooled leaders. Lower is better except skill and winner accuracy.
 
-For target season \(t\), the replay uses:
+## Regular Season
 
-\[
-\text{player prior } \mu_t, \qquad
-\text{context state } C_{t-1}, \qquad
-\text{target-season realized lineup allocation}.
-\]
+Pooled over 584,970 eligible possessions from 3,284 games. Full-game and team
+metrics cover 3,511 reconstructed games.
 
-The player prior was built before \(t\); the context model was fitted only to
-the immediately preceding completed season. Target-season scores, player
-updates, and context refits are excluded. As with the Frozen Leaderboard,
-realized lineup exposure is an oracle input. The common three-season report is
-regular season only because historical playoff possession partitions are not
-yet materialized for 2023-24 and 2024-25; 2025-26 playoffs remain separately
-evaluated on the Frozen Preseason Leaderboard.
+| Model | Poss. RMSE | Poss. MAE | Poss. skill | Eligible game RMSE | Eligible game skill | Full-game RMSE | Winner accuracy | Team NetRtg RMSE | Pythagorean-win RMSE |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| HPM v2.2 usage allocation | **1.198004 (1)** | **1.141380 (1)** | **0.1182% (1)** | 14.1464 (4) | 16.7730% (4) | 14.4050 (4) | 67.47% (5) | 3.4802 (4) | 7.4793 (4) |
+| HPM v2.1 empirical rebound capacity | 1.198010 (2) | 1.141403 (3) | 0.1171% (2) | **14.1340 (1)** | **16.9193% (1)** | 14.3869 (2) | 67.67% (3) | 3.4365 (2) | 7.3881 (2) |
+| Value-Conditioned Aging HPM | 1.198010 (3) | 1.141402 (2) | 0.1171% (3) | 14.1342 (2) | 16.9169% (2) | **14.3802 (1)** | **67.84% (1)** | **3.4290 (1)** | **7.3532 (1)** |
+| HPM v2 shooting composition | 1.198022 (4) | 1.141404 (4) | 0.1151% (4) | 14.1409 (3) | 16.8378% (3) | 14.3908 (3) | 67.70% (2) | 3.4592 (3) | 7.4282 (3) |
+| Complete player-prior RAPM, no context or box score | 1.198061 (5) | 1.141675 (5) | 0.1086% (5) | 14.2105 (5) | 16.0175% (5) | 14.4756 (5) | 67.64% (4) | 3.6754 (5) | 7.7561 (5) |
+| Forward 1-year RAPM-prior baseline | 1.198196 (6) | 1.141757 (6) | 0.0861% (6) | 14.5265 (6) | 12.2406% (6) | 14.8154 (6) | 65.39% (6) | 4.2374 (6) | 9.1066 (6) |
+| Forward 3-year RAPM-prior baseline | 1.198246 (7) | 1.141950 (7) | 0.0778% (7) | 14.6559 (7) | 10.6699% (7) | 14.9714 (7) | 64.68% (7) | 4.5326 (7) | 9.7789 (7) |
 
-The initial comparison holds the shared recursive architecture fixed and tests
-only the box-score prior branches: Value-Conditioned Aging HPM, additive
-box-score residual HPM, and box-score interaction HPM.
+## Playoffs
 
-Each model is scored on 584,970 regular-season possessions from 3,284 games.
-The full-game and team summaries cover 3,280 games with complete reconstructed
-stint allocations. Bold values are the pooled leaders; lower is better except
-for winner accuracy.
+Pooled over 39,967 eligible possessions from 238 games. Each playoff cohort
+uses its matching frozen pre-season player prior and prior-year context state;
+postseason outcomes are evaluation-only.
 
-<!-- frozen-multiseason-results:start -->
-## Results
+| Model | Poss. RMSE | Poss. MAE | Poss. skill | Eligible game RMSE | Eligible game skill |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HPM v2 shooting composition | **1.192759 (1)** | **1.137652 (1)** | **0.0564% (1)** | 16.6913 (4) | 6.6559% (4) |
+| Complete player-prior RAPM, no context or box score | 1.192761 (2) | 1.137741 (5) | 0.0559% (2) | **16.6068 (1)** | **7.5991% (1)** |
+| HPM v2.1 empirical rebound capacity | 1.192772 (3) | 1.137654 (2) | 0.0542% (3) | 16.6701 (2) | 6.8932% (2) |
+| Value-Conditioned Aging HPM | 1.192792 (4) | 1.137701 (4) | 0.0508% (4) | 16.7155 (5) | 6.3851% (5) |
+| HPM v2.2 usage allocation | 1.192807 (5) | 1.137656 (3) | 0.0482% (5) | 16.6806 (3) | 6.7759% (3) |
+| Forward 3-year RAPM-prior baseline | 1.193041 (6) | 1.137974 (7) | 0.0091% (6) | 17.1808 (6) | 1.1016% (6) |
+| Forward 1-year RAPM-prior baseline | 1.193123 (7) | 1.137869 (6) | -0.0047% (7) | 17.2902 (7) | -0.1627% (7) |
 
-Artifact: `artifacts/models/frozen_multiseason_backtest/2023-24_to_2025-26/frozen_multiseason_backtest-2023-24-to-2025-26-20260813T000545Z-96b58af1`.
-
-### Pooled Regular Season
-
-| Model | Possession RMSE | Eligible game RMSE | Full-game RMSE | Winner accuracy | Team NetRtg RMSE | Pythagorean-win RMSE |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Value-Conditioned Aging HPM | **1.198035** | **14.1535** | 14.3850 | 67.38% | 3.5674 | 7.1120 |
-| Forward box-score residual HPM | 1.198038 | 14.1574 | **14.3833** | **67.71%** | **3.5458** | **7.0331** |
-| Forward box-score interaction HPM | 1.198040 | 14.1647 | 14.3921 | 67.68% | 3.5514 | 7.0392 |
-
-### Per-Season Regular Results
-
-| Season | Model | Possession RMSE | Eligible game RMSE |
-| --- | --- | ---: | ---: |
-| 2023-24 | Forward box-score interaction HPM | 1.193125 | 13.7709 |
-| 2023-24 | Forward box-score residual HPM | 1.193126 | 13.7590 |
-| 2023-24 | Value-Conditioned Aging HPM | 1.193127 | 13.7577 |
-| 2024-25 | Forward box-score interaction HPM | 1.202047 | 14.3191 |
-| 2024-25 | Forward box-score residual HPM | 1.202041 | 14.3108 |
-| 2024-25 | Value-Conditioned Aging HPM | 1.202038 | 14.3093 |
-| 2025-26 | Forward box-score interaction HPM | 1.198771 | 14.3577 |
-| 2025-26 | Forward box-score residual HPM | 1.198770 | 14.3548 |
-| 2025-26 | Value-Conditioned Aging HPM | 1.198763 | 14.3469 |
-<!-- frozen-multiseason-results:end -->
+See [Forward RAPM Memory Baselines](forward-rapm-memory-baselines.md) and
+[Complete Player-Prior RAPM Baseline](complete-player-prior-baseline.md) for
+model specifications, annual lambda selections, and immutable artifacts.

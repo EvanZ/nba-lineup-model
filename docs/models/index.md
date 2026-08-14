@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-09"
+last_updated: "2026-08-13"
 ---
 
 # Models
@@ -16,13 +16,13 @@ strictly nested. The selector redraws the vertical ordering by the selected
 out-of-sample metric; rank 1 is best among models eligible for that metric.
 The exact score and parent delta remain visible on every node.
 
-The default view uses frozen 2025-26 regular-season game-margin RMSE because it
-matches the project’s preseason forecasting contract. Models without a result
-under the selected contract remain visible in the unranked lane to preserve the
-full methodological lineage. Use the in-season choices to compare the
-one-season neural and tree branches on their separate chronological holdout.
+The default view uses the recovered-coverage rolling three-season regular
+game-margin RMSE, the project’s current rigorous preseason contract. Models
+without a result under the selected contract remain visible in the unranked
+lane to preserve the full methodological lineage. The older frozen-2025-26 and
+in-season selectors remain available for their respective historical snapshots.
 
-<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260812-box-score-hpm">
+<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260813-rolling-rapm">
   <div class="model-tree__loading" role="status">Loading model evolution…</div>
 </div>
 
@@ -64,6 +64,8 @@ metrics, and malformed metric values.
 | RAPM aging model | Forward player-season priors from prior RAPM and age |
 | Age-informed prior RAPM | Lineup RAPM centered on the frozen aging forecast |
 | Forward RAPM calibration | Frozen lagged RAPM mapped to team wins using realized lineup seconds |
+| Forward RAPM memory baselines | Strict rolling one- and three-season RAPM priors across three frozen target seasons |
+| Complete player-prior RAPM baseline | Aging, value conditioning, and exposure-gated cold starts without context or box-score priors |
 | Frozen 1-year no-prior RAPM | Completed 2024-25 zero-centered RAPM scored on 2025-26 oracle lineups |
 | Frozen pooled 3-year no-prior RAPM | One zero-centered coefficient fit across 2022-23 through 2024-25 |
 | Frozen lagged RAPM | Preseason 2024-25 player values scored on all 2025-26 oracle lineups |
@@ -137,6 +139,19 @@ one-number cold-start prior recursively across completed seasons.
 [Controlled No-Context Value-Conditioned RAPM](forward-centered-value-conditioned-aging-no-context-rapm.md)
 is the direct HPM ablation: it preserves the current player-prior state but
 removes only the recursive lineup-context state.
+
+[HIPSTER PM v2: Depth-Aware Shooting](hpm-v2.md) is the current contextual
+feature experiment. It replaces raw lineup three-point totals with depth,
+capped capacity, and concentration representations while preserving the
+incumbent HPM training contract.
+
+[HIPSTER PM v2.1: Empirical Rebound Capacity](hpm-v21.md) retains that shooting
+representation and replaces rebound-volume summaries with capped player ORB%
+and DRB% unit capacity.
+
+[HIPSTER PM v2.2: Usage Allocation](hpm-v22.md) keeps v2.1's empirical rebound
+capacity and replaces raw usage and turnover volume with four continuous,
+forward-calibrated terminal-action allocation features.
 
 [Forward Context-Reattributed HPM](forward-context-reattributed-hpm.md)
 tests whether some player-projectable context should persist in the next-season

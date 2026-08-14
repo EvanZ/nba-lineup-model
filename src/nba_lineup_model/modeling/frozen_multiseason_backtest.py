@@ -34,6 +34,7 @@ from nba_lineup_model.modeling.frozen_game_outcomes import score_full_game_outco
 from nba_lineup_model.modeling.frozen_prior_evaluation import (
     _game_prediction_frame,
     _historical_team_seasons,
+    _read_playoff_possessions,
     _read_regular_possessions,
     _recover_home_intercept,
     _team_net_rating_metrics,
@@ -48,7 +49,7 @@ from nba_lineup_model.modeling.stints import read_rapm_stints
 from nba_lineup_model.season.schema import validate_season
 
 DEFAULT_SEASONS = ("2023-24", "2024-25", "2025-26")
-DEFAULT_DOCS_PATH = Path("docs/models/three-season-frozen-backtest.md")
+DEFAULT_DOCS_PATH: Path | None = None
 REPORT_NAME = "frozen_multiseason_backtest"
 
 
@@ -65,8 +66,15 @@ BACKTEST_MODELS = (
         "forward_centered_value_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm",
         "Value-Conditioned Aging HPM",
     ),
-    BacktestModel("forward_box_score_residual_hpm", "Forward box-score residual HPM"),
-    BacktestModel("forward_box_score_interaction_hpm", "Forward box-score interaction HPM"),
+    BacktestModel("forward_hpm_v2_depth_aware_shooting", "HPM v2 shooting composition"),
+    BacktestModel(
+        "forward_hpm_v21_empirical_rebound_capacity",
+        "HPM v2.1 empirical rebound capacity",
+    ),
+    BacktestModel(
+        "forward_hpm_v22_usage_allocation",
+        "HPM v2.2 usage allocation",
+    ),
 )
 
 
@@ -200,7 +208,7 @@ def _replay_regular_target_season(
     curated_dir: Path,
     profiles: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame | dict[str, object]]:
-    """Replay a target regular season using its frozen prior context boundary."""
+    """Replay regular season and, when available, playoffs from one frozen state."""
 
     source = _previous_season(target)
     stints = read_rapm_stints(target, analytical_dir=analytical_dir)
@@ -237,6 +245,34 @@ def _replay_regular_target_season(
         source_mean=source_mean,
         source_home_intercept=source_home_intercept,
     )
+    predictions = [regular_predictions]
+    cohort_metrics = [
+        score_possession_cohort(
+            regular_predictions,
+            source_mean=source_mean,
+            model=state.candidate.model,
+        )
+    ]
+    playoff_available = _playoff_partition_exists(target, curated_dir)
+    if playoff_available:
+        playoff_possessions, _ = _read_playoff_possessions(target, curated_dir)
+        playoff_predictions = _score_possessions(
+            playoff_possessions,
+            cohort="playoffs",
+            profiles=profiles,
+            context_predictor=model.predict_lineups,
+            priors=prior_frame,
+            source_mean=source_mean,
+            source_home_intercept=source_home_intercept,
+        )
+        predictions.append(playoff_predictions)
+        cohort_metrics.append(
+            score_possession_cohort(
+                playoff_predictions,
+                source_mean=source_mean,
+                model=state.candidate.model,
+            )
+        )
     regular_games, team_net_ratings = _contextual_stint_predictions(
         stints,
         profiles=profiles,
@@ -263,20 +299,20 @@ def _replay_regular_target_season(
             "target_regular_outcomes_used_for_fit": False,
             "target_playoff_outcomes_used_for_fit": False,
             "oracle_information": "realized target-season regular-season lineups and exposure only",
-            "playoffs_evaluated": False,
-            "playoffs_exclusion_reason": "historical playoff possession partitions unavailable",
+            "playoffs_evaluated": playoff_available,
+            "playoffs_exclusion_reason": (
+                None if playoff_available else "historical playoff possession partition unavailable"
+            ),
             "source_run_id": state.run_id,
             "replay_mode": "persisted_recursive_state_no_refit",
             "replay_context_model_season": source,
             "replay_player_prior_season": target,
         },
-        "cohort_metrics": score_possession_cohort(
-            regular_predictions,
-            source_mean=source_mean,
-            model=state.candidate.model,
+        "cohort_metrics": pd.concat(cohort_metrics, ignore_index=True),
+        "possession_predictions": pd.concat(predictions, ignore_index=True),
+        "game_predictions": pd.concat(
+            [_game_prediction_frame(predictions) for predictions in predictions], ignore_index=True
         ),
-        "possession_predictions": regular_predictions,
-        "game_predictions": _game_prediction_frame(regular_predictions),
         "regular_game_predictions": regular_games,
         "team_net_rating_predictions": team_net_ratings,
         "team_net_rating_metrics": _team_net_rating_metrics(
@@ -310,6 +346,12 @@ def _target_contextual_profiles(
         analytical_dir=str(analytical_dir),
         exposure_cohort=exposure_cohort,
     )
+
+
+def _playoff_partition_exists(season: str, curated_dir: Path) -> bool:
+    return (
+        curated_dir / "possession_segments" / season / "playoffs" / "_manifest.json"
+    ).is_file()
 
 
 def _collect_outputs(evaluations: Sequence[dict[str, object]]) -> dict[str, pd.DataFrame]:
@@ -573,6 +615,32 @@ def _update_docs(
             f"| {row.season} | {row.label} | {row.possession_rmse:.6f} | "
             f"{row.eligible_possession_game_margin_rmse:.4f} |"
         )
+    playoff_metrics = outputs["cohort_metrics"].loc[
+        outputs["cohort_metrics"]["cohort"].eq("playoffs")
+    ].copy()
+    if not playoff_metrics.empty:
+        lines.extend(
+            [
+                "",
+                "### Frozen Playoff Check",
+                "",
+                (
+                    "Each playoff cohort uses the same pre-playoff player priors and prior-season "
+                    "context state as its matching regular-season forecast. Playoff outcomes are "
+                    "evaluation-only and never enter the fitted state."
+                ),
+                "",
+                "| Season | Model | Possession RMSE | Eligible game RMSE |",
+                "| --- | --- | ---: | ---: |",
+            ]
+        )
+        for row in playoff_metrics.sort_values(["season", "label"], kind="stable").itertuples(
+            index=False
+        ):
+            lines.append(
+                f"| {row.season} | {row.label} | {row.possession_rmse:.6f} | "
+                f"{row.eligible_possession_game_margin_rmse:.4f} |"
+            )
     lines.extend([end, ""])
     content = path.read_text()
     before, marker, after = content.partition(start)

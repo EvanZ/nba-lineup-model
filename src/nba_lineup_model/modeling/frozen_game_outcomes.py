@@ -133,6 +133,11 @@ PROMOTED_MODELS: tuple[FrozenOutcomeModel, ...] = (
         "portable-matchup contextual RAPM",
     ),
     FrozenOutcomeModel(
+        "forward_hpm_v2_depth_aware_shooting",
+        "hpm-v2-depth-aware-shooting",
+        "HIPSTER PM v2: Depth-Aware Shooting",
+    ),
+    FrozenOutcomeModel(
         "forward_centered_value_conditioned_aging_no_context_rapm",
         "forward-centered-value-conditioned-aging-no-context-rapm",
         "Controlled no-context value-conditioned aging RAPM",

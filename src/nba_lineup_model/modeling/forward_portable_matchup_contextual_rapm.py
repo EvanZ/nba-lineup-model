@@ -7,7 +7,7 @@ import hashlib
 import json
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -20,7 +20,13 @@ from nba_lineup_model.modeling.context_reattributed_rapm import (
     ContextProjection,
     fit_context_projection,
 )
-from nba_lineup_model.modeling.contextual_features import lineup_side_context_features
+from nba_lineup_model.modeling.contextual_features import (
+    CONTEXT_FEATURE_SET_V1,
+    CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY,
+    CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION,
+    contextual_feature_columns,
+    lineup_side_context_features,
+)
 from nba_lineup_model.modeling.contextual_prior import _evaluate_target, _lineup_effects
 from nba_lineup_model.modeling.contextual_profiles import build_contextual_player_profiles
 from nba_lineup_model.modeling.forward_contextual_rapm import (
@@ -56,6 +62,14 @@ from nba_lineup_model.modeling.replacement_level import (
     player_exposure_shares,
     prepare_player_exposure_cohort,
 )
+from nba_lineup_model.modeling.rebound_opportunity import (
+    ReboundOpportunityModel,
+    fit_rebound_opportunity_model,
+)
+from nba_lineup_model.modeling.usage_allocation import (
+    UsageAllocationModel,
+    fit_usage_allocation_model,
+)
 from nba_lineup_model.modeling.stints import (
     build_rapm_stints_from_legacy_processed_games,
     modeling_code_fingerprint,
@@ -90,6 +104,7 @@ def train_forward_portable_matchup_contextual_rapm(
     player_prior_description: str = "forward exposure-gated RAPM plus portable-matchup context",
     context_fit: Callable[..., MatchupContextualModel] = fit_matchup_contextual_model,
     context_metadata: Callable[[MatchupContextualModel], dict[str, object]] = model_metadata,
+    context_feature_set: str = CONTEXT_FEATURE_SET_V1,
     player_season_panel_path: Path | str = DEFAULT_PANEL_PATH,
     analytical_dir: Path | str = DEFAULT_ANALYTICAL_DIR,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
@@ -144,6 +159,8 @@ def train_forward_portable_matchup_contextual_rapm(
     box_score_residual_selections: list[pd.DataFrame] = []
     contextual_models: dict[str, MatchupContextualModel] = {}
     contextual_metadata: list[dict[str, object]] = []
+    rebound_calibration_metadata: list[dict[str, object]] = []
+    usage_allocation_metadata: list[dict[str, object]] = []
     context_reattributions: dict[str, ContextProjection] = {}
     context_reattribution_metadata: list[dict[str, object]] = []
     training_metadata: list[dict[str, object]] = []
@@ -190,6 +207,7 @@ def train_forward_portable_matchup_contextual_rapm(
                 target_season=season,
                 target_player_ids=participants,
                 analytical_dir=str(analytical_dir),
+                curated_dir=str(curated_dir),
                 exposure_cohort=exposure_cohort,
             )
             if use_context and season != seasons[0]
@@ -270,6 +288,44 @@ def train_forward_portable_matchup_contextual_rapm(
             _fit_replacement_token(season, adjusted_stints, exposure, fitted, panel)
         )
         if use_context and profiles is not None:
+            rebound_model = (
+                fit_rebound_opportunity_model(season, profiles, curated_dir=curated_dir)
+                if context_feature_set in {CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY, CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION}
+                else None
+            )
+            usage_model = (
+                fit_usage_allocation_model(season, profiles, curated_dir=curated_dir)
+                if context_feature_set == CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION
+                else None
+            )
+            if rebound_model is not None:
+                print(
+                    f"  Calibrated rebound realization on "
+                    f"{rebound_model.training_opportunity_count:,} opportunities",
+                    flush=True,
+                )
+                rebound_calibration_metadata.append(
+                    {
+                        "season": season,
+                        "calibration_season": rebound_model.training_season,
+                        "training_opportunity_count": rebound_model.training_opportunity_count,
+                        "reference_grid_size": len(rebound_model.reference_defensive_claims),
+                    }
+                )
+            if usage_model is not None:
+                print(
+                    f"  Calibrated usage allocation on {usage_model.training_event_count:,} actions",
+                    flush=True,
+                )
+                usage_allocation_metadata.append(
+                    {
+                        "season": season,
+                        "calibration_season": usage_model.training_season,
+                        "training_event_count": usage_model.training_event_count,
+                        "temperature": usage_model.temperature,
+                        "claim_budget": usage_model.claim_budget,
+                    }
+                )
             model, row = _fit_matchup_contextual_season(
                 raw_stints,
                 fitted,
@@ -280,6 +336,9 @@ def train_forward_portable_matchup_contextual_rapm(
                 previous_model=previous_model,
                 context_fit=context_fit,
                 context_metadata=context_metadata,
+                context_feature_set=context_feature_set,
+                rebound_model=rebound_model,
+                usage_model=usage_model,
             )
             contextual_models[season] = model
             contextual_metadata.append(row)
@@ -342,6 +401,10 @@ def train_forward_portable_matchup_contextual_rapm(
             else "C_(t-1)(home, away) = 0"
         ),
         "reference_context_source_season": source if use_context else None,
+        "context_feature_set": context_feature_set if use_context else None,
+        "context_feature_columns": list(contextual_feature_columns(context_feature_set))
+        if use_context
+        else [],
     }
     return _write_run(
         target=target,
@@ -349,6 +412,8 @@ def train_forward_portable_matchup_contextual_rapm(
         priors=state_priors,
         contextual_models=contextual_models,
         contextual_metadata=pd.DataFrame(contextual_metadata),
+        rebound_calibration_metadata=pd.DataFrame(rebound_calibration_metadata),
+        usage_allocation_metadata=pd.DataFrame(usage_allocation_metadata),
         prior_metadata=pd.DataFrame(prior_metadata),
         target_priors=target_priors,
         target_profiles=target_profiles,
@@ -558,13 +623,28 @@ def _fit_matchup_contextual_season(
     previous_model: MatchupContextualModel | None = None,
     context_fit: Callable[..., MatchupContextualModel] = fit_matchup_contextual_model,
     context_metadata: Callable[[MatchupContextualModel], dict[str, object]] = model_metadata,
+    context_feature_set: str = CONTEXT_FEATURE_SET_V1,
+    rebound_model: ReboundOpportunityModel | None = None,
+    usage_model: UsageAllocationModel | None = None,
 ) -> tuple[MatchupContextualModel, dict[str, object]]:
     coefficients = fitted.player_estimates.loc[:, ["player_id", "rapm"]]
     values = dict(zip(coefficients["player_id"].astype(int), coefficients["rapm"], strict=True))
     effects, unknown = _lineup_effects(stints, values)
     intercept = _recover_home_intercept(stints, coefficients)
-    home = lineup_side_context_features(stints["home_player_ids"].tolist(), profiles)
-    away = lineup_side_context_features(stints["away_player_ids"].tolist(), profiles)
+    home = lineup_side_context_features(
+        stints["home_player_ids"].tolist(),
+        profiles,
+        feature_set=context_feature_set,
+        rebound_model=rebound_model,
+        usage_model=usage_model,
+    )
+    away = lineup_side_context_features(
+        stints["away_player_ids"].tolist(),
+        profiles,
+        feature_set=context_feature_set,
+        rebound_model=rebound_model,
+        usage_model=usage_model,
+    )
     target = stints["target_home_net_rating"].to_numpy(dtype=float) - effects - intercept
     print(f"  Fitting antisymmetric spline on {len(stints):,} stints", flush=True)
     model = context_fit(
@@ -576,7 +656,10 @@ def _fit_matchup_contextual_season(
         curvature_alpha=curvature_alpha,
         temporal_alpha=temporal_alpha,
         previous_model=previous_model,
+        feature_set=context_feature_set,
     )
+    if rebound_model is not None or usage_model is not None:
+        model = replace(model, rebound_model=rebound_model, usage_model=usage_model)
     print(
         f"  Stored {len(model.reference_features):,} reference units for {fitted.season}",
         flush=True,
@@ -592,6 +675,20 @@ def _fit_matchup_contextual_season(
         "context_training_stint_count": len(stints),
         "context_unknown_player_exposures": int(unknown.sum()),
         "context_home_intercept": intercept,
+        "context_feature_set": context_feature_set,
+        "context_feature_columns": list(contextual_feature_columns(context_feature_set)),
+        "rebound_calibration_source_season": rebound_model.training_season
+        if rebound_model is not None
+        else pd.NA,
+        "rebound_calibration_opportunity_count": rebound_model.training_opportunity_count
+        if rebound_model is not None
+        else pd.NA,
+        "usage_allocation_source_season": usage_model.training_season
+        if usage_model is not None
+        else pd.NA,
+        "usage_allocation_event_count": usage_model.training_event_count
+        if usage_model is not None
+        else pd.NA,
         **context_metadata(model),
     }
 
@@ -603,6 +700,8 @@ def _write_run(
     priors: pd.DataFrame,
     contextual_models: dict[str, MatchupContextualModel],
     contextual_metadata: pd.DataFrame,
+    rebound_calibration_metadata: pd.DataFrame,
+    usage_allocation_metadata: pd.DataFrame,
     prior_metadata: pd.DataFrame,
     target_priors: pd.DataFrame,
     target_profiles: pd.DataFrame,
@@ -658,6 +757,8 @@ def _write_run(
             "season_model_metadata.parquet": season_model_metadata,
             "season_player_priors.parquet": priors,
             "season_context_metadata.parquet": contextual_metadata,
+            "season_rebound_calibration_metadata.parquet": rebound_calibration_metadata,
+            "season_usage_allocation_metadata.parquet": usage_allocation_metadata,
             "season_context_reattribution_metadata.parquet": context_reattribution_metadata,
             "season_player_prior_metadata.parquet": prior_metadata,
             "frozen_2025_26_player_priors.parquet": target_priors,

@@ -1,7 +1,7 @@
 {
   "version": 3,
-  "updated": "2026-08-12",
-  "default_metric": "frozen_regular_game_margin_rmse",
+  "updated": "2026-08-13",
+  "default_metric": "rolling_regular_game_margin_rmse",
   "metrics": [
     {
       "id": "frozen_regular_possession_rmse",
@@ -48,6 +48,42 @@
     {
       "id": "frozen_playoff_game_margin_rmse",
       "label": "Frozen playoffs: game-margin RMSE",
+      "direction": "lower",
+      "decimals": 4
+    },
+    {
+      "id": "rolling_regular_possession_rmse",
+      "label": "Rolling three-season regular: possession RMSE",
+      "direction": "lower",
+      "decimals": 6
+    },
+    {
+      "id": "rolling_regular_game_margin_rmse",
+      "label": "Rolling three-season regular: game-margin RMSE",
+      "direction": "lower",
+      "decimals": 4
+    },
+    {
+      "id": "rolling_regular_full_game_margin_rmse",
+      "label": "Rolling three-season regular: full-game RMSE",
+      "direction": "lower",
+      "decimals": 4
+    },
+    {
+      "id": "rolling_regular_game_winner_accuracy",
+      "label": "Rolling three-season regular: winner accuracy",
+      "direction": "higher",
+      "decimals": 4
+    },
+    {
+      "id": "rolling_regular_team_net_rating_rmse",
+      "label": "Rolling three-season regular: team NetRtg RMSE",
+      "direction": "lower",
+      "decimals": 4
+    },
+    {
+      "id": "rolling_regular_pythagorean_wins_rmse",
+      "label": "Rolling three-season regular: Pythagorean-wins RMSE",
       "direction": "lower",
       "decimals": 4
     },
@@ -153,6 +189,54 @@
         "frozen_regular_pythagorean_wins_rmse": 10.7006,
         "frozen_playoff_possession_rmse": 1.192895,
         "frozen_playoff_game_margin_rmse": 17.5409
+      }
+    },
+    {
+      "id": "forward-one-year-rapm-prior",
+      "name": "Forward 1-year RAPM-prior baseline",
+      "short_name": "Forward 1-year RAPM prior",
+      "parent": "one-season-ridge-rapm",
+      "change": "+ recursive prior centered on the immediately preceding completed annual RAPM state.",
+      "docs": "./forward-rapm-memory-baselines/",
+      "metrics": {
+        "rolling_regular_possession_rmse": 1.198196,
+        "rolling_regular_game_margin_rmse": 14.5265,
+        "rolling_regular_full_game_margin_rmse": 14.8154,
+        "rolling_regular_game_winner_accuracy": 0.653945,
+        "rolling_regular_team_net_rating_rmse": 4.2374,
+        "rolling_regular_pythagorean_wins_rmse": 9.1066
+      }
+    },
+    {
+      "id": "forward-three-year-rapm-prior",
+      "name": "Forward 3-year RAPM-prior baseline",
+      "short_name": "Forward 3-year RAPM prior",
+      "parent": "forward-one-year-rapm-prior",
+      "change": "+ player-specific possession-weighted memory of the preceding three annual RAPM states.",
+      "docs": "./forward-rapm-memory-baselines/",
+      "metrics": {
+        "rolling_regular_possession_rmse": 1.198246,
+        "rolling_regular_game_margin_rmse": 14.6559,
+        "rolling_regular_full_game_margin_rmse": 14.9714,
+        "rolling_regular_game_winner_accuracy": 0.646824,
+        "rolling_regular_team_net_rating_rmse": 4.5326,
+        "rolling_regular_pythagorean_wins_rmse": 9.7789
+      }
+    },
+    {
+      "id": "complete-player-prior-rapm",
+      "name": "Complete player-prior RAPM",
+      "short_name": "Complete player-prior RAPM",
+      "parent": "forward-one-year-rapm-prior",
+      "change": "+ value-conditioned aging, draft/physical inputs, exposure-gated rookie cold starts, replacement tokens, and possession-weighted prior centering; context and box-score priors remain off.",
+      "docs": "./complete-player-prior-baseline/",
+      "metrics": {
+        "rolling_regular_possession_rmse": 1.198061,
+        "rolling_regular_game_margin_rmse": 14.2105,
+        "rolling_regular_full_game_margin_rmse": 14.4756,
+        "rolling_regular_game_winner_accuracy": 0.676445,
+        "rolling_regular_team_net_rating_rmse": 3.6754,
+        "rolling_regular_pythagorean_wins_rmse": 7.7561
       }
     },
     {
@@ -513,6 +597,60 @@
         "frozen_regular_pythagorean_wins_rmse": 8.0346,
         "frozen_playoff_possession_rmse": 1.192460,
         "frozen_playoff_game_margin_rmse": 16.4605
+      }
+    },
+    {
+      "id": "hpm-v2-depth-aware-shooting",
+      "name": "HIPSTER PM v2: Depth-Aware Shooting",
+      "short_name": "HPM v2 depth-aware shooting",
+      "parent": "forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "change": "Ablation: replace raw lineup three-point makes and attempts with shooting depth, capped capacity, and concentration features.",
+      "docs": "./hpm-v2/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198758,
+        "frozen_regular_game_margin_rmse": 14.3487,
+        "frozen_regular_full_game_margin_rmse": 14.6164,
+        "frozen_regular_game_winner_accuracy": 0.679675,
+        "frozen_regular_team_net_rating_rmse": 3.6739,
+        "frozen_regular_pythagorean_wins_rmse": 7.9076,
+        "frozen_playoff_possession_rmse": 1.192485,
+        "frozen_playoff_game_margin_rmse": 16.4450
+      }
+    },
+    {
+      "id": "hpm-v21-empirical-rebound-capacity",
+      "name": "HIPSTER PM v2.1: Empirical Rebound Capacity",
+      "short_name": "HPM v2.1 empirical rebounds",
+      "parent": "hpm-v2-depth-aware-shooting",
+      "change": "+ replace raw and square-root rebound volume with expected unit ORB% and DRB% learned from completed-season rebound opportunities against a reference opponent field.",
+      "docs": "./hpm-v21/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198010,
+        "frozen_regular_game_margin_rmse": 14.1340,
+        "frozen_regular_full_game_margin_rmse": 14.3869,
+        "frozen_regular_game_winner_accuracy": 0.676730,
+        "frozen_regular_team_net_rating_rmse": 3.4365,
+        "frozen_regular_pythagorean_wins_rmse": 7.3881,
+        "frozen_playoff_possession_rmse": 1.192772,
+        "frozen_playoff_game_margin_rmse": 16.6701
+      }
+    },
+    {
+      "id": "hpm-v22-usage-allocation",
+      "name": "HIPSTER PM v2.2: Usage Allocation",
+      "short_name": "HPM v2.2 usage allocation",
+      "parent": "hpm-v21-empirical-rebound-capacity",
+      "change": "Ablation: replace raw usage, turnovers, concentration, and depth-by-usage with empirical terminal-action demand, allocation entropy, role reallocation, and allocation-weighted turnover burden.",
+      "docs": "./hpm-v22/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198004,
+        "frozen_regular_game_margin_rmse": 14.1464,
+        "frozen_regular_full_game_margin_rmse": 14.4050,
+        "frozen_regular_game_winner_accuracy": 0.674737,
+        "frozen_regular_team_net_rating_rmse": 3.4802,
+        "frozen_regular_pythagorean_wins_rmse": 7.4793,
+        "frozen_playoff_possession_rmse": 1.192807,
+        "frozen_playoff_game_margin_rmse": 16.6806
       }
     },
     {

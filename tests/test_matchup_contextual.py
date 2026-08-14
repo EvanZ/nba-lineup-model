@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from nba_lineup_model.modeling.contextual_features import (
+    CONTEXT_FEATURE_SET_V2_DEPTH_AWARE_SHOOTING,
     contextual_feature_columns,
     side_context_feature_columns,
 )
@@ -153,3 +154,37 @@ def test_bounded_portable_matchup_context_caps_support_and_preserves_antisymmetr
         -model.predict_side_pairs(extreme_away, extreme_home),
         atol=1e-12,
     )
+
+
+def test_depth_aware_feature_contract_survives_bounded_temporal_update() -> None:
+    """V2 state keeps its schema through the rolling hierarchical prior."""
+
+    feature_set = CONTEXT_FEATURE_SET_V2_DEPTH_AWARE_SHOOTING
+    columns = side_context_feature_columns(feature_set)
+    values = np.arange(64 * len(columns), dtype=float).reshape(64, len(columns))
+    home = pd.DataFrame(values, columns=columns)
+    away = pd.DataFrame(values[::-1], columns=columns)
+    target = home[columns[0]].to_numpy(dtype=float) - away[columns[0]].to_numpy(dtype=float)
+    previous = fit_bounded_hierarchical_matchup_contextual_model(
+        home,
+        away,
+        target,
+        np.ones(len(home)),
+        alpha=10.0,
+        curvature_alpha=1.0,
+        feature_set=feature_set,
+    )
+    current = fit_bounded_hierarchical_matchup_contextual_model(
+        home,
+        away,
+        -target,
+        np.ones(len(home)),
+        alpha=10.0,
+        curvature_alpha=1.0,
+        temporal_alpha=1.0,
+        previous_model=previous,
+        feature_set=feature_set,
+    )
+
+    assert current.feature_set == feature_set
+    assert tuple(current.side_lower.index) == columns
