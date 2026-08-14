@@ -34,6 +34,7 @@ nba-build-bayesian-rapm-case-study = "nba_lineup_model.modeling.bayesian_case_st
 nba-build-aging-curve-case-study = "nba_lineup_model.modeling.aging_curve:main"
 nba-build-era-comparison = "nba_lineup_model.modeling.era_comparison:main"
 nba-build-box-score-prior-panel = "nba_lineup_model.modeling.box_score_prior:main"
+nba-build-shot-taxonomy = "nba_lineup_model.modeling.shot_taxonomy:main"
 nba-build-draft-prior-study = "nba_lineup_model.modeling.draft_prior:main"
 nba-build-draft-history-cold-start-rankings = "nba_lineup_model.modeling.draft_history_cold_start:main"
 nba-build-forward-draft-history-rankings = "nba_lineup_model.modeling.forward_draft_history_cold_start:main"
