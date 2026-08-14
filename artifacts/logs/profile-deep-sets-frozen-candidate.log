@@ -1,0 +1,53 @@
+target=2023-24 reading profile tokens
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+target=2023-24 reading 26 training seasons
+target=2023-24 token coverage passed
+target=2023-24 loading complete train_seasons=26 train_possessions=5,042,330
+GPU available: False, used: False
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/configuration_validator.py:70: You defined a `validation_step` but have no `val_dataloader`. Skipping val loop.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+target=2023-24 epoch=1/3 train_mse=1.273502
+target=2023-24 epoch=2/3 train_mse=1.272593
+target=2023-24 epoch=3/3 train_mse=1.272247
+`Trainer.fit` stopped: `max_epochs=3` reached.
+target=2023-24 training complete
+target=2023-24 scoring complete
+target=2024-25 reading profile tokens
+target=2024-25 reading 27 training seasons
+target=2024-25 token coverage passed
+target=2024-25 loading complete train_seasons=27 train_possessions=5,225,059
+GPU available: False, used: False
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/configuration_validator.py:70: You defined a `validation_step` but have no `val_dataloader`. Skipping val loop.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+target=2024-25 epoch=1/3 train_mse=1.278781
+target=2024-25 epoch=2/3 train_mse=1.277820
+target=2024-25 epoch=3/3 train_mse=1.277494
+`Trainer.fit` stopped: `max_epochs=3` reached.
+target=2024-25 training complete
+target=2024-25 scoring complete
+target=2025-26 reading profile tokens
+target=2025-26 reading 28 training seasons
+target=2025-26 token coverage passed
+target=2025-26 loading complete train_seasons=28 train_possessions=5,408,490
+GPU available: False, used: False
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/configuration_validator.py:70: You defined a `validation_step` but have no `val_dataloader`. Skipping val loop.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+target=2025-26 epoch=1/3 train_mse=1.284382
+target=2025-26 epoch=2/3 train_mse=1.283411
+target=2025-26 epoch=3/3 train_mse=1.283123
+`Trainer.fit` stopped: `max_epochs=3` reached.
+target=2025-26 training complete
+target=2025-26 scoring complete
+wrote=artifacts/models/profile_deep_sets_frozen_candidate/2023-24_to_2025-26/profile-deep-sets-2023-24-to-2025-26-20260814T222233Z-b8111a74

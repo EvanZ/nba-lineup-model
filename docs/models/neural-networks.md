@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-07-30"
+last_updated: "2026-08-14"
 ---
 
 # Neural Networks
@@ -26,6 +26,7 @@ training loop.
 | --- | --- | --- | --- |
 | Additive neural RAPM | Signed sum | Validates tensors, optimization, and artifacts | Implemented |
 | Deep Sets | Nonlinear pooled sets | Nonlinear lineup strength without pairwise attention | Implemented |
+| Profile Deep Sets | Forward player profiles plus identity residual | Nonlinear composition with transferable side information | In implementation |
 | RAPM + Transformer | Self-attention residual | Player-player and role-dependent interactions around frozen RAPM | Implemented |
 
 Deep Sets is an important ablation. If it matches RAPM + Transformer, the
@@ -252,6 +253,59 @@ additive model. The playoff game-margin difference is indistinguishable from
 zero. This is still a useful architectural ablation: nonlinear pooled sets did
 not earn predictive support under the current one-season, player-ID-only
 protocol.
+
+## Profile Deep Sets
+
+The next Deep Sets experiment is deliberately distinct from the earlier
+player-ID-only model. It consumes the forward-safe 47-field contract in the
+[Profile Token Mart](../data/profile-token-mart.md), while retaining a learned
+identity residual for information not represented by the structured profile.
+
+For player \(p\), let \(x_{p,t}\in\mathbb{R}^{47}\) be the token available
+before target season \(t\), \(E_p\in\mathbb{R}^{32}\) the learned identity
+residual, and \(\psi\) a profile encoder:
+
+\[
+v_{p,t} = E_p + \psi(x_{p,t}),
+\qquad
+\psi:\mathbb{R}^{47}\rightarrow\mathbb{R}^{64}\rightarrow\mathbb{R}^{32}.
+\]
+
+The role marker is then concatenated, preserving the established offense and
+defense distinction:
+
+\[
+t_{p,r} = [v_{p,t};R_r]\in\mathbb{R}^{40}.
+\]
+
+The remainder of the architecture is the same separately pooled Deep Sets
+encoder already documented above. The identity residual is initialized for
+known players. A target-season rookie or other unseen player maps to the
+reserved zero identity row but still receives their actual cold-start profile
+token, so the model does not silently turn that player's side information into
+zeros. The additive skip path remains in place for a directly inspectable
+one-number component.
+
+For every chronological fold, profile standardization fits only the distinct
+\((\text{season}, \text{player})\) tokens appearing in that fold's training
+games. Validation, final holdout, and full-season refit rows are transformed
+using those frozen moments. A 2025-26 possession therefore receives the
+2025-26 pre-season token, while a 2022-23 training possession receives its
+own 2022-23 pre-season token. This prevents both target-season substitution
+and transductive use of players appearing only in held-out games.
+
+The evaluation is a three-season frozen backtest. For evaluation seasons
+2023-24, 2024-25, and 2025-26, the training corpus stops before the evaluated
+season, and the resulting frozen model is scored separately on that season's
+regular season and playoffs. The final leaderboard will pool the three
+regular-season cohorts into one table and the three playoff cohorts into a
+second table.
+
+The implementation tests enforce exact target-season token coverage, reserved
+unknown row zero, training-window-only scaling, and within-side permutation
+invariance. Training, artifact persistence, and frozen evaluation will be
+added as the next slice after this input/model contract is exercised against
+the full 2025-26 possession dataset.
 
 ## RAPM + Transformer architecture
 

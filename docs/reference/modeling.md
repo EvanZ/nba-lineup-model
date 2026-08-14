@@ -48,6 +48,10 @@ last_updated: "2026-07-30"
 
 ::: nba_lineup_model.modeling.deep_sets
 
+## Profile Deep Sets tensors
+
+::: nba_lineup_model.modeling.profile_deep_sets
+
 ## RAPM base predictions
 
 ::: nba_lineup_model.modeling.residual_data

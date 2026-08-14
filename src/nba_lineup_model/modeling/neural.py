@@ -54,6 +54,10 @@ DEFAULT_EARLY_STOPPING_PATIENCE = 5
 DEFAULT_LEARNING_RATES = (0.0001, 0.0003, 0.001, 0.003)
 DEFAULT_WEIGHT_DECAYS = (0.0, 0.001, 0.01, 0.1, 1.0)
 NeuralModuleFactory = Callable[[int, float, float, float], L.LightningModule]
+NeuralDataModuleFactory = Callable[
+    [tuple[str, ...], tuple[str, ...], tuple[str, ...], int],
+    L.LightningDataModule,
+]
 
 
 @dataclass(frozen=True)
@@ -458,6 +462,7 @@ def _search_hyperparameters(
     output_dir: Path,
     module_factory: NeuralModuleFactory,
     enable_progress_bar: bool,
+    data_module_factory: NeuralDataModuleFactory | None = None,
 ) -> _HyperparameterSearch:
     search_dir = output_dir / "hyperparameter_checkpoints"
     search_dir.mkdir()
@@ -487,6 +492,7 @@ def _search_hyperparameters(
                 weight_decay=weight_decay,
                 module_factory=module_factory,
                 enable_progress_bar=enable_progress_bar,
+                data_module_factory=data_module_factory,
             )
             accelerators.add(resolved_accelerator)
             selected_row = history.loc[history["epoch"].eq(selected_epochs)]
@@ -585,16 +591,21 @@ def _fit_selection_model(
     weight_decay: float,
     module_factory: NeuralModuleFactory,
     enable_progress_bar: bool,
+    data_module_factory: NeuralDataModuleFactory | None = None,
 ) -> tuple[pd.DataFrame, int, str]:
     L.seed_everything(config.random_seed, workers=True, verbose=False)
-    data = PossessionDataModule(
-        possessions,
-        player_columns,
-        train_game_ids=train_game_ids,
-        validation_game_ids=validation_game_ids,
-        batch_size=config.batch_size,
-        num_workers=config.num_workers,
-        random_seed=config.random_seed,
+    data = (
+        data_module_factory(train_game_ids, validation_game_ids, (), config.random_seed)
+        if data_module_factory is not None
+        else PossessionDataModule(
+            possessions,
+            player_columns,
+            train_game_ids=train_game_ids,
+            validation_game_ids=validation_game_ids,
+            batch_size=config.batch_size,
+            num_workers=config.num_workers,
+            random_seed=config.random_seed,
+        )
     )
     train_mean = float(
         possessions.loc[
@@ -660,16 +671,21 @@ def _fit_fixed_epoch_model(
     stage: str,
     seed_offset: int,
     enable_progress_bar: bool,
+    data_module_factory: NeuralDataModuleFactory | None = None,
 ) -> tuple[L.LightningModule, pd.DataFrame, str]:
     seed = config.random_seed + seed_offset
     L.seed_everything(seed, workers=True, verbose=False)
-    data = PossessionDataModule(
-        possessions,
-        player_columns,
-        train_game_ids=train_game_ids,
-        batch_size=config.batch_size,
-        num_workers=config.num_workers,
-        random_seed=seed,
+    data = (
+        data_module_factory(train_game_ids, (), (), seed)
+        if data_module_factory is not None
+        else PossessionDataModule(
+            possessions,
+            player_columns,
+            train_game_ids=train_game_ids,
+            batch_size=config.batch_size,
+            num_workers=config.num_workers,
+            random_seed=seed,
+        )
     )
     train_mean = float(
         possessions.loc[

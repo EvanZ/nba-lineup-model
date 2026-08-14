@@ -1,0 +1,63 @@
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+target=1997-98 building profile tokens
+target=1997-98 token_rows=529
+target=1998-99 building profile tokens
+target=1998-99 token_rows=525
+target=1999-00 building profile tokens
+target=1999-00 token_rows=522
+target=2000-01 building profile tokens
+target=2000-01 token_rows=441
+target=2001-02 building profile tokens
+target=2001-02 token_rows=443
+target=2002-03 building profile tokens
+target=2002-03 token_rows=433
+target=2003-04 building profile tokens
+target=2003-04 token_rows=441
+target=2004-05 building profile tokens
+target=2004-05 token_rows=464
+target=2005-06 building profile tokens
+target=2005-06 token_rows=458
+target=2006-07 building profile tokens
+target=2006-07 token_rows=458
+target=2007-08 building profile tokens
+target=2007-08 token_rows=451
+target=2008-09 building profile tokens
+target=2008-09 token_rows=445
+target=2009-10 building profile tokens
+target=2009-10 token_rows=441
+target=2010-11 building profile tokens
+target=2010-11 token_rows=452
+target=2011-12 building profile tokens
+target=2011-12 token_rows=478
+target=2012-13 building profile tokens
+target=2012-13 token_rows=469
+target=2013-14 building profile tokens
+target=2013-14 token_rows=482
+target=2014-15 building profile tokens
+target=2014-15 token_rows=492
+target=2015-16 building profile tokens
+target=2015-16 token_rows=476
+target=2016-17 building profile tokens
+target=2016-17 token_rows=486
+target=2017-18 building profile tokens
+target=2017-18 token_rows=539
+target=2018-19 building profile tokens
+target=2018-19 token_rows=530
+target=2019-20 building profile tokens
+target=2019-20 token_rows=529
+target=2020-21 building profile tokens
+target=2020-21 token_rows=540
+target=2021-22 building profile tokens
+target=2021-22 token_rows=605
+target=2022-23 building profile tokens
+target=2022-23 token_rows=538
+target=2023-24 building profile tokens
+target=2023-24 token_rows=569
+target=2024-25 building profile tokens
+target=2024-25 token_rows=567
+target=2025-26 building profile tokens
+target=2025-26 token_rows=582
+Profile tokens: seasons=29 rows=14,385 output=data/analytical/profile_tokens_v3_candidate
