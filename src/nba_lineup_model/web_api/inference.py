@@ -760,34 +760,19 @@ class LineupEvaluator:
     ) -> dict[str, Any]:
         """Score NAIL-RAPM v1.0 with additive profile terms compiled into players."""
 
-        environment_state = self._season_state(environment_season)
-        environment_coefficients = _compiled_linear_x3_coefficients(
-            environment_state.coefficients, environment_state.profiles, context_model
-        )
-        rating_center = _player_rating_center(environment_coefficients, environment_state.players)
-        unit_coefficients = _compiled_linear_x3_coefficients(
-            unit_state.coefficients,
-            unit_state.profiles,
-            context_model,
-            center=rating_center,
-        )
-        opponent_coefficients = _compiled_linear_x3_coefficients(
-            opponent_state.coefficients,
-            opponent_state.profiles,
-            context_model,
-            center=rating_center,
-        )
+        # Player ratings are fixed at their selected source-season NAIL fit.
+        # Evaluation Era is reserved for the non-additive lineup surface.
         unit_map = dict(
             zip(
-                unit_coefficients["player_id"].astype(int),
-                unit_coefficients["rapm"].astype(float),
+                unit_state.players["player_id"].astype(int),
+                unit_state.players["rapm"].astype(float),
                 strict=True,
             )
         )
         opponent_map = dict(
             zip(
-                opponent_coefficients["player_id"].astype(int),
-                opponent_coefficients["rapm"].astype(float),
+                opponent_state.players["player_id"].astype(int),
+                opponent_state.players["rapm"].astype(float),
                 strict=True,
             )
         )
@@ -835,20 +820,6 @@ class LineupEvaluator:
             sum(opponent_map[player_id] for player_id in opponent_player_ids)
         )
         additive_margin = additive_unit - additive_opponent
-        base_unit = float(
-            unit_state.coefficients.set_index("player_id").loc[unit_player_ids, "rapm"].sum()
-        )
-        base_opponent = float(
-            opponent_state.coefficients.set_index("player_id")
-            .loc[opponent_player_ids, "rapm"]
-            .sum()
-        )
-        if not np.isclose(
-            additive_margin + shape_context,
-            total_context + base_unit - base_opponent,
-            atol=1e-8,
-        ):
-            raise LineupEvaluationError("NAIL-RAPM v1.0 prediction failed reconstruction")
         return {
             "season": environment_season,
             "run_id": self.run_id,

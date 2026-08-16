@@ -32,7 +32,7 @@ from nba_lineup_model.web_api.inference import (
 
 def _evaluator(*, bounded: bool = False, compiled_linear: bool = False) -> LineupEvaluator:
     player_ids = list(range(1, 11))
-    profile_offset = player_ids if bounded else [0] * len(player_ids)
+    profile_offset = player_ids if bounded or compiled_linear else [0] * len(player_ids)
     profiles = pd.DataFrame(
         {
             "player_id": player_ids,
@@ -240,6 +240,7 @@ def test_compiled_linear_matchup_returns_nonadditive_side_scores() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["model_form"] == "compiled_linear_x3"
+    assert np.isclose(payload["additive_margin"], -2.5)
     assert np.isclose(
         payload["unit_composition_rating"] - payload["opponent_composition_rating"],
         payload["contextual_adjustment"],
