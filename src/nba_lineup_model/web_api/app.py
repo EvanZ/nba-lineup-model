@@ -89,6 +89,20 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         except LineupEvaluationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
+    @app.get("/api/players/by-id")
+    def players_by_id(
+        player_id: Annotated[tuple[int, ...], Query()] = (),
+        season: str | None = None,
+    ) -> dict[str, object]:
+        state = get_evaluator()
+        try:
+            return {
+                "season": season or state.season,
+                "players": state.players_by_id(list(player_id), season=season),
+            }
+        except LineupEvaluationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
     @app.get("/api/players/{player_id}")
     def player(player_id: int) -> dict[str, object]:
         try:

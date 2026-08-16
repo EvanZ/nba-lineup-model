@@ -216,6 +216,60 @@ def fit_matchup_contextual_model(
     )
 
 
+def fit_linear_ridge_matchup_contextual_model(
+    home_features: pd.DataFrame,
+    away_features: pd.DataFrame,
+    target: np.ndarray,
+    sample_weight: np.ndarray,
+    *,
+    alpha: float,
+    curvature_alpha: float = 0.0,
+    temporal_alpha: float = 0.0,
+    previous_model: MatchupContextualModel | None = None,
+    feature_set: str = CONTEXT_FEATURE_SET_V1,
+) -> MatchupContextualModel:
+    """Fit a standardized linear Ridge context model on side-feature differences."""
+
+    if alpha <= 0:
+        raise ValueError("Linear contextual alpha must be positive")
+    if curvature_alpha or temporal_alpha:
+        raise ValueError("Linear Ridge context does not use spline or temporal penalties")
+    home = _validated_side_features(home_features, feature_set)
+    away = _validated_side_features(away_features, feature_set)
+    target_values = np.asarray(target, dtype=float)
+    weights = np.asarray(sample_weight, dtype=float)
+    if len(home) != len(away) or len(home) != len(target_values) or len(home) != len(weights):
+        raise ValueError("Contextual training inputs must have equal lengths")
+    if (
+        not np.isfinite(target_values).all()
+        or not np.isfinite(weights).all()
+        or (weights <= 0).any()
+    ):
+        raise ValueError("Contextual targets and weights must be finite, with positive weights")
+
+    relative = _relative_features(home, away, feature_set)
+    augmented_features = pd.concat([relative, -relative], ignore_index=True)
+    augmented_target = np.concatenate([target_values, -target_values])
+    augmented_weight = np.concatenate([weights, weights])
+    scale = StandardScaler()
+    design = scale.fit_transform(augmented_features)
+    ridge = Ridge(alpha=alpha, fit_intercept=False).fit(
+        design,
+        augmented_target,
+        sample_weight=augmented_weight,
+    )
+    pipeline = Pipeline([("scale", scale), ("ridge", ridge)])
+    reference_features, reference_weights = _reference_distribution(
+        home, away, weights, feature_set
+    )
+    return MatchupContextualModel(
+        pipeline,
+        reference_features,
+        reference_weights,
+        feature_set=feature_set,
+    )
+
+
 @dataclass(frozen=True)
 class BoundedMatchupContextualModel(MatchupContextualModel):
     """Portable-matchup context with forward-safe feature support bounds.

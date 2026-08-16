@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeft,
+  ArrowRight,
   ArrowUpRight,
   BookOpen,
   ChevronDown,
@@ -22,9 +24,11 @@ type Side = "unit" | "opponent";
 type AppView = "lab" | "rankings" | "lineups" | "about" | "player";
 type AppRoute = { view: AppView; playerId?: number };
 type Environment = "unit" | "neutral" | "opponent";
+type AgingContributionKey = "prior" | "seasonUpdate" | "additiveProfile";
 
 const SIDE_LABELS: Record<Side, string> = { unit: "Your unit", opponent: "Opponent" };
 const MATERIAL_COMPONENT_CONTRIBUTION = 0.05;
+const MODEL_LABEL = "NAIL-RAPM v1.0";
 const FEATURE_DESCRIPTIONS: Record<string, string> = {
   home_minus_away_three_pa_per_100: "Sum of the five players' prior-season three-point attempts per 100 possessions.",
   home_minus_away_three_pm_per_100: "Sum of the five players' prior-season made three-pointers per 100 possessions.",
@@ -126,14 +130,17 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
 
   if (error) return <p className="error profile-error"><CircleAlert size={16} /> {error}</p>;
   if (!player) return <div className="profile-loading"><LoaderCircle className="spin" size={20} /> Loading player profile</div>;
-  const contextInputs = [
+  const additiveProfileInputs = [
+    player.three_pa_per_100,
     player.three_pm_per_100,
     player.assists_per_100,
+    player.turnovers_per_100,
     player.usage_per_100,
-    player.offensive_rebounds_per_100,
-    player.defensive_rebounds_per_100,
+    player.steals_per_100,
+    player.blocks_per_100,
+    player.offensive_rebound_pct,
   ];
-  const hasContextInputs = contextInputs.every((value) => value !== null);
+  const hasAdditiveProfileInputs = additiveProfileInputs.every((value) => value !== null);
   const historyRows = completePlayerHistory(player);
 
   return (
@@ -146,49 +153,54 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
           <p className="player-profile-meta">Rookie season {player.rookie_season ?? "-"} · {wholeNumber.format(player.games)} games · {wholeNumber.format(player.possessions)} possessions</p>
         </div>
         <div className="profile-hero-rating">
-          <span>{player.rating_season ?? "Latest"} HIPSTER PM</span>
+          <span>{player.rating_season ?? "Latest"} {MODEL_LABEL}</span>
           <Rating value={player.rapm} />
         </div>
       </section>
 
-      {hasContextInputs && <section className="player-profile-section" aria-labelledby="profile-rates-title">
+      {hasAdditiveProfileInputs && <section className="player-profile-section" aria-labelledby="profile-rates-title">
         <div className="player-profile-heading">
-          <p className="section-kicker">Prior-season profile</p>
-          <h2 id="profile-rates-title">Context inputs.</h2>
+          <p className="section-kicker">Lagged player profile</p>
+          <h2 id="profile-rates-title">Additive profile inputs.</h2>
         </div>
-        <dl className="player-stat-grid">
+        <dl className="player-stat-grid player-additive-profile-grid">
+          <div><dt>3PA / 100</dt><dd>{number.format(player.three_pa_per_100!)}</dd></div>
           <div><dt>3PM / 100</dt><dd>{number.format(player.three_pm_per_100!)}</dd></div>
           <div><dt>Assists / 100</dt><dd>{number.format(player.assists_per_100!)}</dd></div>
+          <div><dt>Turnovers / 100</dt><dd>{number.format(player.turnovers_per_100!)}</dd></div>
           <div><dt>Usage / 100</dt><dd>{number.format(player.usage_per_100!)}</dd></div>
-          <div><dt>OREB / 100</dt><dd>{number.format(player.offensive_rebounds_per_100!)}</dd></div>
-          <div><dt>DREB / 100</dt><dd>{number.format(player.defensive_rebounds_per_100!)}</dd></div>
+          <div><dt>Steals / 100</dt><dd>{number.format(player.steals_per_100!)}</dd></div>
+          <div><dt>Blocks / 100</dt><dd>{number.format(player.blocks_per_100!)}</dd></div>
+          <div><dt>OREB claim %</dt><dd>{number.format(player.offensive_rebound_pct!)}</dd></div>
         </dl>
       </section>}
 
       <section className="player-profile-section" aria-labelledby="rating-history-title">
         <div className="player-profile-heading">
           <p className="section-kicker">Completed fits</p>
-          <h2 id="rating-history-title">HIPSTER PM history.</h2>
+          <h2 id="rating-history-title">{MODEL_LABEL} history.</h2>
         </div>
         <PlayerAgingChart player={player} />
-        <p className="player-rating-path-note">Prior context edge is the possession-weighted lineup-versus-opponent context predicted from the previous season. It is shared unit exposure, not credit divided among teammates.</p>
+        <p className="player-rating-path-note">Non-Additive Lineup Edge is the possession-weighted residual non-additive edge of a player’s regular-season units. It is shared unit exposure, not individual causal credit.</p>
         <div className="player-history-table-wrap">
           <table className="player-history-table">
-            <thead><tr><th>Season</th><th>Team split</th><th>Age</th><th>GP</th><th>GS</th><th>Possessions</th><th>Prior</th><th>Prior context edge</th><th>Season update</th><th>HIPSTER PM</th></tr></thead>
+            <thead><tr><th>Season</th><th>Team split</th><th>Age</th><th>GP</th><th>GS</th><th>Possessions</th><th className="nail-history-column">{MODEL_LABEL}</th><th>NAIL rank</th><th>Prior</th><th>Season update</th><th>Additive profile</th><th>Non-Additive Lineup Edge</th></tr></thead>
             <tbody>{[...historyRows].reverse().map((row) => row.kind === "dnp" ? (
               <tr className="player-history-dnp" key={row.season}>
                 <td>{row.season}</td><td><span className="dnp-label">DNP</span></td><td>{row.age === null ? "-" : number.format(row.age)}</td>
-                <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
+                <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
               </tr>
             ) : (
               <tr key={row.point.season}>
                 <td>{row.point.season}</td><td><TeamSplits point={row.point} /></td><td>{row.point.age === null ? "-" : number.format(row.point.age)}</td>
-                <td>{wholeNumber.format(row.point.games)}</td><td>{wholeNumber.format(row.point.games_started)}</td>
-                <td>{wholeNumber.format(row.point.possessions)}</td>
+                <td className="quantity-cell">{wholeNumber.format(row.point.games)}</td><td className="quantity-cell">{wholeNumber.format(row.point.games_started)}</td>
+                <td className="quantity-cell">{wholeNumber.format(row.point.possessions)}</td>
+                <td className="nail-history-cell"><Rating value={row.point.rating} /></td>
+                <td className="nail-rank-cell">#{wholeNumber.format(row.point.nail_rank)}</td>
                 <td>{row.point.prior_rating === null ? "-" : <Rating value={row.point.prior_rating} />}</td>
-                <td>{row.point.prior_context_unit_edge === null ? "-" : <Rating value={row.point.prior_context_unit_edge} />}</td>
                 <td>{row.point.season_update === null ? "-" : <Rating value={row.point.season_update} />}</td>
-                <td><Rating value={row.point.rating} /></td>
+                <td>{row.point.additive_profile_adjustment === null ? "-" : <Rating value={row.point.additive_profile_adjustment} />}</td>
+                <td>{row.point.observed_context_exposure === null ? "-" : <Rating value={row.point.observed_context_exposure} />}</td>
               </tr>
             ))}</tbody>
           </table>
@@ -241,6 +253,11 @@ function TeamSplits({ point }: { point: Player["rating_history"][number] }) {
 function PlayerAgingChart({ player }: { player: Player }) {
   const chartRef = useRef<SVGSVGElement>(null);
   const [showLeagueLeaders, setShowLeagueLeaders] = useState(true);
+  const [visibleContributionLayers, setVisibleContributionLayers] = useState<Record<AgingContributionKey, boolean>>({
+    prior: true,
+    seasonUpdate: true,
+    additiveProfile: true,
+  });
   const [hoveredLeader, setHoveredLeader] = useState<{
     name: string;
     rating: number;
@@ -275,6 +292,26 @@ function PlayerAgingChart({ player }: { player: Player }) {
       ...leader,
       age: firstObserved.age! + seasonStartYear(leader.season) - firstSeasonYear,
     }));
+  const contributionLayers: Array<{
+    key: AgingContributionKey;
+    label: string;
+    color: string;
+  }> = [
+    { key: "prior", label: "Prior", color: "#3f77a8" },
+    { key: "seasonUpdate", label: "Season update", color: "#d86732" },
+    { key: "additiveProfile", label: "Additive profile", color: "#a64d67" },
+  ];
+  const contributionValues = points.map((point) => ({
+    prior: point.prior_rating ?? 0,
+    seasonUpdate: point.season_update ?? 0,
+    additiveProfile: point.additive_profile_adjustment ?? 0,
+  }));
+  const positiveTotals = contributionValues.map((values) => contributionLayers.reduce(
+    (total, layer) => total + Math.max(0, values[layer.key]), 0,
+  ));
+  const negativeTotals = contributionValues.map((values) => contributionLayers.reduce(
+    (total, layer) => total + Math.min(0, values[layer.key]), 0,
+  ));
   const width = 720;
   const height = 266;
   const margin = { top: 38, right: 34, bottom: 54, left: 48 };
@@ -283,8 +320,8 @@ function PlayerAgingChart({ player }: { player: Player }) {
   const seasonMaxes = timeline.map((point) => point.rating);
   const minAge = Math.min(...ages);
   const maxAge = Math.max(...ages);
-  const lowerBound = Math.floor(Math.min(0, ...ratings));
-  const upperBound = Math.ceil(Math.max(0, ...ratings, ...seasonMaxes));
+  const lowerBound = Math.floor(Math.min(0, ...ratings, ...negativeTotals));
+  const upperBound = Math.ceil(Math.max(0, ...ratings, ...seasonMaxes, ...positiveTotals));
   const ratingRange = Math.max(1, upperBound - lowerBound);
   const x = (age: number) => margin.left + ((age - minAge) / Math.max(1, maxAge - minAge)) * (width - margin.left - margin.right);
   const y = (rating: number) => margin.top + ((upperBound - rating) / ratingRange) * (height - margin.top - margin.bottom);
@@ -295,6 +332,33 @@ function PlayerAgingChart({ player }: { player: Player }) {
       || seasonStartYear(point.season) !== seasonStartYear(previous.season) + 1;
     return `${beginsNewSegment ? "M" : "L"}${x(point.age!)},${y(point.rating)}`;
   }).join(" ");
+  function contributionAreaPath(layerIndex: number, polarity: "positive" | "negative") {
+    const segments: Array<Array<{ point: Player["rating_history"][number]; lower: number; upper: number }>> = [];
+    let segment: Array<{ point: Player["rating_history"][number]; lower: number; upper: number }> = [];
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index];
+      const previous = points[index - 1];
+      if (index > 0 && seasonStartYear(point.season) !== seasonStartYear(previous.season) + 1) {
+        if (segment.length) segments.push(segment);
+        segment = [];
+      }
+      const values = contributionValues[index];
+      const priorTotal = contributionLayers.slice(0, layerIndex).reduce(
+        (total, layer) => total + (polarity === "positive" ? Math.max(0, values[layer.key]) : Math.min(0, values[layer.key])),
+        0,
+      );
+      const layerValue = polarity === "positive"
+        ? Math.max(0, values[contributionLayers[layerIndex].key])
+        : Math.min(0, values[contributionLayers[layerIndex].key]);
+      segment.push({ point, lower: priorTotal, upper: priorTotal + layerValue });
+    }
+    if (segment.length) segments.push(segment);
+    return segments.map((entries) => {
+      const upper = entries.map((entry, index) => `${index ? "L" : "M"}${x(entry.point.age!)},${y(entry.upper)}`).join(" ");
+      const lower = [...entries].reverse().map((entry) => `L${x(entry.point.age!)},${y(entry.lower)}`).join(" ");
+      return `${upper} ${lower} Z`;
+    }).join(" ");
+  }
   async function downloadPng() {
     const svg = chartRef.current;
     if (!svg) return;
@@ -310,6 +374,8 @@ function PlayerAgingChart({ player }: { player: Player }) {
       .aging-chart-leader-fallback { fill: #f6f3ec; stroke: #8e968f; stroke-width: 1; }
       .aging-chart-leader-headshot { overflow: visible; }
       .aging-chart-leader-value { fill: #7a827b; font-family: monospace; font-size: 8px; font-weight: 700; }
+      .aging-chart-export-legend { display: block; }
+      .aging-chart-export-legend-label { fill: #505952; font-family: sans-serif; font-size: 9px; font-weight: 700; }
       .aging-chart-line { fill: none; stroke: #174d3d; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
       .aging-chart-point { fill: #e8502f; stroke: #fffefa; stroke-width: 1.5; }
       .aging-chart-point.negative-point { fill: #b33b25; }
@@ -337,7 +403,7 @@ function PlayerAgingChart({ player }: { player: Player }) {
         if (!blob) return;
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
-        link.download = `${player.player_name.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "")}-hipster-pm-aging.png`;
+        link.download = `${player.player_name.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "")}-nail-rapm-v1-history.png`;
         link.click();
         window.setTimeout(() => URL.revokeObjectURL(link.href), 0);
       }, "image/png");
@@ -350,13 +416,33 @@ function PlayerAgingChart({ player }: { player: Player }) {
     setHoveredLeader(null);
   }
 
+  function toggleContributionLayer(layer: AgingContributionKey) {
+    setVisibleContributionLayers((visible) => ({ ...visible, [layer]: !visible[layer] }));
+  }
+
   return (
     <figure className="player-aging-chart">
       <div className="player-aging-chart-toolbar">
-        <span>Age trajectory</span>
+        <span>History</span>
         <div className="player-aging-chart-actions">
+          <div className="player-aging-chart-layer-controls" role="group" aria-label="Visible player-rating components">
+            {contributionLayers.map((layer) => (
+              <button
+                className="chart-component-toggle"
+                key={layer.key}
+                type="button"
+                role="switch"
+                aria-checked={visibleContributionLayers[layer.key]}
+                onClick={() => toggleContributionLayer(layer.key)}
+                title={`${visibleContributionLayers[layer.key] ? "Hide" : "Show"} ${layer.label}`}
+              >
+                <span className="chart-component-swatch" style={{ backgroundColor: layer.color }} aria-hidden="true" />
+                <span>{layer.label}</span>
+              </button>
+            ))}
+          </div>
           <button
-            className="chart-layer-toggle"
+            className="chart-component-toggle"
             type="button"
             role="switch"
             onClick={toggleLeagueLeaders}
@@ -364,20 +450,49 @@ function PlayerAgingChart({ player }: { player: Player }) {
             aria-label={showLeagueLeaders ? "Hide league leaders" : "Show league leaders"}
             aria-checked={showLeagueLeaders}
           >
+            <span className="chart-component-swatch" style={{ backgroundColor: "#174d3d" }} aria-hidden="true" />
             <span>League maxima</span>
-            <span className="chart-layer-toggle-track" aria-hidden="true"><span /></span>
           </button>
-          <button type="button" onClick={downloadPng} title="Download chart as PNG" aria-label={`Download ${player.player_name} age trajectory as PNG`}><Download size={14} /> Download PNG</button>
+          <button type="button" onClick={downloadPng} title="Download chart as PNG" aria-label={`Download ${player.player_name} rating history as PNG`}><Download size={14} /> Download PNG</button>
         </div>
       </div>
-      <svg ref={chartRef} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${player.player_name} completed-fit HIPSTER PM by age`}>
-        <text className="aging-chart-title" x={margin.left} y="17">{player.player_name} · HIPSTER PM age trajectory</text>
+      <svg ref={chartRef} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${player.player_name} completed-fit ${MODEL_LABEL} history by age`}>
+        <text className="aging-chart-title" x={margin.left} y="17">{player.player_name} · {MODEL_LABEL} history</text>
+        <g className="aging-chart-export-legend" aria-label="Rating decomposition legend">
+          {contributionLayers.filter((layer) => visibleContributionLayers[layer.key]).map((layer, index) => {
+            const legendX = margin.left + index * 146;
+            return <g key={layer.key} transform={`translate(${legendX}, 31)`}>
+              <rect x="0" y="-8" width="10" height="10" rx="1" fill={layer.color} fillOpacity="0.8" />
+              <text className="aging-chart-export-legend-label" x="15" y="0">{layer.label}</text>
+            </g>;
+          })}
+        </g>
         <line className="aging-chart-grid" x1={margin.left} x2={width - margin.right} y1={margin.top} y2={margin.top} />
         <line className="aging-chart-zero" x1={margin.left} x2={width - margin.right} y1={zeroY} y2={zeroY} />
         <line className="aging-chart-grid" x1={margin.left} x2={width - margin.right} y1={height - margin.bottom} y2={height - margin.bottom} />
         <text className="aging-chart-y-label" x={margin.left - 10} y={margin.top + 4} textAnchor="end">{formatChartRating(upperBound)}</text>
         <text className="aging-chart-y-label" x={margin.left - 10} y={zeroY + 4} textAnchor="end">0.0</text>
         <text className="aging-chart-y-label" x={margin.left - 10} y={height - margin.bottom + 4} textAnchor="end">{formatChartRating(lowerBound)}</text>
+        {contributionLayers.map((layer, index) => visibleContributionLayers[layer.key] && <g key={layer.key}>
+          <path
+            className="aging-chart-contribution-area"
+            d={contributionAreaPath(index, "positive")}
+            fill={layer.color}
+            fillOpacity="0.38"
+            stroke={layer.color}
+            strokeOpacity="0.55"
+            strokeWidth="0.65"
+          />
+          <path
+            className="aging-chart-contribution-area"
+            d={contributionAreaPath(index, "negative")}
+            fill={layer.color}
+            fillOpacity="0.38"
+            stroke={layer.color}
+            strokeOpacity="0.55"
+            strokeWidth="0.65"
+          />
+        </g>)}
         {showLeagueLeaders && timeline.map((point) => {
           const leaderRating = point.rating;
           const leaderId = point.player_id;
@@ -386,13 +501,13 @@ function PlayerAgingChart({ player }: { player: Player }) {
             {leaderId !== undefined && (
               <a
                 href={playerProfileHref(leaderId)}
-                aria-label={`${leaderName}, ${formatChartRating(leaderRating)} HIPSTER PM`}
+                aria-label={`${leaderName}, ${formatChartRating(leaderRating)} ${MODEL_LABEL}`}
                 onMouseEnter={() => setHoveredLeader({ name: leaderName, rating: leaderRating, x: x(point.age), y: y(leaderRating) })}
                 onMouseLeave={() => setHoveredLeader(null)}
                 onFocus={() => setHoveredLeader({ name: leaderName, rating: leaderRating, x: x(point.age), y: y(leaderRating) })}
                 onBlur={() => setHoveredLeader(null)}
               >
-                <title>{leaderName} · {formatChartRating(leaderRating)} HIPSTER PM</title>
+                <title>{leaderName} · {formatChartRating(leaderRating)} {MODEL_LABEL}</title>
                 <circle className="aging-chart-leader-fallback" cx={x(point.age)} cy={y(leaderRating)} r="10" />
                 <image
                   className="aging-chart-leader-headshot"
@@ -406,7 +521,7 @@ function PlayerAgingChart({ player }: { player: Player }) {
                 />
               </a>
             )}
-            <text className="aging-chart-leader-value" x={x(point.age)} y={Math.max(29, y(leaderRating) - 14)} textAnchor="middle" pointerEvents="none">{formatChartRating(leaderRating)}</text>
+            <text className="aging-chart-leader-value" x={x(point.age)} y={Math.max(margin.top - 8, y(leaderRating) - 14)} textAnchor="middle" pointerEvents="none">{formatChartRating(leaderRating)}</text>
           </g>;
         })}
         <path className="aging-chart-line" d={path} />
@@ -463,7 +578,7 @@ function PlayerAgingChart({ player }: { player: Player }) {
           >
             <rect width="132" height="29" rx="3" />
             <text x="7" y="12">{hoveredLeader.name}</text>
-            <text x="7" y="23">{formatChartRating(hoveredLeader.rating)} HIPSTER PM</text>
+            <text x="7" y="23">{formatChartRating(hoveredLeader.rating)} {MODEL_LABEL}</text>
           </g>
         )}
         {hoveredPlayerPoint && (
@@ -474,15 +589,15 @@ function PlayerAgingChart({ player }: { player: Player }) {
             transform={`translate(${Math.min(width - 154, hoveredPlayerPoint.x + 11)}, ${Math.max(margin.top + 3, hoveredPlayerPoint.y - 49)})`}
           >
             <rect width="144" height="43" rx="3" />
-            <text x="7" y="12">{hoveredPlayerPoint.season} · {formatChartRating(hoveredPlayerPoint.rating)} HIPSTER PM</text>
+            <text x="7" y="12">{hoveredPlayerPoint.season} · {formatChartRating(hoveredPlayerPoint.rating)} {MODEL_LABEL}</text>
             <text x="7" y="24">G {wholeNumber.format(hoveredPlayerPoint.games)} · GS {wholeNumber.format(hoveredPlayerPoint.gamesStarted)}</text>
             <text x="7" y="36">{wholeNumber.format(hoveredPlayerPoint.possessions)} possessions</text>
           </g>
         )}
       </svg>
       <figcaption>{showLeagueLeaders
-        ? "Completed-fit HIPSTER PM by age. The green line is the player; headshots mark the league’s highest completed-fit player rating in each season."
-        : "Completed-fit HIPSTER PM by age. The green line is the player."}
+        ? `Completed-fit ${MODEL_LABEL} by age. The colored areas are signed player-rating components stacked around zero; the green line is their sum. Headshots mark each season's league leader.`
+        : `Completed-fit ${MODEL_LABEL} by age. The colored areas are signed player-rating components stacked around zero; the green line is their sum.`}
       </figcaption>
     </figure>
   );
@@ -584,6 +699,37 @@ function App() {
     setResult(null);
   }
 
+  async function loadObservedLineup(side: Side, lineup: RankedLineup, season: string) {
+    try {
+      setError(null);
+      const setLoading = side === "unit" ? setIsLoadingUnit : setIsLoadingOpponent;
+      setLoading(true);
+      const parameters = new URLSearchParams({ season });
+      lineup.player_ids.forEach((playerId) => parameters.append("player_id", String(playerId)));
+      const response = await fetch(`/api/players/by-id?${parameters.toString()}`);
+      if (!response.ok) throw new Error("This lineup is unavailable in the Lineup Lab.");
+      const payload = (await response.json()) as { players: Player[] };
+      if (payload.players.length !== 5) throw new Error("This lineup is incomplete in the Lineup Lab.");
+      if (side === "unit") {
+        setUnitSeason(season);
+        setUnit(payload.players);
+      } else {
+        setOpponentSeason(season);
+        setOpponent(payload.players);
+      }
+      setResult(null);
+      window.location.hash = "#lab";
+    } catch (lineupError) {
+      setError((lineupError as Error).message);
+    } finally {
+      if (side === "unit") {
+        setIsLoadingUnit(false);
+      } else {
+        setIsLoadingOpponent(false);
+      }
+    }
+  }
+
   async function evaluate() {
     if (!canEvaluate) return;
     try {
@@ -649,7 +795,7 @@ function App() {
         </div>
       </header>
 
-      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "lineups" ? <LineupRankingsPage /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
+      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
         <section className="intro" aria-labelledby="page-title">
           <p className="eyebrow">A lineup is more than the sum of five player ratings.</p>
           <h1 id="page-title">Build the five.</h1>
@@ -714,6 +860,8 @@ function App() {
                     role="radio"
                     aria-checked={environment === value}
                     className={environment === value ? "active" : ""}
+                    disabled={unitSeason === opponentSeason}
+                    title={unitSeason === opponentSeason ? "Evaluation era applies only to mixed-season matchups." : undefined}
                     onClick={() => { setEnvironment(value); setResult(null); }}
                   >{label}</button>
                 ))}
@@ -731,7 +879,6 @@ function App() {
 
           <Results result={result} />
         </section>
-        {result && <ContextCurveExplorer result={result} />}
       </>}
     </main>
   );
@@ -744,36 +891,35 @@ function AboutPage() {
         <p className="eyebrow">About NBA GESTALT</p>
         <h1 id="about-title">A forecast built one season at a time.</h1>
         <p className="about-lede">
-          HIPSTER PM estimates a neutral-court lineup edge per 100 possessions by combining
-          player talent, attributable composition, and matchup-specific context.
+          {MODEL_LABEL} estimates a neutral-court lineup edge per 100 possessions by combining
+          regularized player ratings with non-additive five-player interaction terms.
         </p>
       </section>
 
       <section className="model-identity" aria-labelledby="model-name-title">
         <div>
           <p className="section-kicker">Current model</p>
-          <h2 id="model-name-title">HIPSTER PM</h2>
+          <h2 id="model-name-title">{MODEL_LABEL}</h2>
         </div>
-        <p className="model-identity-name">Forward age-informed HIPSTER PM</p>
+        <p className="model-identity-name">Forward age-informed lineup-interaction RAPM</p>
         <p>
-          <b>H</b>ierarchical <b>I</b>nterpretable <b>P</b>enalized-<b>S</b>pline,
-          <b>T</b>eammate-adjusted, <b>E</b>xposure-gated, <b>R</b>egularized
-          <b>P</b>lus-<b>M</b>inus.
+          <b>N</b>on-<b>A</b>dditive <b>I</b>nteractions in <b>L</b>ineups,
+          Regularized Adjusted Plus-Minus.
         </p>
       </section>
 
       <section className="about-equation" aria-labelledby="equation-title">
         <div>
           <p className="section-kicker">The estimate</p>
-          <h2 id="equation-title">Three terms, one score.</h2>
+          <h2 id="equation-title">Two terms, one score.</h2>
         </div>
         <p className="model-formula">
-          HPM(A, B) = Player(A) - Player(B) + h(Profile(A)) - h(Profile(B)) + q(Profile(A), Profile(B))
+          NAIL(A, B) = Player(A) - Player(B) + NonAdditiveEdge(A, B)
         </p>
         <p>
-          The player term comes from regularized adjusted plus-minus. The function <i>h</i> assigns
-          an attributable composition rating to either unit. The function <i>q</i> captures the small
-          residual created by this particular matchup.
+          The player term combines regularized adjusted plus-minus with the model's player-compilable
+          profile effects. <i>Non-Additive Edge</i> is the remaining unit-level interaction: it cannot
+          be recovered by simply summing five independent player ratings.
         </p>
       </section>
 
@@ -834,33 +980,33 @@ function AboutPage() {
       <section className="about-section contextual-section" aria-labelledby="context-title">
         <div className="about-section-heading">
           <p className="section-kicker">Lineup context</p>
-          <h2 id="context-title">Bounded hierarchical P-spline portable-matchup contextual prior.</h2>
-          <p>These terms use prior-season unit profiles, not target-season results, to describe how five-player composition modifies the player edge.</p>
+          <h2 id="context-title">Linear non-additive lineup context.</h2>
+          <p>These six terms use prior-season player profiles, not target-season results, to capture composition effects that are not linearly additive at the player level.</p>
         </div>
         <dl className="model-lexicon">
           <div>
-            <dt>Bounded</dt>
-            <dd>Feature inputs are capped at their learned support so an unusual hypothetical lineup cannot extrapolate a curve into an unsupported tail.</dd>
+            <dt>Linear Ridge</dt>
+            <dd>A standardized Ridge regression weights the declared non-additive lineup terms, keeping their coefficients stable despite correlated lineups.</dd>
           </div>
           <div>
-            <dt>Hierarchical</dt>
-            <dd>Each season’s contextual functions are softly anchored to the preceding season’s functions, preserving signal while allowing the league to change.</dd>
+            <dt>Shooting depth</dt>
+            <dd>Bottom-two shooting and credible-shooter count distinguish a unit with several credible spacers from one driven by a single shooter.</dd>
           </div>
           <div>
-            <dt>P-spline</dt>
-            <dd>Smooth penalized spline functions allow nonlinear effects, such as diminishing rebounding returns, without giving every local fluctuation a new parameter.</dd>
+            <dt>Creation distribution</dt>
+            <dd>Top-two assists and usage concentration distinguish distributed creation from a unit concentrated in one or two players.</dd>
           </div>
           <div>
-            <dt>Attributable composition</dt>
-            <dd>The portable function <i>h</i> maps a unit’s own profile to its composition rating, so each side receives a separately visible context term.</dd>
+            <dt>Interactions</dt>
+            <dd>Shooting-by-usage and shooter-by-passing are direct five-player interaction terms, not player-level statistics.</dd>
           </div>
           <div>
-            <dt>Matchup</dt>
-            <dd>The residual function <i>q</i> measures what remains when those two unit profiles meet: a small, opponent-specific bonus or penalty.</dd>
+            <dt>Compiled player effects</dt>
+            <dd>Eight additive profile effects compile exactly into player ratings. They are visible in the player row of the lineup ledger rather than double-counted as context.</dd>
           </div>
           <div>
-            <dt>Contextual prior</dt>
-            <dd>Those profile terms enter the RAPM estimation as prior context. They do not credit a player for the target season’s own rebounds, shooting, or turnovers.</dd>
+            <dt>Forward state</dt>
+            <dd>Every season begins from completed prior seasons. Neither a target season's outcomes nor its realized box scores enter its opening state.</dd>
           </div>
         </dl>
       </section>
@@ -876,7 +1022,7 @@ function AboutPage() {
   );
 }
 
-type RankingColumn = "rank" | "player_name" | "team" | "position" | "rapm" | "prior_context_unit_edge" | "possessions" | "games";
+type RankingColumn = "rank" | "player_name" | "team" | "position" | "rapm" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games";
 
 function RankingsPage() {
   const [players, setPlayers] = useState<RankedPlayer[]>([]);
@@ -895,7 +1041,7 @@ function RankingsPage() {
       try {
         setIsLoading(true);
         const response = await fetch(`/api/rankings?season=${encodeURIComponent(selectedSeason)}`, { signal: controller.signal });
-        if (!response.ok) throw new Error("HIPSTER PM rankings are unavailable.");
+        if (!response.ok) throw new Error(`${MODEL_LABEL} rankings are unavailable.`);
         const payload = (await response.json()) as {
           available_seasons: string[];
           players: RankedPlayer[];
@@ -945,8 +1091,11 @@ function RankingsPage() {
     { key: "player_name", label: "Player" },
     { key: "team", label: "Team" },
     { key: "position", label: "Pos" },
-    { key: "rapm", label: "HIPSTER PM", numeric: true },
-    { key: "prior_context_unit_edge", label: "Prior context edge", numeric: true },
+    { key: "rapm", label: MODEL_LABEL, numeric: true },
+    { key: "prior_rating", label: "Prior", numeric: true },
+    { key: "season_update", label: "Season update", numeric: true },
+    { key: "additive_profile_adjustment", label: "Additive profile", numeric: true },
+    { key: "observed_context_exposure", label: "Non-Additive Lineup Edge", numeric: true },
     { key: "possessions", label: "Possessions", numeric: true },
     { key: "games", label: "Games", numeric: true },
   ];
@@ -954,15 +1103,15 @@ function RankingsPage() {
   return (
     <article className="rankings-page" aria-labelledby="rankings-title">
       <section className="rankings-hero">
-        <p className="eyebrow">HIPSTER PM · {selectedSeason} completed fit</p>
+        <p className="eyebrow">{MODEL_LABEL} · {selectedSeason} completed fit</p>
         <h1 id="rankings-title">Player rankings.</h1>
         <p>
-          Completed-fit HIPSTER PM coefficients per 100 possessions for the selected season. Each table is intended
+          Completed-fit {MODEL_LABEL} coefficients per 100 possessions for the selected season. Each table is intended
           for within-season comparison, not an era-neutral all-time ranking.
         </p>
       </section>
 
-      <section className="rankings-table-section" aria-label="HIPSTER PM player rankings">
+      <section className="rankings-table-section" aria-label={`${MODEL_LABEL} player rankings`}>
         <div className="rankings-table-toolbar">
           <p>{isLoading ? "Loading rankings" : `Showing ${visiblePlayers.length} of ${players.length} players`}</p>
           <div className="rankings-table-controls">
@@ -995,7 +1144,7 @@ function RankingsPage() {
           <table className="rankings-table">
             <thead>
               <tr>
-                {columns.map((column) => <th className={column.numeric ? "numeric" : ""} scope="col" key={column.key}>
+                {columns.map((column) => <th className={`${column.numeric ? "numeric " : ""}${column.key === "rapm" ? "nail-rating-column" : ""}`} scope="col" key={column.key}>
                   <button type="button" onClick={() => changeSort(column.key)}>
                     {column.label}
                     {sortColumn === column.key && (sortDirection === "ascending" ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
@@ -1009,10 +1158,13 @@ function RankingsPage() {
                 <th scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>
                 <td>{player.team}</td>
                 <td>{player.position}</td>
-                <td className={player.rapm < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(player.rapm)}</td>
-                <td className={player.prior_context_unit_edge === null ? "numeric" : player.prior_context_unit_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.prior_context_unit_edge === null ? "-" : formatRating(player.prior_context_unit_edge)}</td>
-                <td className="numeric">{wholeNumber.format(player.possessions)}</td>
-                <td className="numeric">{player.games}</td>
+                <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
+                <td className={player.prior_rating === null ? "numeric" : player.prior_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.prior_rating === null ? "-" : formatRating(player.prior_rating)}</td>
+                <td className={player.season_update === null ? "numeric" : player.season_update < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.season_update === null ? "-" : formatRating(player.season_update)}</td>
+                <td className={player.additive_profile_adjustment === null ? "numeric" : player.additive_profile_adjustment < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.additive_profile_adjustment === null ? "-" : formatRating(player.additive_profile_adjustment)}</td>
+                <td className={player.observed_context_exposure === null ? "numeric" : player.observed_context_exposure < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.observed_context_exposure === null ? "-" : formatRating(player.observed_context_exposure)}</td>
+                <td className="numeric quantity-cell">{wholeNumber.format(player.possessions)}</td>
+                <td className="numeric quantity-cell">{player.games}</td>
               </tr>)}
             </tbody>
           </table>
@@ -1027,15 +1179,16 @@ type LineupRankingColumn =
   | "team"
   | "possessions"
   | "games"
-  | "player_rating"
   | "player_edge"
-  | "composition_edge"
-  | "matchup_bonus"
   | "context_edge"
   | "gestalt_score"
   | "actual_net_rating";
 
-function LineupRankingsPage() {
+function LineupRankingsPage({
+  onLoadInLab,
+}: {
+  onLoadInLab: (side: Side, lineup: RankedLineup, season: string) => void;
+}) {
   const [lineups, setLineups] = useState<RankedLineup[]>([]);
   const [selectedSeason, setSelectedSeason] = useState("2025-26");
   const [availableSeasons, setAvailableSeasons] = useState<string[]>([]);
@@ -1103,25 +1256,22 @@ function LineupRankingsPage() {
   const columns: Array<{ key: LineupRankingColumn; label: string; numeric?: boolean }> = [
     { key: "rank", label: "Rank", numeric: true },
     { key: "team", label: "Team" },
+    { key: "gestalt_score", label: "Edge", numeric: true },
+    { key: "player_edge", label: "Additive", numeric: true },
+    { key: "context_edge", label: "Non-Additive", numeric: true },
+    { key: "actual_net_rating", label: "Net Rating", numeric: true },
     { key: "possessions", label: "Poss", numeric: true },
     { key: "games", label: "Games", numeric: true },
-    { key: "player_rating", label: "Player total", numeric: true },
-    { key: "player_edge", label: "Player edge", numeric: true },
-    { key: "composition_edge", label: "Comp. edge", numeric: true },
-    { key: "matchup_bonus", label: "Matchup", numeric: true },
-    { key: "context_edge", label: "Context", numeric: true },
-    { key: "gestalt_score", label: "GESTALT", numeric: true },
-    { key: "actual_net_rating", label: "Actual", numeric: true },
   ];
 
   return (
     <article className="rankings-page lineup-rankings-page" aria-labelledby="lineups-title">
       <section className="rankings-hero">
-        <p className="eyebrow">HIPSTER PM · {selectedSeason} completed fit</p>
+        <p className="eyebrow">{MODEL_LABEL} · {selectedSeason} completed fit</p>
         <h1 id="lineups-title">Lineup contexts.</h1>
         <p>
-          Observed regular-season five-man units, scored against the opponents they actually faced. Context Edge combines
-          composition and matchup effects; GESTALT Score adds the opponent-weighted player edge.
+          Observed regular-season five-man units, scored against the opponents they actually faced. Edge combines
+          additive player value with the residual non-additive lineup effect.
         </p>
       </section>
 
@@ -1165,7 +1315,10 @@ function LineupRankingsPage() {
                   </button>
                 </th>)}
                 <th scope="col">Five-man unit</th>
-                {columns.slice(2).map((column) => <th className={column.numeric ? "numeric" : ""} scope="col" key={column.key}>
+                {columns.slice(2).map((column) => <th className={[
+                  column.numeric ? "numeric" : "",
+                  column.key === "gestalt_score" ? "edge-column" : "",
+                ].filter(Boolean).join(" ")} scope="col" key={column.key}>
                   <button type="button" onClick={() => changeSort(column.key)}>
                     {column.label}
                     {sortColumn === column.key && (sortDirection === "ascending" ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
@@ -1178,17 +1331,34 @@ function LineupRankingsPage() {
                 <td className="rank-number">{lineup.rank}</td>
                 <td>{lineup.team}</td>
                 <th className="lineup-roster" scope="row">
-                  {lineup.player_names.map((name, index) => <a key={lineup.player_ids[index]} className="player-name-link" href={playerProfileHref(lineup.player_ids[index])}>{name}</a>)}
+                  <span className="lineup-roster-names">
+                    {lineup.player_names.map((name, index) => <a key={lineup.player_ids[index]} className="player-name-link" href={playerProfileHref(lineup.player_ids[index])}>{name}</a>)}
+                  </span>
+                  <span className="lineup-lab-actions">
+                    <button
+                      type="button"
+                      onClick={() => onLoadInLab("unit", lineup, selectedSeason)}
+                      aria-label={`Load ${lineup.lineup_label} as your unit in the Lineup Lab`}
+                      title="Load as your unit"
+                    >
+                      <ArrowLeft size={13} aria-hidden="true" /> Your
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onLoadInLab("opponent", lineup, selectedSeason)}
+                      aria-label={`Load ${lineup.lineup_label} as the opponent in the Lineup Lab`}
+                      title="Load as opponent"
+                    >
+                      Opponent <ArrowRight size={13} aria-hidden="true" />
+                    </button>
+                  </span>
                 </th>
-                <td className="numeric">{wholeNumber.format(lineup.possessions)}</td>
-                <td className="numeric">{lineup.games}</td>
-                <td className={lineup.player_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.player_rating)}</td>
+                <td className={lineup.gestalt_score < 0 ? "negative numeric rating-cell edge-rating" : "positive numeric rating-cell edge-rating"}>{formatRating(lineup.gestalt_score)}</td>
                 <td className={lineup.player_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.player_edge)}</td>
-                <td className={lineup.composition_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.composition_edge)}</td>
-                <td className={lineup.matchup_bonus < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.matchup_bonus)}</td>
                 <td className={lineup.context_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.context_edge)}</td>
-                <td className={lineup.gestalt_score < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.gestalt_score)}</td>
                 <td className={lineup.actual_net_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.actual_net_rating)}</td>
+                <td className="numeric quantity-cell">{wholeNumber.format(lineup.possessions)}</td>
+                <td className="numeric quantity-cell">{lineup.games}</td>
               </tr>)}
             </tbody>
           </table>
@@ -1387,9 +1557,9 @@ function PlayerRatingSparkline({ player }: { player: Player }) {
       className="player-rating-sparkline"
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label={`${player.player_name} completed-fit HPM ratings from ${points[0].season} through ${latest.season}`}
+      aria-label={`${player.player_name} completed-fit ${MODEL_LABEL} ratings from ${points[0].season} through ${latest.season}`}
     >
-      <title>Completed-fit HPM trajectory: {points[0].season} to {latest.season}</title>
+      <title>Completed-fit {MODEL_LABEL} trajectory: {points[0].season} to {latest.season}</title>
       <text className="player-rating-rookie-label" x={labelWidth - 2} y={height / 2 + 3} textAnchor="end">{rookieYear}</text>
       <line className="player-rating-zero" x1={labelWidth} x2={width} y1={height / 2} y2={height / 2} />
       <path className="player-rating-line" d={path} />
@@ -1433,15 +1603,15 @@ function Results({ result }: {
       </aside>
     );
   }
-  const combinedEdge = result.additive_margin + result.portable_composition_margin;
+  const compiledLinear = result.model_form === "compiled_linear_x3";
   return (
     <aside className="results-panel" aria-live="polite">
       <div className="result-heading">
         <span>Neutral-court estimate</span>
         <small>
           {result.environment === "neutral"
-            ? `HIPSTER PM · mean of ${result.unit_season} and ${result.opponent_season} eras`
-            : `HIPSTER PM · ${result.season} era`}
+            ? `${MODEL_LABEL} · mean of ${result.unit_season} and ${result.opponent_season} eras`
+            : `${MODEL_LABEL} · ${result.season} era`}
         </small>
       </div>
       <div className="gestalt-score">
@@ -1467,24 +1637,35 @@ function Results({ result }: {
             <td><Rating value={result.opponent.additive_rating} /></td>
             <td><Rating value={result.additive_margin} /></td>
           </tr>
-          <tr>
-            <th scope="row">Composition rating</th>
-            <td><Rating value={result.unit_composition_rating} /></td>
-            <td><Rating value={result.opponent_composition_rating} /></td>
-            <td><Rating value={result.portable_composition_margin} /></td>
-          </tr>
-          <tr className="ledger-subtotal">
-            <th scope="row">Player + composition</th>
-            <td />
-            <td />
-            <td><Rating value={combinedEdge} /></td>
-          </tr>
-          <tr>
-            <th scope="row">Matchup bonus</th>
-            <td />
-            <td />
-            <td><Rating value={result.matchup_adjustment} /></td>
-          </tr>
+          {compiledLinear ? (
+            <tr>
+              <th scope="row">Non-additive lineup edge</th>
+              <td><Rating value={result.unit_composition_rating} /></td>
+              <td><Rating value={result.opponent_composition_rating} /></td>
+              <td><Rating value={result.contextual_adjustment} /></td>
+            </tr>
+          ) : (
+            <>
+              <tr>
+                <th scope="row">Composition rating</th>
+                <td><Rating value={result.unit_composition_rating} /></td>
+                <td><Rating value={result.opponent_composition_rating} /></td>
+                <td><Rating value={result.portable_composition_margin} /></td>
+              </tr>
+              <tr className="ledger-subtotal">
+                <th scope="row">Player + composition</th>
+                <td />
+                <td />
+                <td><Rating value={result.additive_margin + result.portable_composition_margin} /></td>
+              </tr>
+              <tr>
+                <th scope="row">Matchup bonus</th>
+                <td />
+                <td />
+                <td><Rating value={result.matchup_adjustment} /></td>
+              </tr>
+            </>
+          )}
           <tr className="ledger-total">
             <th scope="row">GESTALT score</th>
             <td />
@@ -1493,6 +1674,7 @@ function Results({ result }: {
           </tr>
         </tbody>
       </table>
+      <ContextCurveExplorer result={result} />
     </aside>
   );
 }
@@ -1502,24 +1684,37 @@ function ContextCurveExplorer({
 }: {
   result: Matchup;
 }) {
+  const compiledLinear = result.model_form === "compiled_linear_x3";
   return (
     <section className="curve-explorer" aria-label="Context component curves">
       <h2>Context components</h2>
       <div className="curve-columns">
-        <ContextCurveGroup
-          title="Lineup composition"
-          value={result.portable_composition_margin}
-          signals={result.composition_feature_contributions}
-          responseCurves={new Map((result.composition_response_curves ?? []).map((curve) => [curve.id, curve]))}
-          kind="composition"
-        />
-        <ContextCurveGroup
-          title="Matchup bonus"
-          value={result.matchup_adjustment}
-          signals={result.matchup_feature_contributions}
-          responseCurves={new Map((result.matchup_response_curves ?? []).map((curve) => [curve.id, curve]))}
-          kind="matchup"
-        />
+        {compiledLinear ? (
+          <ContextCurveGroup
+            title="Non-additive lineup edge"
+            value={result.contextual_adjustment}
+            signals={result.composition_feature_contributions}
+            responseCurves={new Map()}
+            kind="composition"
+          />
+        ) : (
+          <>
+            <ContextCurveGroup
+              title="Lineup composition"
+              value={result.portable_composition_margin}
+              signals={result.composition_feature_contributions}
+              responseCurves={new Map((result.composition_response_curves ?? []).map((curve) => [curve.id, curve]))}
+              kind="composition"
+            />
+            <ContextCurveGroup
+              title="Matchup bonus"
+              value={result.matchup_adjustment}
+              signals={result.matchup_feature_contributions}
+              responseCurves={new Map((result.matchup_response_curves ?? []).map((curve) => [curve.id, curve]))}
+              kind="matchup"
+            />
+          </>
+        )}
       </div>
     </section>
   );

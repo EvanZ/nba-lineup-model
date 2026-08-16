@@ -1,0 +1,40 @@
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+Preparing exposure cohort through 2025-26 for 30 seasonal fits
+Fitting portable-plus-matchup context state for 1996-97
+Fitting portable-plus-matchup context state for 1997-98
+  Fitting antisymmetric spline on 36,732 stints
+  Stored 10,331 reference units for 1997-98
+Fitting portable-plus-matchup context state for 1998-99
+  Fitting antisymmetric spline on 22,666 stints
+  Stored 7,268 reference units for 1998-99
+Fitting portable-plus-matchup context state for 1999-00
+  Fitting antisymmetric spline on 36,832 stints
+  Stored 10,078 reference units for 1999-00
+Fitting portable-plus-matchup context state for 2000-01
+  Fitting antisymmetric spline on 34,416 stints
+  Stored 10,197 reference units for 2000-01
+Fitting portable-plus-matchup context state for 2001-02
+  Fitting antisymmetric spline on 34,562 stints
+  Stored 9,592 reference units for 2001-02
+Fitting portable-plus-matchup context state for 2002-03
+  Fitting antisymmetric spline on 34,452 stints
+  Stored 8,878 reference units for 2002-03
+Fitting portable-plus-matchup context state for 2003-04
+  Fitting antisymmetric spline on 34,912 stints
+  Stored 10,724 reference units for 2003-04
+Fitting portable-plus-matchup context state for 2004-05
+  Fitting antisymmetric spline on 38,162 stints
+  Stored 12,779 reference units for 2004-05
+Fitting portable-plus-matchup context state for 2005-06
+  Fitting antisymmetric spline on 37,989 stints
+  Stored 12,412 reference units for 2005-06
+Fitting portable-plus-matchup context state for 2006-07
+  Fitting antisymmetric spline on 38,915 stints
+  Stored 12,580 reference units for 2006-07
+Fitting portable-plus-matchup context state for 2007-08
+  Fitting antisymmetric spline on 36,865 stints
+  Stored 12,034 reference units for 2007-08
+Fitting portable-plus-matchup context state for 2008-09

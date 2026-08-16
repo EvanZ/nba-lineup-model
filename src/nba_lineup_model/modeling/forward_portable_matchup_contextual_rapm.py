@@ -24,11 +24,16 @@ from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_V1,
     CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY,
     CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION,
+    CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO,
+    CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+    LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES,
     contextual_feature_columns,
     lineup_side_context_features,
+    side_context_feature_columns,
 )
 from nba_lineup_model.modeling.contextual_prior import _evaluate_target, _lineup_effects
 from nba_lineup_model.modeling.contextual_profiles import build_contextual_player_profiles
+from nba_lineup_model.modeling.forward_aging_player_prior import center_player_priors
 from nba_lineup_model.modeling.forward_contextual_rapm import (
     DEFAULT_ANALYTICAL_DIR,
     DEFAULT_ARTIFACTS_DIR,
@@ -58,27 +63,38 @@ from nba_lineup_model.modeling.prior_rapm import (
     _available_processed_playoff_game_ids,
     fit_forward_lagged_rapm_season,
 )
-from nba_lineup_model.modeling.replacement_level import (
-    player_exposure_shares,
-    prepare_player_exposure_cohort,
-)
 from nba_lineup_model.modeling.rebound_opportunity import (
     ReboundOpportunityModel,
     fit_rebound_opportunity_model,
 )
-from nba_lineup_model.modeling.usage_allocation import (
-    UsageAllocationModel,
-    fit_usage_allocation_model,
+from nba_lineup_model.modeling.replacement_level import (
+    player_exposure_shares,
+    prepare_player_exposure_cohort,
 )
 from nba_lineup_model.modeling.stints import (
     build_rapm_stints_from_legacy_processed_games,
     modeling_code_fingerprint,
     read_rapm_stints,
 )
+from nba_lineup_model.modeling.usage_allocation import (
+    UsageAllocationModel,
+    fit_usage_allocation_model,
+)
 from nba_lineup_model.season.schema import validate_season
 
 MODEL_NAME = "forward_portable_matchup_contextual_rapm"
 RUN_PREFIX = "forward-portable-matchup-contextual-rapm"
+
+_COMPILED_ADDITIVE_PROFILE_COLUMNS = {
+    "three_pa_per_100": "three_pa_per_100",
+    "three_pm_per_100": "three_pm_per_100",
+    "assists_per_100": "assists_per_100",
+    "turnovers_per_100": "turnovers_per_100",
+    "usage_per_100": "usage_per_100",
+    "steals_per_100": "steals_per_100",
+    "blocks_per_100": "blocks_per_100",
+    "offensive_rebound_claim_total": "offensive_rebound_pct",
+}
 
 
 @dataclass(frozen=True)
@@ -96,6 +112,7 @@ def train_forward_portable_matchup_contextual_rapm(
     context_curvature_alpha: float = 0.0,
     context_temporal_alpha: float = 0.0,
     context_reattribution_weight: float = 0.0,
+    compiled_additive_prior: bool = False,
     include_historical_playoffs: bool = False,
     use_context: bool = True,
     model_name: str = MODEL_NAME,
@@ -105,6 +122,7 @@ def train_forward_portable_matchup_contextual_rapm(
     context_fit: Callable[..., MatchupContextualModel] = fit_matchup_contextual_model,
     context_metadata: Callable[[MatchupContextualModel], dict[str, object]] = model_metadata,
     context_feature_set: str = CONTEXT_FEATURE_SET_V1,
+    profile_transformer: Callable[[pd.DataFrame, str], pd.DataFrame] | None = None,
     player_season_panel_path: Path | str = DEFAULT_PANEL_PATH,
     analytical_dir: Path | str = DEFAULT_ANALYTICAL_DIR,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
@@ -126,6 +144,17 @@ def train_forward_portable_matchup_contextual_rapm(
         raise ValueError("context_reattribution_weight must be between zero and one")
     if context_reattribution_weight and not use_context:
         raise ValueError("Context reattribution requires context_enabled")
+    if compiled_additive_prior:
+        if not use_context:
+            raise ValueError("Compiled additive prior transfer requires context_enabled")
+        if context_feature_set != CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY:
+            raise ValueError(
+                "Compiled additive prior transfer requires the canonical HPM x3 feature set"
+            )
+        if context_reattribution_weight:
+            raise ValueError(
+                "Compiled additive prior transfer cannot be combined with context reattribution"
+            )
     panel = pd.read_parquet(player_season_panel_path)
     artifact_root = Path(artifacts_dir)
     reference_root = _latest_run(artifact_root / "forward_exposure_gated_rapm" / target)
@@ -163,6 +192,7 @@ def train_forward_portable_matchup_contextual_rapm(
     usage_allocation_metadata: list[dict[str, object]] = []
     context_reattributions: dict[str, ContextProjection] = {}
     context_reattribution_metadata: list[dict[str, object]] = []
+    compiled_additive_prior_coefficients: list[pd.DataFrame] = []
     training_metadata: list[dict[str, object]] = []
     target_priors: pd.DataFrame | None = None
     target_profiles: pd.DataFrame | None = None
@@ -181,9 +211,11 @@ def train_forward_portable_matchup_contextual_rapm(
                     playoff_stints,
                     excluded_playoff_ids,
                 ) = build_rapm_stints_from_legacy_processed_games(playoff_ids)
-                raw_stints = pd.concat([raw_stints, playoff_stints], ignore_index=True).sort_values(
-                    ["game_time_utc", "game_id", "stint_index"], kind="stable"
-                ).reset_index(drop=True)
+                raw_stints = (
+                    pd.concat([raw_stints, playoff_stints], ignore_index=True)
+                    .sort_values(["game_time_utc", "game_id", "stint_index"], kind="stable")
+                    .reset_index(drop=True)
+                )
                 playoff_game_count = len(playoff_ids) - len(excluded_playoff_ids)
                 excluded_playoff_game_count = len(excluded_playoff_ids)
             print(
@@ -201,11 +233,23 @@ def train_forward_portable_matchup_contextual_rapm(
             }
         )
         participants = set().union(*raw_stints["home_player_ids"], *raw_stints["away_player_ids"])
+        previous_model = contextual_models.get(_previous_season(season))
+        previous_reattribution = context_reattributions.get(_previous_season(season))
+        priors, prior_row = prior_builder(
+            season=season,
+            panel=panel,
+            completed_results=results,
+            exposure_history=exposure_history,
+            replacement_tokens=replacement_tokens,
+        )
+        profile_ids = participants
+        if compiled_additive_prior:
+            profile_ids = profile_ids | set(priors["player_id"].astype(int))
         profiles = (
             build_contextual_player_profiles(
                 panel,
                 target_season=season,
-                target_player_ids=participants,
+                target_player_ids=profile_ids,
                 analytical_dir=str(analytical_dir),
                 curated_dir=str(curated_dir),
                 exposure_cohort=exposure_cohort,
@@ -213,11 +257,30 @@ def train_forward_portable_matchup_contextual_rapm(
             if use_context and season != seasons[0]
             else None
         )
-        previous_model = contextual_models.get(_previous_season(season))
-        previous_reattribution = context_reattributions.get(_previous_season(season))
+        if profiles is not None and profile_transformer is not None:
+            profiles = profile_transformer(profiles, season)
+        compiled_prior_metadata: dict[str, object] = {}
+        if compiled_additive_prior and previous_model is not None and profiles is not None:
+            priors, compiled_prior_metadata = _add_compiled_additive_context_to_priors(
+                priors,
+                previous_model,
+                profiles,
+                previous_exposure=exposure_history[-1] if exposure_history else None,
+            )
+            compiled_additive_prior_coefficients.append(
+                _compiled_additive_coefficient_frame(
+                    previous_model,
+                    target_season=season,
+                    source_season=_previous_season(season),
+                )
+            )
         if use_context and previous_model is not None and profiles is not None:
             offset = (
-                _context_offset(
+                _compiled_additive_residual_context_offset(
+                    raw_stints, previous_model, profiles
+                )
+                if compiled_additive_prior
+                else _context_offset(
                     raw_stints,
                     previous_model,
                     profiles,
@@ -233,13 +296,6 @@ def train_forward_portable_matchup_contextual_rapm(
         adjusted_stints["target_home_net_rating"] = (
             raw_stints["target_home_net_rating"].to_numpy(dtype=float) - offset
         )
-        priors, prior_row = prior_builder(
-            season=season,
-            panel=panel,
-            completed_results=results,
-            exposure_history=exposure_history,
-            replacement_tokens=replacement_tokens,
-        )
         priors, reattribution_prior_metadata = _add_context_reattribution_to_priors(
             priors,
             previous_reattribution,
@@ -247,6 +303,7 @@ def train_forward_portable_matchup_contextual_rapm(
         )
         prior_row = dict(prior_row)
         prior_row.update(reattribution_prior_metadata)
+        prior_row.update(compiled_prior_metadata)
         aging_model = prior_row.pop("_aging_model", None)
         aging_curve_grid = prior_row.pop("_aging_curve_grid", None)
         box_score_residual_model = prior_row.pop("_box_score_residual_model", None)
@@ -290,12 +347,21 @@ def train_forward_portable_matchup_contextual_rapm(
         if use_context and profiles is not None:
             rebound_model = (
                 fit_rebound_opportunity_model(season, profiles, curated_dir=curated_dir)
-                if context_feature_set in {CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY, CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION}
+                if context_feature_set
+                in {
+                    CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY,
+                    CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION,
+                    CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO,
+                }
                 else None
             )
             usage_model = (
                 fit_usage_allocation_model(season, profiles, curated_dir=curated_dir)
-                if context_feature_set == CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION
+                if context_feature_set
+                in {
+                    CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION,
+                    CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO,
+                }
                 else None
             )
             if rebound_model is not None:
@@ -314,7 +380,8 @@ def train_forward_portable_matchup_contextual_rapm(
                 )
             if usage_model is not None:
                 print(
-                    f"  Calibrated usage allocation on {usage_model.training_event_count:,} actions",
+                    "  Calibrated usage allocation on "
+                    f"{usage_model.training_event_count:,} actions",
                     flush=True,
                 )
                 usage_allocation_metadata.append(
@@ -385,7 +452,9 @@ def train_forward_portable_matchup_contextual_rapm(
             )
             if forecast_model is not None and context_reattribution_weight
             else forecast_model.predict_lineups
-            if forecast_model is not None
+            if forecast_model is not None and not compiled_additive_prior
+            else _context_predictor_with_compiled_additive_prior(forecast_model)
+            if forecast_model is not None and compiled_additive_prior
             else _zero_context_predictor
         ),
     )
@@ -394,7 +463,10 @@ def train_forward_portable_matchup_contextual_rapm(
         "player_prior_method": player_prior_description,
         "context_enabled": use_context,
         "context_contract": (
-            "C_(t-1)(home, away) = h(home) - h(away) + q(home, away)"
+            "C_shape_(t-1)(home, away) = C_full_(t-1)(home, away) - "
+            "beta_(t-1)'(z(home) - z(away))"
+            if compiled_additive_prior
+            else "C_(t-1)(home, away) = h(home) - h(away) + q(home, away)"
             if not context_reattribution_weight
             else "C_residual_(t-1) = C_(t-1) - rho X gamma_(t-1)"
             if use_context
@@ -418,7 +490,9 @@ def train_forward_portable_matchup_contextual_rapm(
         target_priors=target_priors,
         target_profiles=target_profiles,
         forecast_reference=(
-            forecast_model.reference_features.assign(reference_weight=forecast_model.reference_weights)
+            forecast_model.reference_features.assign(
+                reference_weight=forecast_model.reference_weights
+            )
             if forecast_model is not None
             else pd.DataFrame()
         ),
@@ -430,6 +504,12 @@ def train_forward_portable_matchup_contextual_rapm(
         context_reattribution_weight=context_reattribution_weight,
         context_reattributions=context_reattributions,
         context_reattribution_metadata=pd.DataFrame(context_reattribution_metadata),
+        compiled_additive_prior=compiled_additive_prior,
+        compiled_additive_prior_coefficients=(
+            pd.concat(compiled_additive_prior_coefficients, ignore_index=True)
+            if compiled_additive_prior_coefficients
+            else pd.DataFrame()
+        ),
         model_name=model_name,
         run_prefix=run_prefix,
         exposure_history=exposure_history,
@@ -467,6 +547,130 @@ def _context_offset(
     return full_context - reattribution_weight * projected
 
 
+def _linear_raw_context_coefficients(model: MatchupContextualModel) -> pd.Series:
+    """Return original-unit coefficients from the canonical linear x3 model."""
+
+    if model.feature_set != CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY:
+        raise ValueError("Compiled additive transfer requires canonical HPM x3 features")
+    if tuple(model.pipeline.named_steps) != ("scale", "ridge"):
+        raise ValueError("Compiled additive transfer requires a linear scale-plus-ridge model")
+    scale = model.pipeline.named_steps["scale"]
+    ridge = model.pipeline.named_steps["ridge"]
+    values = np.asarray(ridge.coef_, dtype=float) / np.asarray(scale.scale_, dtype=float)
+    columns = side_context_feature_columns(model.feature_set)
+    if len(values) != len(columns):
+        raise ValueError("Linear HPM x3 coefficient count does not match its feature contract")
+    return pd.Series(values, index=columns, name="raw_context_coefficient")
+
+
+def _compiled_additive_context(
+    home: pd.DataFrame,
+    away: pd.DataFrame,
+    model: MatchupContextualModel,
+) -> np.ndarray:
+    """Evaluate only the exactly player-compilable part of linear x3 context."""
+
+    coefficients = _linear_raw_context_coefficients(model)
+    columns = list(LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES)
+    relative = home.loc[:, columns].to_numpy(dtype=float) - away.loc[:, columns].to_numpy(
+        dtype=float
+    )
+    return relative @ coefficients.loc[columns].to_numpy(dtype=float)
+
+
+def _compiled_additive_residual_context_offset(
+    stints: pd.DataFrame,
+    model: MatchupContextualModel,
+    profiles: pd.DataFrame,
+) -> np.ndarray:
+    """Return carried context after removing its transferred additive player part."""
+
+    home = lineup_side_context_features(
+        stints["home_player_ids"].tolist(), profiles, feature_set=model.feature_set
+    )
+    away = lineup_side_context_features(
+        stints["away_player_ids"].tolist(), profiles, feature_set=model.feature_set
+    )
+    full = model.predict_side_pairs(home, away)
+    return full - _compiled_additive_context(home, away, model)
+
+
+def _context_predictor_with_compiled_additive_prior(
+    model: MatchupContextualModel,
+) -> Callable[[object, object, object], np.ndarray]:
+    """Expose only non-additive shape context once beta has entered the prior."""
+
+    def predict(home_lineups: object, away_lineups: object, profiles: object) -> np.ndarray:
+        stints = pd.DataFrame({"home_player_ids": home_lineups, "away_player_ids": away_lineups})
+        return _compiled_additive_residual_context_offset(
+            stints, model, profiles  # type: ignore[arg-type]
+        )
+
+    return predict
+
+
+def _add_compiled_additive_context_to_priors(
+    priors: pd.DataFrame,
+    model: MatchupContextualModel,
+    profiles: pd.DataFrame,
+    *,
+    previous_exposure: pd.DataFrame | None,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Add prior-season beta times current lagged player profiles to the prior."""
+
+    coefficients = _linear_raw_context_coefficients(model)
+    columns = list(LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES)
+    profile_columns = [_COMPILED_ADDITIVE_PROFILE_COLUMNS[column] for column in columns]
+    required = {"player_id", *profile_columns}
+    missing = required - set(profiles)
+    if missing:
+        raise ValueError("Compiled additive prior profiles lack: " + ", ".join(sorted(missing)))
+    values = profiles.loc[:, ["player_id", *profile_columns]].copy()
+    values["compiled_additive_prior_adjustment"] = values.loc[:, profile_columns].to_numpy(
+        dtype=float
+    ) @ coefficients.loc[columns].to_numpy(dtype=float)
+    output = priors.merge(
+        values.loc[:, ["player_id", "compiled_additive_prior_adjustment"]],
+        on="player_id",
+        how="left",
+        validate="one_to_one",
+    )
+    available = output["compiled_additive_prior_adjustment"].notna()
+    output[PRIOR_MEAN_COLUMN] += output["compiled_additive_prior_adjustment"].fillna(0.0)
+    centered, center_metadata = center_player_priors(
+        output.drop(columns="compiled_additive_prior_adjustment"),
+        previous_exposure=previous_exposure,
+    )
+    return centered, {
+        "compiled_additive_prior_enabled": True,
+        "compiled_additive_prior_source_feature_set": model.feature_set,
+        "compiled_additive_prior_feature_count": len(columns),
+        "compiled_additive_prior_available_player_count": int(available.sum()),
+        "compiled_additive_prior_missing_player_count": int((~available).sum()),
+        **{f"compiled_additive_{key}": value for key, value in center_metadata.items()},
+    }
+
+
+def _compiled_additive_coefficient_frame(
+    model: MatchupContextualModel,
+    *,
+    target_season: str,
+    source_season: str,
+) -> pd.DataFrame:
+    """Materialize the beta state carried into one following-season player prior."""
+
+    coefficients = _linear_raw_context_coefficients(model)
+    columns = list(LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES)
+    return pd.DataFrame(
+        {
+            "target_season": target_season,
+            "source_season": source_season,
+            "feature": columns,
+            "raw_context_coefficient": coefficients.loc[columns].to_numpy(dtype=float),
+        }
+    )
+
+
 def _context_predictor_with_reattribution(
     model: MatchupContextualModel,
     reattribution: ContextProjection | None,
@@ -478,9 +682,7 @@ def _context_predictor_with_reattribution(
         full_context = model.predict_lineups(home_lineups, away_lineups, profiles)  # type: ignore[arg-type]
         if reattribution is None or not reattribution_weight:
             return full_context
-        stints = pd.DataFrame(
-            {"home_player_ids": home_lineups, "away_player_ids": away_lineups}
-        )
+        stints = pd.DataFrame({"home_player_ids": home_lineups, "away_player_ids": away_lineups})
         return full_context - reattribution_weight * _project_reattributed_player_context(
             stints, reattribution
         )
@@ -646,7 +848,7 @@ def _fit_matchup_contextual_season(
         usage_model=usage_model,
     )
     target = stints["target_home_net_rating"].to_numpy(dtype=float) - effects - intercept
-    print(f"  Fitting antisymmetric spline on {len(stints):,} stints", flush=True)
+    print(f"  Fitting antisymmetric context model on {len(stints):,} stints", flush=True)
     model = context_fit(
         home,
         away,
@@ -714,6 +916,8 @@ def _write_run(
     context_reattribution_weight: float,
     context_reattributions: dict[str, ContextProjection],
     context_reattribution_metadata: pd.DataFrame,
+    compiled_additive_prior: bool,
+    compiled_additive_prior_coefficients: pd.DataFrame,
     model_name: str,
     run_prefix: str,
     exposure_history: list[pd.DataFrame],
@@ -760,6 +964,9 @@ def _write_run(
             "season_rebound_calibration_metadata.parquet": rebound_calibration_metadata,
             "season_usage_allocation_metadata.parquet": usage_allocation_metadata,
             "season_context_reattribution_metadata.parquet": context_reattribution_metadata,
+            "season_compiled_additive_prior_coefficients.parquet": (
+                compiled_additive_prior_coefficients
+            ),
             "season_player_prior_metadata.parquet": prior_metadata,
             "frozen_2025_26_player_priors.parquet": target_priors,
             "target_player_profiles.parquet": target_profiles,
@@ -816,7 +1023,12 @@ def _write_run(
             "context_temporal_alpha": context_temporal_alpha,
             "context_enabled": context_enabled,
             "context_reattribution_weight": context_reattribution_weight,
+            "compiled_additive_prior": compiled_additive_prior,
             "contextual_offset_contract": (
+                "The prior-season linear additive profile term is added to player priors; "
+                "only the remaining lineup-shape context is carried forward"
+                if compiled_additive_prior
+                else
                 "C_(t-1)(home, away) less its transferred player projection is subtracted "
                 "before season t RAPM"
                 if context_enabled

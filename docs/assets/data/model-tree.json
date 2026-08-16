@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updated": "2026-08-13",
+  "updated": "2026-08-15",
   "default_metric": "rolling_regular_game_margin_rmse",
   "metrics": [
     {
@@ -237,6 +237,42 @@
         "rolling_regular_game_winner_accuracy": 0.676445,
         "rolling_regular_team_net_rating_rmse": 3.6754,
         "rolling_regular_pythagorean_wins_rmse": 7.7561
+      }
+    },
+    {
+      "id": "additive-profile-prior-rapm",
+      "name": "Additive Profile-Prior RAPM",
+      "short_name": "Additive profile prior",
+      "parent": "complete-player-prior-rapm",
+      "change": "+ moves HPM x3's additive player profiles into a strictly lagged residual prior; lineup context remains off.",
+      "docs": "./additive-profile-prior-rapm/",
+      "metrics": {
+        "rolling_regular_possession_rmse": 1.198042,
+        "rolling_regular_game_margin_rmse": 14.2457,
+        "rolling_regular_full_game_margin_rmse": 14.4902,
+        "rolling_regular_game_winner_accuracy": 0.680718,
+        "rolling_regular_team_net_rating_rmse": 3.5860,
+        "rolling_regular_pythagorean_wins_rmse": 7.6646,
+        "frozen_playoff_possession_rmse": 1.192751,
+        "frozen_playoff_game_margin_rmse": 16.6886
+      }
+    },
+    {
+      "id": "additive-profile-linear-shape-context-rapm",
+      "name": "Additive Prior Plus Linear Shape Context",
+      "short_name": "Additive prior + shape context",
+      "parent": "additive-profile-prior-rapm",
+      "change": "+ six non-additive HPM x3 lineup-shape features in standardized linear Ridge context; no spline or quadratic basis.",
+      "docs": "./additive-profile-linear-shape-context/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198026,
+        "frozen_regular_game_margin_rmse": 14.2154,
+        "frozen_regular_full_game_margin_rmse": 14.4542,
+        "frozen_regular_game_winner_accuracy": 0.677585,
+        "frozen_regular_team_net_rating_rmse": 3.5492,
+        "frozen_regular_pythagorean_wins_rmse": 7.4793,
+        "frozen_playoff_possession_rmse": 1.192814,
+        "frozen_playoff_game_margin_rmse": 16.7224
       }
     },
     {
@@ -651,6 +687,186 @@
         "frozen_regular_pythagorean_wins_rmse": 7.4793,
         "frozen_playoff_possession_rmse": 1.192807,
         "frozen_playoff_game_margin_rmse": 16.6806
+      }
+    },
+    {
+      "id": "hpm-v23-shot-portfolio",
+      "name": "HIPSTER PM v2.3: Shot Portfolio",
+      "short_name": "HPM v2.3 shot portfolio",
+      "parent": "hpm-v22-usage-allocation",
+      "change": "+ forward rim-pressure, spacing-capacity, and rim-by-spacing interaction signals with bounded hierarchical P-spline responses.",
+      "docs": "./hpm-v23/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198025,
+        "frozen_regular_game_margin_rmse": 14.1815,
+        "frozen_regular_full_game_margin_rmse": 14.4288,
+        "frozen_regular_game_winner_accuracy": 0.677015,
+        "frozen_regular_team_net_rating_rmse": 3.5037,
+        "frozen_regular_pythagorean_wins_rmse": 7.5274,
+        "frozen_playoff_possession_rmse": 1.192777,
+        "frozen_playoff_game_margin_rmse": 16.6546
+      }
+    },
+    {
+      "id": "hpm-x1-orb-claim-context",
+      "name": "HPM x1: ORB Claim Context",
+      "short_name": "HPM x1 ORB claims",
+      "parent": "forward-centered-value-conditioned-aging-no-context-rapm",
+      "change": "Experiment: add one summed prior-player ORB% claim-total contextual feature to the controlled no-context value-conditioned baseline.",
+      "docs": "./hpm-x1/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198047,
+        "frozen_regular_game_margin_rmse": 14.2081,
+        "frozen_regular_full_game_margin_rmse": 14.4665,
+        "frozen_regular_game_winner_accuracy": 0.678724,
+        "frozen_regular_team_net_rating_rmse": 3.6653,
+        "frozen_regular_pythagorean_wins_rmse": 7.7498,
+        "frozen_playoff_possession_rmse": 1.192763,
+        "frozen_playoff_game_margin_rmse": 16.6315
+      }
+    },
+    {
+      "id": "hpm-x2-raw-oreb100-context",
+      "name": "HPM x2: Raw OREB/100 Context",
+      "short_name": "HPM x2 raw OREB/100",
+      "parent": "forward-centered-value-conditioned-aging-no-context-rapm",
+      "change": "Experiment: replace summed ORB% claims with one summed prior-player OREB/100 context feature.",
+      "docs": "./hpm-x2/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198048,
+        "frozen_regular_game_margin_rmse": 14.2073,
+        "frozen_regular_full_game_margin_rmse": 14.4641,
+        "frozen_regular_game_winner_accuracy": 0.677870,
+        "frozen_regular_team_net_rating_rmse": 3.6558,
+        "frozen_regular_pythagorean_wins_rmse": 7.7389,
+        "frozen_playoff_possession_rmse": 1.192760,
+        "frozen_playoff_game_margin_rmse": 16.6382
+      }
+    },
+    {
+      "id": "hpm-x3-orb-claim-rebound-replacement",
+      "name": "HPM x3: ORB Claim Rebound Replacement",
+      "short_name": "HPM x3 ORB claim replacement",
+      "parent": "forward-centered-value-conditioned-aging-bounded-hierarchical-portable-matchup-contextual-rapm",
+      "change": "Replace HPM v1's five rebounding features with one summed prior-player ORB% claim-total feature; retain all other HPM v1 context signals.",
+      "docs": "./hpm-x3/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198000,
+        "frozen_regular_game_margin_rmse": 14.1309,
+        "frozen_regular_full_game_margin_rmse": 14.3774,
+        "frozen_regular_game_winner_accuracy": 0.677300,
+        "frozen_regular_team_net_rating_rmse": 3.4229,
+        "frozen_regular_pythagorean_wins_rmse": 7.3269,
+        "frozen_playoff_possession_rmse": 1.192781,
+        "frozen_playoff_game_margin_rmse": 16.6792
+      }
+    },
+    {
+      "id": "hpm-x3-linear-ridge-context",
+      "name": "Linear-Ridge HPM x3 Context",
+      "short_name": "Linear HPM x3",
+      "parent": "hpm-x3-orb-claim-rebound-replacement",
+      "change": "Keep x3's feature contract and player-prior pipeline, replacing bounded hierarchical P-splines with standardized linear Ridge context.",
+      "docs": "./hpm-x3-linear-ridge/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197978,
+        "frozen_regular_game_margin_rmse": 14.1051,
+        "frozen_regular_full_game_margin_rmse": 14.3529,
+        "frozen_regular_game_winner_accuracy": 0.681287,
+        "frozen_regular_team_net_rating_rmse": 3.4348,
+        "frozen_regular_pythagorean_wins_rmse": 7.3731,
+        "frozen_playoff_possession_rmse": 1.192766,
+        "frozen_playoff_game_margin_rmse": 16.6817
+      }
+    },
+    {
+      "id": "hpm-x3-linear-ridge-without-uncertainty",
+      "name": "NAIL-RAPM v1.0",
+      "short_name": "NAIL-RAPM v1.0",
+      "parent": "hpm-x3-linear-ridge-context",
+      "change": "- retire imputed-profile count and replacement-profile weight. The remaining 14 coordinates are basketball features; this is the canonical NAIL-RAPM v1.0 contract.",
+      "docs": "./hpm-x3-linear-ridge-without-uncertainty/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197977,
+        "frozen_regular_game_margin_rmse": 14.1119,
+        "frozen_regular_full_game_margin_rmse": 14.3517,
+        "frozen_regular_game_winner_accuracy": 0.683281,
+        "frozen_regular_team_net_rating_rmse": 3.4307,
+        "frozen_regular_pythagorean_wins_rmse": 7.3460,
+        "frozen_playoff_possession_rmse": 1.192752,
+        "frozen_playoff_game_margin_rmse": 16.6636
+      }
+    },
+    {
+      "id": "hpm-x3-linear-quadratic-side-context",
+      "name": "Linear HPM x3: Quadratic Side Context",
+      "short_name": "Linear HPM x3 + quadratic side",
+      "parent": "hpm-x3-linear-ridge-context",
+      "change": "+ one Ridge-penalized squared side-total term for each player-compilable additive feature; no spline basis.",
+      "docs": "./linear-hpm-x3-quadratic-side-context/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198002,
+        "frozen_regular_game_margin_rmse": 14.1311,
+        "frozen_regular_full_game_margin_rmse": 14.3922,
+        "frozen_regular_game_winner_accuracy": 0.673597,
+        "frozen_regular_team_net_rating_rmse": 3.5139,
+        "frozen_regular_pythagorean_wins_rmse": 7.5889,
+        "frozen_playoff_possession_rmse": 1.192719,
+        "frozen_playoff_game_margin_rmse": 16.5978
+      }
+    },
+    {
+      "id": "forward-compiled-additive-prior-hpm-x3",
+      "name": "Forward Compiled-Additive-Prior HPM x3",
+      "short_name": "x3 additive player state",
+      "parent": "hpm-x3-linear-ridge-without-uncertainty",
+      "change": "+ carry the eight learned additive profile coefficients into the following player prior; only six non-additive lineup-shape terms remain carried context. Rejected on regular-season forecasting.",
+      "docs": "./forward-compiled-additive-prior-hpm-x3/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198079,
+        "frozen_regular_game_margin_rmse": 14.3203,
+        "frozen_regular_full_game_margin_rmse": 14.5908,
+        "frozen_regular_game_winner_accuracy": 0.674452,
+        "frozen_regular_team_net_rating_rmse": 3.7410,
+        "frozen_regular_pythagorean_wins_rmse": 8.0203,
+        "frozen_playoff_possession_rmse": 1.192679,
+        "frozen_playoff_game_margin_rmse": 16.5899
+      }
+    },
+    {
+      "id": "hpm-x4-orb-claim-blocks-only",
+      "name": "HPM x4: ORB Claims + Blocks",
+      "short_name": "HPM x4 blocks only",
+      "parent": "hpm-x3-orb-claim-rebound-replacement",
+      "change": "Retain x3's summed ORB% claim feature, remove steals per 100, and retain blocks per 100 as the sole defensive-event signal.",
+      "docs": "./hpm-x4/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198007,
+        "frozen_regular_game_margin_rmse": 14.1493,
+        "frozen_regular_full_game_margin_rmse": 14.4036,
+        "frozen_regular_game_winner_accuracy": 0.675306,
+        "frozen_regular_team_net_rating_rmse": 3.4877,
+        "frozen_regular_pythagorean_wins_rmse": 7.4188,
+        "frozen_playoff_possession_rmse": 1.192816,
+        "frozen_playoff_game_margin_rmse": 16.7442
+      }
+    },
+    {
+      "id": "hpm-x5-orb-claim-interaction-creation",
+      "name": "HPM x5: Interaction-Only Creation",
+      "short_name": "HPM x5 creation",
+      "parent": "hpm-x3-orb-claim-rebound-replacement",
+      "change": "Remove direct assists and top-two-assists functions while retaining the shooter-by-passing interaction and x3's ORB% claim feature.",
+      "docs": "./hpm-x5/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198006,
+        "frozen_regular_game_margin_rmse": 14.1300,
+        "frozen_regular_full_game_margin_rmse": 14.3800,
+        "frozen_regular_game_winner_accuracy": 0.679863,
+        "frozen_regular_team_net_rating_rmse": 3.4546,
+        "frozen_regular_pythagorean_wins_rmse": 7.3907,
+        "frozen_playoff_possession_rmse": 1.192775,
+        "frozen_playoff_game_margin_rmse": 16.6705
       }
     },
     {

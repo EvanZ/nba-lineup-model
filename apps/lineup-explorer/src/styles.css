@@ -67,6 +67,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-profile-heading h2 { margin: 0; color: #17201c; font-family: Georgia, "Times New Roman", serif; font-size: 29px; font-weight: 400; text-transform: none; }
 .player-profile-heading .section-kicker { margin: 0; }
 .player-stat-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; border-top: 1px solid #d9d6ce; }
+.player-additive-profile-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .player-stat-grid div { padding: 15px 14px 12px 0; border-bottom: 1px solid #e2dfd7; }
 .player-stat-grid dt { color: #68716a; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .player-stat-grid dd { margin: 7px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 21px; font-weight: 700; }
@@ -74,18 +75,17 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-rating-path-note { color: #68716a; font-size: 13px; line-height: 1.45; margin: 0 0 14px; max-width: 720px; }
 .player-aging-chart { max-width: 760px; margin: 0 0 26px; padding: 18px 0 16px; border-top: 1px solid #d9d6ce; border-bottom: 1px solid #d9d6ce; }
 .player-aging-chart-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-.player-aging-chart-actions { display: flex; align-items: center; gap: 6px; }
+.player-aging-chart-actions, .player-aging-chart-layer-controls { display: flex; align-items: center; gap: 6px; }
 .player-aging-chart-toolbar button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border: 1px solid #a6aaa4; border-radius: 3px; background: #f6f3ec; color: #245a47; font-size: 11px; font-weight: 700; }
 .player-aging-chart-toolbar button:hover { border-color: #245a47; background: #dce8db; }
-.player-aging-chart-toolbar .chart-layer-toggle { height: 27px; justify-content: space-between; gap: 7px; padding: 0 5px 0 8px; }
-.chart-layer-toggle-track { width: 22px; height: 13px; display: flex; align-items: center; padding: 1px; border-radius: 8px; background: #9aa19b; transition: background 120ms ease; }
-.chart-layer-toggle-track span { width: 11px; height: 11px; border-radius: 50%; background: #fffefa; box-shadow: 0 1px 2px rgb(23 32 28 / 0.24); transition: transform 120ms ease; }
-.chart-layer-toggle[aria-checked="true"] .chart-layer-toggle-track { background: #187052; }
-.chart-layer-toggle[aria-checked="true"] .chart-layer-toggle-track span { transform: translateX(9px); }
+.player-aging-chart-toolbar .chart-component-toggle { height: 27px; gap: 5px; padding: 0 7px; color: #505952; }
+.player-aging-chart-toolbar .chart-component-toggle[aria-checked="false"] { opacity: 0.48; }
+.chart-component-swatch { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 1px; }
 .player-aging-chart svg { width: 100%; height: auto; display: block; overflow: visible; }
 .player-aging-chart figcaption { margin-top: 10px; color: #68716a; font-size: 12px; line-height: 1.45; }
 .aging-chart-grid { stroke: #d9d6ce; stroke-width: 1; }
 .aging-chart-title { fill: #17201c; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 13px; font-weight: 800; }
+.aging-chart-export-legend { display: none; }
 .aging-chart-zero { stroke: #838a83; stroke-width: 1; stroke-dasharray: 5 4; }
 .aging-chart-leader-fallback { fill: #f6f3ec; stroke: #8e968f; stroke-width: 1; }
 .aging-chart-leader-headshot { overflow: visible; }
@@ -107,7 +107,10 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .player-history-table th, .player-history-table td { padding: 10px 8px; border-bottom: 1px solid #e2dfd7; text-align: left; }
 .player-history-table th { color: #68716a; font-size: 10px; text-transform: uppercase; }
-.player-history-table td:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
+.player-history-table .quantity-cell { font-weight: 400; }
+.player-history-table .nail-history-column { color: #17201c; font-size: 11px; font-weight: 900; }
+.player-history-table .nail-history-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 900; }
+.player-history-table .nail-rank-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
 .player-team-splits { display: grid; gap: 3px; min-width: 152px; color: #68716a; font-size: 11px; line-height: 1.25; white-space: nowrap; }
 .player-team-splits .primary { color: #17201c; }
 .player-history-dnp td { color: #8e968f; background: #faf8f3; }
@@ -141,11 +144,21 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .rankings-table .numeric { text-align: right; }
 .rankings-table thead .numeric button { justify-content: flex-end; width: 100%; }
 .rank-number, .rating-cell, .rankings-table td.numeric { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
+.rankings-table .nail-rating-column button { color: #17201c; font-size: 11px; font-weight: 900; }
+.rankings-table .nail-rating-cell { font-size: 15px; font-weight: 900; }
+.rankings-table td.quantity-cell { font-weight: 400; }
 .lineup-rankings-page .rankings-hero { max-width: 900px; }
 .lineup-player-search { width: min(340px, 100%); }
-.lineup-rankings-table { min-width: 1380px; }
-.lineup-rankings-table tbody th.lineup-roster { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 3px 7px; min-width: 290px; max-width: 390px; color: #17201c; font-size: 12px; line-height: 1.25; }
-.lineup-rankings-table .lineup-roster .player-name-link:not(:last-child)::after { content: ","; color: #69716b; }
+.lineup-rankings-table { width: max-content; min-width: 1180px; }
+.lineup-rankings-table tbody th.lineup-roster { display: block; min-width: 290px; max-width: 390px; color: #17201c; font-size: 12px; line-height: 1.25; }
+.lineup-roster-names { display: flex; flex-wrap: wrap; gap: 3px 7px; }
+.lineup-rankings-table .lineup-roster-names .player-name-link:not(:last-child)::after { content: ","; color: #69716b; }
+.lineup-lab-actions { display: flex; align-items: center; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2dfd7; white-space: nowrap; }
+.lineup-lab-actions button { height: 26px; display: inline-flex; align-items: center; gap: 3px; padding: 0 7px; border: 1px solid #a6aaa4; border-radius: 3px; background: #fffefa; color: #245a47; font-size: 10px; font-weight: 800; }
+.lineup-lab-actions button:hover { border-color: #245a47; background: #edf2e9; color: #17201c; }
+.lineup-rankings-table .edge-column button { color: #17201c; font-size: 11px; font-weight: 900; }
+.lineup-rankings-table td.edge-rating { font-size: 15px; font-weight: 900; }
+.lineup-rankings-table td.quantity-cell { font-weight: 400; }
 .eyebrow { margin: 0 0 14px; color: #5d655f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.4; letter-spacing: 0; text-transform: uppercase; }
 h1 { margin: 0; max-width: 720px; font-family: Georgia, "Times New Roman", serif; font-size: clamp(46px, 7vw, 82px); font-weight: 400; line-height: 0.95; letter-spacing: 0; }
 .lab-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(330px, 0.9fr); border-top: 2px solid #17201c; }
@@ -165,6 +178,7 @@ h1 { margin: 0; max-width: 720px; font-family: Georgia, "Times New Roman", serif
 .environment-toggle button:last-child { border-right: 0; }
 .environment-toggle button:hover { background: #edf2e9; color: #245a47; }
 .environment-toggle button.active { background: #245a47; color: #fffefa; }
+.environment-toggle button:disabled { cursor: not-allowed; background: #f0eee8; color: #8b908b; }
 .lineup-controls { display: inline-flex; align-items: center; gap: 6px; }
 .refresh-button, .clear-button { width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 50%; }
 .refresh-button { background: #dce8db; color: #245a47; }
@@ -232,6 +246,9 @@ small { color: #6b736d; font-size: 12px; }
 .feature-info::after { position: absolute; z-index: 8; bottom: calc(100% + 7px); left: 50%; width: 250px; padding: 8px 9px; border: 1px solid #17201c; border-radius: 3px; background: #fffefa; box-shadow: 3px 3px 0 #17201c; color: #17201c; content: attr(data-tooltip); font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 11px; font-weight: 500; line-height: 1.35; opacity: 0; pointer-events: none; text-align: left; transform: translate(-50%, 4px); transition: opacity 120ms ease, transform 120ms ease; visibility: hidden; white-space: normal; }
 .feature-info:hover::after, .feature-info:focus-visible::after { opacity: 1; transform: translate(-50%, 0); visibility: visible; }
 .results-panel { min-height: 555px; padding: 31px 0 34px 34px; }
+.results-panel .curve-explorer { margin-top: 0; padding-top: 20px; border-top: 1px solid #d9d6ce; }
+.results-panel .curve-explorer > h2 { margin-bottom: 13px; }
+.results-panel .curve-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px; }
 .empty-results { display: grid; align-content: center; justify-items: center; gap: 16px; color: #68716a; text-align: center; }
 .empty-results p { max-width: 220px; margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 22px; line-height: 1.15; }
 .result-mark { width: 54px; height: 54px; display: grid; place-items: center; border: 1px solid #17201c; border-radius: 50%; background: #dce8db; font-family: Georgia, "Times New Roman", serif; font-size: 30px; }
@@ -304,6 +321,8 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .player-profile-hero .player-headshot { width: 82px; height: 82px; flex-basis: 82px; }
   .player-profile-hero h1 { font-size: 40px; }
   .profile-hero-rating { grid-column: 1 / -1; justify-items: start; }
+  .player-aging-chart-toolbar { align-items: flex-start; flex-direction: column; }
+  .player-aging-chart-actions { flex-wrap: wrap; }
   .player-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .model-identity { grid-template-columns: minmax(170px, 0.55fr) 1fr; }
   .model-identity > p:last-child { grid-column: 1 / -1; }
@@ -333,6 +352,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .header-link span { display: none; }
   .season-chip { padding: 4px 6px; font-size: 11px; }
   .curve-columns, .curve-grid { grid-template-columns: 1fr; }
+  .player-aging-chart-actions, .player-aging-chart-layer-controls { flex-wrap: wrap; }
   .about-hero { padding-bottom: 42px; }
   .about-lede { font-size: 20px; }
   .rankings-hero > p:last-child { font-size: 19px; }

@@ -18,9 +18,14 @@ from nba_lineup_model.web_api.inference import (
     DISPLAY_SEASON,
     MODEL_ARTIFACT,
     LineupEvaluator,
+    _compiled_linear_x3_coefficients,
+    _is_compiled_linear_x3,
     _player_catalog,
+    _player_rating_center,
     build_observed_lineup_rankings,
+    build_published_player_ratings,
     lineup_rankings_path,
+    published_player_ratings_path,
 )
 
 DEFAULT_PANEL_PATH = Path("data/analytical/player_season_panel/player_seasons.parquet")
@@ -44,6 +49,7 @@ def _build_one_season(season: str) -> None:
 
     evaluator = LineupEvaluator.from_latest_artifact(season=DISPLAY_SEASON)
     state = _artifact_state(evaluator.run_id)
+    _write_published_player_ratings(run_id=evaluator.run_id, **state)
     _write_season(season, run_id=evaluator.run_id, **state)
 
 
@@ -52,6 +58,7 @@ def _build_all_seasons() -> None:
 
     evaluator = LineupEvaluator.from_latest_artifact(season=DISPLAY_SEASON)
     state = _artifact_state(evaluator.run_id)
+    _write_published_player_ratings(run_id=evaluator.run_id, **state)
     seasons = sorted(state["models"])
     for index, season in enumerate(seasons, start=1):
         print(
@@ -67,12 +74,34 @@ def _artifact_state(run_id: str) -> dict[str, object]:
     root = DEFAULT_ARTIFACTS_DIR / MODEL_ARTIFACT / DISPLAY_SEASON / run_id
     metadata = json.loads((root / "metadata.json").read_text())
     if metadata.get("model") != MODEL_ARTIFACT:
-        raise ValueError("The published HPM artifact has an unexpected model identity")
+        raise ValueError("The published NAIL-RAPM artifact has an unexpected model identity")
     return {
         "panel": pd.read_parquet(DEFAULT_PANEL_PATH),
         "coefficients": pd.read_parquet(root / "historical_player_coefficients.parquet"),
+        "ratings": pd.read_parquet(root / "player_season_ratings.parquet"),
         "models": joblib.load(root / "season_context_models.joblib"),
     }
+
+
+def _write_published_player_ratings(
+    *,
+    run_id: str,
+    panel: pd.DataFrame,
+    ratings: pd.DataFrame,
+    models: dict[str, MatchupContextualModel],
+    **_: object,
+) -> None:
+    """Materialize compiled player ratings used by ranking and biography views."""
+
+    output = published_player_ratings_path(MODEL_ARTIFACT, run_id)
+    if output.is_file():
+        print(f"Using existing published player ratings: {output}", flush=True)
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
+    build_published_player_ratings(ratings, panel=panel, models=models).to_parquet(
+        output, index=False
+    )
+    print(f"Materialized published player ratings: {output}", flush=True)
 
 
 def _write_season(
@@ -82,6 +111,7 @@ def _write_season(
     panel: pd.DataFrame,
     coefficients: pd.DataFrame,
     models: dict[str, MatchupContextualModel],
+    **_: object,
 ) -> None:
     """Build one completed-fit observed-lineup table from shared artifact state."""
 
@@ -109,6 +139,24 @@ def _write_season(
     ].copy()
     if season_coefficients.empty:
         raise ValueError(f"No completed player coefficients are available for {season}")
+    if _is_compiled_linear_x3(context_model):
+        uncentered_coefficients = _compiled_linear_x3_coefficients(
+            season_coefficients,
+            profiles,
+            context_model,
+        )
+        uncentered_players = _player_catalog(
+            uncentered_coefficients,
+            profiles,
+            panel_path=DEFAULT_PANEL_PATH,
+            season=season,
+        )
+        season_coefficients = _compiled_linear_x3_coefficients(
+            season_coefficients,
+            profiles,
+            context_model,
+            center=_player_rating_center(uncentered_coefficients, uncentered_players),
+        )
     players = _player_catalog(
         season_coefficients,
         profiles,

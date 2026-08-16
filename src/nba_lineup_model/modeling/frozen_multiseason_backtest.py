@@ -6,7 +6,7 @@ import argparse
 import hashlib
 import json
 import shutil
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,6 +45,7 @@ from nba_lineup_model.modeling.frozen_prior_evaluation import (
 from nba_lineup_model.modeling.matchup_contextual import MatchupContextualModel
 from nba_lineup_model.modeling.neural_data import read_neural_possessions
 from nba_lineup_model.modeling.replacement_level import prepare_player_exposure_cohort
+from nba_lineup_model.modeling.shot_portfolio import add_shot_portfolio_profiles
 from nba_lineup_model.modeling.stints import read_rapm_stints
 from nba_lineup_model.season.schema import validate_season
 
@@ -59,6 +60,8 @@ class BacktestModel:
 
     model: str
     label: str
+    profile_transformer: Callable[[pd.DataFrame, str], pd.DataFrame] | None = None
+    uses_context: bool = True
 
 
 BACKTEST_MODELS = (
@@ -75,6 +78,37 @@ BACKTEST_MODELS = (
         "forward_hpm_v22_usage_allocation",
         "HPM v2.2 usage allocation",
     ),
+    BacktestModel(
+        "forward_hpm_v23_shot_portfolio",
+        "HPM v2.3 shot portfolio",
+        profile_transformer=lambda profiles, target: add_shot_portfolio_profiles(
+            profiles,
+            target_season=target,
+        ),
+    ),
+    BacktestModel("forward_hpm_x1_orb_claim_total", "HPM x1 ORB claim context"),
+    BacktestModel("forward_hpm_x2_orb_per_100_total", "HPM x2 raw OREB/100 context"),
+    BacktestModel(
+        "forward_hpm_x3_v1_orb_claim_replacement",
+        "HPM x3 ORB claim rebound replacement",
+    ),
+    BacktestModel(
+        "forward_hpm_x3_linear_ridge_context",
+        "Compiled-additive linear HPM x3",
+    ),
+    BacktestModel(
+        "forward_hpm_x3_linear_ridge_without_uncertainty",
+        "Compiled-linear HPM x3 without uncertainty",
+    ),
+    BacktestModel(
+        "forward_hpm_x3_linear_quadratic_side_context",
+        "Compiled-additive HPM x3 plus quadratic side context",
+    ),
+    BacktestModel(
+        "forward_additive_profile_linear_shape_context_rapm",
+        "Additive prior plus linear shape context",
+    ),
+    BacktestModel("forward_hpm_x4_orb_claim_blocks_only", "HPM x4 ORB claims plus blocks"),
 )
 
 
@@ -93,29 +127,41 @@ def run_frozen_multiseason_backtest(
     analytical_dir: Path | str = DEFAULT_ANALYTICAL_DIR,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
     docs_path: Path | str | None = DEFAULT_DOCS_PATH,
+    output_artifacts_dir: Path | str | None = None,
 ) -> FrozenMultiseasonBacktestRun:
-    """Score multiple completed seasons without refitting player or context state."""
+    """Score multiple completed seasons without refitting player or context state.
+
+    ``output_artifacts_dir`` permits a focused candidate replay to retain its
+    own immutable report without changing the shared all-model leaderboard
+    pointer under ``artifacts_dir``.
+    """
 
     target_seasons = _validated_seasons(seasons)
     root = Path(artifacts_dir)
+    output_root = Path(output_artifacts_dir) if output_artifacts_dir is not None else root
     panel = pd.read_parquet(player_season_panel_path)
     exposure_cohort = prepare_player_exposure_cohort(
         panel.loc[panel["season"].astype(str).le(target_seasons[-1])],
         through_season=target_seasons[-1],
         analytical_dir=analytical_dir,
     )
-    target_profiles = {
-        target: _target_contextual_profiles(
-            target,
-            panel=panel,
-            exposure_cohort=exposure_cohort,
-            analytical_dir=Path(analytical_dir),
-        )
-        for target in target_seasons
-    }
     source_rows: list[dict[str, object]] = []
     evaluations: list[dict[str, object]] = []
     for candidate in models:
+        target_profiles = (
+            {
+                target: _transformed_target_profiles(
+                    target,
+                    candidate=candidate,
+                    panel=panel,
+                    exposure_cohort=exposure_cohort,
+                    analytical_dir=Path(analytical_dir),
+                )
+                for target in target_seasons
+            }
+            if candidate.uses_context
+            else {target: pd.DataFrame() for target in target_seasons}
+        )
         run_dir = _latest_recursive_run(root / candidate.model / target_seasons[-1])
         state = _load_state(run_dir, candidate=candidate, target_seasons=target_seasons)
         for target in target_seasons:
@@ -143,11 +189,30 @@ def run_frozen_multiseason_backtest(
         target_seasons=target_seasons,
         outputs=outputs,
         sources=pd.DataFrame(source_rows),
-        artifacts_dir=root,
+        artifacts_dir=output_root,
     )
     if docs_path is not None:
         _update_docs(Path(docs_path), target_seasons=target_seasons, outputs=outputs, run=run)
     return run
+
+
+def _transformed_target_profiles(
+    target: str,
+    *,
+    candidate: BacktestModel,
+    panel: pd.DataFrame,
+    exposure_cohort: pd.DataFrame,
+    analytical_dir: Path,
+) -> pd.DataFrame:
+    profiles = _target_contextual_profiles(
+        target,
+        panel=panel,
+        exposure_cohort=exposure_cohort,
+        analytical_dir=analytical_dir,
+    )
+    if candidate.profile_transformer is not None:
+        profiles = candidate.profile_transformer(profiles, target)
+    return profiles
 
 
 @dataclass(frozen=True)
@@ -186,7 +251,7 @@ def _load_state(
             raise ValueError(f"{candidate.label} lacks prior vector for {target}")
         if coefficients.loc[coefficients["season"].eq(source)].empty:
             raise ValueError(f"{candidate.label} lacks player coefficients for {source}")
-        if source not in models:
+        if candidate.uses_context and source not in models:
             raise ValueError(f"{candidate.label} lacks context state for {source}")
     return _RecursiveState(
         candidate=candidate,
@@ -212,7 +277,7 @@ def _replay_regular_target_season(
 
     source = _previous_season(target)
     stints = read_rapm_stints(target, analytical_dir=analytical_dir)
-    if profiles is None:
+    if profiles is None and state.candidate.uses_context:
         profiles = _target_contextual_profiles(
             target,
             panel=panel,
@@ -220,7 +285,8 @@ def _replay_regular_target_season(
             analytical_dir=analytical_dir,
             stints=stints,
         )
-    model = state.context_models[source]
+    model = state.context_models.get(source)
+    context_predictor = model.predict_lineups if model is not None else _zero_context_predictor
     prior_frame = state.priors.loc[
         state.priors["season"].eq(target), ["player_id", "prior_rapm"]
     ].rename(columns={"prior_rapm": "prior_rapm_mean"})
@@ -240,7 +306,7 @@ def _replay_regular_target_season(
         read_neural_possessions(target, analytical_dir=analytical_dir),
         cohort="regular_season",
         profiles=profiles,
-        context_predictor=model.predict_lineups,
+        context_predictor=context_predictor,
         priors=prior_frame,
         source_mean=source_mean,
         source_home_intercept=source_home_intercept,
@@ -260,7 +326,7 @@ def _replay_regular_target_season(
             playoff_possessions,
             cohort="playoffs",
             profiles=profiles,
-            context_predictor=model.predict_lineups,
+            context_predictor=context_predictor,
             priors=prior_frame,
             source_mean=source_mean,
             source_home_intercept=source_home_intercept,
@@ -276,7 +342,7 @@ def _replay_regular_target_season(
     regular_games, team_net_ratings = _contextual_stint_predictions(
         stints,
         profiles=profiles,
-        context_predictor=model.predict_lineups,
+        context_predictor=context_predictor,
         priors=prior_frame,
         source_home_intercept=source_home_intercept,
     )
@@ -305,7 +371,7 @@ def _replay_regular_target_season(
             ),
             "source_run_id": state.run_id,
             "replay_mode": "persisted_recursive_state_no_refit",
-            "replay_context_model_season": source,
+            "replay_context_model_season": source if model is not None else None,
             "replay_player_prior_season": target,
         },
         "cohort_metrics": pd.concat(cohort_metrics, ignore_index=True),
@@ -323,6 +389,17 @@ def _replay_regular_target_season(
     }
 
 
+def _zero_context_predictor(
+    home_lineups: object,
+    away_lineups: object,
+    profiles: object,
+) -> np.ndarray:
+    """Return the explicit zero lineup correction for player-prior-only models."""
+
+    del away_lineups, profiles
+    return np.zeros(len(home_lineups), dtype=float)  # type: ignore[arg-type]
+
+
 def _target_contextual_profiles(
     target: str,
     *,
@@ -336,9 +413,7 @@ def _target_contextual_profiles(
     target_stints = stints
     if target_stints is None:
         target_stints = read_rapm_stints(target, analytical_dir=analytical_dir)
-    participants = set().union(
-        *target_stints["home_player_ids"], *target_stints["away_player_ids"]
-    )
+    participants = set().union(*target_stints["home_player_ids"], *target_stints["away_player_ids"])
     return build_contextual_player_profiles(
         panel,
         target_season=target,
@@ -349,9 +424,7 @@ def _target_contextual_profiles(
 
 
 def _playoff_partition_exists(season: str, curated_dir: Path) -> bool:
-    return (
-        curated_dir / "possession_segments" / season / "playoffs" / "_manifest.json"
-    ).is_file()
+    return (curated_dir / "possession_segments" / season / "playoffs" / "_manifest.json").is_file()
 
 
 def _collect_outputs(evaluations: Sequence[dict[str, object]]) -> dict[str, pd.DataFrame]:
@@ -435,9 +508,11 @@ def _aggregate_metrics(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
                     ),
                 }
             )
-        regular_games = tables["regular_game_predictions"].loc[
-            tables["regular_game_predictions"]["model"].eq(model)
-        ].copy()
+        regular_games = (
+            tables["regular_game_predictions"]
+            .loc[tables["regular_game_predictions"]["model"].eq(model)]
+            .copy()
+        )
         regular_games["game_id"] = (
             regular_games["season"] + ":" + regular_games["game_id"].astype(str)
         )
@@ -463,9 +538,7 @@ def _aggregate_metrics(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
                 "team_net_rating_pearson": float(pearsonr(actual_net, predicted_net).statistic),
                 "team_net_rating_spearman": float(spearmanr(actual_net, predicted_net).statistic),
                 "pythagorean_win_rmse": rmse(wins["wins"], wins["pythagorean_wins"]),
-                "pythagorean_win_mae": mean_absolute_error(
-                    wins["wins"], wins["pythagorean_wins"]
-                ),
+                "pythagorean_win_mae": mean_absolute_error(wins["wins"], wins["pythagorean_wins"]),
                 "pythagorean_win_spearman": float(
                     spearmanr(wins["wins"], wins["pythagorean_wins"]).statistic
                 ),
@@ -535,9 +608,11 @@ def _update_docs(
     aggregate = outputs["aggregate_metrics"]
     regular = aggregate.loc[aggregate["scope"].eq("pooled_regular_season")].copy()
     full = aggregate.loc[aggregate["scope"].eq("pooled_regular_full_games_and_teams")].copy()
-    season_metrics = outputs["cohort_metrics"].loc[
-        outputs["cohort_metrics"]["cohort"].eq("regular_season")
-    ].copy()
+    season_metrics = (
+        outputs["cohort_metrics"]
+        .loc[outputs["cohort_metrics"]["cohort"].eq("regular_season")]
+        .copy()
+    )
     lines = [
         start,
         "## Results",
@@ -607,17 +682,15 @@ def _update_docs(
             "| --- | --- | ---: | ---: |",
         ]
     )
-    ordered_season_metrics = season_metrics.sort_values(
-        ["season", "label"], kind="stable"
-    )
+    ordered_season_metrics = season_metrics.sort_values(["season", "label"], kind="stable")
     for row in ordered_season_metrics.itertuples(index=False):
         lines.append(
             f"| {row.season} | {row.label} | {row.possession_rmse:.6f} | "
             f"{row.eligible_possession_game_margin_rmse:.4f} |"
         )
-    playoff_metrics = outputs["cohort_metrics"].loc[
-        outputs["cohort_metrics"]["cohort"].eq("playoffs")
-    ].copy()
+    playoff_metrics = (
+        outputs["cohort_metrics"].loc[outputs["cohort_metrics"]["cohort"].eq("playoffs")].copy()
+    )
     if not playoff_metrics.empty:
         lines.extend(
             [
@@ -699,3 +772,7 @@ def main() -> None:
     args = parser.parse_args()
     run = run_frozen_multiseason_backtest(seasons=args.seasons)
     print(f"Frozen multiseason backtest: run={run.run_dir}")
+
+
+if __name__ == "__main__":
+    main()

@@ -34,16 +34,20 @@ def main() -> None:
         model = contexts[season]
         if not isinstance(model, MatchupContextualModel):
             raise ValueError("Selected artifact has an incompatible contextual model")
+        if "spline" not in model.pipeline.named_steps:
+            print(f"Skipped response cache for linear context model: {season}")
+            continue
         output = response_cache_path(MODEL_ARTIFACT, run_id, season)
         output.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(_warm_response_cache(model), output)
         print(f"Materialized response cache: {output}")
     # The default-run path preserves the existing single-season API startup contract.
-    if args.season == DISPLAY_SEASON:
+    if args.season == DISPLAY_SEASON and "spline" in contexts[DISPLAY_SEASON].pipeline.named_steps:
         output = response_cache_path(MODEL_ARTIFACT, run_id)
         joblib.dump(_warm_response_cache(contexts[DISPLAY_SEASON]), output)
     context_output = player_context_exposure_path(MODEL_ARTIFACT, run_id)
     if not context_output.is_file():
+        context_output.parent.mkdir(parents=True, exist_ok=True)
         ratings = pd.read_parquet(root / run_id / "player_season_ratings.parquet")
         warm_player_context_exposure(
             contexts,

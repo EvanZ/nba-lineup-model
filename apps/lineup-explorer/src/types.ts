@@ -5,25 +5,30 @@ export type Player = {
   position: string;
   age: number | null;
   rapm: number;
-  prior_context_unit_edge: number | null;
+  observed_context_exposure: number | null;
   rating_season?: string;
   possessions: number;
   games: number;
   profile_source: string;
   profile_imputed: number | null;
   profile_replacement_weight: number | null;
+  three_pa_per_100: number | null;
   three_pm_per_100: number | null;
   assists_per_100: number | null;
+  turnovers_per_100: number | null;
   usage_per_100: number | null;
-  offensive_rebounds_per_100: number | null;
-  defensive_rebounds_per_100: number | null;
+  steals_per_100: number | null;
+  blocks_per_100: number | null;
+  offensive_rebound_pct: number | null;
   rookie_season: string | null;
   rating_history: Array<{
     season: string;
     rating: number;
+    nail_rank: number;
     prior_rating: number | null;
     season_update: number | null;
-    prior_context_unit_edge: number | null;
+    additive_profile_adjustment: number | null;
+    observed_context_exposure: number | null;
     age: number | null;
     team_id: number | null;
     team: string;
@@ -51,6 +56,9 @@ export type Player = {
 
 export type RankedPlayer = Player & {
   rank: number;
+  prior_rating: number | null;
+  season_update: number | null;
+  additive_profile_adjustment: number | null;
 };
 
 export type RankedLineup = {
@@ -94,6 +102,7 @@ export type Matchup = {
   season: string;
   run_id: string;
   retrospective: boolean;
+  model_form?: "compiled_linear_x3";
   unit_season: string;
   opponent_season: string;
   environment: "unit" | "neutral" | "opponent";

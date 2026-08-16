@@ -9,9 +9,13 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 import nba_lineup_model.web_api.app as web_app
-from nba_lineup_model.modeling.contextual_features import lineup_side_context_features
+from nba_lineup_model.modeling.contextual_features import (
+    CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+    lineup_side_context_features,
+)
 from nba_lineup_model.modeling.matchup_contextual import (
     fit_bounded_hierarchical_matchup_contextual_model,
+    fit_linear_ridge_matchup_contextual_model,
     fit_matchup_contextual_model,
 )
 from nba_lineup_model.web_api.app import create_app
@@ -26,7 +30,7 @@ from nba_lineup_model.web_api.inference import (
 )
 
 
-def _evaluator(*, bounded: bool = False) -> LineupEvaluator:
+def _evaluator(*, bounded: bool = False, compiled_linear: bool = False) -> LineupEvaluator:
     player_ids = list(range(1, 11))
     profile_offset = player_ids if bounded else [0] * len(player_ids)
     profiles = pd.DataFrame(
@@ -41,6 +45,7 @@ def _evaluator(*, bounded: bool = False) -> LineupEvaluator:
             "defensive_rebounds_per_100": [4.0 + value / 5 for value in profile_offset],
             "steals_per_100": [0.5 + value / 20 for value in profile_offset],
             "blocks_per_100": [0.25 + value / 25 for value in profile_offset],
+            "offensive_rebound_pct": [4.0 + value / 10 for value in profile_offset],
             "profile_imputed": [0] * 10,
             "profile_replacement_weight": [0.0] * 10,
         }
@@ -96,17 +101,23 @@ def _evaluator(*, bounded: bool = False) -> LineupEvaluator:
         [1, 2, 3, 9, 10],
         [1, 2, 3, 4, 10],
     ]
+    feature_set = (
+        CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY if compiled_linear else "v1"
+    )
     fit = (
-        fit_bounded_hierarchical_matchup_contextual_model
+        fit_linear_ridge_matchup_contextual_model
+        if compiled_linear
+        else fit_bounded_hierarchical_matchup_contextual_model
         if bounded
         else fit_matchup_contextual_model
     )
     model = fit(
-        lineup_side_context_features(home_lineups, profiles),
-        lineup_side_context_features(away_lineups, profiles),
+        lineup_side_context_features(home_lineups, profiles, feature_set=feature_set),
+        lineup_side_context_features(away_lineups, profiles, feature_set=feature_set),
         np.arange(5, dtype=float),
         np.ones(5, dtype=float),
         alpha=1.0,
+        feature_set=feature_set,
     )
     return LineupEvaluator(
         season="2025-26",
@@ -115,7 +126,7 @@ def _evaluator(*, bounded: bool = False) -> LineupEvaluator:
         profiles=profiles,
         players=players,
         context_model=model,
-        response_cache=_warm_response_cache(model),
+        response_cache={} if compiled_linear else _warm_response_cache(model),
     )
 
 
@@ -128,6 +139,25 @@ def test_search_and_matchup_endpoints() -> None:
     assert len(search.json()["players"][0]["rating_history"]) == 3
     assert search.json()["players"][0]["rookie_season"] == "2023-24"
     assert search.json()["players"][0]["age"] == 26.0
+
+    lineup_players = client.get(
+        "/api/players/by-id",
+        params=[("season", "2025-26"), *(("player_id", player_id) for player_id in range(1, 6))],
+    )
+    assert lineup_players.status_code == 200
+    assert lineup_players.json()["season"] == "2025-26"
+    assert [player["player_id"] for player in lineup_players.json()["players"]] == [1, 2, 3, 4, 5]
+
+    profile = client.get("/api/players/1")
+    assert profile.status_code == 200
+    assert profile.json()["three_pa_per_100"] == 5.0
+    assert profile.json()["three_pm_per_100"] == 1.0
+    assert profile.json()["assists_per_100"] == 3.0
+    assert profile.json()["turnovers_per_100"] == 1.0
+    assert profile.json()["usage_per_100"] == 15.0
+    assert profile.json()["steals_per_100"] == 0.5
+    assert profile.json()["blocks_per_100"] == 0.25
+    assert profile.json()["offensive_rebound_pct"] == 4.0
 
     rankings = client.get("/api/rankings")
     assert rankings.status_code == 200
@@ -193,6 +223,26 @@ def test_search_and_matchup_endpoints() -> None:
     assert np.isclose(
         sum(row["contribution"] for row in payload["matchup_feature_contributions"]),
         payload["matchup_adjustment"],
+    )
+
+
+def test_compiled_linear_matchup_returns_nonadditive_side_scores() -> None:
+    client = TestClient(create_app(_evaluator(compiled_linear=True)))
+
+    response = client.post(
+        "/api/matchups",
+        json={
+            "unit_player_ids": [1, 2, 3, 4, 5],
+            "opponent_player_ids": [6, 7, 8, 9, 10],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model_form"] == "compiled_linear_x3"
+    assert np.isclose(
+        payload["unit_composition_rating"] - payload["opponent_composition_rating"],
+        payload["contextual_adjustment"],
     )
 
 
@@ -311,6 +361,7 @@ def test_player_rating_histories_include_seasonal_team_tricode(tmp_path) -> None
             "player_id": [77, 77],
             "player_name": ["Test Player", "Test Player"],
             "rapm": [1.0, 2.0],
+            "additive_profile_adjustment": [0.25, -0.5],
             "age": [25.0, 26.0],
         }
     )
@@ -336,6 +387,8 @@ def test_player_rating_histories_include_seasonal_team_tricode(tmp_path) -> None
     assert [point["possessions"] for point in history[77]] == [1200.0, 1100.0]
     assert [point["games"] for point in history[77]] == [60, 55]
     assert [point["games_started"] for point in history[77]] == [42, 39]
+    assert [point["nail_rank"] for point in history[77]] == [1, 1]
+    assert [point["additive_profile_adjustment"] for point in history[77]] == [0.25, -0.5]
     assert history[77][0]["team_splits"] == [
         {"team_id": 1610612757, "team": "POR", "possessions": 900.0, "games": 45},
         {"team_id": 1610612745, "team": "HOU", "possessions": 300.0, "games": 15},
@@ -443,6 +496,9 @@ def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) 
             "player_id": [77, 77],
             "player_name": ["Test Player", "Test Player"],
             "rapm": [1.0, 2.0],
+            "prior_rapm": [0.5, 1.5],
+            "rapm_adjustment_from_prior": [0.5, 0.5],
+            "additive_profile_adjustment": [0.0, 0.0],
         }
     )
 
@@ -482,7 +538,10 @@ def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) 
             "team": "POR",
                 "position": "G",
                 "rapm": 1.0,
-                "prior_context_unit_edge": None,
+                "prior_rating": 0.5,
+                "season_update": 0.5,
+                "additive_profile_adjustment": 0.0,
+                "observed_context_exposure": None,
                 "possessions": 1200.0,
             "games": 60,
         }
@@ -493,7 +552,14 @@ def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) 
     assert profile.json()["rating_season"] == "2024-25"
     assert profile.json()["team"] == "MIL"
     assert profile.json()["profile_source"] == "career_history"
+    assert profile.json()["three_pa_per_100"] is None
     assert profile.json()["three_pm_per_100"] is None
+    assert profile.json()["assists_per_100"] is None
+    assert profile.json()["turnovers_per_100"] is None
+    assert profile.json()["usage_per_100"] is None
+    assert profile.json()["steals_per_100"] is None
+    assert profile.json()["blocks_per_100"] is None
+    assert profile.json()["offensive_rebound_pct"] is None
 
 
 def test_headshot_endpoint_uses_cached_same_origin_image(monkeypatch) -> None:

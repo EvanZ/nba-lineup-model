@@ -1,0 +1,14 @@
+[2023-24] loading frozen linear context from 2022-23
+[2023-24] cached 13,868 observed lineups across 2 cohort(s)
+[2023-24 regular_season] auditing 182,729 possessions
+[2023-24 playoffs] auditing 12,570 possessions
+[2024-25] loading frozen linear context from 2023-24
+[2024-25] cached 15,623 observed lineups across 2 cohort(s)
+[2024-25 regular_season] auditing 183,431 possessions
+[2024-25 playoffs] auditing 13,144 possessions
+[2025-26] loading frozen linear context from 2024-25
+[2025-26] cached 18,953 observed lineups across 2 cohort(s)
+[2025-26 regular_season] auditing 218,810 possessions
+[2025-26 playoffs] auditing 14,253 possessions
+writing compilation identity artifact
+Linear HPM x3 compilation audit: run=artifacts/models/analysis/linear_hpm_x3_compilation_audit/linear-hpm-x3-compilation-audit-20260816T012436Z-61ab288d

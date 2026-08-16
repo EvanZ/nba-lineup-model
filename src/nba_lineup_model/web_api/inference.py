@@ -14,6 +14,9 @@ import numpy as np
 import pandas as pd
 
 from nba_lineup_model.modeling.contextual_features import (
+    CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
+    CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+    LINEAR_X3_ADDITIVE_FEATURES,
     contextual_feature_columns,
     lineup_side_context_features,
     side_context_feature_columns,
@@ -32,14 +35,9 @@ DEFAULT_ARTIFACTS_DIR = Path("artifacts/models")
 DEFAULT_RESPONSE_CACHE_DIR = Path("artifacts/web/response_curve_cache")
 DEFAULT_LINEUP_RANKINGS_CACHE_DIR = Path("artifacts/web/lineup_rankings")
 DEFAULT_PLAYER_TEAM_SPLITS_CACHE_DIR = Path("artifacts/web/player_team_splits")
-MODEL_ARTIFACT = (
-    "forward_centered_value_conditioned_aging_"
-    "bounded_hierarchical_portable_matchup_contextual_rapm"
-)
-MODEL_NAME = (
-    "forward_centered_value_conditioned_aging_"
-    "bounded_hierarchical_portable_matchup_contextual_rapm"
-)
+# Keep the artifact identifier distinct from the public name, NAIL-RAPM v1.0.
+MODEL_ARTIFACT = "forward_hpm_x3_linear_ridge_without_uncertainty"
+MODEL_NAME = "forward_hpm_x3_linear_ridge_without_uncertainty"
 DISPLAY_SEASON = "2025-26"
 RESPONSE_CURVE_POINTS = 33
 # The client renders the same 33-point polyline, so a denser server cache only
@@ -69,6 +67,36 @@ _FEATURE_LABELS = {
     "home_minus_away_shooter_passing_interaction": "Shooter-by-passing",
     "home_minus_away_rebounding_usage_interaction": "Rebounding-by-usage",
 }
+
+# These NAIL-RAPM v1.0 coordinates are exact sums of player-profile values. A linear
+# Ridge coefficient on each coordinate can therefore be compiled into the
+# individual player rating without changing any matchup prediction.
+_LINEAR_X3_ADDITIVE_FEATURE_TO_PROFILE = {
+    "three_pa_per_100": "three_pa_per_100",
+    "three_pm_per_100": "three_pm_per_100",
+    "assists_per_100": "assists_per_100",
+    "turnovers_per_100": "turnovers_per_100",
+    "usage_per_100": "usage_per_100",
+    "steals_per_100": "steals_per_100",
+    "blocks_per_100": "blocks_per_100",
+    "imputed_count": "profile_imputed",
+    "replacement_weight": "profile_replacement_weight",
+    "offensive_rebound_claim_total": "offensive_rebound_pct",
+}
+
+
+def _linear_x3_additive_feature_map(feature_set: str) -> dict[str, str]:
+    """Return the player-compilable coordinates for one x3 artifact contract."""
+
+    if feature_set == CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY:
+        return {
+            feature: profile_column
+            for feature, profile_column in _LINEAR_X3_ADDITIVE_FEATURE_TO_PROFILE.items()
+            if feature not in {"imputed_count", "replacement_weight"}
+        }
+    if feature_set == CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT:
+        return _LINEAR_X3_ADDITIVE_FEATURE_TO_PROFILE
+    raise LineupEvaluationError(f"Unsupported compiled-linear x3 contract: {feature_set}")
 
 
 class LineupEvaluationError(ValueError):
@@ -124,22 +152,20 @@ class LineupEvaluator:
         season: str = DISPLAY_SEASON,
         panel_path: Path | str = "data/analytical/player_season_panel/player_seasons.parquet",
     ) -> LineupEvaluator:
-        """Load the completed seasonal model state used by the local Lineup Lab."""
+        """Load the published completed-fit model state used by the local Lineup Lab."""
 
         root = Path(artifacts_dir) / MODEL_ARTIFACT / season
         latest_path = root / "latest.json"
         if not latest_path.is_file():
             raise FileNotFoundError(
-                "No published centered aging bounded hierarchical portable-matchup artifact for "
-                f"{season}: {latest_path}"
+                f"No published NAIL-RAPM v1.0 artifact for {season}: {latest_path}"
             )
         run_id = str(json.loads(latest_path.read_text())["run_id"])
         run_dir = root / run_id
         metadata = json.loads((run_dir / "metadata.json").read_text())
         if metadata.get("model") != MODEL_NAME:
             raise LineupEvaluationError(
-                "The selected artifact is not centered aging bounded hierarchical portable-matchup "
-                "contextual RAPM"
+                "The selected artifact is not the published NAIL-RAPM v1.0 model"
             )
         if str(metadata.get("target_season")) != season:
             raise LineupEvaluationError("The selected artifact has an unexpected target season")
@@ -155,7 +181,24 @@ class LineupEvaluator:
         profiles = pd.read_parquet(run_dir / "target_player_profiles.parquet")
         if profiles["player_id"].duplicated().any():
             raise LineupEvaluationError("The artifact has duplicate player profiles")
-        seasonal_ratings = pd.read_parquet(run_dir / "player_season_ratings.parquet")
+        raw_seasonal_ratings = pd.read_parquet(run_dir / "player_season_ratings.parquet")
+        models = joblib.load(run_dir / "season_context_models.joblib")
+        context_model = models.get(season)
+        if context_model is None:
+            raise LineupEvaluationError("The artifact has no completed NAIL-RAPM v1.0 function")
+        if not isinstance(context_model, MatchupContextualModel):
+            raise LineupEvaluationError("The artifact has an incompatible contextual model")
+        published_ratings_path = published_player_ratings_path(MODEL_ARTIFACT, run_id)
+        seasonal_ratings = (
+            pd.read_parquet(published_ratings_path)
+            if published_ratings_path.is_file()
+            else raw_seasonal_ratings
+        )
+        display_coefficients = _compiled_linear_x3_coefficients(
+            coefficients,
+            profiles,
+            context_model,
+        )
         team_splits_cache_path = player_team_splits_path(MODEL_ARTIFACT, run_id)
         player_team_splits = (
             _player_team_splits_by_season(pd.read_parquet(team_splits_cache_path))
@@ -166,7 +209,7 @@ class LineupEvaluator:
         context_exposure = (
             pd.read_parquet(context_exposure_path)
             if context_exposure_path.is_file()
-            else pd.DataFrame(columns=["season", "player_id", "prior_context_unit_edge"])
+            else pd.DataFrame(columns=["season", "player_id", "observed_context_exposure"])
         )
         historical_rankings = _historical_ranking_catalog(
             seasonal_ratings,
@@ -186,7 +229,27 @@ class LineupEvaluator:
         )
         rookie_seasons = _rookie_seasons(seasonal_ratings)
         players = _player_catalog(
-            coefficients, profiles, panel_path=Path(panel_path), season=season
+            display_coefficients, profiles, panel_path=Path(panel_path), season=season
+        )
+        display_coefficients = _compiled_linear_x3_coefficients(
+            coefficients,
+            profiles,
+            context_model,
+            center=_player_rating_center(display_coefficients, players),
+        )
+        players = _player_catalog(
+            display_coefficients, profiles, panel_path=Path(panel_path), season=season
+        )
+        players = _attach_observed_context_exposure(
+            players,
+            context_exposure=context_exposure,
+            season=season,
+        )
+        _replace_current_season_display_ratings(
+            historical_rankings,
+            player_rating_histories,
+            season=season,
+            players=players,
         )
         players["rating_history"] = players["player_id"].map(player_rating_histories).map(
             lambda history: history or []
@@ -200,22 +263,8 @@ class LineupEvaluator:
                 player_rating_histories.get(int(player_id), [{}])[-1].get("age")
             )
         )
-        models = joblib.load(run_dir / "season_context_models.joblib")
-        context_model = models.get(season)
-        if context_model is None:
-            raise LineupEvaluationError(
-                "The artifact has no completed centered aging hierarchical "
-                "portable-matchup function"
-            )
-        if not isinstance(context_model, MatchupContextualModel):
-            raise LineupEvaluationError("The artifact has an incompatible contextual model")
         cache_path = response_cache_path(MODEL_ARTIFACT, run_id)
-        if not cache_path.is_file():
-            raise FileNotFoundError(
-                "Response cache is not materialized for the selected artifact: "
-                f"{cache_path}"
-            )
-        response_cache = joblib.load(cache_path)
+        response_cache = joblib.load(cache_path) if cache_path.is_file() else {}
         player_season_panel = pd.read_parquet(panel_path)
         exposure_cohort = prepare_player_exposure_cohort(
             player_season_panel.loc[
@@ -275,6 +324,22 @@ class LineupEvaluator:
         matches = players.loc[names.str.contains(normalized, regex=False)]
         return _records(matches.head(max(1, min(limit, 25))))
 
+    def players_by_id(
+        self, player_ids: list[int], *, season: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return an ordered five-player unit from one completed season state."""
+
+        selected_season = season or self.season
+        if not player_ids:
+            return []
+        players = self._season_state(selected_season).players.set_index("player_id")
+        missing = sorted(set(player_ids) - set(players.index.astype(int)))
+        if missing:
+            raise LineupEvaluationError(
+                f"Players are unavailable for {selected_season}: {', '.join(map(str, missing))}"
+            )
+        return _records(players.loc[player_ids].reset_index())
+
     def player(self, player_id: int) -> dict[str, Any]:
         """Return a career profile for a player present in any completed fit."""
 
@@ -308,11 +373,14 @@ class LineupEvaluator:
             "profile_source": "career_history",
             "profile_imputed": None,
             "profile_replacement_weight": None,
+            "three_pa_per_100": None,
             "three_pm_per_100": None,
             "assists_per_100": None,
+            "turnovers_per_100": None,
             "usage_per_100": None,
-            "offensive_rebounds_per_100": None,
-            "defensive_rebounds_per_100": None,
+            "steals_per_100": None,
+            "blocks_per_100": None,
+            "offensive_rebound_pct": None,
             "rookie_season": history[0]["season"] if history else None,
             "rating_history": history,
             "league_leader_history": self.player_league_leader_histories.get(player_id, []),
@@ -343,6 +411,15 @@ class LineupEvaluator:
                 raise LineupEvaluationError(
                     f"Completed-fit rankings are unavailable for {selected_season}"
                 )
+        rows = rows.copy()
+        for column in (
+            "prior_rating",
+            "season_update",
+            "additive_profile_adjustment",
+            "observed_context_exposure",
+        ):
+            if column not in rows:
+                rows[column] = np.nan
         ranked = rows.sort_values(
             ["rapm", "player_name", "player_id"],
             ascending=[False, True, True],
@@ -550,16 +627,34 @@ class LineupEvaluator:
                 strict=True,
             )
         )
-        raw_unit_features = lineup_side_context_features([unit_player_ids], unit_state.profiles)
-        raw_opponent_features = lineup_side_context_features(
-            [opponent_player_ids], opponent_state.profiles
-        )
         context_model = self._context_model(environment_season)
+        raw_unit_features = lineup_side_context_features(
+            [unit_player_ids],
+            unit_state.profiles,
+            feature_set=context_model.feature_set,
+        )
+        raw_opponent_features = lineup_side_context_features(
+            [opponent_player_ids],
+            opponent_state.profiles,
+            feature_set=context_model.feature_set,
+        )
         unit_features, opponent_features, features = _model_feature_inputs(
             context_model,
             raw_unit_features,
             raw_opponent_features,
         )
+        if _is_compiled_linear_x3(context_model):
+            return self._evaluate_compiled_linear_x3(
+                unit_player_ids,
+                opponent_player_ids,
+                unit_state=unit_state,
+                opponent_state=opponent_state,
+                context_model=context_model,
+                environment_season=environment_season,
+                unit_features=unit_features,
+                opponent_features=opponent_features,
+                features=features,
+            )
         components = context_model.decompose_side_pairs(
             unit_features, opponent_features
         ).iloc[0]
@@ -587,9 +682,15 @@ class LineupEvaluator:
             sum(opponent_coefficient_map[player_id] for player_id in opponent_player_ids)
         )
         additive_margin = additive_unit - additive_opponent
-        feature_rows = _feature_rows(features, total_contributions)
-        composition_feature_rows = _feature_rows(features, composition_contributions)
-        matchup_feature_rows = _feature_rows(features, matchup_contributions)
+        feature_rows = _feature_rows(
+            features, total_contributions, feature_set=context_model.feature_set
+        )
+        composition_feature_rows = _feature_rows(
+            features, composition_contributions, feature_set=context_model.feature_set
+        )
+        matchup_feature_rows = _feature_rows(
+            features, matchup_contributions, feature_set=context_model.feature_set
+        )
         composition_feature_ids = {row["id"] for row in composition_feature_rows}
         matchup_feature_ids = {row["id"] for row in matchup_feature_rows}
         if response_curve_feature_id is not None:
@@ -644,6 +745,133 @@ class LineupEvaluator:
             response["matchup_response_curves"] = matchup_response_curves
         return response
 
+    def _evaluate_compiled_linear_x3(
+        self,
+        unit_player_ids: list[int],
+        opponent_player_ids: list[int],
+        *,
+        unit_state: SeasonLineupState,
+        opponent_state: SeasonLineupState,
+        context_model: MatchupContextualModel,
+        environment_season: str,
+        unit_features: pd.DataFrame,
+        opponent_features: pd.DataFrame,
+        features: pd.DataFrame,
+    ) -> dict[str, Any]:
+        """Score NAIL-RAPM v1.0 with additive profile terms compiled into players."""
+
+        environment_state = self._season_state(environment_season)
+        environment_coefficients = _compiled_linear_x3_coefficients(
+            environment_state.coefficients, environment_state.profiles, context_model
+        )
+        rating_center = _player_rating_center(environment_coefficients, environment_state.players)
+        unit_coefficients = _compiled_linear_x3_coefficients(
+            unit_state.coefficients,
+            unit_state.profiles,
+            context_model,
+            center=rating_center,
+        )
+        opponent_coefficients = _compiled_linear_x3_coefficients(
+            opponent_state.coefficients,
+            opponent_state.profiles,
+            context_model,
+            center=rating_center,
+        )
+        unit_map = dict(
+            zip(
+                unit_coefficients["player_id"].astype(int),
+                unit_coefficients["rapm"].astype(float),
+                strict=True,
+            )
+        )
+        opponent_map = dict(
+            zip(
+                opponent_coefficients["player_id"].astype(int),
+                opponent_coefficients["rapm"].astype(float),
+                strict=True,
+            )
+        )
+        total_contributions = _antisymmetric_feature_contributions(context_model, features)[0]
+        additive_ids = {
+            f"home_minus_away_{column}" for column in LINEAR_X3_ADDITIVE_FEATURES
+        }
+        feature_ids = contextual_feature_columns(context_model.feature_set)
+        additive_context = float(
+            sum(
+                contribution
+                for feature_id, contribution in zip(
+                    feature_ids, total_contributions, strict=True
+                )
+                if feature_id in additive_ids
+            )
+        )
+        total_context = float(
+            context_model.predict_side_pairs(unit_features, opponent_features)[0]
+        )
+        shape_context = total_context - additive_context
+        unit_composition_rating, opponent_composition_rating = (
+            _compiled_linear_x3_nonadditive_side_scores(
+                context_model,
+                unit_features,
+                opponent_features,
+            )
+        )
+        if not np.isclose(
+            unit_composition_rating - opponent_composition_rating,
+            shape_context,
+            atol=1e-8,
+        ):
+            raise LineupEvaluationError(
+                "NAIL-RAPM v1.0 non-additive side scores failed reconstruction"
+            )
+        shape_rows = _feature_rows(
+            features,
+            total_contributions,
+            feature_set=context_model.feature_set,
+            include_ids=set(feature_ids) - additive_ids,
+        )
+        additive_unit = float(sum(unit_map[player_id] for player_id in unit_player_ids))
+        additive_opponent = float(
+            sum(opponent_map[player_id] for player_id in opponent_player_ids)
+        )
+        additive_margin = additive_unit - additive_opponent
+        base_unit = float(
+            unit_state.coefficients.set_index("player_id").loc[unit_player_ids, "rapm"].sum()
+        )
+        base_opponent = float(
+            opponent_state.coefficients.set_index("player_id")
+            .loc[opponent_player_ids, "rapm"]
+            .sum()
+        )
+        if not np.isclose(
+            additive_margin + shape_context,
+            total_context + base_unit - base_opponent,
+            atol=1e-8,
+        ):
+            raise LineupEvaluationError("NAIL-RAPM v1.0 prediction failed reconstruction")
+        return {
+            "season": environment_season,
+            "run_id": self.run_id,
+            "retrospective": True,
+            "model_form": "compiled_linear_x3",
+            "unit": self._side(unit_player_ids, unit_map, unit_state.players),
+            "opponent": self._side(
+                opponent_player_ids, opponent_map, opponent_state.players
+            ),
+            "additive_margin": additive_margin,
+            "contextual_adjustment": shape_context,
+            "unit_composition_rating": unit_composition_rating,
+            "opponent_composition_rating": opponent_composition_rating,
+            "portable_composition_margin": shape_context,
+            "matchup_adjustment": 0.0,
+            "predicted_net_rating": additive_margin + shape_context,
+            "feature_contributions": shape_rows,
+            "composition_feature_contributions": shape_rows,
+            "matchup_feature_contributions": [],
+            "composition_response_curves": [],
+            "matchup_response_curves": [],
+        }
+
     def _side(
         self,
         player_ids: list[int],
@@ -667,7 +895,9 @@ class LineupEvaluator:
             self.season_states[season] = state
             return state
         if season not in self.season_context_models:
-            raise LineupEvaluationError(f"The completed HPM state is unavailable for {season}")
+            raise LineupEvaluationError(
+                f"The completed NAIL-RAPM state is unavailable for {season}"
+            )
         coefficients = self.historical_coefficients.loc[
             self.historical_coefficients["season"].eq(season), ["player_id", "rapm"]
         ].copy()
@@ -685,8 +915,25 @@ class LineupEvaluator:
             target_player_ids=set(coefficients["player_id"].astype(int)),
             exposure_cohort=exposure_cohort,
         )
-        players = _player_catalog(
+        display_coefficients = _compiled_linear_x3_coefficients(
             coefficients,
+            profiles,
+            self._context_model(season),
+        )
+        players = _player_catalog(
+            display_coefficients,
+            profiles,
+            panel_path=Path("data/analytical/player_season_panel/player_seasons.parquet"),
+            season=season,
+        )
+        display_coefficients = _compiled_linear_x3_coefficients(
+            coefficients,
+            profiles,
+            self._context_model(season),
+            center=_player_rating_center(display_coefficients, players),
+        )
+        players = _player_catalog(
+            display_coefficients,
             profiles,
             panel_path=Path("data/analytical/player_season_panel/player_seasons.parquet"),
             season=season,
@@ -742,6 +989,7 @@ def _mean_evaluation(
 
     result = first.copy()
     for key in (
+        "additive_margin",
         "contextual_adjustment",
         "unit_composition_rating",
         "opponent_composition_rating",
@@ -750,6 +998,8 @@ def _mean_evaluation(
         "predicted_net_rating",
     ):
         result[key] = (float(first[key]) + float(second[key])) / 2.0
+    result["unit"] = _mean_side(first["unit"], second["unit"])
+    result["opponent"] = _mean_side(first["opponent"], second["opponent"])
     for key in (
         "feature_contributions",
         "composition_feature_contributions",
@@ -758,6 +1008,24 @@ def _mean_evaluation(
         result[key] = _mean_feature_rows(first[key], second[key])
     for key in ("composition_response_curves", "matchup_response_curves"):
         result[key] = _mean_response_curves(first.get(key, []), second.get(key, []))
+    return result
+
+
+def _mean_side(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    """Average environment-specific compiled player values for neutral mode."""
+
+    result = first.copy()
+    result["additive_rating"] = (
+        float(first["additive_rating"]) + float(second["additive_rating"])
+    ) / 2.0
+    second_players = {int(player["player_id"]): player for player in second["players"]}
+    players = []
+    for player in first["players"]:
+        combined = player.copy()
+        partner = second_players[int(player["player_id"])]
+        combined["rapm"] = (float(player["rapm"]) + float(partner["rapm"])) / 2.0
+        players.append(combined)
+    result["players"] = players
     return result
 
 
@@ -830,11 +1098,14 @@ def _player_catalog(
         "profile_source",
         "profile_imputed",
         "profile_replacement_weight",
+        "three_pa_per_100",
         "three_pm_per_100",
         "assists_per_100",
+        "turnovers_per_100",
         "usage_per_100",
-        "offensive_rebounds_per_100",
-        "defensive_rebounds_per_100",
+        "steals_per_100",
+        "blocks_per_100",
+        "offensive_rebound_pct",
     ]
     catalog = coefficients.merge(profiles.loc[:, profile_columns], on="player_id", how="inner")
     catalog = catalog.merge(
@@ -866,13 +1137,114 @@ def _player_catalog(
             "profile_source",
             "profile_imputed",
             "profile_replacement_weight",
+            "three_pa_per_100",
             "three_pm_per_100",
             "assists_per_100",
+            "turnovers_per_100",
             "usage_per_100",
-            "offensive_rebounds_per_100",
-            "defensive_rebounds_per_100",
+            "steals_per_100",
+            "blocks_per_100",
+            "offensive_rebound_pct",
         ],
     ]
+
+
+def _attach_observed_context_exposure(
+    players: pd.DataFrame,
+    *,
+    context_exposure: pd.DataFrame,
+    season: str,
+) -> pd.DataFrame:
+    """Attach a current-season descriptive lineup-shape exposure when available."""
+
+    if context_exposure.empty:
+        output = players.copy()
+        output["observed_context_exposure"] = np.nan
+        return output
+    exposure = context_exposure.loc[
+        context_exposure["season"].eq(season),
+        ["player_id", "observed_context_exposure"],
+    ]
+    return players.merge(exposure, on="player_id", how="left", validate="one_to_one")
+
+
+def _replace_current_season_display_ratings(
+    rankings: pd.DataFrame,
+    histories: dict[int, list[dict[str, Any]]],
+    *,
+    season: str,
+    players: pd.DataFrame,
+) -> None:
+    """Keep the public current-season catalog aligned with compiled player credit."""
+
+    ratings = dict(
+        zip(players["player_id"].astype(int), players["rapm"].astype(float), strict=True)
+    )
+    current = rankings["season"].eq(season)
+    rankings.loc[current, "rapm"] = rankings.loc[current, "player_id"].map(ratings).fillna(
+        rankings.loc[current, "rapm"]
+    )
+    for player_id, history in histories.items():
+        for point in history:
+            if str(point["season"]) == season and player_id in ratings:
+                point["rating"] = ratings[player_id]
+
+
+def build_published_player_ratings(
+    ratings: pd.DataFrame,
+    *,
+    panel: pd.DataFrame,
+    models: dict[str, MatchupContextualModel],
+) -> pd.DataFrame:
+    """Compile additive NAIL credit into a consistent completed-fit rating history."""
+
+    compiled_seasons: list[pd.DataFrame] = []
+    for season, season_ratings in ratings.groupby("season", sort=True):
+        season = str(season)
+        context_model = models.get(season)
+        if context_model is None:
+            continue
+        player_ids = set(season_ratings["player_id"].astype(int))
+        exposure_cohort = prepare_player_exposure_cohort(
+            panel.loc[panel["season"].astype(str).le(season)],
+            through_season=season,
+        )
+        profiles = build_contextual_player_profiles(
+            panel,
+            target_season=season,
+            target_player_ids=player_ids,
+            exposure_cohort=exposure_cohort,
+        )
+        base = season_ratings.loc[:, ["player_id", "rapm"]].copy()
+        uncentered = _compiled_linear_x3_coefficients(base, profiles, context_model)
+        season_panel = panel.loc[
+            panel["season"].astype(str).eq(season), ["player_id", "rapm_possessions"]
+        ].copy()
+        if season_panel["player_id"].duplicated().any():
+            season_panel = (
+                season_panel.sort_values("rapm_possessions", ascending=False, kind="stable")
+                .drop_duplicates("player_id", keep="first")
+            )
+        display_center = _player_rating_center(
+            uncentered,
+            season_panel.rename(columns={"rapm_possessions": "possessions"}),
+        )
+        compiled = _compiled_linear_x3_coefficients(
+            base,
+            profiles,
+            context_model,
+            center=display_center,
+        )
+        output = season_ratings.copy()
+        compiled_by_player = compiled.set_index("player_id")["rapm"]
+        output["additive_profile_adjustment"] = (
+            output["player_id"].map(compiled_by_player).astype(float) - output["rapm"].astype(float)
+        )
+        output["rapm"] = output["player_id"].map(compiled_by_player).astype(float)
+        compiled_seasons.append(output)
+    if not compiled_seasons:
+        raise LineupEvaluationError("No completed NAIL-RAPM seasonal ratings were compiled")
+    return pd.concat(compiled_seasons, ignore_index=True)
 
 
 def _historical_ranking_catalog(
@@ -913,6 +1285,15 @@ def _historical_ranking_catalog(
         metadata = pd.DataFrame(columns=["season", "player_id"])
 
     catalog = ratings.loc[:, ["season", "player_id", "player_name", "rapm"]].copy()
+    component_columns = {
+        "prior_rating": "prior_rapm",
+        "season_update": "rapm_adjustment_from_prior",
+        "additive_profile_adjustment": "additive_profile_adjustment",
+    }
+    for public_column, source_column in component_columns.items():
+        catalog[public_column] = (
+            ratings[source_column] if source_column in ratings else np.nan
+        )
     catalog = catalog.merge(
         metadata,
         on=["season", "player_id"],
@@ -921,13 +1302,13 @@ def _historical_ranking_catalog(
     )
     if context_exposure is not None and not context_exposure.empty:
         catalog = catalog.merge(
-            context_exposure.loc[:, ["season", "player_id", "prior_context_unit_edge"]],
+            context_exposure.loc[:, ["season", "player_id", "observed_context_exposure"]],
             on=["season", "player_id"],
             how="left",
             validate="one_to_one",
         )
     else:
-        catalog["prior_context_unit_edge"] = np.nan
+        catalog["observed_context_exposure"] = np.nan
     catalog["team"] = catalog.get(
         "primary_team_tricode", pd.Series(index=catalog.index, dtype="object")
     ).fillna("-")
@@ -949,7 +1330,10 @@ def _historical_ranking_catalog(
             "team",
             "position",
             "rapm",
-            "prior_context_unit_edge",
+            "prior_rating",
+            "season_update",
+            "additive_profile_adjustment",
+            "observed_context_exposure",
             "possessions",
             "games",
         ],
@@ -1037,8 +1421,13 @@ def _player_rating_histories(
                 "games_started",
             ]
         )
-    enriched = ratings.copy()
-    for column in ("prior_rapm", "rapm_adjustment_from_prior"):
+    enriched = ratings.sort_values(
+        ["season", "rapm", "player_name", "player_id"],
+        ascending=[True, False, True, True],
+        kind="stable",
+    ).copy()
+    enriched["nail_rank"] = enriched.groupby("season", sort=False).cumcount() + 1
+    for column in ("prior_rapm", "rapm_adjustment_from_prior", "additive_profile_adjustment"):
         if column not in enriched:
             enriched[column] = np.nan
     ordered = enriched.loc[
@@ -1046,10 +1435,12 @@ def _player_rating_histories(
         [
             "season",
             "player_id",
-            "rapm",
-            "prior_rapm",
-            "rapm_adjustment_from_prior",
-            "age",
+                "rapm",
+                "nail_rank",
+                "prior_rapm",
+                "rapm_adjustment_from_prior",
+                "additive_profile_adjustment",
+                "age",
         ],
     ].merge(
         seasonal_bounds.merge(seasonal_leaders, on="season", how="inner", validate="one_to_one"),
@@ -1064,13 +1455,13 @@ def _player_rating_histories(
     )
     if context_exposure is not None and not context_exposure.empty:
         ordered = ordered.merge(
-            context_exposure.loc[:, ["season", "player_id", "prior_context_unit_edge"]],
+            context_exposure.loc[:, ["season", "player_id", "observed_context_exposure"]],
             on=["season", "player_id"],
             how="left",
             validate="one_to_one",
         )
     else:
-        ordered["prior_context_unit_edge"] = np.nan
+        ordered["observed_context_exposure"] = np.nan
     ordered = ordered.sort_values(
         ["player_id", "season"], kind="stable"
     )
@@ -1080,16 +1471,22 @@ def _player_rating_histories(
             {
                 "season": str(row.season),
                 "rating": float(row.rapm),
+                "nail_rank": int(row.nail_rank),
                 "prior_rating": None if pd.isna(row.prior_rapm) else float(row.prior_rapm),
                 "season_update": (
                     None
                     if pd.isna(row.rapm_adjustment_from_prior)
                     else float(row.rapm_adjustment_from_prior)
                 ),
-                "prior_context_unit_edge": (
+                "additive_profile_adjustment": (
                     None
-                    if pd.isna(row.prior_context_unit_edge)
-                    else float(row.prior_context_unit_edge)
+                    if pd.isna(row.additive_profile_adjustment)
+                    else float(row.additive_profile_adjustment)
+                ),
+                "observed_context_exposure": (
+                    None
+                    if pd.isna(row.observed_context_exposure)
+                    else float(row.observed_context_exposure)
                 ),
                 "age": None if pd.isna(row.age) else float(row.age),
                 "team_id": None if pd.isna(row.primary_team_id) else int(row.primary_team_id),
@@ -1310,21 +1707,139 @@ def _antisymmetric_feature_contributions(
     return 0.5 * (forward - reverse)
 
 
+def _is_compiled_linear_x3(context_model: MatchupContextualModel) -> bool:
+    """Return whether this is the exact additive-compilable NAIL-RAPM contract."""
+
+    return (
+        context_model.feature_set
+        in {
+            CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
+            CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+        }
+        and tuple(context_model.pipeline.named_steps) == ("scale", "ridge")
+    )
+
+
+def _compiled_linear_x3_nonadditive_side_scores(
+    context_model: MatchupContextualModel,
+    unit_features: pd.DataFrame,
+    opponent_features: pd.DataFrame,
+) -> tuple[float, float]:
+    """Return reference-centered non-additive side scores for compiled NAIL-RAPM."""
+
+    side_columns = side_context_feature_columns(context_model.feature_set)
+    relative_columns = contextual_feature_columns(context_model.feature_set)
+    additive_ids = {
+        f"home_minus_away_{column}" for column in LINEAR_X3_ADDITIVE_FEATURES
+    }
+    nonadditive_columns = [
+        side_column
+        for feature_id, side_column in zip(
+            relative_columns, side_columns, strict=True
+        )
+        if feature_id not in additive_ids
+    ]
+    if not nonadditive_columns:
+        return 0.0, 0.0
+
+    scale = context_model.pipeline.named_steps["scale"]
+    ridge = context_model.pipeline.named_steps["ridge"]
+    raw_coefficients = pd.Series(
+        np.asarray(ridge.coef_, dtype=float) / np.asarray(scale.scale_, dtype=float),
+        index=side_columns,
+    )
+    reference = context_model.reference_features.loc[:, nonadditive_columns]
+    weights = np.asarray(context_model.reference_weights, dtype=float)
+    weights = weights / weights.sum()
+    reference_mean = np.average(reference.to_numpy(dtype=float), axis=0, weights=weights)
+    coefficients = raw_coefficients.loc[nonadditive_columns].to_numpy(dtype=float)
+
+    def score(side: pd.DataFrame) -> float:
+        values = side.loc[:, nonadditive_columns].to_numpy(dtype=float)[0]
+        return float((values - reference_mean) @ coefficients)
+
+    return score(unit_features), score(opponent_features)
+
+
+def _compiled_linear_x3_coefficients(
+    coefficients: pd.DataFrame,
+    profiles: pd.DataFrame,
+    context_model: MatchupContextualModel,
+    *,
+    center: float = 0.0,
+) -> pd.DataFrame:
+    """Add exact linear additive-profile context credit to player coefficients."""
+
+    if not _is_compiled_linear_x3(context_model):
+        return coefficients.copy()
+    additive_feature_map = _linear_x3_additive_feature_map(context_model.feature_set)
+    required = {"player_id", "rapm", *additive_feature_map.values()}
+    missing = required - set(coefficients.columns) - set(profiles.columns)
+    if missing:
+        raise LineupEvaluationError(
+            "NAIL-RAPM v1.0 lacks profile columns: " + ", ".join(sorted(missing))
+        )
+    scale = context_model.pipeline.named_steps["scale"]
+    ridge = context_model.pipeline.named_steps["ridge"]
+    raw_coefficients = np.asarray(ridge.coef_, dtype=float) / np.asarray(
+        scale.scale_, dtype=float
+    )
+    side_columns = side_context_feature_columns(context_model.feature_set)
+    raw_by_feature = dict(zip(side_columns, raw_coefficients, strict=True))
+    adjustment = np.zeros(len(profiles), dtype=float)
+    for feature, profile_column in additive_feature_map.items():
+        adjustment += raw_by_feature[feature] * profiles[profile_column].to_numpy(dtype=float)
+    adjustments = pd.DataFrame(
+        {
+            "player_id": profiles["player_id"].astype(int),
+            "compiled_profile_adjustment": adjustment,
+        }
+    )
+    output = coefficients.merge(adjustments, on="player_id", how="left", validate="one_to_one")
+    output["rapm"] = (
+        output["rapm"] + output["compiled_profile_adjustment"].fillna(0.0) - center
+    )
+    return output.drop(columns="compiled_profile_adjustment")
+
+
+def _player_rating_center(coefficients: pd.DataFrame, players: pd.DataFrame) -> float:
+    """Return the possession-weighted display center for one player pool."""
+
+    values = coefficients.loc[:, ["player_id", "rapm"]].merge(
+        players.loc[:, ["player_id", "possessions"]],
+        on="player_id",
+        how="left",
+        validate="one_to_one",
+    )
+    weights = values["possessions"].fillna(0.0).clip(lower=0.0).to_numpy(dtype=float)
+    ratings = values["rapm"].to_numpy(dtype=float)
+    if float(weights.sum()) > 0.0:
+        return float(np.average(ratings, weights=weights))
+    return float(np.mean(ratings))
+
+
 def _feature_contributions(context_model: object, features: pd.DataFrame) -> np.ndarray:
-    """Return exact per-original-feature spline Ridge contributions, excluding intercept."""
+    """Return exact per-original-feature Ridge contributions, excluding intercept."""
 
     try:
-        spline = context_model.named_steps["spline"]
         scale = context_model.named_steps["scale"]
         ridge = context_model.named_steps["ridge"]
     except AttributeError as error:
         raise TypeError(
-            "Context attribution requires the published spline Ridge pipeline"
+            "Context attribution requires the published Ridge pipeline"
         ) from error
-    basis = spline.transform(features.loc[:, contextual_feature_columns()])
+    columns = list(features.columns)
+    if "spline" not in context_model.named_steps:
+        scaled = scale.transform(features.loc[:, columns])
+        coefficients = np.asarray(ridge.coef_, dtype=float)
+        if scaled.shape[1] != len(columns) or len(coefficients) != len(columns):
+            raise ValueError("Linear feature layout is incompatible with contextual attribution")
+        return scaled * coefficients
+    spline = context_model.named_steps["spline"]
+    basis = spline.transform(features.loc[:, columns])
     scaled = scale.transform(basis)
     coefficients = np.asarray(ridge.coef_, dtype=float)
-    feature_count = len(contextual_feature_columns())
+    feature_count = len(columns)
     if scaled.shape[1] % feature_count or len(coefficients) != scaled.shape[1]:
         raise ValueError("Spline feature layout is incompatible with contextual attribution")
     basis_count = scaled.shape[1] // feature_count
@@ -1347,20 +1862,22 @@ def _model_feature_inputs(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return the exact side and relative inputs used by the fitted model."""
 
-    unit = unit_features.loc[:, side_context_feature_columns()].copy()
-    opponent = opponent_features.loc[:, side_context_feature_columns()].copy()
+    side_columns = side_context_feature_columns(context_model.feature_set)
+    relative_columns = contextual_feature_columns(context_model.feature_set)
+    unit = unit_features.loc[:, side_columns].copy()
+    opponent = opponent_features.loc[:, side_columns].copy()
     if isinstance(context_model, BoundedMatchupContextualModel):
         unit = unit.clip(context_model.side_lower, context_model.side_upper, axis=1)
         opponent = opponent.clip(context_model.side_lower, context_model.side_upper, axis=1)
     relative = pd.DataFrame(
         {
             column: (
-                unit[side_context_feature_columns()[index]].to_numpy(dtype=float)
-                - opponent[side_context_feature_columns()[index]].to_numpy(dtype=float)
+                unit[side_columns[index]].to_numpy(dtype=float)
+                - opponent[side_columns[index]].to_numpy(dtype=float)
             )
-            for index, column in enumerate(contextual_feature_columns())
+            for index, column in enumerate(relative_columns)
         },
-        columns=contextual_feature_columns(),
+        columns=relative_columns,
     )
     return unit, opponent, _model_relative_features(context_model, relative)
 
@@ -1380,15 +1897,16 @@ def _side_feature_contributions(
 ) -> np.ndarray:
     """Attribute h(U) feature-by-feature against the frozen reference field."""
 
-    side_columns = side_context_feature_columns()
+    side_columns = side_context_feature_columns(context_model.feature_set)
     reference = context_model.reference_features.loc[:, side_columns].to_numpy(dtype=float)
     weights = context_model.reference_weights
     side = side_features.loc[:, side_columns].to_numpy(dtype=float)
-    output = np.empty((len(side), len(contextual_feature_columns())), dtype=float)
+    relative_columns = contextual_feature_columns(context_model.feature_set)
+    output = np.empty((len(side), len(relative_columns)), dtype=float)
     for index, values in enumerate(side):
         relative = pd.DataFrame(
             values - reference,
-            columns=contextual_feature_columns(),
+            columns=relative_columns,
         )
         contributions = _antisymmetric_feature_contributions(
             context_model,
@@ -1398,7 +1916,13 @@ def _side_feature_contributions(
     return output
 
 
-def _feature_rows(features: pd.DataFrame, contributions: np.ndarray) -> list[dict[str, Any]]:
+def _feature_rows(
+    features: pd.DataFrame,
+    contributions: np.ndarray,
+    *,
+    feature_set: str = CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
+    include_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
     """Package sortable original-feature attributions for the browser response."""
 
     rows = [
@@ -1409,8 +1933,9 @@ def _feature_rows(features: pd.DataFrame, contributions: np.ndarray) -> list[dic
             "contribution": float(contribution),
         }
         for column, contribution in zip(
-            contextual_feature_columns(), contributions, strict=True
+            contextual_feature_columns(feature_set), contributions, strict=True
         )
+        if include_ids is None or column in include_ids
     ]
     rows.sort(key=lambda row: abs(float(row["contribution"])), reverse=True)
     return rows
@@ -1572,6 +2097,12 @@ def lineup_rankings_path(model_artifact: str, run_id: str, season: str) -> Path:
     return DEFAULT_LINEUP_RANKINGS_CACHE_DIR / model_artifact / run_id / f"{season}.parquet"
 
 
+def published_player_ratings_path(model_artifact: str, run_id: str) -> Path:
+    """Return the web cache containing compiled completed-fit player ratings."""
+
+    return DEFAULT_LINEUP_RANKINGS_CACHE_DIR / model_artifact / run_id / "player_ratings.parquet"
+
+
 def build_observed_lineup_rankings(
     *,
     season: str,
@@ -1615,19 +2146,51 @@ def build_observed_lineup_rankings(
     home_lineups = [_lineup_key(lineup) for lineup in stints["home_player_ids"]]
     away_lineups = [_lineup_key(lineup) for lineup in stints["away_player_ids"]]
     all_lineups = list(dict.fromkeys([*home_lineups, *away_lineups]))
-    raw_side_features = lineup_side_context_features(all_lineups, profiles)
-    side_features, _, _ = _model_feature_inputs(
-        context_model, raw_side_features, raw_side_features
-    )
-    side_scores = _sampled_side_scores(context_model, side_features)
-    side_score_map = dict(zip(all_lineups, side_scores, strict=True))
-    home_raw = lineup_side_context_features(home_lineups, profiles)
-    away_raw = lineup_side_context_features(away_lineups, profiles)
+    feature_kwargs = {
+        "feature_set": context_model.feature_set,
+        "rebound_model": getattr(context_model, "rebound_model", None),
+        "usage_model": getattr(context_model, "usage_model", None),
+    }
+    raw_side_features = lineup_side_context_features(all_lineups, profiles, **feature_kwargs)
+    home_raw = lineup_side_context_features(home_lineups, profiles, **feature_kwargs)
+    away_raw = lineup_side_context_features(away_lineups, profiles, **feature_kwargs)
     home_features, away_features, _ = _model_feature_inputs(context_model, home_raw, away_raw)
-    total_context = context_model.predict_side_pairs(home_features, away_features)
-    home_scores = np.asarray([side_score_map[lineup] for lineup in home_lineups], dtype=float)
-    away_scores = np.asarray([side_score_map[lineup] for lineup in away_lineups], dtype=float)
-    matchup_bonus = total_context - home_scores + away_scores
+    if _is_compiled_linear_x3(context_model):
+        side_columns = side_context_feature_columns(context_model.feature_set)
+        additive_ids = {
+            f"home_minus_away_{column}" for column in LINEAR_X3_ADDITIVE_FEATURES
+        }
+        nonadditive_columns = [
+            side_column
+            for feature_id, side_column in zip(
+                contextual_feature_columns(context_model.feature_set), side_columns, strict=True
+            )
+            if feature_id not in additive_ids
+        ]
+        scale = context_model.pipeline.named_steps["scale"]
+        ridge = context_model.pipeline.named_steps["ridge"]
+        raw_coefficients = pd.Series(
+            np.asarray(ridge.coef_, dtype=float) / np.asarray(scale.scale_, dtype=float),
+            index=side_columns,
+        )
+        raw_side_scores = raw_side_features.loc[:, nonadditive_columns].to_numpy(dtype=float) @ (
+            raw_coefficients.loc[nonadditive_columns].to_numpy(dtype=float)
+        )
+        side_score_map = dict(zip(all_lineups, raw_side_scores, strict=True))
+        home_scores = np.asarray([side_score_map[lineup] for lineup in home_lineups], dtype=float)
+        away_scores = np.asarray([side_score_map[lineup] for lineup in away_lineups], dtype=float)
+        total_context = home_scores - away_scores
+        matchup_bonus = np.zeros(len(stints), dtype=float)
+    else:
+        side_features, _, _ = _model_feature_inputs(
+            context_model, raw_side_features, raw_side_features
+        )
+        side_scores = _sampled_side_scores(context_model, side_features)
+        side_score_map = dict(zip(all_lineups, side_scores, strict=True))
+        total_context = context_model.predict_side_pairs(home_features, away_features)
+        home_scores = np.asarray([side_score_map[lineup] for lineup in home_lineups], dtype=float)
+        away_scores = np.asarray([side_score_map[lineup] for lineup in away_lineups], dtype=float)
+        matchup_bonus = total_context - home_scores + away_scores
     home_player_ratings = np.asarray(
         [_lineup_rating(lineup, coefficient_map) for lineup in home_lineups], dtype=float
     )
@@ -1779,7 +2342,8 @@ def _sampled_side_scores(
     partition that total into composition and matchup components.
     """
 
-    reference = context_model.reference_features.loc[:, side_context_feature_columns()]
+    side_columns = side_context_feature_columns(context_model.feature_set)
+    reference = context_model.reference_features.loc[:, side_columns]
     weights = np.asarray(context_model.reference_weights, dtype=float)
     count = min(sample_size, len(reference))
     cumulative = np.cumsum(weights)
@@ -1791,11 +2355,11 @@ def _sampled_side_scores(
         chunk = side_features.iloc[start : start + 64].reset_index(drop=True)
         home = pd.DataFrame(
             np.repeat(chunk.to_numpy(dtype=float), count, axis=0),
-            columns=side_context_feature_columns(),
+            columns=side_columns,
         )
         away = pd.DataFrame(
             np.tile(sample.to_numpy(dtype=float), (len(chunk), 1)),
-            columns=side_context_feature_columns(),
+            columns=side_columns,
         )
         output[start : start + len(chunk)] = context_model.predict_side_pairs(home, away).reshape(
             len(chunk), count
@@ -1809,9 +2373,10 @@ def warm_player_context_exposure(
     *,
     panel_path: Path,
 ) -> pd.DataFrame:
-    """Aggregate each player's signed prior-context edge over observed regular stints."""
+    """Aggregate each player's observed lineup-shape context over regular stints."""
 
     target = str(ratings["season"].max())
+    print("Preparing context-exposure cohort", flush=True)
     panel = pd.read_parquet(panel_path)
     exposure_cohort = prepare_player_exposure_cohort(
         panel.loc[panel["season"].astype(str).le(target)],
@@ -1819,10 +2384,10 @@ def warm_player_context_exposure(
     )
     rows: list[dict[str, object]] = []
     for season in sorted(ratings["season"].astype(str).unique()):
-        source = _previous_season(season)
-        model = models.get(source)
-        if model is None:
+        model = models.get(season)
+        if model is None or not _is_compiled_linear_x3(model):
             continue
+        print(f"[{season}] calculating observed lineup-shape context exposure", flush=True)
         stints = read_rapm_stints(season)
         participants = set().union(*stints["home_player_ids"], *stints["away_player_ids"])
         profiles = build_contextual_player_profiles(
@@ -1831,37 +2396,88 @@ def warm_player_context_exposure(
             target_player_ids=participants,
             exposure_cohort=exposure_cohort,
         )
-        offsets = model.predict_lineups(
-            stints["home_player_ids"].tolist(),
-            stints["away_player_ids"].tolist(),
-            profiles,
+        additive_ids = {
+            f"home_minus_away_{column}" for column in LINEAR_X3_ADDITIVE_FEATURES
+        }
+        side_columns = side_context_feature_columns(model.feature_set)
+        nonadditive_columns = [
+            side_column
+            for feature_id, side_column in zip(
+                contextual_feature_columns(model.feature_set), side_columns, strict=True
+            )
+            if feature_id not in additive_ids
+        ]
+        scale = model.pipeline.named_steps["scale"]
+        ridge = model.pipeline.named_steps["ridge"]
+        raw_coefficients = pd.Series(
+            np.asarray(ridge.coef_, dtype=float) / np.asarray(scale.scale_, dtype=float),
+            index=side_columns,
         )
-        totals: dict[int, list[float]] = {}
-        for home, away, possessions, offset in zip(
-            stints["home_player_ids"],
-            stints["away_player_ids"],
-            stints["possessions"],
-            offsets,
-            strict=True,
-        ):
-            weight = float(possessions)
-            for player_id, signed_offset in (
-                *((int(player), float(offset)) for player in home),
-                *((int(player), -float(offset)) for player in away),
-            ):
-                aggregate = totals.setdefault(player_id, [0.0, 0.0])
-                aggregate[0] += weight * signed_offset
-                aggregate[1] += weight
+        unique_lineups = sorted(
+            {
+                tuple(sorted(int(player_id) for player_id in lineup))
+                for lineup in [*stints["home_player_ids"], *stints["away_player_ids"]]
+            }
+        )
+        lineup_features = lineup_side_context_features(
+            unique_lineups,
+            profiles,
+            feature_set=model.feature_set,
+        )
+        lineup_scores = dict(
+            zip(
+                unique_lineups,
+                lineup_features.loc[:, nonadditive_columns].to_numpy(dtype=float)
+                @ raw_coefficients.loc[nonadditive_columns].to_numpy(dtype=float),
+                strict=True,
+            )
+        )
+        home_keys = stints["home_player_ids"].map(
+            lambda lineup: tuple(sorted(int(player_id) for player_id in lineup))
+        )
+        away_keys = stints["away_player_ids"].map(
+            lambda lineup: tuple(sorted(int(player_id) for player_id in lineup))
+        )
+        offsets = home_keys.map(lineup_scores).to_numpy(dtype=float) - away_keys.map(
+            lineup_scores
+        ).to_numpy(dtype=float)
+        exposure = pd.DataFrame(
+            {
+                "player_id": [
+                    int(player_id)
+                    for lineup in stints["home_player_ids"]
+                    for player_id in lineup
+                ]
+                + [
+                    int(player_id)
+                    for lineup in stints["away_player_ids"]
+                    for player_id in lineup
+                ],
+                "possessions": np.repeat(
+                    stints["possessions"].to_numpy(dtype=float), 5
+                ).tolist()
+                * 2,
+                "weighted_context": np.repeat(offsets * stints["possessions"], 5).tolist()
+                + np.repeat(-offsets * stints["possessions"], 5).tolist(),
+            }
+        )
+        totals = exposure.groupby("player_id", as_index=False).agg(
+            weighted_context=("weighted_context", "sum"),
+            context_exposure_possessions=("possessions", "sum"),
+        )
         rows.extend(
             {
                 "season": season,
-                "player_id": player_id,
-                "prior_context_unit_edge": weighted_sum / possessions,
-                "context_exposure_possessions": possessions,
-                "context_offset_source_season": source,
+                "player_id": int(row.player_id),
+                "observed_context_exposure": (
+                    float(row.weighted_context) / float(row.context_exposure_possessions)
+                ),
+                "context_exposure_possessions": float(row.context_exposure_possessions),
+                "context_model_season": season,
+                "context_profile_information_cutoff": _previous_season(season),
             }
-            for player_id, (weighted_sum, possessions) in totals.items()
-            if possessions > 0
+            for row in totals.itertuples(index=False)
+            if float(row.context_exposure_possessions) > 0.0
         )
     return pd.DataFrame(rows)
 

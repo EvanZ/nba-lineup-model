@@ -10,6 +10,7 @@ from nba_lineup_model.modeling.contextual_features import (
 )
 from nba_lineup_model.modeling.matchup_contextual import (
     fit_bounded_hierarchical_matchup_contextual_model,
+    fit_linear_ridge_matchup_contextual_model,
     fit_matchup_contextual_model,
     isolated_feature_component,
 )
@@ -36,6 +37,23 @@ def test_matchup_context_is_antisymmetric_and_reference_identified() -> None:
         + components["matchup_context_net_rating"],
         atol=1e-12,
     )
+
+
+def test_linear_ridge_context_has_no_matchup_remainder() -> None:
+    columns = side_context_feature_columns()
+    values = np.arange(32 * len(columns), dtype=float).reshape(32, len(columns))
+    home = pd.DataFrame(values, columns=columns)
+    away = pd.DataFrame(values[::-1], columns=columns)
+    model = fit_linear_ridge_matchup_contextual_model(
+        home,
+        away,
+        np.linspace(-3.0, 3.0, len(home)),
+        np.ones(len(home)),
+        alpha=10.0,
+    )
+
+    components = model.decompose_side_pairs(home, away)
+    np.testing.assert_allclose(components["matchup_context_net_rating"], 0.0, atol=1e-12)
 
     candidate = home.iloc[[0]].copy()
     reference = model.reference_features

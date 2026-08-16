@@ -1,0 +1,97 @@
+/Users/evanzamir/.matplotlib is not a writable directory
+Matplotlib created a temporary cache directory at /var/folders/yk/sw70zq2153l8_4bz2hdhtlvm0000gn/T/matplotlib-wwg710br because there was an issue with the default path ({configdir}); it is highly recommended to set the MPLCONFIGDIR environment variable to a writable directory, in particular to speed up the import of Matplotlib and to better support multiprocessing.
+Matplotlib is building the font cache; this may take a moment.
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+Preparing exposure cohort through 2025-26 for 30 seasonal fits
+Fitting portable-plus-matchup context state for 1996-97
+Fitting portable-plus-matchup context state for 1997-98
+  Fitting antisymmetric spline on 36,732 stints
+  Stored 8,653 reference units for 1997-98
+Fitting portable-plus-matchup context state for 1998-99
+  Fitting antisymmetric spline on 22,666 stints
+  Stored 6,172 reference units for 1998-99
+Fitting portable-plus-matchup context state for 1999-00
+  Fitting antisymmetric spline on 36,832 stints
+  Stored 8,616 reference units for 1999-00
+Fitting portable-plus-matchup context state for 2000-01
+  Fitting antisymmetric spline on 34,416 stints
+  Stored 8,537 reference units for 2000-01
+Fitting portable-plus-matchup context state for 2001-02
+  Fitting antisymmetric spline on 34,562 stints
+  Stored 8,259 reference units for 2001-02
+Fitting portable-plus-matchup context state for 2002-03
+  Fitting antisymmetric spline on 34,452 stints
+  Stored 7,557 reference units for 2002-03
+Fitting portable-plus-matchup context state for 2003-04
+  Fitting antisymmetric spline on 34,912 stints
+  Stored 9,059 reference units for 2003-04
+Fitting portable-plus-matchup context state for 2004-05
+  Fitting antisymmetric spline on 38,162 stints
+  Stored 11,126 reference units for 2004-05
+Fitting portable-plus-matchup context state for 2005-06
+  Fitting antisymmetric spline on 37,989 stints
+  Stored 10,541 reference units for 2005-06
+Fitting portable-plus-matchup context state for 2006-07
+  Fitting antisymmetric spline on 38,915 stints
+  Stored 10,780 reference units for 2006-07
+Fitting portable-plus-matchup context state for 2007-08
+  Fitting antisymmetric spline on 36,865 stints
+  Stored 10,594 reference units for 2007-08
+Fitting portable-plus-matchup context state for 2008-09
+  Fitting antisymmetric spline on 35,909 stints
+  Stored 10,005 reference units for 2008-09
+Fitting portable-plus-matchup context state for 2009-10
+  Fitting antisymmetric spline on 35,867 stints
+  Stored 9,930 reference units for 2009-10
+Fitting portable-plus-matchup context state for 2010-11
+  Fitting antisymmetric spline on 37,089 stints
+  Stored 10,509 reference units for 2010-11
+Fitting portable-plus-matchup context state for 2011-12
+  Fitting antisymmetric spline on 28,472 stints
+  Stored 9,076 reference units for 2011-12
+Fitting portable-plus-matchup context state for 2012-13
+  Fitting antisymmetric spline on 35,310 stints
+  Stored 10,642 reference units for 2012-13
+Fitting portable-plus-matchup context state for 2013-14
+  Fitting antisymmetric spline on 36,529 stints
+  Stored 10,903 reference units for 2013-14
+Fitting portable-plus-matchup context state for 2014-15
+  Fitting antisymmetric spline on 37,549 stints
+  Stored 12,684 reference units for 2014-15
+Fitting portable-plus-matchup context state for 2015-16
+  Fitting antisymmetric spline on 38,073 stints
+  Stored 11,502 reference units for 2015-16
+Fitting portable-plus-matchup context state for 2016-17
+  Fitting antisymmetric spline on 37,334 stints
+  Stored 11,524 reference units for 2016-17
+Fitting portable-plus-matchup context state for 2017-18
+  Fitting antisymmetric spline on 35,547 stints
+  Stored 11,981 reference units for 2017-18
+Fitting portable-plus-matchup context state for 2018-19
+  Fitting antisymmetric spline on 37,294 stints
+  Stored 13,213 reference units for 2018-19
+Fitting portable-plus-matchup context state for 2019-20
+  Fitting antisymmetric spline on 30,088 stints
+  Stored 11,420 reference units for 2019-20
+Fitting portable-plus-matchup context state for 2020-21
+  Fitting antisymmetric spline on 31,073 stints
+  Stored 12,822 reference units for 2020-21
+Fitting portable-plus-matchup context state for 2021-22
+  Fitting antisymmetric spline on 34,601 stints
+  Stored 14,661 reference units for 2021-22
+Fitting portable-plus-matchup context state for 2022-23
+  Fitting antisymmetric spline on 34,823 stints
+  Stored 14,268 reference units for 2022-23
+Fitting portable-plus-matchup context state for 2023-24
+  Fitting antisymmetric spline on 34,022 stints
+  Stored 13,484 reference units for 2023-24
+Fitting portable-plus-matchup context state for 2024-25
+  Fitting antisymmetric spline on 34,859 stints
+  Stored 15,124 reference units for 2024-25
+Fitting portable-plus-matchup context state for 2025-26
+  Fitting antisymmetric spline on 39,918 stints
+  Stored 17,490 reference units for 2025-26
+HPM x2 OREB/100 total: run=artifacts/models/forward_hpm_x2_orb_per_100_total/2025-26/forward-hpm-x2-orb-per-100-total-2025-26-20260815T041121Z-55b9ac34

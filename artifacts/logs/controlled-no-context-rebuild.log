@@ -1,0 +1,23 @@
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+Preparing exposure cohort through 2025-26 for 30 seasonal fits
+Fitting portable-plus-matchup context state for 1996-97
+Fitting portable-plus-matchup context state for 1997-98
+Fitting portable-plus-matchup context state for 1998-99
+Fitting portable-plus-matchup context state for 1999-00
+Fitting portable-plus-matchup context state for 2000-01
+Fitting portable-plus-matchup context state for 2001-02
+Fitting portable-plus-matchup context state for 2002-03
+Fitting portable-plus-matchup context state for 2003-04
+Fitting portable-plus-matchup context state for 2004-05
+Fitting portable-plus-matchup context state for 2005-06
+Fitting portable-plus-matchup context state for 2006-07
+Fitting portable-plus-matchup context state for 2007-08
+Fitting portable-plus-matchup context state for 2008-09
+Fitting portable-plus-matchup context state for 2009-10
+Fitting portable-plus-matchup context state for 2010-11
+Fitting portable-plus-matchup context state for 2011-12
+Fitting portable-plus-matchup context state for 2012-13
+Fitting portable-plus-matchup context state for 2013-14

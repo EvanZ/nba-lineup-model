@@ -26,6 +26,76 @@ CONTEXT_FEATURE_SET_V1 = "v1"
 CONTEXT_FEATURE_SET_V2_DEPTH_AWARE_SHOOTING = "v2_depth_aware_shooting"
 CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY = "v2_1_empirical_rebound_capacity"
 CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION = "v2_2_usage_allocation"
+CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO = "v2_3_shot_portfolio"
+CONTEXT_FEATURE_SET_X1_ORB_CLAIM_TOTAL = "x1_orb_claim_total"
+CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL = "x2_orb_per_100_total"
+CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT = "x3_v1_orb_claim_replacement"
+CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY = "x3_without_uncertainty"
+CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY = "x4_orb_claim_blocks_only"
+CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION = "x5_orb_claim_interaction_creation"
+CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE = "linear_nonadditive_context"
+CONTEXT_FEATURE_SET_X3_NONADDITIVE_SHAPE = "x3_nonadditive_shape_context"
+CONTEXT_FEATURE_SET_LINEAR_X3_ADDITIVE_QUADRATIC_SIDE = "linear_x3_additive_quadratic_side"
+CONTEXT_FEATURE_SET_V1_WITHOUT_SHOOTING = "v1_without_shooting"
+CONTEXT_FEATURE_SET_V1_WITHOUT_CREATION = "v1_without_creation"
+CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING = "v1_without_rebounding"
+CONTEXT_FEATURE_SET_V1_WITHOUT_DEFENSIVE_EVENTS = "v1_without_defensive_events"
+CONTEXT_FEATURE_SET_V1_WITHOUT_UNCERTAINTY = "v1_without_uncertainty"
+
+V1_KNOCKOUT_EXCLUSIONS = {
+    CONTEXT_FEATURE_SET_V1_WITHOUT_SHOOTING: frozenset(
+        {
+            "three_pa_per_100",
+            "three_pm_per_100",
+            "bottom_two_three_pm",
+            "credible_shooter_count",
+            "shooting_usage_interaction",
+            "shooter_passing_interaction",
+        }
+    ),
+    CONTEXT_FEATURE_SET_V1_WITHOUT_CREATION: frozenset({"assists_per_100", "top_two_assists"}),
+    CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING: frozenset(
+        {
+            "offensive_rebounds_per_100",
+            "defensive_rebounds_per_100",
+            "sqrt_offensive_rebounds",
+            "sqrt_defensive_rebounds",
+            "rebounding_usage_interaction",
+        }
+    ),
+    CONTEXT_FEATURE_SET_V1_WITHOUT_DEFENSIVE_EVENTS: frozenset(
+        {"steals_per_100", "blocks_per_100"}
+    ),
+    CONTEXT_FEATURE_SET_V1_WITHOUT_UNCERTAINTY: frozenset({"imputed_count", "replacement_weight"}),
+}
+
+# The basketball-profile coordinates in the canonical compiled-linear x3
+# contract. They are exact sums of player-profile values and can therefore be
+# compiled into player ratings after fitting without changing a prediction.
+LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES = (
+    "three_pa_per_100",
+    "three_pm_per_100",
+    "assists_per_100",
+    "turnovers_per_100",
+    "usage_per_100",
+    "steals_per_100",
+    "blocks_per_100",
+    "offensive_rebound_claim_total",
+)
+
+# The original x3 and quadratic feature contracts additionally used two
+# profile-quality calibration coordinates. Keep the immutable legacy contract
+# available so stored artifacts remain scoreable, but do not use it for new
+# canonical training.
+LINEAR_X3_LEGACY_ADDITIVE_FEATURES = (
+    *LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES[:-1],
+    "imputed_count",
+    "replacement_weight",
+    "offensive_rebound_claim_total",
+)
+
+# Backward-compatible name for the existing quadratic-side feature contract.
+LINEAR_X3_ADDITIVE_FEATURES = LINEAR_X3_LEGACY_ADDITIVE_FEATURES
 
 
 def available_context_feature_sets() -> tuple[str, ...]:
@@ -36,6 +106,17 @@ def available_context_feature_sets() -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_V2_DEPTH_AWARE_SHOOTING,
         CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY,
         CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION,
+        CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO,
+        CONTEXT_FEATURE_SET_X1_ORB_CLAIM_TOTAL,
+        CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL,
+        CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
+        CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+        CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY,
+        CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION,
+        CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE,
+        CONTEXT_FEATURE_SET_X3_NONADDITIVE_SHAPE,
+        CONTEXT_FEATURE_SET_LINEAR_X3_ADDITIVE_QUADRATIC_SIDE,
+        *V1_KNOCKOUT_EXCLUSIONS,
     )
 
 
@@ -57,17 +138,30 @@ def lineup_context_features(
 
     if len(home_lineups) != len(away_lineups):
         raise ValueError("Contextual home and away lineup sequences must align")
-    required = {"player_id", *_required_profile_columns(feature_set), "profile_imputed", "profile_replacement_weight"}
+    required = {
+        "player_id",
+        *_required_profile_columns(feature_set),
+        "profile_imputed",
+        "profile_replacement_weight",
+    }
     missing = required - set(profiles)
     if missing:
         raise ValueError(f"Contextual player profiles missing columns: {sorted(missing)}")
     if profiles["player_id"].duplicated().any():
         raise ValueError("Contextual player profiles contain duplicate player IDs")
     home = lineup_side_context_features(
-        home_lineups, profiles, feature_set=feature_set, rebound_model=rebound_model, usage_model=usage_model
+        home_lineups,
+        profiles,
+        feature_set=feature_set,
+        rebound_model=rebound_model,
+        usage_model=usage_model,
     )
     away = lineup_side_context_features(
-        away_lineups, profiles, feature_set=feature_set, rebound_model=rebound_model, usage_model=usage_model
+        away_lineups,
+        profiles,
+        feature_set=feature_set,
+        rebound_model=rebound_model,
+        usage_model=usage_model,
     )
     return pd.DataFrame(
         {
@@ -99,15 +193,32 @@ def lineup_side_context_features(
 ) -> pd.DataFrame:
     """Encode five-player units under one versioned contextual feature contract."""
 
-    required = {"player_id", *_required_profile_columns(feature_set), "profile_imputed", "profile_replacement_weight"}
+    required = {
+        "player_id",
+        *_required_profile_columns(feature_set),
+        "profile_imputed",
+        "profile_replacement_weight",
+    }
     missing = required - set(profiles)
     if missing:
         raise ValueError(f"Contextual player profiles missing columns: {sorted(missing)}")
     if profiles["player_id"].duplicated().any():
         raise ValueError("Contextual player profiles contain duplicate player IDs")
-    if feature_set in {CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY, CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION} and rebound_model is None:
+    if (
+        feature_set
+        in {
+            CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY,
+            CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION,
+            CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO,
+        }
+        and rebound_model is None
+    ):
         raise ValueError("Empirical rebound-capacity features require a rebound opportunity model")
-    if feature_set == CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION and usage_model is None:
+    if (
+        feature_set
+        in {CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION, CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO}
+        and usage_model is None
+    ):
         raise ValueError("Usage-allocation features require a usage allocation model")
     values = profiles.set_index("player_id")
     lineup_values = [_lineup_values(lineup, values) for lineup in lineups]
@@ -140,12 +251,23 @@ def side_context_feature_columns(
             "shooter_passing_interaction",
             "rebounding_usage_interaction",
         )
+    if feature_set in V1_KNOCKOUT_EXCLUSIONS:
+        return tuple(
+            column
+            for column in side_context_feature_columns(CONTEXT_FEATURE_SET_V1)
+            if column not in V1_KNOCKOUT_EXCLUSIONS[feature_set]
+        )
     if feature_set == CONTEXT_FEATURE_SET_V2_DEPTH_AWARE_SHOOTING:
         return (
-            *(column for column in PROFILE_RATE_COLUMNS if column not in {
-                "three_pa_per_100",
-                "three_pm_per_100",
-            }),
+            *(
+                column
+                for column in PROFILE_RATE_COLUMNS
+                if column
+                not in {
+                    "three_pa_per_100",
+                    "three_pm_per_100",
+                }
+            ),
             "bottom_three_three_pm",
             "credible_shooter_count",
             "capped_three_pm",
@@ -162,12 +284,17 @@ def side_context_feature_columns(
         )
     if feature_set == CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY:
         return (
-            *(column for column in PROFILE_RATE_COLUMNS if column not in {
-                "three_pa_per_100",
-                "three_pm_per_100",
-                OFFENSIVE_REBOUND_COLUMN,
-                DEFENSIVE_REBOUND_COLUMN,
-            }),
+            *(
+                column
+                for column in PROFILE_RATE_COLUMNS
+                if column
+                not in {
+                    "three_pa_per_100",
+                    "three_pm_per_100",
+                    OFFENSIVE_REBOUND_COLUMN,
+                    DEFENSIVE_REBOUND_COLUMN,
+                }
+            ),
             "bottom_three_three_pm",
             "credible_shooter_count",
             "capped_three_pm",
@@ -183,16 +310,126 @@ def side_context_feature_columns(
         )
     if feature_set == CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION:
         return (
-            *(column for column in PROFILE_RATE_COLUMNS if column not in {
-                "three_pa_per_100", "three_pm_per_100", OFFENSIVE_REBOUND_COLUMN,
-                DEFENSIVE_REBOUND_COLUMN, "usage_per_100", "turnovers_per_100",
-            }),
-            "bottom_three_three_pm", "credible_shooter_count", "capped_three_pm",
-            "shooting_concentration", "top_two_assists",
-            "expected_offensive_rebound_pct", "expected_defensive_rebound_pct",
-            "imputed_count", "replacement_weight", "shooter_passing_interaction",
-            "excess_usage_demand", "allocation_entropy", "role_reallocation_js",
+            *(
+                column
+                for column in PROFILE_RATE_COLUMNS
+                if column
+                not in {
+                    "three_pa_per_100",
+                    "three_pm_per_100",
+                    OFFENSIVE_REBOUND_COLUMN,
+                    DEFENSIVE_REBOUND_COLUMN,
+                    "usage_per_100",
+                    "turnovers_per_100",
+                }
+            ),
+            "bottom_three_three_pm",
+            "credible_shooter_count",
+            "capped_three_pm",
+            "shooting_concentration",
+            "top_two_assists",
+            "expected_offensive_rebound_pct",
+            "expected_defensive_rebound_pct",
+            "imputed_count",
+            "replacement_weight",
+            "shooter_passing_interaction",
+            "excess_usage_demand",
+            "allocation_entropy",
+            "role_reallocation_js",
             "allocation_weighted_turnover_burden",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO:
+        return (
+            *(
+                column
+                for column in side_context_feature_columns(CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION)
+                if column
+                not in {
+                    "bottom_three_three_pm",
+                    "credible_shooter_count",
+                    "capped_three_pm",
+                    "shooting_concentration",
+                    "shooter_passing_interaction",
+                }
+            ),
+            "bottom_three_three_pm",
+            "credible_shooter_count",
+            "capped_three_pm",
+            "shooting_concentration",
+            "shooter_passing_interaction",
+            "rim_pressure",
+            "spacing_capacity",
+            "rim_spacing_interaction",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_X1_ORB_CLAIM_TOTAL:
+        return ("offensive_rebound_claim_total",)
+    if feature_set == CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL:
+        return (OFFENSIVE_REBOUND_COLUMN,)
+    if feature_set == CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT:
+        excluded = V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
+        return (
+            *(
+                column
+                for column in side_context_feature_columns(CONTEXT_FEATURE_SET_V1)
+                if column not in excluded
+            ),
+            "offensive_rebound_claim_total",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY:
+        return tuple(
+            column
+            for column in side_context_feature_columns(
+                CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT
+            )
+            if column not in {"imputed_count", "replacement_weight"}
+        )
+    if feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
+        excluded = (
+            V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
+            | frozenset({"steals_per_100"})
+        )
+        return (
+            *(
+                column
+                for column in side_context_feature_columns(CONTEXT_FEATURE_SET_V1)
+                if column not in excluded
+            ),
+            "offensive_rebound_claim_total",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION:
+        excluded = (
+            V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
+            | frozenset({"assists_per_100", "top_two_assists"})
+        )
+        return (
+            *(
+                column
+                for column in side_context_feature_columns(CONTEXT_FEATURE_SET_V1)
+                if column not in excluded
+            ),
+            "offensive_rebound_claim_total",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE:
+        return (
+            "bottom_two_three_pm",
+            "credible_shooter_count",
+            "usage_concentration",
+            "shooting_usage_interaction",
+            "shooter_passing_interaction",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_X3_NONADDITIVE_SHAPE:
+        return (
+            "bottom_two_three_pm",
+            "credible_shooter_count",
+            "top_two_assists",
+            "usage_concentration",
+            "shooting_usage_interaction",
+            "shooter_passing_interaction",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_LINEAR_X3_ADDITIVE_QUADRATIC_SIDE:
+        return (
+            *LINEAR_X3_ADDITIVE_FEATURES,
+            *(f"{column}_squared" for column in LINEAR_X3_ADDITIVE_FEATURES),
         )
     raise ValueError(f"Unknown contextual feature set: {feature_set}")
 
@@ -208,8 +445,32 @@ def _lineup_values(lineup: Sequence[int], values: pd.DataFrame) -> pd.DataFrame:
 
 
 def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
-    if feature_set in {CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY, CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION}:
+    if feature_set in {
+        CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY,
+        CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION,
+        CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO,
+    }:
         return PROFILE_COLUMNS
+    if feature_set == CONTEXT_FEATURE_SET_X1_ORB_CLAIM_TOTAL:
+        return ("offensive_rebound_pct",)
+    if feature_set == CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL:
+        return (OFFENSIVE_REBOUND_COLUMN,)
+    if feature_set in {
+        CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
+        CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+    }:
+        return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
+    if feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
+        return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
+    if feature_set == CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION:
+        return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
+    if feature_set in {
+        CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE,
+        CONTEXT_FEATURE_SET_X3_NONADDITIVE_SHAPE,
+    }:
+        return PROFILE_RATE_COLUMNS
+    if feature_set == CONTEXT_FEATURE_SET_LINEAR_X3_ADDITIVE_QUADRATIC_SIDE:
+        return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
     return PROFILE_RATE_COLUMNS
 
 
@@ -220,7 +481,7 @@ def _side_feature_row(
     rebound_rate: tuple[float, float] | None = None,
     usage_feature: dict[str, float] | None = None,
 ) -> dict[str, float]:
-    if feature_set == CONTEXT_FEATURE_SET_V1:
+    if feature_set == CONTEXT_FEATURE_SET_V1 or feature_set in V1_KNOCKOUT_EXCLUSIONS:
         result = {column: float(lineup[column].sum()) for column in PROFILE_RATE_COLUMNS}
         result.update(_summary_v1(lineup))
     elif feature_set == CONTEXT_FEATURE_SET_V2_DEPTH_AWARE_SHOOTING:
@@ -234,7 +495,8 @@ def _side_feature_row(
         result = {
             column: float(lineup[column].sum())
             for column in PROFILE_RATE_COLUMNS
-            if column not in {
+            if column
+            not in {
                 "three_pa_per_100",
                 "three_pm_per_100",
                 OFFENSIVE_REBOUND_COLUMN,
@@ -248,11 +510,97 @@ def _side_feature_row(
         result = {
             column: float(lineup[column].sum())
             for column in PROFILE_RATE_COLUMNS
-            if column not in {"three_pa_per_100", "three_pm_per_100", OFFENSIVE_REBOUND_COLUMN, DEFENSIVE_REBOUND_COLUMN, "usage_per_100", "turnovers_per_100"}
+            if column
+            not in {
+                "three_pa_per_100",
+                "three_pm_per_100",
+                OFFENSIVE_REBOUND_COLUMN,
+                DEFENSIVE_REBOUND_COLUMN,
+                "usage_per_100",
+                "turnovers_per_100",
+            }
         }
         if rebound_rate is None or usage_feature is None:
             raise ValueError("Rebound and usage allocation features are required for v2.2")
         result.update(_summary_v22(lineup, rebound_rate=rebound_rate, usage_feature=usage_feature))
+    elif feature_set == CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO:
+        if rebound_rate is None or usage_feature is None:
+            raise ValueError("Rebound and usage allocation features are required for v2.3")
+        # Preserve every base aggregate retained by v2.2, then append the
+        # portfolio signals.  The shot features supplement rather than replace
+        # defensive events, passing, or other established profile aggregates.
+        result = {
+            column: float(lineup[column].sum())
+            for column in PROFILE_RATE_COLUMNS
+            if column
+            not in {
+                "three_pa_per_100",
+                "three_pm_per_100",
+                OFFENSIVE_REBOUND_COLUMN,
+                DEFENSIVE_REBOUND_COLUMN,
+                "usage_per_100",
+                "turnovers_per_100",
+            }
+        }
+        result.update(_summary_v22(lineup, rebound_rate=rebound_rate, usage_feature=usage_feature))
+        rim = float(lineup["rim_pressure"].sum())
+        spacing = float(lineup["spacing_capacity"].sum())
+        result.update(
+            rim_pressure=rim,
+            spacing_capacity=spacing,
+            rim_spacing_interaction=rim * spacing,
+        )
+    elif feature_set == CONTEXT_FEATURE_SET_X1_ORB_CLAIM_TOTAL:
+        result = {"offensive_rebound_claim_total": float(lineup["offensive_rebound_pct"].sum())}
+    elif feature_set == CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL:
+        result = {OFFENSIVE_REBOUND_COLUMN: float(lineup[OFFENSIVE_REBOUND_COLUMN].sum())}
+    elif feature_set == CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT:
+        excluded = V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
+        result = {column: float(lineup[column].sum()) for column in PROFILE_RATE_COLUMNS}
+        result.update(_summary_v1(lineup))
+        result = {column: value for column, value in result.items() if column not in excluded}
+        result["offensive_rebound_claim_total"] = float(lineup["offensive_rebound_pct"].sum())
+    elif feature_set == CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY:
+        result = _side_feature_row(lineup, CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT)
+        result = {
+            column: value
+            for column, value in result.items()
+            if column not in {"imputed_count", "replacement_weight"}
+        }
+    elif feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
+        excluded = (
+            V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
+            | frozenset({"steals_per_100"})
+        )
+        result = {column: float(lineup[column].sum()) for column in PROFILE_RATE_COLUMNS}
+        result.update(_summary_v1(lineup))
+        result = {column: value for column, value in result.items() if column not in excluded}
+        result["offensive_rebound_claim_total"] = float(lineup["offensive_rebound_pct"].sum())
+    elif feature_set == CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION:
+        excluded = (
+            V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
+            | frozenset({"assists_per_100", "top_two_assists"})
+        )
+        result = {column: float(lineup[column].sum()) for column in PROFILE_RATE_COLUMNS}
+        result.update(_summary_v1(lineup))
+        result = {column: value for column, value in result.items() if column not in excluded}
+        result["offensive_rebound_claim_total"] = float(lineup["offensive_rebound_pct"].sum())
+    elif feature_set == CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE:
+        result = _summary_v1(lineup)
+        result = {
+            column: result[column]
+            for column in side_context_feature_columns(CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE)
+        }
+    elif feature_set == CONTEXT_FEATURE_SET_X3_NONADDITIVE_SHAPE:
+        result = _summary_v1(lineup)
+        result = {
+            column: result[column]
+            for column in side_context_feature_columns(CONTEXT_FEATURE_SET_X3_NONADDITIVE_SHAPE)
+        }
+    elif feature_set == CONTEXT_FEATURE_SET_LINEAR_X3_ADDITIVE_QUADRATIC_SIDE:
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT)
+        result = {column: base[column] for column in LINEAR_X3_ADDITIVE_FEATURES}
+        result.update({f"{column}_squared": value**2 for column, value in result.items()})
     else:
         raise ValueError(f"Unknown contextual feature set: {feature_set}")
     return result
