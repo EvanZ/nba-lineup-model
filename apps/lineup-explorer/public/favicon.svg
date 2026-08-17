@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="NBA GESTALT">
+  <rect width="256" height="256" rx="48" fill="#17201c"/>
+  <path d="M195 67c-16-15-37-23-60-23-47 0-81 35-81 84 0 51 35 84 82 84 25 0 47-8 63-23v-56h-67v34h30v6c-8 4-17 6-26 6-27 0-45-18-45-51 0-32 18-51 45-51 16 0 29 5 39 14z" fill="#f6f3ec"/>
+  <circle cx="199" cy="58" r="16" fill="#e8502f"/>
+</svg>

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">NBA GESTALT</title>
+  <desc id="description">NBA GESTALT Lineup Lab social sharing card</desc>
+  <image x="0" y="0" width="1200" height="630" preserveAspectRatio="xMidYMid slice" xlink:href="gestalt-court-backdrop.png" />
+  <rect x="0" y="0" width="650" height="630" fill="#f6f3ec" fill-opacity="0.94" />
+  <rect x="48" y="50" width="84" height="8" fill="#e8502f" />
+  <text x="48" y="108" fill="#17201c" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="800">NBA GESTALT</text>
+  <text x="48" y="143" fill="#68716a" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" letter-spacing="2">LINEUP LAB</text>
+  <line x1="48" y1="178" x2="564" y2="178" stroke="#17201c" stroke-width="2" />
+  <text x="48" y="274" fill="#17201c" font-family="Georgia, Times New Roman, serif" font-size="94">gestalt</text>
+  <text x="391" y="273" fill="#3e7891" font-family="Georgia, Times New Roman, serif" font-size="42" font-style="italic">noun</text>
+  <text x="52" y="321" fill="#527f92" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" letter-spacing="1">GERMAN  /gə-ˈshtält/</text>
+  <text x="48" y="392" fill="#17201c" font-family="Georgia, Times New Roman, serif" font-size="34">A whole whose properties emerge from</text>
+  <text x="48" y="436" fill="#17201c" font-family="Georgia, Times New Roman, serif" font-size="34">the relationships among its parts.</text>
+  <line x1="48" y1="484" x2="564" y2="484" stroke="#d9d6ce" stroke-width="2" />
+  <text x="48" y="538" fill="#245a47" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700">Build the five.</text>
+  <text x="48" y="573" fill="#68716a" font-family="Arial, Helvetica, sans-serif" font-size="16">Gestalt Estimates Situational Teammate-Adjusted Lineup Terms</text>
+</svg>
