@@ -24,11 +24,13 @@ From the repository root:
 
 The default release is the currently published NAIL-RAPM v1.0 artifact. Override the
 model run with `GESTALT_RUN_ID` only after materializing its web rankings and response
-curve caches. Build the compact historical exposure cache before publishing so mixed-era
-Lab queries do not require the full stint archive on EC2:
+curve caches. Build the compact historical exposure and player-profile caches before
+publishing so historical Lab queries do not require raw stints or curated source
+partitions on EC2:
 
 ```bash
 uv run nba-build-gestalt-exposure-cohort
+uv run nba-build-gestalt-historical-profiles
 ```
 
 ## Deploy on EC2

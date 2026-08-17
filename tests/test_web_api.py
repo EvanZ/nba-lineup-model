@@ -329,6 +329,7 @@ def test_historical_lab_state_uses_published_exposure_cache(monkeypatch) -> None
             "2025-26": evaluator.context_model,
         },
         exposure_cohort=cached_cohort,
+        historical_profiles=evaluator.profiles.assign(season="2024-25"),
     )
     monkeypatch.setattr(
         web_inference,
@@ -338,7 +339,7 @@ def test_historical_lab_state_uses_published_exposure_cache(monkeypatch) -> None
     monkeypatch.setattr(
         web_inference,
         "build_contextual_player_profiles",
-        lambda *args, **kwargs: evaluator.profiles,
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("profiles rebuilt")),
     )
     monkeypatch.setattr(
         web_inference,

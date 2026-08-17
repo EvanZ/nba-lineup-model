@@ -35,6 +35,7 @@ DEFAULT_RESPONSE_CACHE_DIR = Path("artifacts/web/response_curve_cache")
 DEFAULT_LINEUP_RANKINGS_CACHE_DIR = Path("artifacts/web/lineup_rankings")
 DEFAULT_PLAYER_TEAM_SPLITS_CACHE_DIR = Path("artifacts/web/player_team_splits")
 DEFAULT_EXPOSURE_COHORT_CACHE_DIR = Path("artifacts/web/exposure_cohorts")
+DEFAULT_HISTORICAL_PROFILE_CACHE_DIR = Path("artifacts/web/historical_profiles")
 # Keep the artifact identifier distinct from the public name, NAIL-RAPM v1.0.
 MODEL_ARTIFACT = "forward_hpm_x3_linear_ridge_without_uncertainty"
 MODEL_NAME = "forward_hpm_x3_linear_ridge_without_uncertainty"
@@ -146,6 +147,7 @@ class LineupEvaluator:
     season_context_models: dict[str, MatchupContextualModel] = field(default_factory=dict)
     player_season_panel: pd.DataFrame = field(default_factory=pd.DataFrame)
     exposure_cohort: pd.DataFrame = field(default_factory=pd.DataFrame)
+    historical_profiles: pd.DataFrame = field(default_factory=pd.DataFrame)
     season_states: dict[str, SeasonLineupState] = field(default_factory=dict)
     response_caches: dict[str, dict[int, tuple[np.ndarray, np.ndarray]]] = field(
         default_factory=dict
@@ -284,6 +286,12 @@ class LineupEvaluator:
                 through_season=season,
             )
         )
+        profile_cache_path = historical_profiles_path(MODEL_ARTIFACT, run_id)
+        historical_profiles = (
+            pd.read_parquet(profile_cache_path)
+            if profile_cache_path.is_file()
+            else pd.DataFrame()
+        )
         rankings_path = lineup_rankings_path(MODEL_ARTIFACT, run_id, season)
         observed_lineups = (
             pd.read_parquet(rankings_path) if rankings_path.is_file() else pd.DataFrame()
@@ -307,6 +315,7 @@ class LineupEvaluator:
             season_context_models=models,
             player_season_panel=player_season_panel,
             exposure_cohort=exposure_cohort,
+            historical_profiles=historical_profiles,
             season_states={
                 season: SeasonLineupState(
                     season=season,
@@ -899,12 +908,25 @@ class LineupEvaluator:
                 ],
                 through_season=season,
             )
-        profiles = build_contextual_player_profiles(
-            self.player_season_panel,
-            target_season=season,
-            target_player_ids=set(coefficients["player_id"].astype(int)),
-            exposure_cohort=exposure_cohort,
+        profiles = self.historical_profiles.loc[
+            self.historical_profiles.get("season", pd.Series(dtype=str)).astype(str).eq(season)
+        ].copy()
+        if not profiles.empty:
+            profiles = profiles.drop(columns="season")
+        expected_player_ids = set(coefficients["player_id"].astype(int))
+        cached_player_ids = set(profiles.get("player_id", pd.Series(dtype=int)).astype(int))
+        cache_is_complete = (
+            not profiles.empty
+            and cached_player_ids == expected_player_ids
+            and not profiles["player_id"].duplicated().any()
         )
+        if not cache_is_complete:
+            profiles = build_contextual_player_profiles(
+                self.player_season_panel,
+                target_season=season,
+                target_player_ids=expected_player_ids,
+                exposure_cohort=exposure_cohort,
+            )
         display_coefficients = _compiled_linear_x3_coefficients(
             coefficients,
             profiles,
@@ -2091,6 +2113,12 @@ def exposure_cohort_path(model_artifact: str, run_id: str) -> Path:
     """Return the compact historical exposure cache needed by the public API."""
 
     return DEFAULT_EXPOSURE_COHORT_CACHE_DIR / model_artifact / f"{run_id}.parquet"
+
+
+def historical_profiles_path(model_artifact: str, run_id: str) -> Path:
+    """Return the compact completed-season player-profile cache for the public API."""
+
+    return DEFAULT_HISTORICAL_PROFILE_CACHE_DIR / model_artifact / f"{run_id}.parquet"
 
 
 def published_player_ratings_path(model_artifact: str, run_id: str) -> Path:

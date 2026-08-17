@@ -18,6 +18,7 @@ LINEUP_CACHE="artifacts/web/lineup_rankings/${MODEL_ARTIFACT}/${RUN_ID}"
 TEAM_SPLITS_CACHE="artifacts/web/player_team_splits/${MODEL_ARTIFACT}"
 RESPONSE_CACHE="artifacts/web/response_curve_cache/${MODEL_ARTIFACT}"
 EXPOSURE_COHORT_CACHE="artifacts/web/exposure_cohorts/${MODEL_ARTIFACT}/${RUN_ID}.parquet"
+HISTORICAL_PROFILE_CACHE="artifacts/web/historical_profiles/${MODEL_ARTIFACT}/${RUN_ID}.parquet"
 PANEL="data/analytical/player_season_panel"
 
 required_paths=(
@@ -27,6 +28,7 @@ required_paths=(
   "$TEAM_SPLITS_CACHE"
   "$RESPONSE_CACHE"
   "$EXPOSURE_COHORT_CACHE"
+  "$HISTORICAL_PROFILE_CACHE"
   "$PANEL"
 )
 
@@ -43,6 +45,7 @@ mkdir -p "$STAGING_DIR"
 mkdir -p "$STAGING_DIR/deploy"
 mkdir -p "$STAGING_DIR/$MODEL_SEASON_ROOT"
 mkdir -p "$(dirname "$STAGING_DIR/$EXPOSURE_COHORT_CACHE")"
+mkdir -p "$(dirname "$STAGING_DIR/$HISTORICAL_PROFILE_CACHE")"
 
 rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' src/ "$STAGING_DIR/src/"
 rsync -a README.md pyproject.toml uv.lock "$STAGING_DIR/"
@@ -53,6 +56,7 @@ rsync -a "$LINEUP_CACHE/" "$STAGING_DIR/$LINEUP_CACHE/"
 rsync -a "$TEAM_SPLITS_CACHE/" "$STAGING_DIR/$TEAM_SPLITS_CACHE/"
 rsync -a "$RESPONSE_CACHE/" "$STAGING_DIR/$RESPONSE_CACHE/"
 rsync -a "$EXPOSURE_COHORT_CACHE" "$STAGING_DIR/$EXPOSURE_COHORT_CACHE"
+rsync -a "$HISTORICAL_PROFILE_CACHE" "$STAGING_DIR/$HISTORICAL_PROFILE_CACHE"
 rsync -a "$PANEL/" "$STAGING_DIR/$PANEL/"
 
 cat > "$STAGING_DIR/release.json" <<EOF
