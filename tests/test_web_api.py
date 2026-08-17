@@ -9,6 +9,7 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 import nba_lineup_model.web_api.app as web_app
+import nba_lineup_model.web_api.inference as web_inference
 from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
     lineup_side_context_features,
@@ -301,6 +302,55 @@ def test_matchup_endpoint_accepts_season_scoped_units_and_neutral_environment() 
     assert payload["opponent_season"] == "2025-26"
     assert payload["environment"] == "neutral"
     assert payload["environment_seasons"] == ["2024-25", "2025-26"]
+
+
+def test_historical_lab_state_uses_published_exposure_cache(monkeypatch) -> None:
+    evaluator = _evaluator(compiled_linear=True)
+    historical_coefficients = pd.concat(
+        [
+            evaluator.coefficients.assign(season="2024-25"),
+            evaluator.coefficients.assign(season="2025-26"),
+        ],
+        ignore_index=True,
+    )
+    cached_cohort = pd.DataFrame(
+        {
+            "season": ["2024-25"] * 10,
+            "player_id": list(range(1, 11)),
+            "exposure_share": [0.2] * 10,
+        }
+    )
+    evaluator = replace(
+        evaluator,
+        historical_coefficients=historical_coefficients,
+        seasonal_ratings=historical_coefficients.assign(age=26.0, is_rookie=False),
+        season_context_models={
+            "2024-25": evaluator.context_model,
+            "2025-26": evaluator.context_model,
+        },
+        exposure_cohort=cached_cohort,
+    )
+    monkeypatch.setattr(
+        web_inference,
+        "prepare_player_exposure_cohort",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw stints requested")),
+    )
+    monkeypatch.setattr(
+        web_inference,
+        "build_contextual_player_profiles",
+        lambda *args, **kwargs: evaluator.profiles,
+    )
+    monkeypatch.setattr(
+        web_inference,
+        "_player_catalog",
+        lambda *args, **kwargs: evaluator.players.copy(),
+    )
+
+    client = TestClient(create_app(evaluator))
+    response = client.get("/api/default-opponent", params={"season": "2024-25"})
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["players"]) == 5
 
 
 def test_lineup_rankings_endpoint_filters_by_possessions_and_players() -> None:

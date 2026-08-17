@@ -886,12 +886,19 @@ class LineupEvaluator:
         ].copy()
         if coefficients.empty:
             raise LineupEvaluationError(f"Completed player ratings are unavailable for {season}")
-        exposure_cohort = prepare_player_exposure_cohort(
-            self.player_season_panel.loc[
-                self.player_season_panel["season"].astype(str).le(season)
-            ],
-            through_season=season,
-        )
+        # The public runtime ships this compact all-season cache, not raw stints.
+        # Filtering it preserves the historical cold-start contract without an
+        # on-demand reconstruction from the large analytical archive.
+        exposure_cohort = self.exposure_cohort.loc[
+            self.exposure_cohort["season"].astype(str).le(season)
+        ].copy()
+        if exposure_cohort.empty:
+            exposure_cohort = prepare_player_exposure_cohort(
+                self.player_season_panel.loc[
+                    self.player_season_panel["season"].astype(str).le(season)
+                ],
+                through_season=season,
+            )
         profiles = build_contextual_player_profiles(
             self.player_season_panel,
             target_season=season,
