@@ -1,0 +1,17 @@
+[Unit]
+Description=NBA GESTALT API
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/nba-gestalt/current
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/nba-gestalt/current/.venv/bin/uvicorn nba_lineup_model.web_api.app:app --host 127.0.0.1 --port 8010 --workers 1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -152,6 +152,7 @@ nba-gestalt-api = "nba_lineup_model.web_api.app:main"
 nba-build-gestalt-response-cache = "nba_lineup_model.web_api.warm_response_cache:main"
 nba-build-gestalt-lineup-rankings = "nba_lineup_model.web_api.lineup_rankings_cache:main"
 nba-build-gestalt-player-team-splits = "nba_lineup_model.web_api.player_team_splits_cache:main"
+nba-build-gestalt-exposure-cohort = "nba_lineup_model.web_api.exposure_cohort_cache:main"
 
 [dependency-groups]
 dev = [

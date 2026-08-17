@@ -1,0 +1,13 @@
+# Runtime dependencies for the public FastAPI service.
+# Keep this intentionally separate from the full modeling environment in pyproject.toml.
+fastapi==0.140.7
+httpx==0.28.1
+joblib==1.5.3
+matplotlib==3.11.1
+numpy==2.5.1
+pandas==2.3.3
+pyarrow==24.0.0
+pydantic==2.13.4
+scikit-learn==1.9.0
+scipy==1.18.0
+uvicorn==0.51.0

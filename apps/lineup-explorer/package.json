@@ -10,14 +10,17 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
+    "katex": "^0.18.4",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "react-katex": "^3.1.0",
     "typescript": "latest",
     "vite": "latest"
   },
   "devDependencies": {
     "@types/react": "latest",
-    "@types/react-dom": "latest"
+    "@types/react-dom": "latest",
+    "@types/react-katex": "^3.0.4"
   }
 }

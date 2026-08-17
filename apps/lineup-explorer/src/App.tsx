@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { BlockMath } from "react-katex";
 import {
   ArrowLeft,
   ArrowRight,
@@ -797,8 +798,19 @@ function App() {
 
       {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
         <section className="intro" aria-labelledby="page-title">
-          <p className="eyebrow">A lineup is more than the sum of five player ratings.</p>
-          <h1 id="page-title">Build the five.</h1>
+          <div className="gestalt-entry" aria-label="Definition of gestalt">
+            <div className="gestalt-entry-heading">
+              <span className="gestalt-word">gestalt</span>
+              <span className="gestalt-part-of-speech">noun</span>
+            </div>
+            <p className="gestalt-pronunciation"><span>German</span> /gə-ˈshtält/</p>
+            <p className="gestalt-definition">A whole whose properties emerge from the relationships among its parts.</p>
+            <p className="gestalt-basketball-note">In basketball, five players can create an edge that no sum of individual ratings fully explains.</p>
+          </div>
+          <div className="intro-prompt">
+            <p className="eyebrow">Lineup Lab</p>
+            <h1 id="page-title">Build the five.</h1>
+          </div>
         </section>
 
         <section className="lab-grid" aria-label="Lineup builder">
@@ -888,11 +900,11 @@ function AboutPage() {
   return (
     <article className="about-page" aria-labelledby="about-title">
       <section className="about-hero">
-        <p className="eyebrow">About NBA GESTALT</p>
-        <h1 id="about-title">A forecast built one season at a time.</h1>
+        <p className="eyebrow">NBA GESTALT methodology</p>
+        <h1 id="about-title">A player model, then a lineup residual.</h1>
         <p className="about-lede">
-          {MODEL_LABEL} estimates a neutral-court lineup edge per 100 possessions by combining
-          regularized player ratings with non-additive five-player interaction terms.
+          {MODEL_LABEL} estimates a neutral-court edge per 100 possessions. It separates what can be
+          assigned to individual players from what belongs to the particular five-player combination.
         </p>
       </section>
 
@@ -901,7 +913,7 @@ function AboutPage() {
           <p className="section-kicker">Current model</p>
           <h2 id="model-name-title">{MODEL_LABEL}</h2>
         </div>
-        <p className="model-identity-name">Forward age-informed lineup-interaction RAPM</p>
+        <p className="model-identity-name">Forward, age-informed, residual-lineup RAPM</p>
         <p>
           <b>N</b>on-<b>A</b>dditive <b>I</b>nteractions in <b>L</b>ineups,
           Regularized Adjusted Plus-Minus.
@@ -910,112 +922,153 @@ function AboutPage() {
 
       <section className="about-equation" aria-labelledby="equation-title">
         <div>
-          <p className="section-kicker">The estimate</p>
-          <h2 id="equation-title">Two terms, one score.</h2>
+          <p className="section-kicker">Stint model</p>
+          <h2 id="equation-title">What one row means.</h2>
         </div>
-        <p className="model-formula">
-          NAIL(A, B) = Player(A) - Player(B) + NonAdditiveEdge(A, B)
-        </p>
+        <div className="about-formula-stack">
+          <div className="model-formula">
+            <BlockMath math={String.raw`\hat{y}_s = b_{\mathrm{home}} + \sum_{i \in H_s} r_{i,t} - \sum_{j \in A_s} r_{j,t} + C_t(H_s, A_s) + \varepsilon_s`} />
+          </div>
+          <div className="model-subformula">
+            <BlockMath math={String.raw`C_t(H,A) = C_{\mathrm{add},t}(H,A) + C_{\mathrm{nonadd},t}(H,A)`} />
+          </div>
+        </div>
         <p>
-          The player term combines regularized adjusted plus-minus with the model's player-compilable
-          profile effects. <i>Non-Additive Edge</i> is the remaining unit-level interaction: it cannot
-          be recovered by simply summing five independent player ratings.
+          Each row is a possession-weighted stint. <i>y_s</i> is its home-minus-away net-rating outcome,
+          <i> b_home</i> is home court, and the two five-player sums are the raw player edge. <i>C</i> is
+          the lineup-profile correction. The model estimates all reported ratings on a per-100-possession scale.
         </p>
       </section>
 
-      <section className="about-section" aria-labelledby="prior-title">
+      <section className="about-section" aria-labelledby="forward-title">
         <div className="about-section-heading">
-          <p className="section-kicker">Player prior</p>
-          <h2 id="prior-title">Forward RAPM.</h2>
-          <p>Each player estimate begins with only information that was available before the target season.</p>
+          <p className="section-kicker">Recursive fitting loop</p>
+          <h2 id="forward-title">Each season starts before it happens.</h2>
+          <p>
+            For target season <i>t</i>, every starting quantity is constructed from seasons before <i>t</i>.
+            Once season <i>t</i> is complete, its fitted state can inform season <i>t+1</i>, never itself.
+          </p>
         </div>
-        <div className="about-steps two-up">
+        <div className="about-steps">
           <section>
             <span>01</span>
-            <h3>Forward</h3>
+            <h3>Build the player prior</h3>
             <p>
-              The model rolls from completed season to completed season. A target season never supplies its
-              own possessions, outcomes, or box-score rates to its starting estimate.
+              Returning players receive a centered, value-conditioned aging forecast from their completed
+              history. The age model uses prior player state, age, experience, and prior exposure.
             </p>
           </section>
           <section>
             <span>02</span>
-            <h3>RAPM</h3>
+            <h3>Handle cold starts</h3>
             <p>
-              Regularized Adjusted Plus-Minus estimates player coefficients from possession outcomes while
-              accounting for the other nine players on the floor and home court. Its ridge penalty stabilizes
-              correlated lineup data by pulling uncertain player estimates toward their preseason priors.
+              A player without a usable prior season receives a draft-profile forecast blended with a
+              replacement-level token. The exposure gate shifts the blend toward replacement when projected
+              opportunity is low.
             </p>
           </section>
-        </div>
-      </section>
-
-      <section className="about-section" aria-labelledby="aging-title">
-        <div className="about-section-heading">
-          <p className="section-kicker">Season-to-season state</p>
-          <h2 id="aging-title">Aging and cold starts.</h2>
-          <p>Returning players and players without an NBA-season estimate take different, leakage-safe paths.</p>
-        </div>
-        <div className="about-steps two-up">
           <section>
             <span>03</span>
-            <h3>Aging</h3>
+            <h3>Carry context forward</h3>
             <p>
-              For returning players, an age-spline ridge model forecasts the next RAPM level from the last
-              completed RAPM, on-court possession exposure, age, NBA experience, draft information, and physical profile.
-            </p>
-          </section>
-          <section>
-            <span>04</span>
-            <h3>Exposure-gated cold start</h3>
-            <p>
-              Players without a usable prior-season estimate receive a blend of a draft-profile forecast and a
-              historical replacement estimate. The blend shifts toward replacement when the forward exposure model
-              expects little opportunity.
+              The prior season's lineup correction is subtracted from the current stint target before RAPM
+              refits player coefficients. That prevents repeatable lineup composition from being absorbed
+              wholesale into player ratings.
             </p>
           </section>
         </div>
       </section>
 
-      <section className="about-section contextual-section" aria-labelledby="context-title">
+      <section className="about-section" aria-labelledby="rapm-title">
         <div className="about-section-heading">
-          <p className="section-kicker">Lineup context</p>
-          <h2 id="context-title">Linear non-additive lineup context.</h2>
-          <p>These six terms use prior-season player profiles, not target-season results, to capture composition effects that are not linearly additive at the player level.</p>
+          <p className="section-kicker">Player update</p>
+          <h2 id="rapm-title">RAPM estimates the part that travels with a player.</h2>
+          <p>
+            The current season then updates the prior from possession outcomes, with the other nine players
+            and home court in the same regression. Ridge regularization anchors uncertain estimates to the
+            preseason prior rather than treating a small sample as a new truth.
+          </p>
         </div>
-        <dl className="model-lexicon">
-          <div>
-            <dt>Linear Ridge</dt>
-            <dd>A standardized Ridge regression weights the declared non-additive lineup terms, keeping their coefficients stable despite correlated lineups.</dd>
+        <div className="about-formula-callout">
+          <div className="model-formula">
+            <BlockMath math={String.raw`r^{\mathrm{raw}}_{i,t} = \mu_{i,t} + \Delta r_{i,t}`} />
           </div>
-          <div>
-            <dt>Shooting depth</dt>
-            <dd>Bottom-two shooting and credible-shooter count distinguish a unit with several credible spacers from one driven by a single shooter.</dd>
+          <p>
+            This is the raw player state before profile attribution. A player&apos;s update is identified by how
+            the team performs across the possession-weighted stints in which that player appears, conditional
+            on teammates and opponents. It is not a box-score total or a causal estimate of every action.
+          </p>
+        </div>
+      </section>
+
+      <section className="about-section" aria-labelledby="context-title">
+        <div className="about-section-heading">
+          <p className="section-kicker">Residual lineup model</p>
+          <h2 id="context-title">Context is fit to what player RAPM leaves behind.</h2>
+          <p>
+            After the raw player edge is removed from each completed stint, a second standardized Ridge
+            regression fits the residual against a fixed, strictly lagged five-player feature contract.
+            The final v1.0 model is linear in those features; it does not use splines or a black-box interaction network.
+          </p>
+        </div>
+        <div className="feature-contract">
+          <section>
+            <p className="section-kicker">Player-compilable features</p>
+            <h3>Eight additive profile coordinates.</h3>
+            <p>
+              These are sums of player profiles, so their fitted credit can be assigned exactly back to individuals
+              without changing a lineup forecast.
+            </p>
+            <ul className="feature-list">
+              <li>Three-point attempts and makes</li>
+              <li>Assists, turnovers, and usage</li>
+              <li>Steals and blocks</li>
+              <li>Offensive-rebound claim total</li>
+            </ul>
+          </section>
+          <section>
+            <p className="section-kicker">Lineup-only features</p>
+            <h3>Six non-additive shape coordinates.</h3>
+            <p>
+              These deliberately depend on the group rather than independent player totals, so they remain as a
+              unit-level edge instead of being allocated to any one player.
+            </p>
+            <ul className="feature-list">
+              <li>Bottom-two shooting and credible-shooter count</li>
+              <li>Top-two assists and usage concentration</li>
+              <li>Shooting-by-usage and shooter-by-passing</li>
+            </ul>
+          </section>
+        </div>
+      </section>
+
+      <section className="about-section" aria-labelledby="attribution-title">
+        <div className="about-section-heading">
+          <p className="section-kicker">Attribution contract</p>
+          <h2 id="attribution-title">The published player rating excludes residual lineup credit.</h2>
+        </div>
+        <div className="about-formula-callout">
+          <div className="model-formula">
+            <BlockMath math={String.raw`R^{\mathrm{NAIL}}_{i,t} = \mu_{i,t} + \Delta r_{i,t} + \delta^{\mathrm{profile}}_{i,t}`} />
           </div>
-          <div>
-            <dt>Creation distribution</dt>
-            <dd>Top-two assists and usage concentration distinguish distributed creation from a unit concentrated in one or two players.</dd>
+          <div className="model-subformula">
+            <BlockMath math={String.raw`\operatorname{Edge}(U,O) = \operatorname{Player}(U) - \operatorname{Player}(O) + C_{\mathrm{nonadd},t}(U,O)`} />
           </div>
-          <div>
-            <dt>Interactions</dt>
-            <dd>Shooting-by-usage and shooter-by-passing are direct five-player interaction terms, not player-level statistics.</dd>
-          </div>
-          <div>
-            <dt>Compiled player effects</dt>
-            <dd>Eight additive profile effects compile exactly into player ratings. They are visible in the player row of the lineup ledger rather than double-counted as context.</dd>
-          </div>
-          <div>
-            <dt>Forward state</dt>
-            <dd>Every season begins from completed prior seasons. Neither a target season's outcomes nor its realized box scores enter its opening state.</dd>
-          </div>
-        </dl>
+          <p>
+            The eight additive features compile exactly into the player rating. The six non-additive features remain
+            a separate unit-level term. In the Lineup Lab, the ledger shows both pieces. In player pages,
+            <i> Non-Additive Lineup Edge</i> is a possession-weighted description of the units a player actually
+            shared, not extra individual credit and not a causal allocation.
+          </p>
+        </div>
       </section>
 
       <section className="about-footer-note">
         <p className="section-kicker">Current publication</p>
         <p>
-          The Lineup Lab serves the age-informed 2025-26 completed fit. It is a retrospective model state for
-          exploring lineups, not a live forecast or a causal player-value claim.
+          The Lineup Lab serves the completed 2025-26 NAIL-RAPM v1.0 state. It is useful for retrospective
+          lineup exploration and as the state carried forward into a forecast; it is not a live in-season update
+          or a claim that the residual lineup effect belongs causally to a single player.
         </p>
       </section>
     </article>

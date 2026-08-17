@@ -57,6 +57,7 @@ nav = [
   {"Guides" = [
     {"Build and serve the docs" = "guides/documentation.md"},
     {"Run NBA GESTALT locally" = "guides/run-gestalt-lineup-lab.md"},
+    {"Deploy NBA GESTALT beta" = "guides/deploy-gestalt-beta.md"},
     {"Use the Prefect UI" = "guides/prefect-ui.md"},
     {"Track experiments with MLflow" = "guides/mlflow.md"},
     {"Build one game" = "guides/build-game.md"},

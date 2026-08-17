@@ -23,7 +23,16 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .header-link { display: inline-flex; align-items: center; gap: 5px; color: #4f5851; font-size: 12px; font-weight: 700; text-decoration: none; }
 .header-link:hover { color: #245a47; text-decoration: underline; text-underline-offset: 3px; }
 .season-chip { padding: 5px 8px; background: #dce8db; color: #245a47; font-size: 12px; font-weight: 700; }
-.intro { padding: 72px 0 38px; }
+.intro { padding: 62px 0 42px; }
+.gestalt-entry { max-width: 850px; padding: 0 0 34px; border-bottom: 1px solid #d9d6ce; }
+.gestalt-entry-heading { display: flex; align-items: baseline; gap: 14px; }
+.gestalt-word { color: #17201c; font-family: Georgia, "Times New Roman", serif; font-size: clamp(54px, 7vw, 82px); line-height: 0.86; }
+.gestalt-part-of-speech { color: #3e7891; font-family: Georgia, "Times New Roman", serif; font-size: clamp(25px, 3vw, 38px); font-style: italic; line-height: 1; }
+.gestalt-pronunciation { margin: 22px 0 0; color: #527f92; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 700; letter-spacing: 0; }
+.gestalt-pronunciation span { margin-right: 10px; color: #8a918b; font-size: 10px; text-transform: uppercase; }
+.gestalt-definition { max-width: 770px; margin: 19px 0 0; color: #17201c; font-family: Georgia, "Times New Roman", serif; font-size: clamp(24px, 2.7vw, 33px); line-height: 1.15; }
+.gestalt-basketball-note { max-width: 720px; margin: 15px 0 0; color: #68716a; font-size: 14px; line-height: 1.5; }
+.intro-prompt { padding-top: 34px; }
 .about-page { padding-top: 72px; }
 .about-hero { max-width: 850px; padding-bottom: 54px; }
 .about-hero h1 { max-width: 780px; }
@@ -36,8 +45,19 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .about-equation { display: grid; grid-template-columns: minmax(200px, 0.6fr) minmax(380px, 1.4fr); gap: 28px 40px; padding: 30px 0 32px; border-bottom: 1px solid #d9d6ce; }
 .section-kicker { margin: 0 0 7px; color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .about-equation h2, .about-section-heading h2 { margin: 0; color: #17201c; font-family: Georgia, "Times New Roman", serif; font-size: 30px; font-weight: 400; line-height: 1.05; text-transform: none; }
-.model-formula { grid-column: 2; margin: 0; color: #245a47; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px; font-weight: 700; line-height: 1.55; }
+.model-formula { grid-column: 2; margin: 0; color: #245a47; font-size: 16px; font-weight: 700; line-height: 1.55; }
+.model-formula .katex-display, .model-subformula .katex-display { margin: 0; overflow-x: auto; overflow-y: hidden; text-align: left; }
+.model-formula .katex { font-size: 1.08em; }
 .about-equation > p:last-child { grid-column: 2; margin: -10px 0 0; color: #5d655f; font-size: 14px; line-height: 1.55; }
+.about-formula-stack { display: grid; grid-column: 2; gap: 6px; }
+.about-formula-stack .model-formula { grid-column: auto; }
+.model-subformula { margin: 0; color: #68716a; font-size: 13px; font-weight: 700; line-height: 1.5; }
+.model-subformula .katex { font-size: 1em; }
+.about-formula-callout { max-width: 860px; margin-top: 42px; padding: 48px 0 52px; border-top: 2px solid #17201c; }
+.about-formula-callout .model-formula { grid-column: auto; }
+.about-formula-callout .model-formula { font-size: 15px; }
+.about-formula-callout .model-subformula { margin-top: 17px; padding-top: 15px; border-top: 1px solid #d9d6ce; }
+.about-formula-callout > p:not(.model-formula):not(.model-subformula) { max-width: 760px; margin: 12px 0 0; color: #5d655f; font-size: 14px; line-height: 1.55; }
 .about-section { padding: 48px 0; border-bottom: 1px solid #d9d6ce; }
 .about-section-heading { max-width: 760px; }
 .about-section-heading > p:last-child { margin: 13px 0 0; color: #5d655f; font-size: 15px; line-height: 1.5; }
@@ -52,6 +72,12 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .model-lexicon div { padding: 15px 0 17px; border-top: 1px solid #d9d6ce; }
 .model-lexicon dt { color: #17201c; font-size: 15px; font-weight: 800; }
 .model-lexicon dd { margin: 7px 0 0; color: #5d655f; font-size: 13px; line-height: 1.55; }
+.feature-contract { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 48px; max-width: 980px; margin-top: 31px; }
+.feature-contract section { padding: 16px 0 0; border-top: 2px solid #17201c; }
+.feature-contract h3 { margin: 17px 0 8px; color: #17201c; font-size: 17px; }
+.feature-contract p:not(.section-kicker) { margin: 0; color: #5d655f; font-size: 13px; line-height: 1.55; }
+.feature-list { margin: 16px 0 0; padding: 0; color: #4f5851; font-size: 13px; line-height: 1.55; list-style: none; }
+.feature-list li { padding: 6px 0; border-top: 1px solid #d9d6ce; }
 .about-footer-note { max-width: 700px; padding: 36px 0 8px; }
 .about-footer-note > p:last-child { margin: 0; color: #5d655f; font-size: 14px; line-height: 1.55; }
 .rankings-page { padding-top: 72px; }
@@ -327,9 +353,9 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .model-identity { grid-template-columns: minmax(170px, 0.55fr) 1fr; }
   .model-identity > p:last-child { grid-column: 1 / -1; }
   .about-equation { grid-template-columns: 1fr; gap: 20px; }
-  .model-formula, .about-equation > p:last-child { grid-column: auto; }
+  .model-formula, .about-equation > p:last-child, .about-formula-stack { grid-column: auto; }
   .about-steps { grid-template-columns: 1fr; gap: 22px; }
-  .about-steps.two-up, .model-lexicon { grid-template-columns: 1fr; }
+  .about-steps.two-up, .model-lexicon, .feature-contract { grid-template-columns: 1fr; }
   .intro { padding: 52px 0 32px; }
   .lab-grid { grid-template-columns: 1fr; }
   .builder-panel { padding: 24px 0 31px; border-right: 0; }
@@ -354,6 +380,12 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .curve-columns, .curve-grid { grid-template-columns: 1fr; }
   .player-aging-chart-actions, .player-aging-chart-layer-controls { flex-wrap: wrap; }
   .about-hero { padding-bottom: 42px; }
+  .gestalt-entry { padding-bottom: 28px; }
+  .gestalt-entry-heading { gap: 10px; }
+  .gestalt-pronunciation { margin-top: 18px; font-size: 13px; }
+  .gestalt-definition { font-size: 24px; }
+  .gestalt-basketball-note { font-size: 13px; }
+  .intro-prompt { padding-top: 28px; }
   .about-lede { font-size: 20px; }
   .rankings-hero > p:last-child { font-size: 19px; }
   .rankings-table-toolbar { align-items: stretch; flex-direction: column; }

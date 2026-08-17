@@ -22,7 +22,6 @@ from nba_lineup_model.modeling.contextual_features import (
     side_context_feature_columns,
 )
 from nba_lineup_model.modeling.contextual_profiles import build_contextual_player_profiles
-from nba_lineup_model.modeling.forward_contextual_rapm import _previous_season
 from nba_lineup_model.modeling.matchup_contextual import (
     BoundedMatchupContextualModel,
     MatchupContextualModel,
@@ -35,6 +34,7 @@ DEFAULT_ARTIFACTS_DIR = Path("artifacts/models")
 DEFAULT_RESPONSE_CACHE_DIR = Path("artifacts/web/response_curve_cache")
 DEFAULT_LINEUP_RANKINGS_CACHE_DIR = Path("artifacts/web/lineup_rankings")
 DEFAULT_PLAYER_TEAM_SPLITS_CACHE_DIR = Path("artifacts/web/player_team_splits")
+DEFAULT_EXPOSURE_COHORT_CACHE_DIR = Path("artifacts/web/exposure_cohorts")
 # Keep the artifact identifier distinct from the public name, NAIL-RAPM v1.0.
 MODEL_ARTIFACT = "forward_hpm_x3_linear_ridge_without_uncertainty"
 MODEL_NAME = "forward_hpm_x3_linear_ridge_without_uncertainty"
@@ -44,6 +44,13 @@ RESPONSE_CURVE_POINTS = 33
 # adds warmup cost without increasing the published curve resolution.
 WARM_RESPONSE_CURVE_POINTS = RESPONSE_CURVE_POINTS
 LINEUP_REFERENCE_SAMPLE_SIZE = 512
+
+
+def _previous_season(season: str) -> str:
+    """Return the prior NBA season label without importing training modules."""
+
+    start = int(season[:4]) - 1
+    return f"{start}-{str(start + 1)[-2:]}"
 
 _FEATURE_LABELS = {
     "home_minus_away_three_pa_per_100": "Three-point attempt volume",
@@ -266,11 +273,16 @@ class LineupEvaluator:
         cache_path = response_cache_path(MODEL_ARTIFACT, run_id)
         response_cache = joblib.load(cache_path) if cache_path.is_file() else {}
         player_season_panel = pd.read_parquet(panel_path)
-        exposure_cohort = prepare_player_exposure_cohort(
-            player_season_panel.loc[
-                player_season_panel["season"].astype(str).le(season)
-            ],
-            through_season=season,
+        cohort_path = exposure_cohort_path(MODEL_ARTIFACT, run_id)
+        exposure_cohort = (
+            pd.read_parquet(cohort_path)
+            if cohort_path.is_file()
+            else prepare_player_exposure_cohort(
+                player_season_panel.loc[
+                    player_season_panel["season"].astype(str).le(season)
+                ],
+                through_season=season,
+            )
         )
         rankings_path = lineup_rankings_path(MODEL_ARTIFACT, run_id, season)
         observed_lineups = (
@@ -2066,6 +2078,12 @@ def lineup_rankings_path(model_artifact: str, run_id: str, season: str) -> Path:
     """Return the immutable observed-five lineup table for one completed model run."""
 
     return DEFAULT_LINEUP_RANKINGS_CACHE_DIR / model_artifact / run_id / f"{season}.parquet"
+
+
+def exposure_cohort_path(model_artifact: str, run_id: str) -> Path:
+    """Return the compact historical exposure cache needed by the public API."""
+
+    return DEFAULT_EXPOSURE_COHORT_CACHE_DIR / model_artifact / f"{run_id}.parquet"
 
 
 def published_player_ratings_path(model_artifact: str, run_id: str) -> Path:
