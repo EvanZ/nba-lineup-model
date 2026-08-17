@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BlockMath } from "react-katex";
+import { trackPageView } from "./analytics";
 import {
   ArrowLeft,
   ArrowRight,
@@ -101,6 +102,10 @@ function useAppView(): AppRoute {
     window.addEventListener("hashchange", updateView);
     return () => window.removeEventListener("hashchange", updateView);
   }, []);
+
+  useEffect(() => {
+    trackPageView();
+  }, [view]);
 
   return view;
 }
