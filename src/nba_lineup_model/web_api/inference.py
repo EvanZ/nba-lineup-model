@@ -203,6 +203,7 @@ class LineupEvaluator:
             if published_ratings_path.is_file()
             else raw_seasonal_ratings
         )
+        rookie_seasons = _rookie_seasons(seasonal_ratings)
         display_coefficients = _compiled_linear_x3_coefficients(
             coefficients,
             profiles,
@@ -224,6 +225,7 @@ class LineupEvaluator:
             seasonal_ratings,
             panel_path=Path(panel_path),
             context_exposure=context_exposure,
+            rookie_seasons=rookie_seasons,
         )
         player_rating_histories = _player_rating_histories(
             seasonal_ratings,
@@ -236,7 +238,6 @@ class LineupEvaluator:
             player_rating_histories,
             active_through_years=_player_active_through_years(Path(panel_path)),
         )
-        rookie_seasons = _rookie_seasons(seasonal_ratings)
         players = _player_catalog(
             display_coefficients, profiles, panel_path=Path(panel_path), season=season
         )
@@ -267,6 +268,7 @@ class LineupEvaluator:
             player_league_leader_histories
         ).map(lambda history: history or [])
         players["rookie_season"] = players["player_id"].map(rookie_seasons)
+        _assign_draft_class_year(players)
         players["age"] = players["player_id"].map(
             lambda player_id: (
                 player_rating_histories.get(int(player_id), [{}])[-1].get("age")
@@ -367,6 +369,7 @@ class LineupEvaluator:
         row = self.players.loc[self.players["player_id"].eq(player_id)]
         if not row.empty:
             player = _records(row)[0]
+            player.setdefault("draft_class_year", None)
             player["rating_season"] = self.season
             player["league_leader_history"] = self.player_league_leader_histories.get(
                 player_id, player.get("league_leader_history", [])
@@ -386,6 +389,11 @@ class LineupEvaluator:
             "player_name": str(latest["player_name"]),
             "team": str(latest["team"]),
             "position": str(latest["position"]),
+            "draft_year": _optional_int(latest.get("draft_year")),
+            "draft_round": _optional_int(latest.get("draft_round")),
+            "draft_number": _optional_int(latest.get("draft_number")),
+            "is_undrafted": _optional_bool(latest.get("is_undrafted")),
+            "draft_class_year": _optional_int(latest.get("draft_class_year")),
             "age": latest_history.get("age"),
             "rapm": float(latest["rapm"]),
             "possessions": float(latest["possessions"]),
@@ -438,6 +446,7 @@ class LineupEvaluator:
             "season_update",
             "additive_profile_adjustment",
             "observed_context_exposure",
+            "draft_class_year",
         ):
             if column not in rows:
                 rows[column] = np.nan
@@ -956,6 +965,10 @@ class LineupEvaluator:
         players["age"] = players["player_id"].map(
             dict(zip(season_ratings["player_id"], season_ratings["age"], strict=True))
         )
+        players["rookie_season"] = players["player_id"].map(
+            _rookie_seasons(self.seasonal_ratings)
+        )
+        _assign_draft_class_year(players)
         players["rating_history"] = players["player_id"].map(
             lambda player_id: [
                 point
@@ -1093,6 +1106,10 @@ def _player_catalog(
         "player_name",
         "primary_team_tricode",
         "listed_position",
+        "draft_year",
+        "draft_round",
+        "draft_number",
+        "is_undrafted",
         "rapm_possessions",
         "games",
         "points",
@@ -1133,6 +1150,7 @@ def _player_catalog(
         "rapm_possessions", pd.Series(index=catalog.index)
     ).fillna(0.0)
     catalog["games"] = catalog.get("games", pd.Series(index=catalog.index)).fillna(0).astype(int)
+    _normalize_draft_metadata(catalog)
     catalog = catalog.sort_values(["player_name", "player_id"], kind="stable").reset_index(
         drop=True
     )
@@ -1143,6 +1161,10 @@ def _player_catalog(
             "player_name",
             "team",
             "position",
+            "draft_year",
+            "draft_round",
+            "draft_number",
+            "is_undrafted",
             "rapm",
             "possessions",
             "games",
@@ -1264,6 +1286,7 @@ def _historical_ranking_catalog(
     *,
     panel_path: Path,
     context_exposure: pd.DataFrame | None = None,
+    rookie_seasons: dict[int, str] | None = None,
 ) -> pd.DataFrame:
     """Attach season-specific display metadata to completed player ratings."""
 
@@ -1281,6 +1304,10 @@ def _historical_ranking_catalog(
         "player_id",
         "primary_team_tricode",
         "listed_position",
+        "draft_year",
+        "draft_round",
+        "draft_number",
+        "is_undrafted",
         "rapm_possessions",
         "games",
     ]
@@ -1333,6 +1360,9 @@ def _historical_ranking_catalog(
     catalog["games"] = catalog.get(
         "games", pd.Series(index=catalog.index, dtype="float64")
     ).fillna(0).astype(int)
+    _normalize_draft_metadata(catalog)
+    catalog["rookie_season"] = catalog["player_id"].map(rookie_seasons or {})
+    _assign_draft_class_year(catalog)
     return catalog.loc[
         :,
         [
@@ -1341,6 +1371,11 @@ def _historical_ranking_catalog(
             "player_name",
             "team",
             "position",
+            "draft_year",
+            "draft_round",
+            "draft_number",
+            "is_undrafted",
+            "draft_class_year",
             "rapm",
             "prior_rating",
             "season_update",
@@ -2562,6 +2597,54 @@ def _curve_points(values: np.ndarray, contributions: np.ndarray) -> list[dict[st
 def _records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     clean = frame.replace({np.nan: None})
     return [dict(row) for row in clean.to_dict(orient="records")]
+
+
+def _normalize_draft_metadata(frame: pd.DataFrame) -> None:
+    """Expose draft fields with stable nullable API types."""
+
+    for column in ("draft_year", "draft_round", "draft_number"):
+        values = pd.to_numeric(
+            frame.get(column, pd.Series(index=frame.index, dtype="float64")),
+            errors="coerce",
+        )
+        frame[column] = pd.Series(
+            [int(value) if pd.notna(value) else None for value in values],
+            index=frame.index,
+            dtype="object",
+        )
+    undrafted = frame.get("is_undrafted", pd.Series(index=frame.index, dtype="object"))
+    frame["is_undrafted"] = pd.Series(
+        [bool(value) if pd.notna(value) else None for value in undrafted],
+        index=frame.index,
+        dtype="object",
+    )
+
+
+def _assign_draft_class_year(frame: pd.DataFrame) -> None:
+    """Attach a shared entering class for drafted and undrafted players."""
+
+    draft_year = pd.to_numeric(frame["draft_year"], errors="coerce")
+    rookie_year = pd.to_numeric(
+        frame.get("rookie_season", pd.Series(index=frame.index, dtype="object"))
+        .astype("string")
+        .str.slice(0, 4),
+        errors="coerce",
+    )
+    undrafted = frame["is_undrafted"].eq(True)
+    class_year = draft_year.where(draft_year.notna(), rookie_year.where(undrafted))
+    frame["draft_class_year"] = pd.Series(
+        [int(value) if pd.notna(value) else None for value in class_year],
+        index=frame.index,
+        dtype="object",
+    )
+
+
+def _optional_int(value: object) -> int | None:
+    return int(value) if pd.notna(value) else None
+
+
+def _optional_bool(value: object) -> bool | None:
+    return bool(value) if pd.notna(value) else None
 
 
 def _normalize_search_text(value: str) -> str:

@@ -156,7 +156,7 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
         <div>
           <p className="eyebrow">{player.team} · {player.position} · Age {player.age === null ? "-" : number.format(player.age)}</p>
           <h1 id="player-profile-title">{player.player_name}</h1>
-          <p className="player-profile-meta">Rookie season {player.rookie_season ?? "-"} · {wholeNumber.format(player.games)} games · {wholeNumber.format(player.possessions)} possessions</p>
+          <p className="player-profile-meta">{draftSummary(player)} · Rookie season {player.rookie_season ?? "-"}</p>
         </div>
         <div className="profile-hero-rating">
           <span>{player.rating_season ?? "Latest"} {MODEL_LABEL}</span>
@@ -219,6 +219,19 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
 type PlayerHistoryRow =
   | { kind: "completed"; point: Player["rating_history"][number] }
   | { kind: "dnp"; season: string; age: number | null };
+
+function draftSummary(player: Player): string {
+  if (player.is_undrafted === true) {
+    return player.draft_class_year === null
+      ? "Undrafted"
+      : `Undrafted · Entry class ${player.draft_class_year}`;
+  }
+  const details = [
+    player.draft_year === null ? null : `Draft class ${player.draft_year}`,
+    player.draft_number === null ? null : `No. ${player.draft_number} overall`,
+  ].filter((value): value is string => value !== null);
+  return details.length ? details.join(" · ") : "Draft information unavailable";
+}
 
 function completePlayerHistory(player: Player): PlayerHistoryRow[] {
   const observed = player.rating_history;
@@ -1080,7 +1093,7 @@ function AboutPage() {
   );
 }
 
-type RankingColumn = "rank" | "player_name" | "team" | "position" | "rapm" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games";
+type RankingColumn = "rank" | "player_name" | "team" | "position" | "draft_number" | "rapm" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games";
 
 function RankingsPage() {
   const [players, setPlayers] = useState<RankedPlayer[]>([]);
@@ -1088,6 +1101,7 @@ function RankingsPage() {
   const [availableSeasons, setAvailableSeasons] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [minimumPossessions, setMinimumPossessions] = useState(500);
+  const [draftClassFilter, setDraftClassFilter] = useState("all");
   const [sortColumn, setSortColumn] = useState<RankingColumn>("rank");
   const [sortDirection, setSortDirection] = useState<"ascending" | "descending">("ascending");
   const [isLoading, setIsLoading] = useState(true);
@@ -1115,15 +1129,35 @@ function RankingsPage() {
     return () => controller.abort();
   }, [selectedSeason]);
 
+  useEffect(() => {
+    setDraftClassFilter("all");
+  }, [selectedSeason]);
+
+  const draftClasses = useMemo(() => [...new Set(
+    players.flatMap((player) => player.draft_class_year === null ? [] : [player.draft_class_year]),
+  )].sort((left, right) => right - left), [players]);
+
   const visiblePlayers = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     const rows = (normalized
       ? players.filter((player) => [player.player_name, player.team, player.position]
         .some((value) => value.toLocaleLowerCase().includes(normalized)))
       : players)
-      .filter((player) => player.possessions >= minimumPossessions);
+      .filter((player) => player.possessions >= minimumPossessions)
+      .filter((player) => {
+        if (draftClassFilter === "all") return true;
+        if (draftClassFilter === "undrafted") return player.is_undrafted === true;
+        return player.draft_class_year === Number(draftClassFilter);
+      });
     const direction = sortDirection === "ascending" ? 1 : -1;
     return [...rows].sort((left, right) => {
+      if (sortColumn === "draft_number") {
+        const leftGroup = draftPickGroup(left);
+        const rightGroup = draftPickGroup(right);
+        if (leftGroup !== rightGroup) return leftGroup - rightGroup;
+        if (leftGroup !== 0) return left.rank - right.rank;
+        return direction * ((left.draft_number ?? 0) - (right.draft_number ?? 0)) || left.rank - right.rank;
+      }
       const leftValue = left[sortColumn];
       const rightValue = right[sortColumn];
       if (leftValue === null || leftValue === undefined) return 1;
@@ -1133,7 +1167,7 @@ function RankingsPage() {
       }
       return direction * String(leftValue).localeCompare(String(rightValue)) || left.rank - right.rank;
     });
-  }, [minimumPossessions, players, query, sortColumn, sortDirection]);
+  }, [draftClassFilter, minimumPossessions, players, query, sortColumn, sortDirection]);
 
   function changeSort(column: RankingColumn) {
     if (column === sortColumn) {
@@ -1149,6 +1183,7 @@ function RankingsPage() {
     { key: "player_name", label: "Player" },
     { key: "team", label: "Team" },
     { key: "position", label: "Pos" },
+    { key: "draft_number", label: "Pick", numeric: true },
     { key: "rapm", label: MODEL_LABEL, numeric: true },
     { key: "prior_rating", label: "Prior", numeric: true },
     { key: "season_update", label: "Season update", numeric: true },
@@ -1191,6 +1226,14 @@ function RankingsPage() {
                 onChange={(event) => setMinimumPossessions(Math.max(0, Number(event.target.value) || 0))}
               />
             </label>
+            <label className="rankings-draft-class">
+              <span>Draft class</span>
+              <select value={draftClassFilter} onChange={(event) => setDraftClassFilter(event.target.value)}>
+                <option value="all">All classes</option>
+                {draftClasses.map((draftYear) => <option key={draftYear} value={draftYear}>{draftYear}</option>)}
+                <option value="undrafted">Undrafted</option>
+              </select>
+            </label>
             <label className="rankings-search">
               <Search size={17} aria-hidden="true" />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search player or team" />
@@ -1216,6 +1259,7 @@ function RankingsPage() {
                 <th scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>
                 <td>{player.team}</td>
                 <td>{player.position}</td>
+                <td className="numeric quantity-cell">{formatDraftPick(player)}</td>
                 <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
                 <td className={player.prior_rating === null ? "numeric" : player.prior_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.prior_rating === null ? "-" : formatRating(player.prior_rating)}</td>
                 <td className={player.season_update === null ? "numeric" : player.season_update < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.season_update === null ? "-" : formatRating(player.season_update)}</td>
@@ -1230,6 +1274,16 @@ function RankingsPage() {
       </section>
     </article>
   );
+}
+
+function draftPickGroup(player: Player): number {
+  if (player.draft_number !== null) return 0;
+  return player.is_undrafted === true ? 1 : 2;
+}
+
+function formatDraftPick(player: Player): string {
+  if (player.is_undrafted === true) return "U";
+  return player.draft_number === null ? "-" : String(player.draft_number);
 }
 
 type LineupRankingColumn =

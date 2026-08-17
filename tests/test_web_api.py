@@ -59,6 +59,11 @@ def _evaluator(*, bounded: bool = False, compiled_linear: bool = False) -> Lineu
         possessions=1000.0,
         games=50,
         profile_source="prior_season",
+        draft_year=2014,
+        draft_round=1,
+        draft_number=41,
+        is_undrafted=False,
+        draft_class_year=2014,
         age=26.0,
         rating_history=[
             [
@@ -159,6 +164,11 @@ def test_search_and_matchup_endpoints() -> None:
     assert profile.json()["steals_per_100"] == 0.5
     assert profile.json()["blocks_per_100"] == 0.25
     assert profile.json()["offensive_rebound_pct"] == 4.0
+    assert profile.json()["draft_year"] == 2014
+    assert profile.json()["draft_round"] == 1
+    assert profile.json()["draft_number"] == 41
+    assert profile.json()["is_undrafted"] is False
+    assert profile.json()["draft_class_year"] == 2014
 
     rankings = client.get("/api/rankings")
     assert rankings.status_code == 200
@@ -538,6 +548,10 @@ def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) 
             "player_id": [77, 77],
             "primary_team_tricode": ["POR", "MIL"],
             "listed_position": ["G", "G"],
+            "draft_year": [2013, 2013],
+            "draft_round": [2, 2],
+            "draft_number": [45, 45],
+            "is_undrafted": [False, False],
             "rapm_possessions": [1200.0, 1100.0],
             "games": [60, 55],
         }
@@ -588,13 +602,18 @@ def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) 
             "player_id": 77,
             "player_name": "Test Player",
             "team": "POR",
-                "position": "G",
-                "rapm": 1.0,
-                "prior_rating": 0.5,
-                "season_update": 0.5,
-                "additive_profile_adjustment": 0.0,
-                "observed_context_exposure": None,
-                "possessions": 1200.0,
+            "position": "G",
+            "draft_year": 2013,
+            "draft_round": 2,
+            "draft_number": 45,
+            "is_undrafted": False,
+            "draft_class_year": 2013,
+            "rapm": 1.0,
+            "prior_rating": 0.5,
+            "season_update": 0.5,
+            "additive_profile_adjustment": 0.0,
+            "observed_context_exposure": None,
+            "possessions": 1200.0,
             "games": 60,
         }
     ]

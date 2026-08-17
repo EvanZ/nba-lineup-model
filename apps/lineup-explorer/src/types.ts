@@ -3,6 +3,11 @@ export type Player = {
   player_name: string;
   team: string;
   position: string;
+  draft_year: number | null;
+  draft_round: number | null;
+  draft_number: number | null;
+  is_undrafted: boolean | null;
+  draft_class_year: number | null;
   age: number | null;
   rapm: number;
   observed_context_exposure: number | null;

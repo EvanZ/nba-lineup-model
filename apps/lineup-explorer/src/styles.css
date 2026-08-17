@@ -148,11 +148,11 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .rankings-table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 0; border-bottom: 1px solid #d9d6ce; }
 .rankings-table-toolbar p { margin: 0; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
 .rankings-table-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-.rankings-season, .rankings-minimum-possessions { display: flex; align-items: center; gap: 7px; color: #69716b; }
-.rankings-season span, .rankings-minimum-possessions span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; text-transform: uppercase; }
-.rankings-season select, .rankings-minimum-possessions input { height: 38px; border: 1px solid #a6aaa4; border-radius: 0; padding: 0 28px 0 10px; background: #fffefa; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
+.rankings-season, .rankings-minimum-possessions, .rankings-draft-class { display: flex; align-items: center; gap: 7px; color: #69716b; }
+.rankings-season span, .rankings-minimum-possessions span, .rankings-draft-class span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.rankings-season select, .rankings-minimum-possessions input, .rankings-draft-class select { height: 38px; border: 1px solid #a6aaa4; border-radius: 0; padding: 0 28px 0 10px; background: #fffefa; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
 .rankings-minimum-possessions input { width: 92px; padding-right: 8px; }
-.rankings-season select:focus, .rankings-minimum-possessions input:focus { outline: 2px solid #bde5d0; outline-offset: 2px; }
+.rankings-season select:focus, .rankings-minimum-possessions input:focus, .rankings-draft-class select:focus { outline: 2px solid #bde5d0; outline-offset: 2px; }
 .rankings-search { width: min(300px, 100%); height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #a6aaa4; background: #fffefa; color: #68716a; }
 .rankings-search:focus-within { outline: 2px solid #bde5d0; outline-offset: 2px; }
 .rankings-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #17201c; font-size: 13px; }
@@ -390,7 +390,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .rankings-hero > p:last-child { font-size: 19px; }
   .rankings-table-toolbar { align-items: stretch; flex-direction: column; }
   .rankings-table-controls { align-items: stretch; flex-direction: column; }
-  .rankings-season { justify-content: space-between; }
+  .rankings-season, .rankings-minimum-possessions, .rankings-draft-class { justify-content: space-between; }
   .rankings-search { width: 100%; }
   .model-identity { grid-template-columns: 1fr; gap: 12px; }
   .model-identity > p:last-child { grid-column: auto; }
