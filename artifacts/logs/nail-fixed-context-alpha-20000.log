@@ -1,0 +1,94 @@
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+Preparing exposure cohort through 2025-26 for 30 seasonal fits
+Fitting portable-plus-matchup context state for 1996-97
+Fitting portable-plus-matchup context state for 1997-98
+  Fitting antisymmetric context model on 36,732 stints
+  Stored 10,343 reference units for 1997-98
+Fitting portable-plus-matchup context state for 1998-99
+  Fitting antisymmetric context model on 22,666 stints
+  Stored 7,274 reference units for 1998-99
+Fitting portable-plus-matchup context state for 1999-00
+  Fitting antisymmetric context model on 36,832 stints
+  Stored 10,074 reference units for 1999-00
+Fitting portable-plus-matchup context state for 2000-01
+  Fitting antisymmetric context model on 34,416 stints
+  Stored 10,175 reference units for 2000-01
+Fitting portable-plus-matchup context state for 2001-02
+  Fitting antisymmetric context model on 34,562 stints
+  Stored 9,589 reference units for 2001-02
+Fitting portable-plus-matchup context state for 2002-03
+  Fitting antisymmetric context model on 34,452 stints
+  Stored 8,892 reference units for 2002-03
+Fitting portable-plus-matchup context state for 2003-04
+  Fitting antisymmetric context model on 34,912 stints
+  Stored 10,741 reference units for 2003-04
+Fitting portable-plus-matchup context state for 2004-05
+  Fitting antisymmetric context model on 38,162 stints
+  Stored 12,780 reference units for 2004-05
+Fitting portable-plus-matchup context state for 2005-06
+  Fitting antisymmetric context model on 37,989 stints
+  Stored 12,415 reference units for 2005-06
+Fitting portable-plus-matchup context state for 2006-07
+  Fitting antisymmetric context model on 38,915 stints
+  Stored 12,580 reference units for 2006-07
+Fitting portable-plus-matchup context state for 2007-08
+  Fitting antisymmetric context model on 36,865 stints
+  Stored 12,044 reference units for 2007-08
+Fitting portable-plus-matchup context state for 2008-09
+  Fitting antisymmetric context model on 35,909 stints
+  Stored 11,416 reference units for 2008-09
+Fitting portable-plus-matchup context state for 2009-10
+  Fitting antisymmetric context model on 35,867 stints
+  Stored 11,429 reference units for 2009-10
+Fitting portable-plus-matchup context state for 2010-11
+  Fitting antisymmetric context model on 37,089 stints
+  Stored 12,305 reference units for 2010-11
+Fitting portable-plus-matchup context state for 2011-12
+  Fitting antisymmetric context model on 28,472 stints
+  Stored 10,620 reference units for 2011-12
+Fitting portable-plus-matchup context state for 2012-13
+  Fitting antisymmetric context model on 35,310 stints
+  Stored 12,056 reference units for 2012-13
+Fitting portable-plus-matchup context state for 2013-14
+  Fitting antisymmetric context model on 36,529 stints
+  Stored 12,429 reference units for 2013-14
+Fitting portable-plus-matchup context state for 2014-15
+  Fitting antisymmetric context model on 37,549 stints
+  Stored 14,521 reference units for 2014-15
+Fitting portable-plus-matchup context state for 2015-16
+  Fitting antisymmetric context model on 38,073 stints
+  Stored 12,932 reference units for 2015-16
+Fitting portable-plus-matchup context state for 2016-17
+  Fitting antisymmetric context model on 37,334 stints
+  Stored 13,073 reference units for 2016-17
+Fitting portable-plus-matchup context state for 2017-18
+  Fitting antisymmetric context model on 35,547 stints
+  Stored 13,656 reference units for 2017-18
+Fitting portable-plus-matchup context state for 2018-19
+  Fitting antisymmetric context model on 37,294 stints
+  Stored 14,786 reference units for 2018-19
+Fitting portable-plus-matchup context state for 2019-20
+  Fitting antisymmetric context model on 30,088 stints
+  Stored 12,884 reference units for 2019-20
+Fitting portable-plus-matchup context state for 2020-21
+  Fitting antisymmetric context model on 31,073 stints
+  Stored 14,597 reference units for 2020-21
+Fitting portable-plus-matchup context state for 2021-22
+  Fitting antisymmetric context model on 34,601 stints
+  Stored 16,677 reference units for 2021-22
+Fitting portable-plus-matchup context state for 2022-23
+  Fitting antisymmetric context model on 34,823 stints
+  Stored 16,226 reference units for 2022-23
+Fitting portable-plus-matchup context state for 2023-24
+  Fitting antisymmetric context model on 34,022 stints
+  Stored 15,232 reference units for 2023-24
+Fitting portable-plus-matchup context state for 2024-25
+  Fitting antisymmetric context model on 34,859 stints
+  Stored 17,343 reference units for 2024-25
+Fitting portable-plus-matchup context state for 2025-26
+  Fitting antisymmetric context model on 39,918 stints
+  Stored 19,544 reference units for 2025-26
+Fixed raw context alpha=20,000: run=artifacts/models/forward_nail_rapm_v11_fixed_context_alpha_20000/2025-26/forward-nail-rapm-v11-fixed-context-alpha-20000-2025-26-20260819T030123Z-0bcb7095

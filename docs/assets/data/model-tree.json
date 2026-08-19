@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updated": "2026-08-15",
+  "updated": "2026-08-18",
   "default_metric": "rolling_regular_game_margin_rmse",
   "metrics": [
     {
@@ -785,7 +785,7 @@
       "short_name": "NAIL-RAPM v1.0",
       "parent": "hpm-x3-linear-ridge-context",
       "change": "- retire imputed-profile count and replacement-profile weight. The remaining 14 coordinates are basketball features; this is the canonical NAIL-RAPM v1.0 contract.",
-      "docs": "./hpm-x3-linear-ridge-without-uncertainty/",
+      "docs": "./nail-rapm-v1/",
       "metrics": {
         "frozen_regular_possession_rmse": 1.197977,
         "frozen_regular_game_margin_rmse": 14.1119,
@@ -795,6 +795,186 @@
         "frozen_regular_pythagorean_wins_rmse": 7.3460,
         "frozen_playoff_possession_rmse": 1.192752,
         "frozen_playoff_game_margin_rmse": 16.6636
+      }
+    },
+    {
+      "id": "nail-additive-only-context",
+      "name": "NAIL-RAPM Additive-Only Context",
+      "short_name": "NAIL additive-only",
+      "parent": "hpm-x3-linear-ridge-without-uncertainty",
+      "change": "- all six non-additive lineup coordinates; retain only the eight player-additive basketball profile totals in the same lineup-level Ridge fit.",
+      "docs": "./nail-additive-only-context/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197989,
+        "frozen_regular_game_margin_rmse": 14.1286,
+        "frozen_regular_full_game_margin_rmse": 14.3754,
+        "frozen_regular_game_winner_accuracy": 0.679294,
+        "frozen_regular_team_net_rating_rmse": 3.4783,
+        "frozen_regular_pythagorean_wins_rmse": 7.4728,
+        "frozen_playoff_possession_rmse": 1.192713,
+        "frozen_playoff_game_margin_rmse": 16.5724
+      }
+    },
+    {
+      "id": "nail-rapm-v1-uniform-300-season-reference",
+      "name": "NAIL-RAPM Uniform-300 Source-Season Anchor",
+      "short_name": "NAIL anchor-only control",
+      "parent": "hpm-x3-linear-ridge-without-uncertainty",
+      "change": "Controlled padding ablation: retain uniform 300-possession formulas but replace the expanding historical league anchor with the immediately prior season's league rate.",
+      "docs": "./nail-rapm-v11-profile-padding/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197980,
+        "frozen_regular_game_margin_rmse": 14.1012,
+        "frozen_regular_full_game_margin_rmse": 14.3419,
+        "frozen_regular_game_winner_accuracy": 0.681287,
+        "frozen_regular_team_net_rating_rmse": 3.4146,
+        "frozen_regular_pythagorean_wins_rmse": 7.3041,
+        "frozen_playoff_possession_rmse": 1.192753,
+        "frozen_playoff_game_margin_rmse": 16.6537
+      }
+    },
+    {
+      "id": "nail-rapm-v11-stat-specific-padding",
+      "name": "NAIL-RAPM v1.1 Stat-Specific Padding",
+      "short_name": "NAIL-RAPM v1.1",
+      "parent": "nail-rapm-v1-uniform-300-season-reference",
+      "change": "+ statistic-specific profile stabilization constants; decompose 3PM into volume and accuracy and usage into FGA, FTA, and turnovers.",
+      "docs": "./nail-rapm-v11-profile-padding/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197979,
+        "frozen_regular_game_margin_rmse": 14.0864,
+        "frozen_regular_full_game_margin_rmse": 14.3236,
+        "frozen_regular_game_winner_accuracy": 0.685275,
+        "frozen_regular_team_net_rating_rmse": 3.3898,
+        "frozen_regular_pythagorean_wins_rmse": 7.2757,
+        "frozen_playoff_possession_rmse": 1.192740,
+        "frozen_playoff_game_margin_rmse": 16.6267
+      }
+    },
+    {
+      "id": "nail-rapm-v11-normalized-context-penalty",
+      "name": "NAIL-RAPM Normalized Context Penalty",
+      "short_name": "NAIL normalized context",
+      "parent": "nail-rapm-v11-stat-specific-padding",
+      "change": "Replace fixed raw context alpha=10,000 with a leakage-safe normalized lambda_C=0.704 selected over 23 pre-frozen seasons. Rejected after worse frozen regular-season prediction.",
+      "docs": "./nail-context-regularization/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198002,
+        "frozen_regular_game_margin_rmse": 14.1339,
+        "frozen_regular_full_game_margin_rmse": 14.3822,
+        "frozen_regular_game_winner_accuracy": 0.680148,
+        "frozen_regular_team_net_rating_rmse": 3.5234,
+        "frozen_regular_pythagorean_wins_rmse": 7.4597,
+        "frozen_playoff_possession_rmse": 1.192726,
+        "frozen_playoff_game_margin_rmse": 16.5979
+      }
+    },
+    {
+      "id": "nail-rapm-v11-fixed-context-alpha-1000",
+      "name": "NAIL-RAPM Fixed Context Alpha 1,000",
+      "short_name": "NAIL fixed alpha 1k",
+      "parent": "nail-rapm-v11-stat-specific-padding",
+      "change": "Sensitivity ablation: reduce the raw context Ridge penalty from 10,000 to 1,000 while holding the full v1.1 contract fixed. Rejected after frozen evaluation.",
+      "docs": "./nail-context-regularization/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197999,
+        "frozen_regular_game_margin_rmse": 14.1017,
+        "frozen_regular_full_game_margin_rmse": 14.3389,
+        "frozen_regular_game_winner_accuracy": 0.679863,
+        "frozen_regular_team_net_rating_rmse": 3.4009,
+        "frozen_regular_pythagorean_wins_rmse": 7.2776,
+        "frozen_playoff_possession_rmse": 1.192745,
+        "frozen_playoff_game_margin_rmse": 16.6197
+      }
+    },
+    {
+      "id": "nail-rapm-v11-fixed-context-alpha-5000",
+      "name": "NAIL-RAPM Fixed Context Alpha 5,000",
+      "short_name": "NAIL fixed alpha 5k",
+      "parent": "nail-rapm-v11-stat-specific-padding",
+      "change": "Sensitivity ablation and exact pre-frozen minimum: reduce the raw context Ridge penalty from 10,000 to 5,000. Rejected after frozen evaluation.",
+      "docs": "./nail-context-regularization/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197994,
+        "frozen_regular_game_margin_rmse": 14.0949,
+        "frozen_regular_full_game_margin_rmse": 14.3300,
+        "frozen_regular_game_winner_accuracy": 0.678439,
+        "frozen_regular_team_net_rating_rmse": 3.4156,
+        "frozen_regular_pythagorean_wins_rmse": 7.2821,
+        "frozen_playoff_possession_rmse": 1.192727,
+        "frozen_playoff_game_margin_rmse": 16.6090
+      }
+    },
+    {
+      "id": "nail-rapm-v11-fixed-context-alpha-20000",
+      "name": "NAIL-RAPM Fixed Context Alpha 20,000",
+      "short_name": "NAIL fixed alpha 20k",
+      "parent": "nail-rapm-v11-stat-specific-padding",
+      "change": "Sensitivity ablation and paired one-standard-error selection: increase the raw context Ridge penalty from 10,000 to 20,000. Rejected after it did not beat the incumbent on frozen evaluation.",
+      "docs": "./nail-context-regularization/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197980,
+        "frozen_regular_game_margin_rmse": 14.0907,
+        "frozen_regular_full_game_margin_rmse": 14.3296,
+        "frozen_regular_game_winner_accuracy": 0.682427,
+        "frozen_regular_team_net_rating_rmse": 3.4095,
+        "frozen_regular_pythagorean_wins_rmse": 7.2966,
+        "frozen_playoff_possession_rmse": 1.192736,
+        "frozen_playoff_game_margin_rmse": 16.6187
+      }
+    },
+    {
+      "id": "nail-rapm-cross-season-padding",
+      "name": "NAIL-RAPM Cross-Season Profile Padding",
+      "short_name": "NAIL cross-season padding",
+      "parent": "nail-rapm-v1-uniform-300-season-reference",
+      "change": "Alternative: fit each padding constant on player transitions ending by 2022-23. Rejected because the primitive-profile winner did not win downstream frozen prediction.",
+      "docs": "./nail-rapm-v11-profile-padding/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197980,
+        "frozen_regular_game_margin_rmse": 14.0957,
+        "frozen_regular_full_game_margin_rmse": 14.3316,
+        "frozen_regular_game_winner_accuracy": 0.684136,
+        "frozen_regular_team_net_rating_rmse": 3.3939,
+        "frozen_regular_pythagorean_wins_rmse": 7.3012,
+        "frozen_playoff_possession_rmse": 1.192749,
+        "frozen_playoff_game_margin_rmse": 16.6463
+      }
+    },
+    {
+      "id": "nail-token-mlp-residual",
+      "name": "NAIL Token MLP Residual",
+      "short_name": "NAIL token MLP",
+      "parent": "nail-additive-only-context",
+      "change": "+ shared nonlinear MLP over eight strictly lagged player-profile tokens; predict the frozen additive-only NAIL residual without communication between player tokens.",
+      "docs": "./nail-token-residual/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197986,
+        "frozen_regular_game_margin_rmse": 14.1207,
+        "frozen_regular_full_game_margin_rmse": 14.3698,
+        "frozen_regular_game_winner_accuracy": 0.679863,
+        "frozen_regular_team_net_rating_rmse": 3.4669,
+        "frozen_regular_pythagorean_wins_rmse": 7.3841,
+        "frozen_playoff_possession_rmse": 1.192747,
+        "frozen_playoff_game_margin_rmse": 16.6393
+      }
+    },
+    {
+      "id": "nail-set-attention-residual",
+      "name": "NAIL Within-Unit Set Attention Residual",
+      "short_name": "NAIL Set Attention",
+      "parent": "nail-token-mlp-residual",
+      "change": "Replace the independent token transform with two layers of four-head within-unit self-attention; retain the same eight fields, residual target, and frozen evaluation contract.",
+      "docs": "./nail-token-residual/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197997,
+        "frozen_regular_game_margin_rmse": 14.1458,
+        "frozen_regular_full_game_margin_rmse": 14.4098,
+        "frozen_regular_game_winner_accuracy": 0.676445,
+        "frozen_regular_team_net_rating_rmse": 3.5075,
+        "frozen_regular_pythagorean_wins_rmse": 7.5605,
+        "frozen_playoff_possession_rmse": 1.192768,
+        "frozen_playoff_game_margin_rmse": 16.7235
       }
     },
     {

@@ -13,6 +13,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from nba_lineup_model.web_api.inference import (
+    MODEL_DISPLAY_NAME,
     MODEL_NAME,
     LineupEvaluationError,
     LineupEvaluator,
@@ -67,8 +68,15 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         return {
             "status": "ok",
             "model": MODEL_NAME,
+            "model_display_name": MODEL_DISPLAY_NAME,
             "season": state.season,
             "run_id": state.run_id,
+            "context_alpha": state.context_alpha,
+            "profile_padding_contract": (
+                state.profile_padding_contract.name
+                if state.profile_padding_contract is not None
+                else None
+            ),
             "player_count": len(state.players),
             "lab_seasons": state.available_lab_seasons(),
         }

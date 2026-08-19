@@ -40,6 +40,10 @@ class MatchupContextualModel:
     feature_set: str = field(default=CONTEXT_FEATURE_SET_V1, kw_only=True)
     rebound_model: ReboundOpportunityModel | None = field(default=None, kw_only=True)
     usage_model: UsageAllocationModel | None = field(default=None, kw_only=True)
+    regularization_contract: str = field(default="weighted_sum_loss", kw_only=True)
+    configured_regularization: float | None = field(default=None, kw_only=True)
+    effective_ridge_alpha: float | None = field(default=None, kw_only=True)
+    training_weight_sum: float | None = field(default=None, kw_only=True)
 
     def predict_lineups(
         self,
@@ -267,6 +271,80 @@ def fit_linear_ridge_matchup_contextual_model(
         reference_features,
         reference_weights,
         feature_set=feature_set,
+        regularization_contract="weighted_sum_loss",
+        configured_regularization=float(alpha),
+        effective_ridge_alpha=float(alpha),
+        training_weight_sum=float(augmented_weight.sum()),
+    )
+
+
+def fit_normalized_linear_ridge_matchup_contextual_model(
+    home_features: pd.DataFrame,
+    away_features: pd.DataFrame,
+    target: np.ndarray,
+    sample_weight: np.ndarray,
+    *,
+    alpha: float,
+    curvature_alpha: float = 0.0,
+    temporal_alpha: float = 0.0,
+    previous_model: MatchupContextualModel | None = None,
+    feature_set: str = CONTEXT_FEATURE_SET_V1,
+) -> MatchupContextualModel:
+    """Fit linear context with a penalty relative to mean weighted loss.
+
+    ``alpha`` is the dimensionless ``lambda_C`` in
+    ``weighted_sse / sum(weight) + lambda_C * ||beta||^2``. The sum is over
+    the signed orientation-augmented sample, where each stint appears twice.
+    Scikit-learn's Ridge objective uses weighted SSE, so its fitted alpha is
+    ``lambda_C * augmented_weight_sum``. This keeps regularization strength
+    invariant to season length and to a common rescaling of every sample
+    weight.
+    """
+
+    if alpha <= 0:
+        raise ValueError("Normalized linear contextual alpha must be positive")
+    if curvature_alpha or temporal_alpha:
+        raise ValueError("Normalized linear Ridge context does not use extra penalties")
+    del previous_model
+    home = _validated_side_features(home_features, feature_set)
+    away = _validated_side_features(away_features, feature_set)
+    target_values = np.asarray(target, dtype=float)
+    weights = np.asarray(sample_weight, dtype=float)
+    if len(home) != len(away) or len(home) != len(target_values) or len(home) != len(weights):
+        raise ValueError("Contextual training inputs must have equal lengths")
+    if (
+        not np.isfinite(target_values).all()
+        or not np.isfinite(weights).all()
+        or (weights <= 0).any()
+    ):
+        raise ValueError("Contextual targets and weights must be finite, with positive weights")
+
+    relative = _relative_features(home, away, feature_set)
+    augmented_features = pd.concat([relative, -relative], ignore_index=True)
+    augmented_target = np.concatenate([target_values, -target_values])
+    augmented_weight = np.concatenate([weights, weights])
+    training_weight_sum = float(augmented_weight.sum())
+    effective_ridge_alpha = float(alpha * training_weight_sum)
+    scale = StandardScaler()
+    design = scale.fit_transform(augmented_features)
+    ridge = Ridge(alpha=effective_ridge_alpha, fit_intercept=False).fit(
+        design,
+        augmented_target,
+        sample_weight=augmented_weight,
+    )
+    pipeline = Pipeline([("scale", scale), ("ridge", ridge)])
+    reference_features, reference_weights = _reference_distribution(
+        home, away, weights, feature_set
+    )
+    return MatchupContextualModel(
+        pipeline,
+        reference_features,
+        reference_weights,
+        feature_set=feature_set,
+        regularization_contract="mean_weighted_loss",
+        configured_regularization=float(alpha),
+        effective_ridge_alpha=effective_ridge_alpha,
+        training_weight_sum=training_weight_sum,
     )
 
 
@@ -401,6 +479,14 @@ def model_metadata(model: MatchupContextualModel) -> dict[str, object]:
         "context_reference_unit_count": int(len(model.reference_features)),
         "context_reference_weight_sum": float(model.reference_weights.sum()),
         "context_feature_set": model.feature_set,
+        "context_regularization_contract": getattr(
+            model, "regularization_contract", "weighted_sum_loss"
+        ),
+        "context_configured_regularization": getattr(
+            model, "configured_regularization", None
+        ),
+        "context_effective_ridge_alpha": getattr(model, "effective_ridge_alpha", None),
+        "context_training_weight_sum": getattr(model, "training_weight_sum", None),
     }
 
 

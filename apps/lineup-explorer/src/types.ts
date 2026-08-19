@@ -10,6 +10,9 @@ export type Player = {
   draft_class_year: number | null;
   age: number | null;
   rapm: number;
+  prior_rating?: number | null;
+  season_update?: number | null;
+  additive_profile_adjustment?: number | null;
   observed_context_exposure: number | null;
   rating_season?: string;
   possessions: number;

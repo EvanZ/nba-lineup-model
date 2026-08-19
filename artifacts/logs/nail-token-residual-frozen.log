@@ -1,0 +1,116 @@
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+season=1998-99 building frozen additive-only residual stints
+season=1999-00 building frozen additive-only residual stints
+season=2000-01 building frozen additive-only residual stints
+season=2001-02 building frozen additive-only residual stints
+season=2002-03 building frozen additive-only residual stints
+season=2003-04 building frozen additive-only residual stints
+season=2004-05 building frozen additive-only residual stints
+season=2005-06 building frozen additive-only residual stints
+season=2006-07 building frozen additive-only residual stints
+season=2007-08 building frozen additive-only residual stints
+season=2008-09 building frozen additive-only residual stints
+season=2009-10 building frozen additive-only residual stints
+season=2010-11 building frozen additive-only residual stints
+season=2011-12 building frozen additive-only residual stints
+season=2012-13 building frozen additive-only residual stints
+season=2013-14 building frozen additive-only residual stints
+season=2014-15 building frozen additive-only residual stints
+season=2015-16 building frozen additive-only residual stints
+season=2016-17 building frozen additive-only residual stints
+season=2017-18 building frozen additive-only residual stints
+season=2018-19 building frozen additive-only residual stints
+season=2019-20 loading cached additive-only residual stints
+season=2020-21 loading cached additive-only residual stints
+season=2021-22 loading cached additive-only residual stints
+season=2022-23 loading cached additive-only residual stints
+season=2023-24 loading cached additive-only residual stints
+season=2024-25 building frozen additive-only residual stints
+target=2023-24 architecture=token_mlp train_seasons=25 rows=798,692 possessions=2,723,769
+GPU available: False, used: False
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+target=2023-24 architecture=token_mlp epoch=1/5 train_weighted_rmse=95.5511
+target=2023-24 architecture=token_mlp epoch=2/5 train_weighted_rmse=95.5503
+target=2023-24 architecture=token_mlp epoch=3/5 train_weighted_rmse=95.5407
+target=2023-24 architecture=token_mlp epoch=4/5 train_weighted_rmse=95.5416
+target=2023-24 architecture=token_mlp epoch=5/5 train_weighted_rmse=95.5477
+`Trainer.fit` stopped: `max_epochs=5` reached.
+target=2023-24 architecture=token_mlp scoring complete
+target=2023-24 architecture=set_attention train_seasons=25 rows=798,692 possessions=2,723,769
+/Users/evanzamir/projects/nba-lineup-model/src/nba_lineup_model/models/nail_token_residual.py:62: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.encoder = nn.TransformerEncoder(layer, num_layers=attention_layers)
+GPU available: False, used: False
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+target=2023-24 architecture=set_attention epoch=1/5 train_weighted_rmse=95.5506
+target=2023-24 architecture=set_attention epoch=2/5 train_weighted_rmse=95.5484
+target=2023-24 architecture=set_attention epoch=3/5 train_weighted_rmse=95.5372
+target=2023-24 architecture=set_attention epoch=4/5 train_weighted_rmse=95.5358
+target=2023-24 architecture=set_attention epoch=5/5 train_weighted_rmse=95.5402
+`Trainer.fit` stopped: `max_epochs=5` reached.
+target=2023-24 architecture=set_attention scoring complete
+target=2024-25 architecture=token_mlp train_seasons=26 rows=829,673 possessions=2,836,570
+GPU available: False, used: False
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+target=2024-25 architecture=token_mlp epoch=1/5 train_weighted_rmse=95.6097
+target=2024-25 architecture=token_mlp epoch=2/5 train_weighted_rmse=95.6029
+target=2024-25 architecture=token_mlp epoch=3/5 train_weighted_rmse=95.6021
+target=2024-25 architecture=token_mlp epoch=4/5 train_weighted_rmse=95.5986
+target=2024-25 architecture=token_mlp epoch=5/5 train_weighted_rmse=95.5995
+`Trainer.fit` stopped: `max_epochs=5` reached.
+target=2024-25 architecture=token_mlp scoring complete
+target=2024-25 architecture=set_attention train_seasons=26 rows=829,673 possessions=2,836,570
+/Users/evanzamir/projects/nba-lineup-model/src/nba_lineup_model/models/nail_token_residual.py:62: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.encoder = nn.TransformerEncoder(layer, num_layers=attention_layers)
+GPU available: False, used: False
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+target=2024-25 architecture=set_attention epoch=1/5 train_weighted_rmse=95.6085
+target=2024-25 architecture=set_attention epoch=2/5 train_weighted_rmse=95.5973
+target=2024-25 architecture=set_attention epoch=3/5 train_weighted_rmse=95.5944
+target=2024-25 architecture=set_attention epoch=4/5 train_weighted_rmse=95.5872
+target=2024-25 architecture=set_attention epoch=5/5 train_weighted_rmse=95.5858
+`Trainer.fit` stopped: `max_epochs=5` reached.
+target=2024-25 architecture=set_attention scoring complete
+target=2025-26 architecture=token_mlp train_seasons=27 rows=861,619 possessions=2,949,669
+GPU available: False, used: False
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+target=2025-26 architecture=token_mlp epoch=1/5 train_weighted_rmse=95.7516
+target=2025-26 architecture=token_mlp epoch=2/5 train_weighted_rmse=95.7452
+target=2025-26 architecture=token_mlp epoch=3/5 train_weighted_rmse=95.7439
+target=2025-26 architecture=token_mlp epoch=4/5 train_weighted_rmse=95.7458
+target=2025-26 architecture=token_mlp epoch=5/5 train_weighted_rmse=95.7387
+`Trainer.fit` stopped: `max_epochs=5` reached.
+target=2025-26 architecture=token_mlp scoring complete
+target=2025-26 architecture=set_attention train_seasons=27 rows=861,619 possessions=2,949,669
+/Users/evanzamir/projects/nba-lineup-model/src/nba_lineup_model/models/nail_token_residual.py:62: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.encoder = nn.TransformerEncoder(layer, num_layers=attention_layers)
+GPU available: False, used: False
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/Users/evanzamir/projects/nba-lineup-model/.venv/lib/python3.12/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:434: The 'train_dataloader' does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=7` in the `DataLoader` to improve performance.
+target=2025-26 architecture=set_attention epoch=1/5 train_weighted_rmse=95.7502
+target=2025-26 architecture=set_attention epoch=2/5 train_weighted_rmse=95.7430
+target=2025-26 architecture=set_attention epoch=3/5 train_weighted_rmse=95.7383
+target=2025-26 architecture=set_attention epoch=4/5 train_weighted_rmse=95.7361
+target=2025-26 architecture=set_attention epoch=5/5 train_weighted_rmse=95.7274
+`Trainer.fit` stopped: `max_epochs=5` reached.
+target=2025-26 architecture=set_attention scoring complete
+wrote=artifacts/models/analysis/nail_token_residual_frozen/2023-24_to_2025-26/nail-token-residual-2023-24-to-2025-26-20260818T052735Z-bb21b3ef

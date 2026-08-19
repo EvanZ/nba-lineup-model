@@ -1,0 +1,64 @@
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+Skipped response cache for linear context model: 1997-98
+Skipped response cache for linear context model: 1998-99
+Skipped response cache for linear context model: 1999-00
+Skipped response cache for linear context model: 2000-01
+Skipped response cache for linear context model: 2001-02
+Skipped response cache for linear context model: 2002-03
+Skipped response cache for linear context model: 2003-04
+Skipped response cache for linear context model: 2004-05
+Skipped response cache for linear context model: 2005-06
+Skipped response cache for linear context model: 2006-07
+Skipped response cache for linear context model: 2007-08
+Skipped response cache for linear context model: 2008-09
+Skipped response cache for linear context model: 2009-10
+Skipped response cache for linear context model: 2010-11
+Skipped response cache for linear context model: 2011-12
+Skipped response cache for linear context model: 2012-13
+Skipped response cache for linear context model: 2013-14
+Skipped response cache for linear context model: 2014-15
+Skipped response cache for linear context model: 2015-16
+Skipped response cache for linear context model: 2016-17
+Skipped response cache for linear context model: 2017-18
+Skipped response cache for linear context model: 2018-19
+Skipped response cache for linear context model: 2019-20
+Skipped response cache for linear context model: 2020-21
+Skipped response cache for linear context model: 2021-22
+Skipped response cache for linear context model: 2022-23
+Skipped response cache for linear context model: 2023-24
+Skipped response cache for linear context model: 2024-25
+Skipped response cache for linear context model: 2025-26
+Preparing context-exposure cohort
+[1997-98] calculating observed lineup-shape context exposure
+[1998-99] calculating observed lineup-shape context exposure
+[1999-00] calculating observed lineup-shape context exposure
+[2000-01] calculating observed lineup-shape context exposure
+[2001-02] calculating observed lineup-shape context exposure
+[2002-03] calculating observed lineup-shape context exposure
+[2003-04] calculating observed lineup-shape context exposure
+[2004-05] calculating observed lineup-shape context exposure
+[2005-06] calculating observed lineup-shape context exposure
+[2006-07] calculating observed lineup-shape context exposure
+[2007-08] calculating observed lineup-shape context exposure
+[2008-09] calculating observed lineup-shape context exposure
+[2009-10] calculating observed lineup-shape context exposure
+[2010-11] calculating observed lineup-shape context exposure
+[2011-12] calculating observed lineup-shape context exposure
+[2012-13] calculating observed lineup-shape context exposure
+[2013-14] calculating observed lineup-shape context exposure
+[2014-15] calculating observed lineup-shape context exposure
+[2015-16] calculating observed lineup-shape context exposure
+[2016-17] calculating observed lineup-shape context exposure
+[2017-18] calculating observed lineup-shape context exposure
+[2018-19] calculating observed lineup-shape context exposure
+[2019-20] calculating observed lineup-shape context exposure
+[2020-21] calculating observed lineup-shape context exposure
+[2021-22] calculating observed lineup-shape context exposure
+[2022-23] calculating observed lineup-shape context exposure
+[2023-24] calculating observed lineup-shape context exposure
+[2024-25] calculating observed lineup-shape context exposure
+[2025-26] calculating observed lineup-shape context exposure
+Materialized player context exposure: artifacts/web/response_curve_cache/forward_nail_rapm_v1_medvedovsky_padding/forward-nail-rapm-v1-medvedovsky-padding-2025-26-20260818T140419Z-2d5d58cb-player-context.parquet

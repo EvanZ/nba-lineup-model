@@ -6,8 +6,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-import nba_lineup_model.modeling.forward_centered_value_conditioned_aging_no_context_rapm as no_context
 import nba_lineup_model.modeling.forward_portable_matchup_contextual_rapm as portable
+from nba_lineup_model.modeling import (
+    forward_centered_value_conditioned_aging_no_context_rapm as no_context,
+)
 from nba_lineup_model.modeling.prior_rapm import PRIOR_MEAN_COLUMN, ForwardLaggedRapmSeason
 
 
@@ -36,7 +38,10 @@ def test_controlled_no_context_wrapper_disables_only_context(monkeypatch) -> Non
 
     assert captured["use_context"] is False
     assert captured["model_name"] == no_context.MODEL_NAME
-    assert captured["player_prior_builder"] is no_context.build_centered_value_conditioned_aging_exposure_gated_priors
+    assert (
+        captured["player_prior_builder"]
+        is no_context.build_centered_value_conditioned_aging_exposure_gated_priors
+    )
 
 
 def test_season_metadata_accepts_an_empty_context_state() -> None:
@@ -76,6 +81,24 @@ def test_zero_context_predictor_returns_no_lineup_adjustment() -> None:
     )
 
     assert np.array_equal(predicted, np.array([0.0, 0.0]))
+
+
+def test_empty_target_evaluation_preserves_state_boundary() -> None:
+    evaluation = portable._empty_target_evaluation(
+        target="2022-23",
+        source="2021-22",
+    )
+
+    assert evaluation["source_state"] == {
+        "target_season": "2022-23",
+        "source_season": "2021-22",
+        "target_evaluation_performed": False,
+    }
+    assert all(
+        isinstance(frame, pd.DataFrame) and frame.empty
+        for name, frame in evaluation.items()
+        if name != "source_state"
+    )
 
 
 def test_frozen_evaluation_uses_previous_season_portable_matchup_state(

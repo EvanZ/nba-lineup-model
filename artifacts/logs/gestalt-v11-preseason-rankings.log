@@ -1,0 +1,10 @@
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+/Users/evanzamir/projects/nba-lineup-model/src/nba_lineup_model/web_api/preseason_rankings_cache.py:426: FutureWarning: The behavior of DataFrame concatenation with empty or all-NA entries is deprecated. In a future version, this will no longer exclude empty or all-NA columns when determining the result dtypes. To retain the old behavior, exclude the relevant entries before the concat operation.
+  return pd.concat([panel, target_rows], ignore_index=True)
+Fitting frozen forward prior
+Scoring frozen additive profiles
+Writing preseason ranking cache
+Materialized preseason rankings: artifacts/web/preseason_rankings/forward_nail_rapm_v1_medvedovsky_padding/forward-nail-rapm-v1-medvedovsky-padding-2025-26-20260818T140419Z-2d5d58cb/2026-27.parquet

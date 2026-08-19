@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import nba_lineup_model.web_api.app as web_app
 import nba_lineup_model.web_api.inference as web_inference
+import nba_lineup_model.web_api.preseason_rankings_cache as preseason_cache
 from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
     lineup_side_context_features,
@@ -27,6 +28,7 @@ from nba_lineup_model.web_api.inference import (
     _player_league_leader_histories,
     _player_rating_histories,
     _player_team_splits_by_season,
+    _preseason_ranking_catalog,
     _warm_response_cache,
 )
 
@@ -631,6 +633,116 @@ def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) 
     assert profile.json()["steals_per_100"] is None
     assert profile.json()["blocks_per_100"] is None
     assert profile.json()["offensive_rebound_pct"] is None
+
+
+def test_preseason_rankings_include_returners_and_cold_starts(tmp_path) -> None:
+    roster_path = tmp_path / "roster.parquet"
+    draft_path = tmp_path / "draft.parquet"
+    pd.DataFrame(
+        {
+            "player_id": [1, 99, 100],
+            "player_name": ["Nikola Jokić", "Draft Rookie", "Undrafted Rookie"],
+            "team_abbreviation": ["TST", "RKS", "UDR"],
+            "listed_position": ["C", "F", "G"],
+            "age": [31.0, 19.0, 22.0],
+            "experience": [11, 0, 0],
+        }
+    ).to_parquet(roster_path, index=False)
+    pd.DataFrame(
+        {
+            "player_id": [99],
+            "draft_round": [1],
+            "draft_number": [4],
+            "cold_start_rapm_prior": [-0.5],
+            "replacement_rapm": [-3.9],
+        }
+    ).to_parquet(draft_path, index=False)
+    completed = pd.DataFrame(
+        {
+            "season": ["2025-26"],
+            "player_id": [1],
+            "player_name": ["Nikola Jokić"],
+            "team": ["OLD"],
+            "position": ["C"],
+            "draft_year": [2014],
+            "draft_round": [2],
+            "draft_number": [41],
+            "is_undrafted": [False],
+            "draft_class_year": [2014],
+            "rapm": [4.2],
+            "prior_rating": [1.0],
+            "season_update": [2.0],
+            "additive_profile_adjustment": [1.2],
+            "observed_context_exposure": [0.0],
+            "possessions": [2000.0],
+            "games": [70],
+            "rookie_season": ["2015-16"],
+        }
+    )
+    preview = _preseason_ranking_catalog(
+        completed,
+        roster_path=roster_path,
+        draft_rankings_path=draft_path,
+        completed_season="2025-26",
+        preview_season="2026-27",
+    )
+    by_player = preview.set_index("player_id")
+    assert by_player.loc[1, "rapm"] == 4.2
+    assert by_player.loc[1, "team"] == "TST"
+    assert pd.isna(by_player.loc[1, "prior_rating"])
+    assert by_player.loc[99, "rapm"] == -0.5
+    assert by_player.loc[99, "draft_number"] == 4
+    assert by_player.loc[99, "profile_source"] == "draft_cold_start_prior"
+    assert by_player.loc[100, "rapm"] == -3.9
+    assert by_player.loc[100, "is_undrafted"] is True
+    assert by_player.loc[100, "draft_class_year"] == 2026
+
+    evaluator = replace(_evaluator(), preseason_rankings=preview)
+    client = TestClient(create_app(evaluator))
+    rankings = client.get("/api/rankings", params={"season": "2026-27"})
+    assert rankings.status_code == 200
+    assert rankings.json()["available_seasons"] == ["2026-27", "2025-26"]
+    assert rankings.json()["players"][0]["player_id"] == 1
+    rookie = client.get("/api/players/99")
+    assert rookie.status_code == 200
+    assert rookie.json()["rating_season"] == "2026-27"
+    assert rookie.json()["rating_history"] == []
+
+
+def test_preseason_draft_history_normalizes_string_player_ids() -> None:
+    draft = pd.DataFrame(
+        {
+            "player_id": ["1642865"],
+            "player_name": ["Yaxel Lendeborg"],
+            "draft_number": [11],
+        }
+    )
+
+    normalized = preseason_cache._normalize_draft_history_ids(draft)
+
+    assert normalized["player_id"].dtype.kind in {"i", "u"}
+    assert normalized.loc[0, "player_id"] == 1642865
+
+
+def test_imputed_profile_adjustment_is_folded_into_historical_prior() -> None:
+    ratings = pd.DataFrame(
+        {
+            "player_id": [1, 2],
+            "prior_rapm": [-1.0, 0.5],
+            "additive_profile_adjustment": [-0.4, 0.2],
+            "rapm": [-0.2, 1.0],
+        }
+    )
+    profiles = pd.DataFrame(
+        {"player_id": [1, 2], "profile_imputed": [1, 0]}
+    )
+
+    folded = web_inference._fold_imputed_profile_into_prior(ratings, profiles)
+
+    assert folded.loc[0, "prior_rapm"] == -1.4
+    assert pd.isna(folded.loc[0, "additive_profile_adjustment"])
+    assert folded.loc[1, "prior_rapm"] == 0.5
+    assert folded.loc[1, "additive_profile_adjustment"] == 0.2
 
 
 def test_headshot_endpoint_uses_cached_same_origin_image(monkeypatch) -> None:

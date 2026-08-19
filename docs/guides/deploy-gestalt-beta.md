@@ -22,16 +22,28 @@ From the repository root:
 ./scripts/publish_gestalt_release.sh
 ```
 
-The default release is the currently published NAIL-RAPM v1.0 artifact. Override the
-model run with `GESTALT_RUN_ID` only after materializing its web rankings and response
-curve caches. Build the compact historical exposure and player-profile caches before
-publishing so historical Lab queries do not require raw stints or curated source
-partitions on EC2:
+The default release is the currently published NAIL-RAPM v1.1 artifact. Every numerical
+cache is namespaced by the immutable model run ID. Materialize all of them before a
+release so rankings, biographies, historical Lab queries, observed lineups, profile
+decompositions, and preseason forecasts all use the same fitted model:
 
 ```bash
 uv run nba-build-gestalt-exposure-cohort
+uv run nba-build-gestalt-lineup-rankings --all-seasons
+uv run nba-build-gestalt-player-team-splits
+uv run nba-build-gestalt-response-cache --all-seasons
 uv run nba-build-gestalt-historical-profiles
+uv run nba-build-gestalt-preseason-rankings
+uv run nba-validate-gestalt-release
 ```
+
+The validator checks model identity, context regularization, the exact profile-padding
+coefficients, all historical season coverage, lineup-score arithmetic, and consistency
+between the trained target profiles and their web cache. It then writes a SHA-256 and
+row-count inventory to
+`artifacts/web/releases/<model-artifact>/<run-id>/bundle_manifest.json`. The publish
+script runs this validation again and refuses to upload an incomplete or mixed bundle.
+Override the run with `GESTALT_RUN_ID` only after that run's manifest succeeds.
 
 ## Deploy on EC2
 

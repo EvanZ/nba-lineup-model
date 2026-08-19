@@ -8,8 +8,9 @@ low-exposure replacement population used by the forward cold-start RAPM.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from functools import lru_cache
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 import numpy as np
@@ -58,6 +59,79 @@ PROFILE_PSEUDO_POSSESSIONS = 300.0
 REPLACEMENT_SHARE_CUTOFF = 0.05
 
 
+@dataclass(frozen=True)
+class ProfilePaddingContract:
+    """Versioned empirical-Bayes padding for lagged player profiles."""
+
+    name: str
+    rate_pseudo_possessions: Mapping[str, float]
+    reference_mode: str = "expanding"
+    three_point_percentage_attempts: float | None = None
+    usage_component_pseudo_possessions: Mapping[str, float] | None = None
+    rebound_percentage_pseudo_possessions: Mapping[str, float] | None = None
+    source: str | None = None
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "reference_mode": self.reference_mode,
+            "rate_pseudo_possessions": dict(self.rate_pseudo_possessions),
+            "three_point_percentage_attempts": self.three_point_percentage_attempts,
+            "usage_component_pseudo_possessions": (
+                dict(self.usage_component_pseudo_possessions)
+                if self.usage_component_pseudo_possessions is not None
+                else None
+            ),
+            "rebound_percentage_pseudo_possessions": (
+                dict(self.rebound_percentage_pseudo_possessions)
+                if self.rebound_percentage_pseudo_possessions is not None
+                else None
+            ),
+            "source": self.source,
+        }
+
+
+UNIFORM_300_PROFILE_PADDING = ProfilePaddingContract(
+    name="uniform_300_expanding_reference",
+    rate_pseudo_possessions={
+        trait: PROFILE_PSEUDO_POSSESSIONS for trait in PROFILE_COUNTS
+    },
+)
+
+UNIFORM_300_SEASON_PROFILE_PADDING = ProfilePaddingContract(
+    name="uniform_300_source_season_reference",
+    rate_pseudo_possessions={
+        trait: PROFILE_PSEUDO_POSSESSIONS for trait in PROFILE_COUNTS
+    },
+    reference_mode="season",
+)
+
+MEDVEDOVSKY_2020_PROFILE_PADDING = ProfilePaddingContract(
+    name="medvedovsky_2020_stat_specific",
+    rate_pseudo_possessions={
+        "three_pa": 29.29,
+        "assists": 55.57,
+        "turnovers": 425.69,
+        "offensive_rebounds": 101.46,
+        "defensive_rebounds": 109.0,
+        "steals": 632.61,
+        "blocks": 151.22,
+    },
+    reference_mode="season",
+    three_point_percentage_attempts=242.61,
+    usage_component_pseudo_possessions={
+        "field_goals_attempted": 89.62,
+        "free_throws_attempted": 197.58,
+        "turnovers": 425.69,
+    },
+    rebound_percentage_pseudo_possessions={
+        "offensive_rebound_pct": 98.55,
+        "defensive_rebound_pct": 108.26,
+    },
+    source="https://kmedved.com/2020/08/06/nba-stabilization-rates-and-the-padding-approach/",
+)
+
+
 def build_contextual_player_profiles(
     panel: pd.DataFrame,
     *,
@@ -66,6 +140,7 @@ def build_contextual_player_profiles(
     analytical_dir: str = "data/analytical",
     curated_dir: str = "data/curated",
     exposure_cohort: pd.DataFrame | None = None,
+    padding_contract: ProfilePaddingContract = UNIFORM_300_PROFILE_PADDING,
 ) -> pd.DataFrame:
     """Build target player profiles using information available before a season.
 
@@ -113,8 +188,8 @@ def build_contextual_player_profiles(
         )
         target_bios = pd.concat([target_bios, placeholders], ignore_index=True)
 
-    reference = _league_reference_rates(history)
-    historical_rates = _rate_frame(history, reference).merge(
+    _validate_padding_contract(padding_contract)
+    historical_rates = _rate_frame(history, padding_contract=padding_contract).merge(
         _rebound_percentage_frame(
             tuple(sorted(history["season"].astype(str).unique(), key=lambda value: int(value[:4]))),
             curated_dir=curated_dir,
@@ -122,6 +197,10 @@ def build_contextual_player_profiles(
         on=["season", "player_id"],
         how="left",
         validate="one_to_one",
+    )
+    historical_rates = _pad_rebound_percentages(
+        historical_rates,
+        padding_contract=padding_contract,
     )
     if historical_rates.loc[:, list(PROFILE_REBOUND_PERCENT_COLUMNS)].isna().any(axis=None):
         raise ValueError("Contextual rebound percentage profiles are incomplete")
@@ -193,30 +272,222 @@ def build_contextual_player_profiles(
     )
 
 
-def _rate_frame(frame: pd.DataFrame, reference: dict[str, float]) -> pd.DataFrame:
+def _rate_frame(
+    frame: pd.DataFrame,
+    *,
+    padding_contract: ProfilePaddingContract,
+) -> pd.DataFrame:
     output = frame.loc[:, ["season", "player_id", "rapm_possessions", *_count_columns()]].copy()
     possessions = pd.to_numeric(output.pop("rapm_possessions"), errors="raise").astype(float)
     if not possessions.gt(0).all():
         raise ValueError("Contextual profiles require positive player possession totals")
     output["_possessions"] = possessions
+    references = _reference_rate_frame(frame, padding_contract=padding_contract)
     for trait, counts in PROFILE_COUNTS.items():
+        if trait in {"three_pm", "usage"}:
+            continue
         raw = _trait_count(output, counts)
-        output[f"{trait}_per_100"] = (
-            100.0
-            * (raw + PROFILE_PSEUDO_POSSESSIONS * reference[trait] / 100.0)
-            / (possessions + PROFILE_PSEUDO_POSSESSIONS)
+        output[f"{trait}_per_100"] = _pad_possession_rate(
+            raw,
+            possessions,
+            references[trait],
+            padding_contract.rate_pseudo_possessions[trait],
         )
+    output["three_pm_per_100"] = _three_point_makes_rate(
+        output,
+        possessions,
+        references,
+        padding_contract=padding_contract,
+    )
+    output["usage_per_100"] = _usage_rate(
+        output,
+        possessions,
+        references,
+        padding_contract=padding_contract,
+    )
     return output.loc[:, ["season", "player_id", "_possessions", *PROFILE_RATE_COLUMNS]]
+
+
+def _pad_possession_rate(
+    raw: pd.Series,
+    possessions: pd.Series,
+    reference_rate: pd.Series,
+    pseudo_possessions: float,
+) -> pd.Series:
+    return (
+        100.0
+        * (raw.to_numpy(dtype=float) + pseudo_possessions * reference_rate / 100.0)
+        / (possessions.to_numpy(dtype=float) + pseudo_possessions)
+    )
+
+
+def _three_point_makes_rate(
+    frame: pd.DataFrame,
+    possessions: pd.Series,
+    references: pd.DataFrame,
+    *,
+    padding_contract: ProfilePaddingContract,
+) -> pd.Series:
+    attempts = pd.to_numeric(frame["three_pointers_attempted"], errors="raise").astype(float)
+    makes = pd.to_numeric(frame["three_pointers_made"], errors="raise").astype(float)
+    percentage_attempts = padding_contract.three_point_percentage_attempts
+    if percentage_attempts is None:
+        return _pad_possession_rate(
+            makes,
+            possessions,
+            references["three_pm"],
+            padding_contract.rate_pseudo_possessions["three_pm"],
+        )
+    attempt_rate = _pad_possession_rate(
+        attempts,
+        possessions,
+        references["three_pa"],
+        padding_contract.rate_pseudo_possessions["three_pa"],
+    )
+    percentage = (
+        makes.to_numpy(dtype=float)
+        + percentage_attempts * references["three_point_pct"]
+    ) / (attempts.to_numpy(dtype=float) + percentage_attempts)
+    return pd.Series(attempt_rate.to_numpy(dtype=float) * percentage, index=frame.index)
+
+
+def _usage_rate(
+    frame: pd.DataFrame,
+    possessions: pd.Series,
+    references: pd.DataFrame,
+    *,
+    padding_contract: ProfilePaddingContract,
+) -> pd.Series:
+    components = padding_contract.usage_component_pseudo_possessions
+    if components is None:
+        return _pad_possession_rate(
+            _trait_count(frame, PROFILE_COUNTS["usage"]),
+            possessions,
+            references["usage"],
+            padding_contract.rate_pseudo_possessions["usage"],
+        )
+    rates: dict[str, pd.Series] = {}
+    for column, pseudo_possessions in components.items():
+        rates[column] = _pad_possession_rate(
+            pd.to_numeric(frame[column], errors="raise").astype(float),
+            possessions,
+            references[f"{column}_per_100"],
+            pseudo_possessions,
+        )
+    return (
+        rates["field_goals_attempted"]
+        + 0.44 * rates["free_throws_attempted"]
+        + rates["turnovers"]
+    )
+
+
+def _reference_rate_frame(
+    frame: pd.DataFrame,
+    *,
+    padding_contract: ProfilePaddingContract,
+) -> pd.DataFrame:
+    if padding_contract.reference_mode == "expanding":
+        reference = _league_reference_rates(frame)
+        return pd.DataFrame(
+            {key: np.repeat(value, len(frame)) for key, value in reference.items()},
+            index=frame.index,
+        )
+    rows: list[pd.DataFrame] = []
+    for _season, members in frame.groupby("season", sort=False):
+        reference = _league_reference_rates(members)
+        rows.append(
+            pd.DataFrame(
+                {key: np.repeat(value, len(members)) for key, value in reference.items()},
+                index=members.index,
+            )
+        )
+    return pd.concat(rows).loc[frame.index]
 
 
 def _league_reference_rates(frame: pd.DataFrame) -> dict[str, float]:
     possessions = pd.to_numeric(frame["rapm_possessions"], errors="raise").astype(float)
     if not possessions.gt(0).all():
         raise ValueError("Contextual profile reference requires positive possessions")
-    return {
+    rates = {
         trait: 100.0 * float(_trait_count(frame, counts).sum()) / float(possessions.sum())
         for trait, counts in PROFILE_COUNTS.items()
     }
+    attempts = float(pd.to_numeric(frame["three_pointers_attempted"], errors="raise").sum())
+    makes = float(pd.to_numeric(frame["three_pointers_made"], errors="raise").sum())
+    rates["three_point_pct"] = makes / attempts if attempts > 0 else 0.0
+    for column in (
+        "field_goals_attempted",
+        "free_throws_attempted",
+        "turnovers",
+    ):
+        rates[f"{column}_per_100"] = (
+            100.0 * float(pd.to_numeric(frame[column], errors="raise").sum())
+            / float(possessions.sum())
+        )
+    return rates
+
+
+def _pad_rebound_percentages(
+    rates: pd.DataFrame,
+    *,
+    padding_contract: ProfilePaddingContract,
+) -> pd.DataFrame:
+    paddings = padding_contract.rebound_percentage_pseudo_possessions
+    if paddings is None:
+        return rates
+    output = rates.copy()
+    if padding_contract.reference_mode == "expanding":
+        groups = [(None, output)]
+    else:
+        groups = list(output.groupby("season", sort=False))
+    for _, members in groups:
+        weights = members["_possessions"].to_numpy(dtype=float)
+        for column, pseudo_possessions in paddings.items():
+            reference = float(np.average(members[column].to_numpy(dtype=float), weights=weights))
+            values = members[column].to_numpy(dtype=float)
+            output.loc[members.index, column] = (
+                values * weights + pseudo_possessions * reference
+            ) / (weights + pseudo_possessions)
+    return output
+
+
+def _validate_padding_contract(contract: ProfilePaddingContract) -> None:
+    if contract.reference_mode not in {"expanding", "season"}:
+        raise ValueError("Profile padding reference_mode must be 'expanding' or 'season'")
+    required = set(PROFILE_COUNTS) - {"three_pm", "usage"}
+    if contract.three_point_percentage_attempts is None:
+        required.add("three_pm")
+    if contract.usage_component_pseudo_possessions is None:
+        required.add("usage")
+    missing = required - set(contract.rate_pseudo_possessions)
+    if missing:
+        raise ValueError(f"Profile padding is missing traits: {sorted(missing)}")
+    values = list(contract.rate_pseudo_possessions.values())
+    if contract.three_point_percentage_attempts is not None:
+        values.append(contract.three_point_percentage_attempts)
+    if contract.usage_component_pseudo_possessions is not None:
+        required_usage = {
+            "field_goals_attempted",
+            "free_throws_attempted",
+            "turnovers",
+        }
+        missing_usage = required_usage - set(contract.usage_component_pseudo_possessions)
+        if missing_usage:
+            raise ValueError(
+                f"Profile padding is missing usage components: {sorted(missing_usage)}"
+            )
+        values.extend(contract.usage_component_pseudo_possessions.values())
+    if contract.rebound_percentage_pseudo_possessions is not None:
+        missing_rebounds = set(PROFILE_REBOUND_PERCENT_COLUMNS) - set(
+            contract.rebound_percentage_pseudo_possessions
+        )
+        if missing_rebounds:
+            raise ValueError(
+                f"Profile padding is missing rebound percentages: {sorted(missing_rebounds)}"
+            )
+        values.extend(contract.rebound_percentage_pseudo_possessions.values())
+    if any(not np.isfinite(value) or value < 0 for value in values):
+        raise ValueError("Profile padding pseudo-sample sizes must be finite and non-negative")
 
 
 def _rookie_cohort_profiles(rates: pd.DataFrame, bios: pd.DataFrame) -> pd.DataFrame:
@@ -397,7 +668,7 @@ def _rebound_percentage_frame(seasons: tuple[str, ...], *, curated_dir: str) -> 
     return pd.concat(frames, ignore_index=True)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _season_rebound_percentage(season: str, curated_dir: str) -> pd.DataFrame:
     """Calculate standard player ORB% and DRB% from game-level opportunities."""
 

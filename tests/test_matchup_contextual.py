@@ -12,6 +12,7 @@ from nba_lineup_model.modeling.matchup_contextual import (
     fit_bounded_hierarchical_matchup_contextual_model,
     fit_linear_ridge_matchup_contextual_model,
     fit_matchup_contextual_model,
+    fit_normalized_linear_ridge_matchup_contextual_model,
     isolated_feature_component,
 )
 
@@ -66,6 +67,84 @@ def test_linear_ridge_context_has_no_matchup_remainder() -> None:
         ),
         0.0,
         atol=1e-10,
+    )
+
+
+def test_normalized_linear_ridge_is_invariant_to_weight_scale() -> None:
+    columns = side_context_feature_columns()
+    values = np.arange(32 * len(columns), dtype=float).reshape(32, len(columns))
+    home = pd.DataFrame(values, columns=columns)
+    away = pd.DataFrame(values[::-1], columns=columns)
+    target = np.linspace(-3.0, 3.0, len(home))
+    weights = np.linspace(1.0, 3.0, len(home))
+
+    baseline = fit_normalized_linear_ridge_matchup_contextual_model(
+        home, away, target, weights, alpha=0.05
+    )
+    rescaled = fit_normalized_linear_ridge_matchup_contextual_model(
+        home, away, target, 17.0 * weights, alpha=0.05
+    )
+
+    np.testing.assert_allclose(
+        baseline.predict_side_pairs(home, away),
+        rescaled.predict_side_pairs(home, away),
+        atol=1e-12,
+    )
+    assert baseline.regularization_contract == "mean_weighted_loss"
+    assert rescaled.effective_ridge_alpha == 17.0 * baseline.effective_ridge_alpha
+
+
+def test_normalized_linear_ridge_matches_equivalent_raw_alpha() -> None:
+    columns = side_context_feature_columns()
+    values = np.arange(32 * len(columns), dtype=float).reshape(32, len(columns))
+    home = pd.DataFrame(values, columns=columns)
+    away = pd.DataFrame(values[::-1], columns=columns)
+    target = np.linspace(-3.0, 3.0, len(home))
+    weights = np.linspace(1.0, 3.0, len(home))
+    normalized = fit_normalized_linear_ridge_matchup_contextual_model(
+        home, away, target, weights, alpha=0.05
+    )
+    raw = fit_linear_ridge_matchup_contextual_model(
+        home,
+        away,
+        target,
+        weights,
+        alpha=normalized.effective_ridge_alpha,
+    )
+
+    np.testing.assert_allclose(
+        normalized.predict_side_pairs(home, away),
+        raw.predict_side_pairs(home, away),
+        atol=1e-12,
+    )
+
+
+def test_published_raw_alpha_matches_its_exact_normalized_lambda() -> None:
+    columns = side_context_feature_columns()
+    values = np.arange(32 * len(columns), dtype=float).reshape(32, len(columns))
+    home = pd.DataFrame(values, columns=columns)
+    away = pd.DataFrame(values[::-1], columns=columns)
+    target = np.linspace(-3.0, 3.0, len(home))
+    weights = np.linspace(1.0, 3.0, len(home))
+    raw_alpha = 10_000.0
+    augmented_weight_sum = 2.0 * weights.sum()
+
+    raw = fit_linear_ridge_matchup_contextual_model(
+        home, away, target, weights, alpha=raw_alpha
+    )
+    normalized = fit_normalized_linear_ridge_matchup_contextual_model(
+        home,
+        away,
+        target,
+        weights,
+        alpha=raw_alpha / augmented_weight_sum,
+    )
+
+    assert normalized.effective_ridge_alpha == raw_alpha
+    np.testing.assert_allclose(
+        normalized.predict_side_pairs(home, away),
+        raw.predict_side_pairs(home, away),
+        atol=1e-12,
     )
 
 

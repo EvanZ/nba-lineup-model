@@ -30,7 +30,7 @@ type AgingContributionKey = "prior" | "seasonUpdate" | "additiveProfile";
 
 const SIDE_LABELS: Record<Side, string> = { unit: "Your unit", opponent: "Opponent" };
 const MATERIAL_COMPONENT_CONTRIBUTION = 0.05;
-const MODEL_LABEL = "NAIL-RAPM v1.0";
+const MODEL_LABEL = "NAIL-RAPM v1.1";
 const FEATURE_DESCRIPTIONS: Record<string, string> = {
   home_minus_away_three_pa_per_100: "Sum of the five players' prior-season three-point attempts per 100 possessions.",
   home_minus_away_three_pm_per_100: "Sum of the five players' prior-season made three-pointers per 100 possessions.",
@@ -148,6 +148,13 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
   ];
   const hasAdditiveProfileInputs = additiveProfileInputs.every((value) => value !== null);
   const historyRows = completePlayerHistory(player);
+  const isPreseasonPreview = player.rating_season === "2026-27";
+  const ratingSeasonLabel = isPreseasonPreview
+    ? "2026-27 preseason preview"
+    : `${player.rating_season ?? "Latest"} ${MODEL_LABEL}`;
+  const coldStartDescription = player.profile_source === "draft_cold_start_prior"
+    ? "This preseason rating uses the forward draft cold-start prior."
+    : "This preseason rating uses the published replacement-level cold-start prior.";
 
   return (
     <article className="player-profile-page" aria-labelledby="player-profile-title">
@@ -159,10 +166,32 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
           <p className="player-profile-meta">{draftSummary(player)} · Rookie season {player.rookie_season ?? "-"}</p>
         </div>
         <div className="profile-hero-rating">
-          <span>{player.rating_season ?? "Latest"} {MODEL_LABEL}</span>
+          <span>{ratingSeasonLabel}</span>
           <Rating value={player.rapm} />
         </div>
       </section>
+
+      {isPreseasonPreview && <section className="player-profile-section preseason-forecast" aria-labelledby="preseason-forecast-title">
+        <div className="player-profile-heading">
+          <p className="section-kicker">Frozen before 2026-27 play</p>
+          <h2 id="preseason-forecast-title">2026-27 forecast.</h2>
+        </div>
+        <dl className="player-stat-grid player-forecast-grid">
+          <div>
+            <dt>Forward prior</dt>
+            <dd>{player.prior_rating === null || player.prior_rating === undefined ? "-" : <Rating value={player.prior_rating} />}</dd>
+          </div>
+          <div>
+            <dt>Lagged additive profile</dt>
+            <dd>{player.additive_profile_adjustment === null || player.additive_profile_adjustment === undefined ? "-" : <Rating value={player.additive_profile_adjustment} />}</dd>
+          </div>
+          <div className="player-forecast-total">
+            <dt>{MODEL_LABEL} forecast</dt>
+            <dd><Rating value={player.rapm} /></dd>
+          </div>
+        </dl>
+        <p className="player-rating-path-note">The prior is a forward value-conditioned aging estimate. The additive profile uses lagged 2025-26 per-100 possession traits under frozen coefficients, not 2026-27 production.</p>
+      </section>}
 
       {hasAdditiveProfileInputs && <section className="player-profile-section" aria-labelledby="profile-rates-title">
         <div className="player-profile-heading">
@@ -181,7 +210,15 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
         </dl>
       </section>}
 
-      <section className="player-profile-section" aria-labelledby="rating-history-title">
+      {historyRows.length === 0 ? (
+        <section className="player-profile-section" aria-labelledby="rating-history-title">
+          <div className="player-profile-heading">
+            <p className="section-kicker">Preseason state</p>
+            <h2 id="rating-history-title">No completed-fit history yet.</h2>
+          </div>
+          <p className="player-rating-path-note">{coldStartDescription}</p>
+        </section>
+      ) : <section className="player-profile-section" aria-labelledby="rating-history-title">
         <div className="player-profile-heading">
           <p className="section-kicker">Completed fits</p>
           <h2 id="rating-history-title">{MODEL_LABEL} history.</h2>
@@ -211,7 +248,7 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
             ))}</tbody>
           </table>
         </div>
-      </section>
+      </section>}
     </article>
   );
 }
@@ -422,7 +459,7 @@ function PlayerAgingChart({ player }: { player: Player }) {
         if (!blob) return;
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
-        link.download = `${player.player_name.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "")}-nail-rapm-v1-history.png`;
+        link.download = `${player.player_name.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "")}-nail-rapm-v11-history.png`;
         link.click();
         window.setTimeout(() => URL.revokeObjectURL(link.href), 0);
       }, "image/png");
@@ -1026,7 +1063,7 @@ function AboutPage() {
           <p>
             After the raw player edge is removed from each completed stint, a second standardized Ridge
             regression fits the residual against a fixed, strictly lagged five-player feature contract.
-            The final v1.0 model is linear in those features; it does not use splines or a black-box interaction network.
+            The v1.1 model is linear in those features; it does not use splines or a black-box interaction network.
           </p>
         </div>
         <div className="feature-contract">
@@ -1084,7 +1121,8 @@ function AboutPage() {
       <section className="about-footer-note">
         <p className="section-kicker">Current publication</p>
         <p>
-          The Lineup Lab serves the completed 2025-26 NAIL-RAPM v1.0 state. It is useful for retrospective
+          The Lineup Lab serves the completed 2025-26 NAIL-RAPM v1.1 state with published statistic-specific
+          profile shrinkage. It is useful for retrospective
           lineup exploration and as the state carried forward into a forecast; it is not a live in-season update
           or a claim that the residual lineup effect belongs causally to a single player.
         </p>
@@ -1131,7 +1169,10 @@ function RankingsPage() {
 
   useEffect(() => {
     setDraftClassFilter("all");
+    setMinimumPossessions(selectedSeason === "2026-27" ? 0 : 500);
   }, [selectedSeason]);
+
+  const isPreseasonPreview = selectedSeason === "2026-27";
 
   const draftClasses = useMemo(() => [...new Set(
     players.flatMap((player) => player.draft_class_year === null ? [] : [player.draft_class_year]),
@@ -1196,12 +1237,20 @@ function RankingsPage() {
   return (
     <article className="rankings-page" aria-labelledby="rankings-title">
       <section className="rankings-hero">
-        <p className="eyebrow">{MODEL_LABEL} · {selectedSeason} completed fit</p>
+        <p className="eyebrow">{MODEL_LABEL} · {selectedSeason} {isPreseasonPreview ? "preseason preview" : "completed fit"}</p>
         <h1 id="rankings-title">Player rankings.</h1>
-        <p>
-          Completed-fit {MODEL_LABEL} coefficients per 100 possessions for the selected season. Each table is intended
-          for within-season comparison, not an era-neutral all-time ranking.
-        </p>
+        {isPreseasonPreview ? (
+          <p>
+            Frozen before 2026-27 play. Returning players receive a forward value-conditioned aging prior plus the
+            2025-26 additive profile adjustment; drafted and undrafted cold starts use their respective forward
+            priors. Season updates and non-additive lineup edges are unavailable until the season is played.
+          </p>
+        ) : (
+          <p>
+            Completed-fit {MODEL_LABEL} coefficients per 100 possessions for the selected season. Each table is intended
+            for within-season comparison, not an era-neutral all-time ranking.
+          </p>
+        )}
       </section>
 
       <section className="rankings-table-section" aria-label={`${MODEL_LABEL} player rankings`}>
@@ -1342,7 +1391,8 @@ function LineupRankingsPage({
     const tokens = query.split(",").map((token) => token.trim().toLocaleLowerCase()).filter(Boolean);
     const filtered = tokens.length
       ? lineups.filter((lineup) => tokens.every((token) =>
-        lineup.player_names.some((name) => name.toLocaleLowerCase().includes(token)),
+        lineup.team.toLocaleLowerCase().includes(token)
+        || lineup.player_names.some((name) => name.toLocaleLowerCase().includes(token)),
       ))
       : lineups;
     const direction = sortDirection === "ascending" ? 1 : -1;
@@ -1365,15 +1415,20 @@ function LineupRankingsPage({
     setSortDirection(column === "rank" ? "ascending" : "descending");
   }
 
-  const columns: Array<{ key: LineupRankingColumn; label: string; numeric?: boolean }> = [
-    { key: "rank", label: "Rank", numeric: true },
-    { key: "team", label: "Team" },
-    { key: "gestalt_score", label: "Edge", numeric: true },
-    { key: "player_edge", label: "Additive", numeric: true },
-    { key: "context_edge", label: "Non-Additive", numeric: true },
-    { key: "actual_net_rating", label: "Net Rating", numeric: true },
-    { key: "possessions", label: "Poss", numeric: true },
-    { key: "games", label: "Games", numeric: true },
+  const columns: Array<{
+    key: LineupRankingColumn;
+    label: string;
+    tooltip: string;
+    numeric?: boolean;
+  }> = [
+    { key: "rank", label: "Rank", tooltip: "Ranked by Context, then possessions. Sorting another column changes the display order, not this rank.", numeric: true },
+    { key: "team", label: "Team", tooltip: "Team that used this five-man unit." },
+    { key: "gestalt_score", label: "Edge", tooltip: "Expected edge per 100 possessions against the opponents this unit actually faced: NAIL plus Context.", numeric: true },
+    { key: "player_edge", label: "NAIL", tooltip: "Difference in the summed NAIL-RAPM ratings of this unit and its actual opponents, per 100 possessions.", numeric: true },
+    { key: "context_edge", label: "Context", tooltip: "Residual non-additive lineup effect beyond the five players' NAIL ratings, against actual opponents, per 100 possessions.", numeric: true },
+    { key: "actual_net_rating", label: "Net Rating", tooltip: "Observed points scored minus points allowed per 100 possessions while this unit played.", numeric: true },
+    { key: "possessions", label: "Poss", tooltip: "Regular-season possessions played by this exact five-man unit." , numeric: true },
+    { key: "games", label: "Games", tooltip: "Regular-season games in which this exact five-man unit appeared.", numeric: true },
   ];
 
   return (
@@ -1383,7 +1438,7 @@ function LineupRankingsPage({
         <h1 id="lineups-title">Lineup contexts.</h1>
         <p>
           Observed regular-season five-man units, scored against the opponents they actually faced. Edge combines
-          additive player value with the residual non-additive lineup effect.
+          NAIL player value with the residual lineup-context effect.
         </p>
       </section>
 
@@ -1423,16 +1478,29 @@ function LineupRankingsPage({
                 {columns.slice(0, 2).map((column) => <th className={column.numeric ? "numeric" : ""} scope="col" key={column.key}>
                   <button type="button" onClick={() => changeSort(column.key)}>
                     {column.label}
+                    <span className="column-info" role="img" aria-label={column.tooltip} data-tooltip={column.tooltip}>
+                      <Info size={12} aria-hidden="true" />
+                    </span>
                     {sortColumn === column.key && (sortDirection === "ascending" ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
                   </button>
                 </th>)}
-                <th scope="col">Five-man unit</th>
+                <th scope="col">
+                  <span className="lineup-column-heading">
+                    Five-man unit
+                    <span className="column-info" role="img" aria-label="The exact five players grouped together in regular-season stints. Use the buttons below the names to load the unit into the Lineup Lab." data-tooltip="The exact five players grouped together in regular-season stints. Use the buttons below the names to load the unit into the Lineup Lab.">
+                      <Info size={12} aria-hidden="true" />
+                    </span>
+                  </span>
+                </th>
                 {columns.slice(2).map((column) => <th className={[
                   column.numeric ? "numeric" : "",
                   column.key === "gestalt_score" ? "edge-column" : "",
                 ].filter(Boolean).join(" ")} scope="col" key={column.key}>
                   <button type="button" onClick={() => changeSort(column.key)}>
                     {column.label}
+                    <span className="column-info" role="img" aria-label={column.tooltip} data-tooltip={column.tooltip}>
+                      <Info size={12} aria-hidden="true" />
+                    </span>
                     {sortColumn === column.key && (sortDirection === "ascending" ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
                   </button>
                 </th>)}

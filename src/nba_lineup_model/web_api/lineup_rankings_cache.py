@@ -9,7 +9,10 @@ from pathlib import Path
 import joblib
 import pandas as pd
 
-from nba_lineup_model.modeling.contextual_profiles import build_contextual_player_profiles
+from nba_lineup_model.modeling.contextual_profiles import (
+    ProfilePaddingContract,
+    build_contextual_player_profiles,
+)
 from nba_lineup_model.modeling.matchup_contextual import MatchupContextualModel
 from nba_lineup_model.modeling.replacement_level import prepare_player_exposure_cohort
 from nba_lineup_model.modeling.stints import read_rapm_stints
@@ -48,7 +51,10 @@ def _build_one_season(season: str) -> None:
     """Materialize one selected completed-fit season."""
 
     evaluator = LineupEvaluator.from_latest_artifact(season=DISPLAY_SEASON)
-    state = _artifact_state(evaluator.run_id)
+    state = _artifact_state(
+        evaluator.run_id,
+        padding_contract=evaluator.profile_padding_contract,
+    )
     _write_published_player_ratings(run_id=evaluator.run_id, **state)
     _write_season(season, run_id=evaluator.run_id, **state)
 
@@ -57,7 +63,10 @@ def _build_all_seasons() -> None:
     """Materialize every season with a completed contextual model."""
 
     evaluator = LineupEvaluator.from_latest_artifact(season=DISPLAY_SEASON)
-    state = _artifact_state(evaluator.run_id)
+    state = _artifact_state(
+        evaluator.run_id,
+        padding_contract=evaluator.profile_padding_contract,
+    )
     _write_published_player_ratings(run_id=evaluator.run_id, **state)
     seasons = sorted(state["models"])
     for index, season in enumerate(seasons, start=1):
@@ -68,7 +77,11 @@ def _build_all_seasons() -> None:
         _write_season(season, run_id=evaluator.run_id, **state)
 
 
-def _artifact_state(run_id: str) -> dict[str, object]:
+def _artifact_state(
+    run_id: str,
+    *,
+    padding_contract: ProfilePaddingContract,
+) -> dict[str, object]:
     """Load the completed artifact state shared by every historical season."""
 
     root = DEFAULT_ARTIFACTS_DIR / MODEL_ARTIFACT / DISPLAY_SEASON / run_id
@@ -80,6 +93,7 @@ def _artifact_state(run_id: str) -> dict[str, object]:
         "coefficients": pd.read_parquet(root / "historical_player_coefficients.parquet"),
         "ratings": pd.read_parquet(root / "player_season_ratings.parquet"),
         "models": joblib.load(root / "season_context_models.joblib"),
+        "padding_contract": padding_contract,
     }
 
 
@@ -89,6 +103,7 @@ def _write_published_player_ratings(
     panel: pd.DataFrame,
     ratings: pd.DataFrame,
     models: dict[str, MatchupContextualModel],
+    padding_contract: ProfilePaddingContract,
     **_: object,
 ) -> None:
     """Materialize compiled player ratings used by ranking and biography views."""
@@ -98,9 +113,12 @@ def _write_published_player_ratings(
         print(f"Using existing published player ratings: {output}", flush=True)
         return
     output.parent.mkdir(parents=True, exist_ok=True)
-    build_published_player_ratings(ratings, panel=panel, models=models).to_parquet(
-        output, index=False
-    )
+    build_published_player_ratings(
+        ratings,
+        panel=panel,
+        models=models,
+        padding_contract=padding_contract,
+    ).to_parquet(output, index=False)
     print(f"Materialized published player ratings: {output}", flush=True)
 
 
@@ -111,6 +129,7 @@ def _write_season(
     panel: pd.DataFrame,
     coefficients: pd.DataFrame,
     models: dict[str, MatchupContextualModel],
+    padding_contract: ProfilePaddingContract,
     **_: object,
 ) -> None:
     """Build one completed-fit observed-lineup table from shared artifact state."""
@@ -133,6 +152,7 @@ def _write_season(
         target_season=season,
         target_player_ids=player_ids,
         exposure_cohort=exposure_cohort,
+        padding_contract=padding_contract,
     )
     season_coefficients = coefficients.loc[
         coefficients["season"].astype(str).eq(season), ["player_id", "rapm"]

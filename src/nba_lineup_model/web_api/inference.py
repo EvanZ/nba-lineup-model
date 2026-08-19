@@ -7,7 +7,7 @@ import random
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import joblib
 import numpy as np
@@ -21,14 +21,15 @@ from nba_lineup_model.modeling.contextual_features import (
     lineup_side_context_features,
     side_context_feature_columns,
 )
-from nba_lineup_model.modeling.contextual_profiles import build_contextual_player_profiles
 from nba_lineup_model.modeling.matchup_contextual import (
     BoundedMatchupContextualModel,
     MatchupContextualModel,
     isolated_feature_component,
 )
-from nba_lineup_model.modeling.replacement_level import prepare_player_exposure_cohort
 from nba_lineup_model.modeling.stints import read_rapm_stints
+
+if TYPE_CHECKING:
+    from nba_lineup_model.modeling.contextual_profiles import ProfilePaddingContract
 
 DEFAULT_ARTIFACTS_DIR = Path("artifacts/models")
 DEFAULT_RESPONSE_CACHE_DIR = Path("artifacts/web/response_curve_cache")
@@ -36,15 +37,63 @@ DEFAULT_LINEUP_RANKINGS_CACHE_DIR = Path("artifacts/web/lineup_rankings")
 DEFAULT_PLAYER_TEAM_SPLITS_CACHE_DIR = Path("artifacts/web/player_team_splits")
 DEFAULT_EXPOSURE_COHORT_CACHE_DIR = Path("artifacts/web/exposure_cohorts")
 DEFAULT_HISTORICAL_PROFILE_CACHE_DIR = Path("artifacts/web/historical_profiles")
-# Keep the artifact identifier distinct from the public name, NAIL-RAPM v1.0.
-MODEL_ARTIFACT = "forward_hpm_x3_linear_ridge_without_uncertainty"
-MODEL_NAME = "forward_hpm_x3_linear_ridge_without_uncertainty"
+DEFAULT_PRESEASON_RANKINGS_CACHE_DIR = Path("artifacts/web/preseason_rankings")
+DEFAULT_TEAM_ROSTERS_DIR = Path("data/curated/team_rosters")
+DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path(
+    "artifacts/models/forward_draft_history_cold_start"
+)
+# Keep the artifact identifier distinct from the public release name.
+MODEL_ARTIFACT = "forward_nail_rapm_v1_medvedovsky_padding"
+MODEL_NAME = "forward_nail_rapm_v1_medvedovsky_padding"
+MODEL_DISPLAY_NAME = "NAIL-RAPM v1.1"
 DISPLAY_SEASON = "2025-26"
+PRESEASON_PREVIEW_SEASON = "2026-27"
 RESPONSE_CURVE_POINTS = 33
 # The client renders the same 33-point polyline, so a denser server cache only
 # adds warmup cost without increasing the published curve resolution.
 WARM_RESPONSE_CURVE_POINTS = RESPONSE_CURVE_POINTS
 LINEUP_REFERENCE_SAMPLE_SIZE = 512
+
+
+def build_contextual_player_profiles(*args: Any, **kwargs: Any) -> pd.DataFrame:
+    """Lazily load the profile builder, avoiding web startup plotting imports."""
+
+    from nba_lineup_model.modeling.contextual_profiles import (
+        build_contextual_player_profiles as implementation,
+    )
+
+    return implementation(*args, **kwargs)
+
+
+def _published_profile_padding_contract(
+    metadata: dict[str, Any],
+) -> ProfilePaddingContract:
+    """Validate and return the exact profile-padding contract for this release."""
+
+    from nba_lineup_model.modeling.contextual_profiles import (
+        MEDVEDOVSKY_2020_PROFILE_PADDING,
+    )
+
+    actual = metadata.get("profile_padding_contract")
+    expected = MEDVEDOVSKY_2020_PROFILE_PADDING.metadata()
+    if not isinstance(actual, dict) or any(
+        actual.get(key) != value for key, value in expected.items()
+    ):
+        raise LineupEvaluationError(
+            f"The selected {MODEL_DISPLAY_NAME} artifact does not contain the "
+            "published statistic-specific profile-padding coefficients"
+        )
+    return MEDVEDOVSKY_2020_PROFILE_PADDING
+
+
+def prepare_player_exposure_cohort(*args: Any, **kwargs: Any) -> pd.DataFrame:
+    """Lazily load the cohort builder when an uncached historical state is needed."""
+
+    from nba_lineup_model.modeling.replacement_level import (
+        prepare_player_exposure_cohort as implementation,
+    )
+
+    return implementation(*args, **kwargs)
 
 
 def _previous_season(season: str) -> str:
@@ -76,7 +125,7 @@ _FEATURE_LABELS = {
     "home_minus_away_rebounding_usage_interaction": "Rebounding-by-usage",
 }
 
-# These NAIL-RAPM v1.0 coordinates are exact sums of player-profile values. A linear
+# These NAIL-RAPM coordinates are exact sums of player-profile values. A linear
 # Ridge coefficient on each coordinate can therefore be compiled into the
 # individual player rating without changing any matchup prediction.
 _LINEAR_X3_ADDITIVE_FEATURE_TO_PROFILE = {
@@ -132,6 +181,8 @@ class LineupEvaluator:
     players: pd.DataFrame
     context_model: MatchupContextualModel
     response_cache: dict[int, tuple[np.ndarray, np.ndarray]]
+    context_alpha: float | None = None
+    profile_padding_contract: ProfilePaddingContract | None = None
     lineup_rankings_root: Path | None = None
     player_rating_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     player_league_leader_histories: dict[int, list[dict[str, Any]]] = field(
@@ -141,6 +192,7 @@ class LineupEvaluator:
         default_factory=dict
     )
     historical_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
+    preseason_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
     observed_lineups: pd.DataFrame = field(default_factory=pd.DataFrame)
     historical_coefficients: pd.DataFrame = field(default_factory=pd.DataFrame)
     seasonal_ratings: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -167,18 +219,19 @@ class LineupEvaluator:
         latest_path = root / "latest.json"
         if not latest_path.is_file():
             raise FileNotFoundError(
-                f"No published NAIL-RAPM v1.0 artifact for {season}: {latest_path}"
+                f"No published {MODEL_DISPLAY_NAME} artifact for {season}: {latest_path}"
             )
         run_id = str(json.loads(latest_path.read_text())["run_id"])
         run_dir = root / run_id
         metadata = json.loads((run_dir / "metadata.json").read_text())
         if metadata.get("model") != MODEL_NAME:
             raise LineupEvaluationError(
-                "The selected artifact is not the published NAIL-RAPM v1.0 model"
+                f"The selected artifact is not the published {MODEL_DISPLAY_NAME} model"
             )
         if str(metadata.get("target_season")) != season:
             raise LineupEvaluationError("The selected artifact has an unexpected target season")
 
+        profile_padding_contract = _published_profile_padding_contract(metadata)
         historical_coefficients = pd.read_parquet(
             run_dir / "historical_player_coefficients.parquet"
         )
@@ -194,7 +247,9 @@ class LineupEvaluator:
         models = joblib.load(run_dir / "season_context_models.joblib")
         context_model = models.get(season)
         if context_model is None:
-            raise LineupEvaluationError("The artifact has no completed NAIL-RAPM v1.0 function")
+            raise LineupEvaluationError(
+                f"The artifact has no completed {MODEL_DISPLAY_NAME} function"
+            )
         if not isinstance(context_model, MatchupContextualModel):
             raise LineupEvaluationError("The artifact has an incompatible contextual model")
         published_ratings_path = published_player_ratings_path(MODEL_ARTIFACT, run_id)
@@ -226,6 +281,22 @@ class LineupEvaluator:
             panel_path=Path(panel_path),
             context_exposure=context_exposure,
             rookie_seasons=rookie_seasons,
+        )
+        preseason_path = preseason_rankings_path(
+            MODEL_ARTIFACT, run_id, PRESEASON_PREVIEW_SEASON
+        )
+        preseason_rankings = (
+            pd.read_parquet(preseason_path)
+            if preseason_path.is_file()
+            else _preseason_ranking_catalog(
+                historical_rankings,
+                roster_path=team_roster_path(PRESEASON_PREVIEW_SEASON),
+                draft_rankings_path=forward_draft_cold_start_rankings_path(
+                    PRESEASON_PREVIEW_SEASON
+                ),
+                completed_season=season,
+                preview_season=PRESEASON_PREVIEW_SEASON,
+            )
         )
         player_rating_histories = _player_rating_histories(
             seasonal_ratings,
@@ -306,11 +377,14 @@ class LineupEvaluator:
             players=players,
             context_model=context_model,
             response_cache=response_cache,
+            context_alpha=float(metadata["context_alpha"]),
+            profile_padding_contract=profile_padding_contract,
             lineup_rankings_root=DEFAULT_LINEUP_RANKINGS_CACHE_DIR / MODEL_ARTIFACT / run_id,
             player_rating_histories=player_rating_histories,
             player_league_leader_histories=player_league_leader_histories,
             player_team_splits=player_team_splits,
             historical_rankings=historical_rankings,
+            preseason_rankings=preseason_rankings,
             observed_lineups=observed_lineups,
             historical_coefficients=historical_coefficients,
             seasonal_ratings=seasonal_ratings,
@@ -366,22 +440,73 @@ class LineupEvaluator:
     def player(self, player_id: int) -> dict[str, Any]:
         """Return a career profile for a player present in any completed fit."""
 
+        preseason_row = (
+            self.preseason_rankings.loc[
+                self.preseason_rankings["player_id"].eq(player_id)
+            ]
+            if "player_id" in self.preseason_rankings
+            else pd.DataFrame()
+        )
         row = self.players.loc[self.players["player_id"].eq(player_id)]
         if not row.empty:
             player = _records(row)[0]
+            if not preseason_row.empty:
+                preview = _records(preseason_row)[0]
+                for column in (
+                    "team",
+                    "position",
+                    "draft_year",
+                    "draft_round",
+                    "draft_number",
+                    "is_undrafted",
+                    "draft_class_year",
+                    "age",
+                    "rapm",
+                    "prior_rating",
+                    "season_update",
+                    "additive_profile_adjustment",
+                    "rookie_season",
+                    "profile_source",
+                ):
+                    player[column] = preview[column]
+                player["rating_season"] = PRESEASON_PREVIEW_SEASON
             player.setdefault("draft_class_year", None)
-            player["rating_season"] = self.season
+            player.setdefault("rating_season", self.season)
             player["league_leader_history"] = self.player_league_leader_histories.get(
                 player_id, player.get("league_leader_history", [])
             )
             return player
 
         history = self.player_rating_histories.get(player_id, [])
-        historical_rows = self.historical_rankings.loc[
-            self.historical_rankings["player_id"].eq(player_id)
-        ]
+        historical_rows = (
+            self.historical_rankings.loc[
+                self.historical_rankings["player_id"].eq(player_id)
+            ]
+            if "player_id" in self.historical_rankings
+            else pd.DataFrame()
+        )
         if historical_rows.empty:
-            raise LineupEvaluationError(f"Player {player_id} is not available in published fits")
+            if preseason_row.empty:
+                raise LineupEvaluationError(
+                    f"Player {player_id} is not available in published fits"
+                )
+            preview = _records(preseason_row)[0]
+            return {
+                **preview,
+                "rating_season": PRESEASON_PREVIEW_SEASON,
+                "profile_imputed": None,
+                "profile_replacement_weight": None,
+                "three_pa_per_100": None,
+                "three_pm_per_100": None,
+                "assists_per_100": None,
+                "turnovers_per_100": None,
+                "usage_per_100": None,
+                "steals_per_100": None,
+                "blocks_per_100": None,
+                "offensive_rebound_pct": None,
+                "rating_history": [],
+                "league_leader_history": [],
+            }
         latest = historical_rows.sort_values("season", ascending=False, kind="stable").iloc[0]
         latest_history = history[-1] if history else {}
         return {
@@ -418,15 +543,27 @@ class LineupEvaluator:
     def available_ranking_seasons(self) -> list[str]:
         """Return completed-fit ranking seasons, newest first."""
 
-        if self.historical_rankings.empty:
-            return [self.season]
-        return sorted(self.historical_rankings["season"].astype(str).unique(), reverse=True)
+        seasons = set()
+        if not self.historical_rankings.empty:
+            seasons.update(self.historical_rankings["season"].astype(str).unique())
+        else:
+            seasons.add(self.season)
+        if not self.preseason_rankings.empty:
+            seasons.update(self.preseason_rankings["season"].astype(str).unique())
+        return sorted(seasons, reverse=True)
 
     def rankings(self, season: str | None = None) -> list[dict[str, Any]]:
         """Return one selected season's completed-fit coefficients in rank order."""
 
         selected_season = season or self.season
-        if self.historical_rankings.empty:
+        if (
+            not self.preseason_rankings.empty
+            and self.preseason_rankings["season"].eq(selected_season).any()
+        ):
+            rows = self.preseason_rankings.loc[
+                self.preseason_rankings["season"].eq(selected_season)
+            ]
+        elif self.historical_rankings.empty:
             if selected_season != self.season:
                 raise LineupEvaluationError(
                     f"Completed-fit rankings are unavailable for {selected_season}"
@@ -788,7 +925,7 @@ class LineupEvaluator:
         opponent_features: pd.DataFrame,
         features: pd.DataFrame,
     ) -> dict[str, Any]:
-        """Score NAIL-RAPM v1.0 with additive profile terms compiled into players."""
+        """Score NAIL-RAPM with additive profile terms compiled into players."""
 
         # Player ratings are fixed at their selected source-season NAIL fit.
         # Evaluation Era is reserved for the non-additive lineup surface.
@@ -837,7 +974,7 @@ class LineupEvaluator:
             atol=1e-8,
         ):
             raise LineupEvaluationError(
-                "NAIL-RAPM v1.0 non-additive side scores failed reconstruction"
+                "NAIL-RAPM non-additive side scores failed reconstruction"
             )
         shape_rows = _feature_rows(
             features,
@@ -935,6 +1072,11 @@ class LineupEvaluator:
                 target_season=season,
                 target_player_ids=expected_player_ids,
                 exposure_cohort=exposure_cohort,
+                **(
+                    {"padding_contract": self.profile_padding_contract}
+                    if self.profile_padding_contract is not None
+                    else {}
+                ),
             )
         display_coefficients = _compiled_linear_x3_coefficients(
             coefficients,
@@ -1229,6 +1371,7 @@ def build_published_player_ratings(
     *,
     panel: pd.DataFrame,
     models: dict[str, MatchupContextualModel],
+    padding_contract: ProfilePaddingContract | None = None,
 ) -> pd.DataFrame:
     """Compile additive NAIL credit into a consistent completed-fit rating history."""
 
@@ -1248,6 +1391,11 @@ def build_published_player_ratings(
             target_season=season,
             target_player_ids=player_ids,
             exposure_cohort=exposure_cohort,
+            **(
+                {"padding_contract": padding_contract}
+                if padding_contract is not None
+                else {}
+            ),
         )
         base = season_ratings.loc[:, ["player_id", "rapm"]].copy()
         uncentered = _compiled_linear_x3_coefficients(base, profiles, context_model)
@@ -1275,10 +1423,30 @@ def build_published_player_ratings(
             output["player_id"].map(compiled_by_player).astype(float) - output["rapm"].astype(float)
         )
         output["rapm"] = output["player_id"].map(compiled_by_player).astype(float)
-        compiled_seasons.append(output)
+        compiled_seasons.append(_fold_imputed_profile_into_prior(output, profiles))
     if not compiled_seasons:
         raise LineupEvaluationError("No completed NAIL-RAPM seasonal ratings were compiled")
     return pd.concat(compiled_seasons, ignore_index=True)
+
+
+def _fold_imputed_profile_into_prior(
+    ratings: pd.DataFrame, profiles: pd.DataFrame
+) -> pd.DataFrame:
+    """Present imputed cold-start profiles as part of the player prior."""
+
+    output = ratings.copy()
+    imputed_ids = set(
+        profiles.loc[
+            profiles["profile_imputed"].astype(bool), "player_id"
+        ].astype(int)
+    )
+    mask = output["player_id"].astype(int).isin(imputed_ids)
+    output.loc[mask, "prior_rapm"] = (
+        output.loc[mask, "prior_rapm"].astype(float)
+        + output.loc[mask, "additive_profile_adjustment"].astype(float)
+    )
+    output.loc[mask, "additive_profile_adjustment"] = np.nan
+    return output
 
 
 def _historical_ranking_catalog(
@@ -1385,6 +1553,168 @@ def _historical_ranking_catalog(
             "games",
         ],
     ]
+
+
+def _preseason_ranking_catalog(
+    completed_rankings: pd.DataFrame,
+    *,
+    roster_path: Path,
+    draft_rankings_path: Path,
+    completed_season: str,
+    preview_season: str,
+) -> pd.DataFrame:
+    """Combine a roster snapshot with published returner and cold-start values."""
+
+    columns = [
+        "season",
+        "player_id",
+        "player_name",
+        "team",
+        "position",
+        "draft_year",
+        "draft_round",
+        "draft_number",
+        "is_undrafted",
+        "draft_class_year",
+        "rapm",
+        "prior_rating",
+        "season_update",
+        "additive_profile_adjustment",
+        "observed_context_exposure",
+        "possessions",
+        "games",
+        "age",
+        "rookie_season",
+        "profile_source",
+    ]
+    if not roster_path.is_file():
+        return pd.DataFrame(columns=columns)
+
+    roster = pd.read_parquet(roster_path).copy()
+    required_roster_columns = {
+        "player_id",
+        "player_name",
+        "team_abbreviation",
+        "listed_position",
+        "age",
+        "experience",
+    }
+    missing = required_roster_columns - set(roster.columns)
+    if missing:
+        raise LineupEvaluationError(
+            "Preseason roster is missing required columns: " + ", ".join(sorted(missing))
+        )
+    roster = roster.sort_values(["player_id", "team_abbreviation"], kind="stable").drop_duplicates(
+        "player_id", keep="first"
+    )
+
+    completed = completed_rankings.loc[
+        completed_rankings["season"].eq(completed_season)
+    ].copy()
+    completed = completed.sort_values("rapm", ascending=False, kind="stable").drop_duplicates(
+        "player_id", keep="first"
+    )
+    returners = completed.set_index("player_id") if not completed.empty else pd.DataFrame()
+
+    draft_rankings = pd.DataFrame()
+    if draft_rankings_path.is_file():
+        draft_rankings = pd.read_parquet(draft_rankings_path).copy()
+        required_draft_columns = {"player_id", "draft_number", "cold_start_rapm_prior"}
+        missing = required_draft_columns - set(draft_rankings.columns)
+        if missing:
+            raise LineupEvaluationError(
+                "Forward draft cold-start ranking is missing required columns: "
+                + ", ".join(sorted(missing))
+            )
+        draft_rankings["player_id"] = pd.to_numeric(
+            draft_rankings["player_id"], errors="coerce"
+        )
+        draft_rankings = draft_rankings.loc[draft_rankings["player_id"].notna()].copy()
+        draft_rankings["player_id"] = draft_rankings["player_id"].astype(int)
+        draft_rankings = draft_rankings.drop_duplicates("player_id", keep="first")
+        draft_rankings = draft_rankings.set_index("player_id")
+    replacement_rating = (
+        float(draft_rankings["replacement_rapm"].iloc[0])
+        if not draft_rankings.empty and "replacement_rapm" in draft_rankings
+        else np.nan
+    )
+
+    records: list[dict[str, Any]] = []
+    for roster_row in roster.itertuples(index=False):
+        player_id = int(roster_row.player_id)
+        returning = returners.loc[player_id] if player_id in returners.index else None
+        drafted = draft_rankings.loc[player_id] if player_id in draft_rankings.index else None
+        experience = pd.to_numeric(pd.Series([roster_row.experience]), errors="coerce").iloc[0]
+        is_new = pd.isna(experience) or float(experience) == 0.0
+        is_undrafted = (
+            bool(returning["is_undrafted"])
+            if returning is not None and pd.notna(returning["is_undrafted"])
+            else drafted is None
+        )
+        draft_year = (
+            _optional_int(returning["draft_year"])
+            if returning is not None
+            else int(preview_season[:4]) if drafted is not None else None
+        )
+        draft_round = (
+            _optional_int(returning["draft_round"])
+            if returning is not None
+            else _optional_int(drafted.get("draft_round")) if drafted is not None else None
+        )
+        draft_number = (
+            _optional_int(returning["draft_number"])
+            if returning is not None
+            else _optional_int(drafted.get("draft_number")) if drafted is not None else None
+        )
+        rookie_season = (
+            str(returning["rookie_season"])
+            if returning is not None and pd.notna(returning.get("rookie_season"))
+            else preview_season if is_new else None
+        )
+        if returning is not None:
+            rating = float(returning["rapm"])
+            source = "carried_forward_completed_fit"
+        elif drafted is not None:
+            rating = float(drafted["cold_start_rapm_prior"])
+            source = "draft_cold_start_prior"
+        else:
+            rating = replacement_rating
+            source = "replacement_cold_start_prior"
+        draft_class_year = (
+            draft_year
+            if draft_year is not None
+            else int(preview_season[:4])
+            if is_new
+            else None
+        )
+        records.append(
+            {
+                "season": preview_season,
+                "player_id": player_id,
+                "player_name": str(roster_row.player_name),
+                "team": str(roster_row.team_abbreviation),
+                "position": str(roster_row.listed_position),
+                "draft_year": draft_year,
+                "draft_round": draft_round,
+                "draft_number": draft_number,
+                "is_undrafted": is_undrafted,
+                "draft_class_year": draft_class_year,
+                "rapm": rating,
+                "prior_rating": np.nan,
+                "season_update": np.nan,
+                "additive_profile_adjustment": np.nan,
+                "observed_context_exposure": np.nan,
+                "possessions": 0.0,
+                "games": 0,
+                "age": _optional_float(roster_row.age),
+                "rookie_season": rookie_season,
+                "profile_source": source,
+            }
+        )
+    preview = pd.DataFrame(records, columns=columns)
+    _normalize_draft_metadata(preview)
+    _assign_draft_class_year(preview)
+    return preview
 
 
 def _player_rating_histories(
@@ -1824,7 +2154,7 @@ def _compiled_linear_x3_coefficients(
     missing = required - set(coefficients.columns) - set(profiles.columns)
     if missing:
         raise LineupEvaluationError(
-            "NAIL-RAPM v1.0 lacks profile columns: " + ", ".join(sorted(missing))
+            "NAIL-RAPM lacks profile columns: " + ", ".join(sorted(missing))
         )
     scale = context_model.pipeline.named_steps["scale"]
     ridge = context_model.pipeline.named_steps["ridge"]
@@ -2162,6 +2492,34 @@ def published_player_ratings_path(model_artifact: str, run_id: str) -> Path:
     return DEFAULT_LINEUP_RANKINGS_CACHE_DIR / model_artifact / run_id / "player_ratings.parquet"
 
 
+def preseason_rankings_path(model_artifact: str, run_id: str, season: str) -> Path:
+    """Return the immutable cached preseason ranking catalog for one model run."""
+
+    return (
+        DEFAULT_PRESEASON_RANKINGS_CACHE_DIR
+        / model_artifact
+        / run_id
+        / f"{season}.parquet"
+    )
+
+
+def team_roster_path(season: str) -> Path:
+    """Return the normalized active-roster snapshot for one preseason."""
+
+    return DEFAULT_TEAM_ROSTERS_DIR / season / "part-00000.parquet"
+
+
+def forward_draft_cold_start_rankings_path(season: str) -> Path:
+    """Return the latest forward draft-cold-start ranking artifact, when published."""
+
+    root = DEFAULT_FORWARD_DRAFT_COLD_START_DIR / season
+    latest = root / "latest.json"
+    if not latest.is_file():
+        return root / "drafted_rookie_rankings.parquet"
+    run_id = str(json.loads(latest.read_text()).get("run_id", ""))
+    return root / run_id / "drafted_rookie_rankings.parquet"
+
+
 def build_observed_lineup_rankings(
     *,
     season: str,
@@ -2431,6 +2789,7 @@ def warm_player_context_exposure(
     ratings: pd.DataFrame,
     *,
     panel_path: Path,
+    padding_contract: ProfilePaddingContract | None = None,
 ) -> pd.DataFrame:
     """Aggregate each player's observed lineup-shape context over regular stints."""
 
@@ -2454,6 +2813,11 @@ def warm_player_context_exposure(
             target_season=season,
             target_player_ids=participants,
             exposure_cohort=exposure_cohort,
+            **(
+                {"padding_contract": padding_contract}
+                if padding_contract is not None
+                else {}
+            ),
         )
         additive_ids = {
             f"home_minus_away_{column}" for column in LINEAR_X3_ADDITIVE_FEATURES
@@ -2641,6 +3005,10 @@ def _assign_draft_class_year(frame: pd.DataFrame) -> None:
 
 def _optional_int(value: object) -> int | None:
     return int(value) if pd.notna(value) else None
+
+
+def _optional_float(value: object) -> float | None:
+    return float(value) if pd.notna(value) else None
 
 
 def _optional_bool(value: object) -> bool | None:

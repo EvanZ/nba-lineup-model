@@ -14,6 +14,7 @@ from nba_lineup_model.web_api.inference import (
     DEFAULT_ARTIFACTS_DIR,
     DISPLAY_SEASON,
     MODEL_ARTIFACT,
+    _published_profile_padding_contract,
     _warm_response_cache,
     player_context_exposure_path,
     response_cache_path,
@@ -28,6 +29,8 @@ def main() -> None:
     args = parser.parse_args()
     root = DEFAULT_ARTIFACTS_DIR / MODEL_ARTIFACT / DISPLAY_SEASON
     run_id = str(json.loads((root / "latest.json").read_text())["run_id"])
+    metadata = json.loads((root / run_id / "metadata.json").read_text())
+    padding_contract = _published_profile_padding_contract(metadata)
     contexts = joblib.load(root / run_id / "season_context_models.joblib")
     seasons = sorted(contexts) if args.all_seasons else [args.season]
     for season in seasons:
@@ -53,6 +56,7 @@ def main() -> None:
             contexts,
             ratings,
             panel_path=Path("data/analytical/player_season_panel/player_seasons.parquet"),
+            padding_contract=padding_contract,
         ).to_parquet(context_output, index=False)
         print(f"Materialized player context exposure: {context_output}")
 

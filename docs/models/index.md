@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-13"
+last_updated: "2026-08-18"
 ---
 
 # Models
@@ -22,7 +22,7 @@ without a result under the selected contract remain visible in the unranked
 lane to preserve the full methodological lineage. The older frozen-2025-26 and
 in-season selectors remain available for their respective historical snapshots.
 
-<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260816-nail-rapm-v1">
+<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260819-nail-fixed-context-grid">
   <div class="model-tree__loading" role="status">Loading model evolution…</div>
 </div>
 
@@ -163,16 +163,26 @@ three frozen seasons.
 tests the smallest nonlinear extension of that contract: one squared side-total
 term per additive feature, with no spline basis.
 
-[NAIL-RAPM v1.0](hpm-x3-linear-ridge-without-uncertainty.md) is the canonical
+[NAIL-RAPM v1.0](nail-rapm-v1.md) is the canonical
 linear model: `imputed_count` and `replacement_weight` were retired because
 they are profile-quality diagnostics rather than basketball context. They remain
 only in the immutable historical artifact used for the decision.
+
+[NAIL-RAPM v1.1](nail-rapm-v11-profile-padding.md) keeps that architecture and
+replaces universal 300-possession profile shrinkage with statistic-specific
+stabilization constants. It is the current full-game and team-level leader on
+the three-season frozen leaderboard.
+
+[NAIL-RAPM Context Regularization](nail-context-regularization.md) replaces the
+inherited raw context `alpha=10000` with a season-size-invariant penalty chosen
+over 23 pre-frozen seasons. Its playoff replay improves slightly, but the
+regular-season frozen bootstrap rejects it, so v1.1 remains promoted.
 
 [Forward Compiled-Additive-Prior HPM x3](forward-compiled-additive-prior-hpm-x3.md)
 tests the resulting attribution contract recursively: learned additive player
 profile effects enter the next player prior, while the six true non-additive lineup
 effects remain in carried context. Its full transfer is a useful negative
-regular-season result, so NAIL-RAPM v1.0 remains the reference.
+regular-season result, so the NAIL v1 family remains the reference.
 
 [Additive Prior Plus Linear Non-Additive Context](additive-profile-linear-shape-context.md)
 is the controlled test of the attribution boundary: additive player profiles

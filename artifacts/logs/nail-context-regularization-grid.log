@@ -1,0 +1,13 @@
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+Preparing exposure cohort through 2022-23 for 27 seasonal fits
+Fitting portable-plus-matchup context state for 1996-97
+Fitting portable-plus-matchup context state for 1997-98
+  Fitting antisymmetric context model on 36,732 stints
+  Stored 10,343 reference units for 1997-98
+Fitting portable-plus-matchup context state for 1998-99
+  Fitting antisymmetric context model on 22,666 stints
+  Stored 7,274 reference units for 1998-99
+Fitting portable-plus-matchup context state for 1999-00

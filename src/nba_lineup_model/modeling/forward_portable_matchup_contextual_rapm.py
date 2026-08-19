@@ -115,6 +115,7 @@ def train_forward_portable_matchup_contextual_rapm(
     compiled_additive_prior: bool = False,
     include_historical_playoffs: bool = False,
     use_context: bool = True,
+    evaluate_target: bool = True,
     model_name: str = MODEL_NAME,
     run_prefix: str = RUN_PREFIX,
     player_prior_builder: Callable[..., tuple[pd.DataFrame, dict[str, object]]] | None = None,
@@ -122,6 +123,8 @@ def train_forward_portable_matchup_contextual_rapm(
     context_fit: Callable[..., MatchupContextualModel] = fit_matchup_contextual_model,
     context_metadata: Callable[[MatchupContextualModel], dict[str, object]] = model_metadata,
     context_feature_set: str = CONTEXT_FEATURE_SET_V1,
+    profile_builder: Callable[..., pd.DataFrame] | None = None,
+    profile_contract_metadata: dict[str, object] | None = None,
     profile_transformer: Callable[[pd.DataFrame, str], pd.DataFrame] | None = None,
     player_season_panel_path: Path | str = DEFAULT_PANEL_PATH,
     analytical_dir: Path | str = DEFAULT_ANALYTICAL_DIR,
@@ -157,7 +160,10 @@ def train_forward_portable_matchup_contextual_rapm(
             )
     panel = pd.read_parquet(player_season_panel_path)
     artifact_root = Path(artifacts_dir)
-    reference_root = _latest_run(artifact_root / "forward_exposure_gated_rapm" / target)
+    reference_root = _latest_reference_run(
+        artifact_root / "forward_exposure_gated_rapm",
+        target,
+    )
     reference_coefficients = pd.read_parquet(
         reference_root / "historical_player_coefficients.parquet"
     )
@@ -197,6 +203,7 @@ def train_forward_portable_matchup_contextual_rapm(
     target_priors: pd.DataFrame | None = None
     target_profiles: pd.DataFrame | None = None
     prior_builder = player_prior_builder or _exposure_gated_player_priors
+    resolved_profile_builder = profile_builder or build_contextual_player_profiles
 
     for season in seasons:
         print(f"Fitting portable-plus-matchup context state for {season}", flush=True)
@@ -246,7 +253,7 @@ def train_forward_portable_matchup_contextual_rapm(
         if compiled_additive_prior:
             profile_ids = profile_ids | set(priors["player_id"].astype(int))
         profiles = (
-            build_contextual_player_profiles(
+            resolved_profile_builder(
                 panel,
                 target_season=season,
                 target_player_ids=profile_ids,
@@ -435,28 +442,32 @@ def train_forward_portable_matchup_contextual_rapm(
         [result.player_estimates for result in results], ignore_index=True
     )
     state_priors = pd.concat(priors_by_season, ignore_index=True)
-    evaluation = _evaluate_target(
-        target,
-        model=forecast_model,  # type: ignore[arg-type]
-        profiles=target_profiles,
-        priors=state_priors,
-        coefficients=historical_coefficients,
-        analytical_dir=Path(analytical_dir),
-        curated_dir=Path(curated_dir),
-        evaluation_model=model_name,
-        context_predictor=(
-            _context_predictor_with_reattribution(
-                forecast_model,
-                context_reattributions.get(source),
-                context_reattribution_weight,
-            )
-            if forecast_model is not None and context_reattribution_weight
-            else forecast_model.predict_lineups
-            if forecast_model is not None and not compiled_additive_prior
-            else _context_predictor_with_compiled_additive_prior(forecast_model)
-            if forecast_model is not None and compiled_additive_prior
-            else _zero_context_predictor
-        ),
+    evaluation = (
+        _evaluate_target(
+            target,
+            model=forecast_model,  # type: ignore[arg-type]
+            profiles=target_profiles,
+            priors=state_priors,
+            coefficients=historical_coefficients,
+            analytical_dir=Path(analytical_dir),
+            curated_dir=Path(curated_dir),
+            evaluation_model=model_name,
+            context_predictor=(
+                _context_predictor_with_reattribution(
+                    forecast_model,
+                    context_reattributions.get(source),
+                    context_reattribution_weight,
+                )
+                if forecast_model is not None and context_reattribution_weight
+                else forecast_model.predict_lineups
+                if forecast_model is not None and not compiled_additive_prior
+                else _context_predictor_with_compiled_additive_prior(forecast_model)
+                if forecast_model is not None and compiled_additive_prior
+                else _zero_context_predictor
+            ),
+        )
+        if evaluate_target
+        else _empty_target_evaluation(target=target, source=source)
     )
     evaluation["source_state"] = {
         **evaluation["source_state"],  # type: ignore[arg-type]
@@ -473,10 +484,12 @@ def train_forward_portable_matchup_contextual_rapm(
             else "C_(t-1)(home, away) = 0"
         ),
         "reference_context_source_season": source if use_context else None,
+        "target_evaluation_performed": evaluate_target,
         "context_feature_set": context_feature_set if use_context else None,
         "context_feature_columns": list(contextual_feature_columns(context_feature_set))
         if use_context
         else [],
+        "profile_padding_contract": profile_contract_metadata,
     }
     return _write_run(
         target=target,
@@ -524,6 +537,7 @@ def train_forward_portable_matchup_contextual_rapm(
             else pd.DataFrame()
         ),
         training_metadata=pd.DataFrame(training_metadata),
+        profile_contract_metadata=profile_contract_metadata,
         artifacts_dir=artifact_root,
     )
 
@@ -790,6 +804,49 @@ def _zero_context_predictor(
     return np.zeros(len(home_lineups), dtype=float)  # type: ignore[arg-type]
 
 
+def _empty_target_evaluation(*, target: str, source: str) -> dict[str, object]:
+    """Persist recursive state without requiring target-season scoring data."""
+
+    return {
+        "source_state": {
+            "target_season": target,
+            "source_season": source,
+            "target_evaluation_performed": False,
+        },
+        "cohort_metrics": pd.DataFrame(),
+        "possession_predictions": pd.DataFrame(),
+        "game_predictions": pd.DataFrame(),
+        "regular_game_predictions": pd.DataFrame(),
+        "team_net_rating_predictions": pd.DataFrame(),
+        "team_net_rating_metrics": pd.DataFrame(),
+        "team_win_predictions": pd.DataFrame(),
+        "team_win_metrics": pd.DataFrame(),
+    }
+
+
+def _latest_reference_run(root: Path, target: str) -> Path:
+    """Use the nearest complete exposure-gated run that reaches ``target``."""
+
+    exact = root / target
+    try:
+        return _latest_run(exact)
+    except FileNotFoundError:
+        pass
+    if not root.is_dir():
+        raise ValueError(f"No exposure-gated reference artifact reaches {target}: {root}")
+    candidates = sorted(
+        (
+            path
+            for path in root.iterdir()
+            if path.is_dir() and path.name >= target and (path / "latest.json").is_file()
+        ),
+        key=lambda path: path.name,
+    )
+    if not candidates:
+        raise ValueError(f"No exposure-gated reference artifact reaches {target}: {root}")
+    return _latest_run(candidates[0])
+
+
 def _exposure_gated_player_priors(
     *,
     season: str,
@@ -926,6 +983,7 @@ def _write_run(
     box_score_residual_models: dict[str, object],
     box_score_residual_selection: pd.DataFrame,
     training_metadata: pd.DataFrame,
+    profile_contract_metadata: dict[str, object] | None,
     artifacts_dir: Path,
 ) -> ForwardPortableMatchupContextualRapmRun:
     now = datetime.now(UTC)
@@ -1024,6 +1082,7 @@ def _write_run(
             "context_enabled": context_enabled,
             "context_reattribution_weight": context_reattribution_weight,
             "compiled_additive_prior": compiled_additive_prior,
+            "profile_padding_contract": profile_contract_metadata,
             "contextual_offset_contract": (
                 "The prior-season linear additive profile term is added to player priors; "
                 "only the remaining lineup-shape context is carried forward"

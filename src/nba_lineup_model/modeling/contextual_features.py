@@ -31,6 +31,7 @@ CONTEXT_FEATURE_SET_X1_ORB_CLAIM_TOTAL = "x1_orb_claim_total"
 CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL = "x2_orb_per_100_total"
 CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT = "x3_v1_orb_claim_replacement"
 CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY = "x3_without_uncertainty"
+CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY = "nail_additive_only"
 CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY = "x4_orb_claim_blocks_only"
 CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION = "x5_orb_claim_interaction_creation"
 CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE = "linear_nonadditive_context"
@@ -111,6 +112,7 @@ def available_context_feature_sets() -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL,
         CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
         CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+        CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
         CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY,
         CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION,
         CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE,
@@ -383,6 +385,8 @@ def side_context_feature_columns(
             )
             if column not in {"imputed_count", "replacement_weight"}
         )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY:
+        return LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES
     if feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
         excluded = (
             V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
@@ -458,6 +462,7 @@ def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
     if feature_set in {
         CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
         CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+        CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
     }:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
     if feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
@@ -567,6 +572,9 @@ def _side_feature_row(
             for column, value in result.items()
             if column not in {"imputed_count", "replacement_weight"}
         }
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY:
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY)
+        result = {column: base[column] for column in LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES}
     elif feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
         excluded = (
             V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]

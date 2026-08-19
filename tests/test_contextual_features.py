@@ -6,6 +6,7 @@ import pandas as pd
 from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE,
     CONTEXT_FEATURE_SET_LINEAR_X3_ADDITIVE_QUADRATIC_SIDE,
+    CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
     CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING,
     CONTEXT_FEATURE_SET_V2_DEPTH_AWARE_SHOOTING,
     CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY,
@@ -53,6 +54,7 @@ def test_relative_context_features_equal_the_difference_of_side_features() -> No
             {
                 "player_id": player_id,
                 **_rates(player_id),
+                "offensive_rebound_pct": 0.1,
                 "profile_imputed": 0,
                 "profile_replacement_weight": 0.0,
             }
@@ -100,6 +102,38 @@ def test_x3_nonadditive_shape_contract_retains_all_six_lineup_features() -> None
         "shooter_passing_interaction",
     )
     assert features.loc[0, "top_two_assists"] == 9.0
+
+
+def test_nail_additive_only_contract_retains_only_player_additive_coordinates() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "offensive_rebound_pct": 0.1,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id in range(1, 6)
+        ]
+    )
+
+    features = lineup_side_context_features(
+        [[1, 2, 3, 4, 5]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
+    )
+
+    assert tuple(features.columns) == (
+        "three_pa_per_100",
+        "three_pm_per_100",
+        "assists_per_100",
+        "turnovers_per_100",
+        "usage_per_100",
+        "steals_per_100",
+        "blocks_per_100",
+        "offensive_rebound_claim_total",
+    )
 
 
 def test_x3_without_uncertainty_removes_only_profile_quality_terms() -> None:
