@@ -28,6 +28,8 @@ artifacts/reports/*
 !artifacts/reports/.gitkeep
 artifacts/mlflow/*
 !artifacts/mlflow/.gitkeep
+artifacts/web/preseason_rankings/
+artifacts/web/releases/
 
 *.parquet
 *.duckdb
