@@ -30,6 +30,7 @@ from nba_lineup_model.web_api.inference import (
     _player_rating_center,
     _published_profile_padding_contract,
     build_contextual_player_profiles,
+    compiled_linear_x3_additive_profile_breakdown,
     exposure_cohort_path,
     forward_draft_cold_start_rankings_path,
     preseason_rankings_path,
@@ -132,8 +133,36 @@ def materialize_preseason_rankings(
         uncentered,
         completed_exposure.rename(columns={"on_court_possessions": "possessions"}),
     )
+    profile_breakdown = compiled_linear_x3_additive_profile_breakdown(
+        profiles,
+        context_model,
+        completed_exposure.rename(columns={"on_court_possessions": "possessions"}),
+    )
+    breakdown_json = (
+        profile_breakdown.loc[
+            :, ["player_id", "feature", "player_value", "reference_value", "contribution"]
+        ]
+        .groupby("player_id", sort=False)
+        .apply(
+            lambda frame: json.dumps(
+                [
+                    {
+                        "feature": str(row.feature),
+                        "player_value": float(row.player_value),
+                        "reference_value": float(row.reference_value),
+                        "contribution": float(row.contribution),
+                    }
+                    for row in frame.itertuples(index=False)
+                ]
+            ),
+            include_groups=False,
+        )
+        .rename("additive_profile_breakdown_json")
+        .reset_index()
+    )
 
     output = roster.copy()
+    output = output.merge(breakdown_json, on="player_id", how="left", validate="one_to_one")
     # Preserve the published coordinate while folding an imputed profile into
     # a cold-start prior. A projected cohort profile is not an observed player
     # additive contribution and should not be displayed as one.
@@ -147,6 +176,7 @@ def materialize_preseason_rankings(
     )
     output.loc[cold_start, "prior_rating"] = output.loc[cold_start, "rapm"]
     output.loc[cold_start, "additive_profile_adjustment"] = np.nan
+    output.loc[cold_start, "additive_profile_breakdown_json"] = None
     output["season_update"] = np.nan
     output["observed_context_exposure"] = np.nan
     output["possessions"] = 0.0
@@ -170,7 +200,7 @@ def materialize_preseason_rankings(
         "draft_round", "draft_number", "is_undrafted", "draft_class_year", "rapm",
         "prior_rating", "season_update", "additive_profile_adjustment",
         "observed_context_exposure", "possessions", "games", "age", "rookie_season",
-        "profile_source", "forecast_source",
+        "profile_source", "forecast_source", "additive_profile_breakdown_json",
     ]
     output = output.loc[:, columns].sort_values(
         ["rapm", "player_name", "player_id"], ascending=[False, True, True], kind="stable"

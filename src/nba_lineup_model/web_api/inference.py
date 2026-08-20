@@ -191,6 +191,9 @@ class LineupEvaluator:
     player_team_splits: dict[tuple[str, int], list[dict[str, Any]]] = field(
         default_factory=dict
     )
+    player_latest_teams: dict[tuple[str, int], dict[str, Any]] = field(
+        default_factory=dict
+    )
     historical_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
     preseason_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
     observed_lineups: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -265,9 +268,19 @@ class LineupEvaluator:
             context_model,
         )
         team_splits_cache_path = player_team_splits_path(MODEL_ARTIFACT, run_id)
-        player_team_splits = (
-            _player_team_splits_by_season(pd.read_parquet(team_splits_cache_path))
+        team_splits_frame = (
+            pd.read_parquet(team_splits_cache_path)
             if team_splits_cache_path.is_file()
+            else pd.DataFrame()
+        )
+        player_team_splits = (
+            _player_team_splits_by_season(team_splits_frame)
+            if not team_splits_frame.empty
+            else {}
+        )
+        player_latest_teams = (
+            _player_latest_teams_by_season(team_splits_frame)
+            if not team_splits_frame.empty
             else {}
         )
         context_exposure_path = player_context_exposure_path(MODEL_ARTIFACT, run_id)
@@ -281,6 +294,7 @@ class LineupEvaluator:
             panel_path=Path(panel_path),
             context_exposure=context_exposure,
             rookie_seasons=rookie_seasons,
+            player_latest_teams=player_latest_teams,
         )
         preseason_path = preseason_rankings_path(
             MODEL_ARTIFACT, run_id, PRESEASON_PREVIEW_SEASON
@@ -303,6 +317,7 @@ class LineupEvaluator:
             panel_path=Path(panel_path),
             context_exposure=context_exposure,
             player_team_splits=player_team_splits,
+            player_latest_teams=player_latest_teams,
         )
         player_league_leader_histories = _player_league_leader_histories(
             seasonal_ratings,
@@ -310,7 +325,11 @@ class LineupEvaluator:
             active_through_years=_player_active_through_years(Path(panel_path)),
         )
         players = _player_catalog(
-            display_coefficients, profiles, panel_path=Path(panel_path), season=season
+            display_coefficients,
+            profiles,
+            panel_path=Path(panel_path),
+            season=season,
+            player_latest_teams=player_latest_teams,
         )
         display_coefficients = _compiled_linear_x3_coefficients(
             coefficients,
@@ -319,7 +338,11 @@ class LineupEvaluator:
             center=_player_rating_center(display_coefficients, players),
         )
         players = _player_catalog(
-            display_coefficients, profiles, panel_path=Path(panel_path), season=season
+            display_coefficients,
+            profiles,
+            panel_path=Path(panel_path),
+            season=season,
+            player_latest_teams=player_latest_teams,
         )
         players = _attach_observed_context_exposure(
             players,
@@ -383,6 +406,7 @@ class LineupEvaluator:
             player_rating_histories=player_rating_histories,
             player_league_leader_histories=player_league_leader_histories,
             player_team_splits=player_team_splits,
+            player_latest_teams=player_latest_teams,
             historical_rankings=historical_rankings,
             preseason_rankings=preseason_rankings,
             observed_lineups=observed_lineups,
@@ -465,6 +489,7 @@ class LineupEvaluator:
                     "prior_rating",
                     "season_update",
                     "additive_profile_adjustment",
+                    "additive_profile_breakdown",
                     "rookie_season",
                     "profile_source",
                 ):
@@ -1088,6 +1113,7 @@ class LineupEvaluator:
             profiles,
             panel_path=Path("data/analytical/player_season_panel/player_seasons.parquet"),
             season=season,
+            player_latest_teams=self.player_latest_teams,
         )
         display_coefficients = _compiled_linear_x3_coefficients(
             coefficients,
@@ -1100,6 +1126,7 @@ class LineupEvaluator:
             profiles,
             panel_path=Path("data/analytical/player_season_panel/player_seasons.parquet"),
             season=season,
+            player_latest_teams=self.player_latest_teams,
         )
         season_ratings = self.seasonal_ratings.loc[
             self.seasonal_ratings["season"].eq(season), ["player_id", "age"]
@@ -1241,6 +1268,7 @@ def _player_catalog(
     *,
     panel_path: Path,
     season: str,
+    player_latest_teams: dict[tuple[str, int], dict[str, Any]] | None = None,
 ) -> pd.DataFrame:
     panel = pd.read_parquet(panel_path)
     panel_columns = [
@@ -1285,6 +1313,12 @@ def _player_catalog(
     catalog["team"] = catalog.get(
         "primary_team_tricode", pd.Series(index=catalog.index)
     ).fillna("-")
+    latest_teams = player_latest_teams or {}
+    if latest_teams:
+        catalog["team"] = [
+            latest_teams.get((season, int(player_id)), {}).get("team", team)
+            for player_id, team in zip(catalog["player_id"], catalog["team"], strict=True)
+        ]
     catalog["position"] = catalog.get(
         "listed_position", pd.Series(index=catalog.index)
     ).fillna("-")
@@ -1455,6 +1489,7 @@ def _historical_ranking_catalog(
     panel_path: Path,
     context_exposure: pd.DataFrame | None = None,
     rookie_seasons: dict[int, str] | None = None,
+    player_latest_teams: dict[tuple[str, int], dict[str, Any]] | None = None,
 ) -> pd.DataFrame:
     """Attach season-specific display metadata to completed player ratings."""
 
@@ -1519,6 +1554,14 @@ def _historical_ranking_catalog(
     catalog["team"] = catalog.get(
         "primary_team_tricode", pd.Series(index=catalog.index, dtype="object")
     ).fillna("-")
+    latest_teams = player_latest_teams or {}
+    if latest_teams:
+        catalog["team"] = [
+            latest_teams.get((str(season), int(player_id)), {}).get("team", team)
+            for season, player_id, team in zip(
+                catalog["season"], catalog["player_id"], catalog["team"], strict=True
+            )
+        ]
     catalog["position"] = catalog.get(
         "listed_position", pd.Series(index=catalog.index, dtype="object")
     ).fillna("-")
@@ -1723,6 +1766,7 @@ def _player_rating_histories(
     panel_path: Path,
     context_exposure: pd.DataFrame | None = None,
     player_team_splits: dict[tuple[str, int], list[dict[str, Any]]] | None = None,
+    player_latest_teams: dict[tuple[str, int], dict[str, Any]] | None = None,
 ) -> dict[int, list[dict[str, Any]]]:
     """Package completed-fit seasonal ratings into compact browser sparklines."""
 
@@ -1843,6 +1887,7 @@ def _player_rating_histories(
         ["player_id", "season"], kind="stable"
     )
     team_splits = player_team_splits or {}
+    latest_teams = player_latest_teams or {}
     return {
         int(player_id): [
             {
@@ -1866,8 +1911,18 @@ def _player_rating_histories(
                     else float(row.observed_context_exposure)
                 ),
                 "age": None if pd.isna(row.age) else float(row.age),
-                "team_id": None if pd.isna(row.primary_team_id) else int(row.primary_team_id),
-                "team": "-" if pd.isna(row.primary_team_tricode) else str(row.primary_team_tricode),
+                "team_id": latest_teams.get(
+                    (str(row.season), int(row.player_id)), {}
+                ).get(
+                    "team_id",
+                    None if pd.isna(row.primary_team_id) else int(row.primary_team_id),
+                ),
+                "team": latest_teams.get(
+                    (str(row.season), int(row.player_id)), {}
+                ).get(
+                    "team",
+                    "-" if pd.isna(row.primary_team_tricode) else str(row.primary_team_tricode),
+                ),
                 "team_splits": team_splits.get(
                     (str(row.season), int(row.player_id)), []
                 ),
@@ -1961,7 +2016,7 @@ def build_player_team_splits(
     *,
     analytical_dir: Path | str = Path("data/analytical"),
 ) -> pd.DataFrame:
-    """Aggregate every rated player's regular-season on-court exposure by team."""
+    """Aggregate player-team exposure and preserve primary and latest-team identity."""
 
     required = {"season", "player_id"}
     missing = required - set(ratings.columns)
@@ -1983,6 +2038,7 @@ def build_player_team_splits(
                 :,
                 [
                     "game_id",
+                    "game_time_utc",
                     f"{side}_team_id",
                     f"{side}_team_tricode",
                     f"{side}_player_ids",
@@ -2002,12 +2058,26 @@ def build_player_team_splits(
             )
     if not frames:
         return pd.DataFrame(
-            columns=["season", "player_id", "team_id", "team", "possessions", "games"]
+            columns=[
+                "season",
+                "player_id",
+                "team_id",
+                "team",
+                "possessions",
+                "games",
+                "last_game_time_utc",
+                "is_primary_team",
+                "is_latest_team",
+            ]
         )
     rows = pd.concat(frames, ignore_index=True)
     splits = (
         rows.groupby(["season", "player_id", "team_id", "team"], as_index=False, sort=False)
-        .agg(possessions=("possessions", "sum"), games=("game_id", "nunique"))
+        .agg(
+            possessions=("possessions", "sum"),
+            games=("game_id", "nunique"),
+            last_game_time_utc=("game_time_utc", "max"),
+        )
         .sort_values(
             ["season", "player_id", "possessions", "team_id"],
             ascending=[True, True, False, True],
@@ -2015,6 +2085,24 @@ def build_player_team_splits(
         )
         .reset_index(drop=True)
     )
+    splits["is_primary_team"] = ~splits.duplicated(["season", "player_id"])
+    latest = (
+        splits.sort_values(
+            ["season", "player_id", "last_game_time_utc", "possessions", "team_id"],
+            ascending=[True, True, False, False, True],
+            kind="stable",
+        )
+        .drop_duplicates(["season", "player_id"], keep="first")
+        .loc[:, ["season", "player_id", "team_id"]]
+        .assign(is_latest_team=True)
+    )
+    splits = splits.merge(
+        latest,
+        on=["season", "player_id", "team_id"],
+        how="left",
+        validate="many_to_one",
+    )
+    splits["is_latest_team"] = splits["is_latest_team"].eq(True)
     splits["player_id"] = splits["player_id"].astype("int64")
     splits["team_id"] = splits["team_id"].astype("int64")
     splits["games"] = splits["games"].astype("int64")
@@ -2038,6 +2126,10 @@ def _player_team_splits_by_season(
         ascending=[True, True, False, True],
         kind="stable",
     )
+    if "is_primary_team" not in ordered:
+        ordered["is_primary_team"] = ~ordered.duplicated(["season", "player_id"])
+    if "is_latest_team" not in ordered:
+        ordered["is_latest_team"] = ordered["is_primary_team"]
     return {
         (str(season), int(player_id)): [
             {
@@ -2045,10 +2137,57 @@ def _player_team_splits_by_season(
                 "team": str(row.team),
                 "possessions": float(row.possessions),
                 "games": int(row.games),
+                "is_primary_team": bool(row.is_primary_team),
+                "is_latest_team": bool(row.is_latest_team),
             }
             for row in rows.itertuples(index=False)
         ]
         for (season, player_id), rows in ordered.groupby(["season", "player_id"], sort=False)
+    }
+
+
+def _player_latest_teams_by_season(
+    splits: pd.DataFrame,
+) -> dict[tuple[str, int], dict[str, Any]]:
+    """Return the team from each player's final observed game in a season."""
+
+    required = {"season", "player_id", "team_id", "team"}
+    missing = required - set(splits.columns)
+    if missing:
+        raise LineupEvaluationError(
+            "Player-team split artifact is missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+    if "is_latest_team" in splits:
+        latest = splits.loc[splits["is_latest_team"].astype(bool)].copy()
+    elif "last_game_time_utc" in splits:
+        latest = (
+            splits.sort_values(
+                ["season", "player_id", "last_game_time_utc", "possessions", "team_id"],
+                ascending=[True, True, False, False, True],
+                kind="stable",
+            )
+            .drop_duplicates(["season", "player_id"], keep="first")
+        )
+    else:
+        # Older caches only preserve exposure order. Treat their primary team as
+        # the fallback until the cache is rematerialized from dated stints.
+        latest = (
+            splits.sort_values(
+                ["season", "player_id", "possessions", "team_id"],
+                ascending=[True, True, False, True],
+                kind="stable",
+            )
+            .drop_duplicates(["season", "player_id"], keep="first")
+        )
+    if latest.duplicated(["season", "player_id"]).any():
+        raise LineupEvaluationError("Player-team splits identify multiple latest teams")
+    return {
+        (str(row.season), int(row.player_id)): {
+            "team_id": int(row.team_id),
+            "team": str(row.team),
+        }
+        for row in latest.itertuples(index=False)
     }
 
 
@@ -2177,6 +2316,83 @@ def _compiled_linear_x3_coefficients(
         output["rapm"] + output["compiled_profile_adjustment"].fillna(0.0) - center
     )
     return output.drop(columns="compiled_profile_adjustment")
+
+
+def compiled_linear_x3_additive_profile_breakdown(
+    profiles: pd.DataFrame,
+    context_model: MatchupContextualModel,
+    reference_weights: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return exact player-versus-reference additive-profile contributions.
+
+    The reference is the possession-weighted player profile in the applicable
+    forecast pool.  Keeping this calculation beside the compiled-rating logic
+    ensures that the web explanation uses the same raw Ridge coefficients as
+    the published rating.
+    """
+
+    if not _is_compiled_linear_x3(context_model):
+        return pd.DataFrame(
+            columns=[
+                "player_id",
+                "feature",
+                "profile_column",
+                "player_value",
+                "reference_value",
+                "coefficient",
+                "contribution",
+            ]
+        )
+
+    additive_feature_map = _linear_x3_additive_feature_map(context_model.feature_set)
+    required = {"player_id", *additive_feature_map.values()}
+    missing = required - set(profiles.columns)
+    if missing:
+        raise LineupEvaluationError(
+            "NAIL-RAPM lacks profile columns: " + ", ".join(sorted(missing))
+        )
+    if {"player_id", "possessions"} - set(reference_weights.columns):
+        raise LineupEvaluationError(
+            "Additive-profile reference requires player possession weights"
+        )
+
+    scale = context_model.pipeline.named_steps["scale"]
+    ridge = context_model.pipeline.named_steps["ridge"]
+    raw_coefficients = np.asarray(ridge.coef_, dtype=float) / np.asarray(
+        scale.scale_, dtype=float
+    )
+    side_columns = side_context_feature_columns(context_model.feature_set)
+    raw_by_feature = dict(zip(side_columns, raw_coefficients, strict=True))
+    values = profiles.loc[:, ["player_id", *additive_feature_map.values()]].copy()
+    weights = values.loc[:, ["player_id"]].merge(
+        reference_weights.loc[:, ["player_id", "possessions"]],
+        on="player_id",
+        how="left",
+        validate="one_to_one",
+    )["possessions"].fillna(0.0).clip(lower=0.0).to_numpy(dtype=float)
+
+    output: list[pd.DataFrame] = []
+    for feature, profile_column in additive_feature_map.items():
+        player_values = values[profile_column].to_numpy(dtype=float)
+        if float(weights.sum()) > 0.0:
+            reference_value = float(np.average(player_values, weights=weights))
+        else:
+            reference_value = float(np.mean(player_values))
+        coefficient = float(raw_by_feature[feature])
+        output.append(
+            pd.DataFrame(
+                {
+                    "player_id": values["player_id"].astype(int),
+                    "feature": feature,
+                    "profile_column": profile_column,
+                    "player_value": player_values,
+                    "reference_value": reference_value,
+                    "coefficient": coefficient,
+                    "contribution": coefficient * (player_values - reference_value),
+                }
+            )
+        )
+    return pd.concat(output, ignore_index=True)
 
 
 def _player_rating_center(coefficients: pd.DataFrame, players: pd.DataFrame) -> float:
@@ -2960,7 +3176,12 @@ def _curve_points(values: np.ndarray, contributions: np.ndarray) -> list[dict[st
 
 def _records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     clean = frame.replace({np.nan: None})
-    return [dict(row) for row in clean.to_dict(orient="records")]
+    records = [dict(row) for row in clean.to_dict(orient="records")]
+    for record in records:
+        serialized_breakdown = record.pop("additive_profile_breakdown_json", None)
+        if serialized_breakdown:
+            record["additive_profile_breakdown"] = json.loads(serialized_breakdown)
+    return records
 
 
 def _normalize_draft_metadata(frame: pd.DataFrame) -> None:

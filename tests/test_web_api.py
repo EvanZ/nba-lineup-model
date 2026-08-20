@@ -25,11 +25,13 @@ from nba_lineup_model.web_api.inference import (
     LineupEvaluator,
     SeasonLineupState,
     _historical_ranking_catalog,
+    _player_latest_teams_by_season,
     _player_league_leader_histories,
     _player_rating_histories,
     _player_team_splits_by_season,
     _preseason_ranking_catalog,
     _warm_response_cache,
+    build_player_team_splits,
 )
 
 
@@ -430,33 +432,85 @@ def test_player_rating_histories_include_seasonal_team_tricode(tmp_path) -> None
         }
     )
 
-    team_splits = _player_team_splits_by_season(
-        pd.DataFrame(
-            {
-                "season": ["2023-24", "2023-24", "2024-25"],
-                "player_id": [77, 77, 77],
-                "team_id": [1610612757, 1610612745, 1610612749],
-                "team": ["POR", "HOU", "MIL"],
-                "possessions": [900.0, 300.0, 1100.0],
-                "games": [45, 15, 55],
-            }
-        )
+    splits_frame = pd.DataFrame(
+        {
+            "season": ["2023-24", "2023-24", "2024-25"],
+            "player_id": [77, 77, 77],
+            "team_id": [1610612757, 1610612745, 1610612749],
+            "team": ["POR", "HOU", "MIL"],
+            "possessions": [900.0, 300.0, 1100.0],
+            "games": [45, 15, 55],
+            "last_game_time_utc": pd.to_datetime(
+                ["2024-01-01T00:00:00Z", "2024-04-01T00:00:00Z", "2025-04-01T00:00:00Z"]
+            ),
+            "is_primary_team": [True, False, True],
+            "is_latest_team": [False, True, True],
+        }
     )
+    team_splits = _player_team_splits_by_season(splits_frame)
+    latest_teams = _player_latest_teams_by_season(splits_frame)
     history = _player_rating_histories(
-        ratings, panel_path=panel_path, player_team_splits=team_splits
+        ratings,
+        panel_path=panel_path,
+        player_team_splits=team_splits,
+        player_latest_teams=latest_teams,
     )
 
-    assert [point["team"] for point in history[77]] == ["POR", "MIL"]
-    assert [point["team_id"] for point in history[77]] == [1610612757, 1610612749]
+    assert [point["team"] for point in history[77]] == ["HOU", "MIL"]
+    assert [point["team_id"] for point in history[77]] == [1610612745, 1610612749]
     assert [point["possessions"] for point in history[77]] == [1200.0, 1100.0]
     assert [point["games"] for point in history[77]] == [60, 55]
     assert [point["games_started"] for point in history[77]] == [42, 39]
     assert [point["nail_rank"] for point in history[77]] == [1, 1]
     assert [point["additive_profile_adjustment"] for point in history[77]] == [0.25, -0.5]
     assert history[77][0]["team_splits"] == [
-        {"team_id": 1610612757, "team": "POR", "possessions": 900.0, "games": 45},
-        {"team_id": 1610612745, "team": "HOU", "possessions": 300.0, "games": 15},
+        {
+            "team_id": 1610612757,
+            "team": "POR",
+            "possessions": 900.0,
+            "games": 45,
+            "is_primary_team": True,
+            "is_latest_team": False,
+        },
+        {
+            "team_id": 1610612745,
+            "team": "HOU",
+            "possessions": 300.0,
+            "games": 15,
+            "is_primary_team": False,
+            "is_latest_team": True,
+        },
     ]
+
+
+def test_player_team_splits_distinguish_primary_from_latest_team(monkeypatch) -> None:
+    stints = pd.DataFrame(
+        {
+            "season": ["2023-24", "2023-24"],
+            "game_id": ["early", "late"],
+            "game_time_utc": pd.to_datetime(
+                ["2024-01-01T00:00:00Z", "2024-04-01T00:00:00Z"]
+            ),
+            "home_team_id": [1, 3],
+            "home_team_tricode": ["AAA", "CCC"],
+            "home_player_ids": [[77, 2, 3, 4, 5], [77, 6, 7, 8, 9]],
+            "away_team_id": [2, 2],
+            "away_team_tricode": ["BBB", "BBB"],
+            "away_player_ids": [[10, 11, 12, 13, 14], [10, 11, 12, 13, 14]],
+            "possessions": [100.0, 10.0],
+        }
+    )
+    monkeypatch.setattr(web_inference, "read_rapm_stints", lambda *args, **kwargs: stints)
+
+    splits = build_player_team_splits(
+        pd.DataFrame({"season": ["2023-24"], "player_id": [77]})
+    )
+    player = splits.loc[splits["player_id"].eq(77)].set_index("team")
+
+    assert bool(player.loc["AAA", "is_primary_team"])
+    assert not bool(player.loc["AAA", "is_latest_team"])
+    assert not bool(player.loc["CCC", "is_primary_team"])
+    assert bool(player.loc["CCC", "is_latest_team"])
 
 
 def test_league_leader_history_retains_missed_player_seasons() -> None:
@@ -570,7 +624,13 @@ def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) 
         }
     )
 
-    catalog = _historical_ranking_catalog(ratings, panel_path=panel_path)
+    catalog = _historical_ranking_catalog(
+        ratings,
+        panel_path=panel_path,
+        player_latest_teams={
+            ("2023-24", 77): {"team_id": 1610612745, "team": "HOU"}
+        },
+    )
     evaluator = replace(
         _evaluator(),
         historical_rankings=catalog,
@@ -603,7 +663,7 @@ def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) 
             "season": "2023-24",
             "player_id": 77,
             "player_name": "Test Player",
-            "team": "POR",
+            "team": "HOU",
             "position": "G",
             "draft_year": 2013,
             "draft_round": 2,
@@ -743,6 +803,26 @@ def test_imputed_profile_adjustment_is_folded_into_historical_prior() -> None:
     assert pd.isna(folded.loc[0, "additive_profile_adjustment"])
     assert folded.loc[1, "prior_rapm"] == 0.5
     assert folded.loc[1, "additive_profile_adjustment"] == 0.2
+
+
+def test_additive_profile_breakdown_uses_weighted_forecast_reference() -> None:
+    evaluator = _evaluator(compiled_linear=True)
+    weights = pd.DataFrame(
+        {"player_id": evaluator.profiles["player_id"], "possessions": [1.0, *[0.0] * 9]}
+    )
+
+    breakdown = web_inference.compiled_linear_x3_additive_profile_breakdown(
+        evaluator.profiles,
+        evaluator.context_model,
+        weights,
+    )
+
+    player_one = breakdown.loc[breakdown["player_id"].eq(1)]
+    assert len(player_one) == 8
+    assert (player_one["reference_value"] == player_one["player_value"]).all()
+    assert np.isclose(player_one["contribution"].sum(), 0.0)
+    player_two = breakdown.loc[breakdown["player_id"].eq(2)]
+    assert not np.isclose(player_two["contribution"].sum(), 0.0)
 
 
 def test_headshot_endpoint_uses_cached_same_origin_image(monkeypatch) -> None:

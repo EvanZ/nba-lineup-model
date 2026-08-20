@@ -20,6 +20,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .header-navigation a { color: #69716b; font-size: 12px; font-weight: 700; text-decoration: none; }
 .header-navigation a:hover, .header-navigation a.active { color: #17201c; }
 .header-navigation a.active { text-decoration: underline; text-decoration-color: #e8502f; text-decoration-thickness: 2px; text-underline-offset: 6px; }
+.header-links { display: flex; align-items: center; gap: 16px; }
 .header-link { display: inline-flex; align-items: center; gap: 5px; color: #4f5851; font-size: 12px; font-weight: 700; text-decoration: none; }
 .header-link:hover { color: #245a47; text-decoration: underline; text-underline-offset: 3px; }
 .season-chip { padding: 5px 8px; background: #dce8db; color: #245a47; font-size: 12px; font-weight: 700; }
@@ -109,6 +110,10 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-profile-heading .section-kicker { margin: 0; }
 .player-stat-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; border-top: 1px solid #d9d6ce; }
 .player-additive-profile-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.additive-profile-reference-note { margin-top: 18px; }
+.player-additive-profile-grid dd { display: flex; align-items: baseline; gap: 8px; }
+.player-additive-profile-grid .additive-profile-effect { color: #68716a; font-size: 12px; }
+.player-additive-profile-grid .additive-profile-effect.negative { color: #b33b25; }
 .player-forecast-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 760px; }
 .player-forecast-total { padding-left: 16px !important; border-left: 2px solid #17201c; }
 .player-stat-grid div { padding: 15px 14px 12px 0; border-bottom: 1px solid #e2dfd7; }
@@ -155,7 +160,8 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-history-table .nail-history-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 900; }
 .player-history-table .nail-rank-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
 .player-team-splits { display: grid; gap: 3px; min-width: 152px; color: #68716a; font-size: 11px; line-height: 1.25; white-space: nowrap; }
-.player-team-splits .primary { color: #17201c; }
+.player-team-splits .latest { color: #17201c; }
+.player-team-splits em { margin-left: 4px; color: #26715b; font-size: 9px; font-style: normal; font-weight: 800; text-transform: uppercase; }
 .player-history-dnp td { color: #8e968f; background: #faf8f3; }
 .dnp-label { color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 700; }
 .profile-loading, .profile-error { min-height: 300px; display: flex; align-items: center; justify-content: center; gap: 9px; }
@@ -163,17 +169,18 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .rankings-hero > p:last-child { max-width: 690px; margin: 23px 0 0; color: #4f5851; font-family: Georgia, "Times New Roman", serif; font-size: 21px; line-height: 1.35; }
 .rankings-table-section { border-top: 2px solid #17201c; }
 .rankings-table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 0; border-bottom: 1px solid #d9d6ce; }
-.rankings-table-toolbar p { margin: 0; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
-.rankings-table-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-.rankings-season, .rankings-minimum-possessions, .rankings-draft-class { display: flex; align-items: center; gap: 7px; color: #69716b; }
-.rankings-season span, .rankings-minimum-possessions span, .rankings-draft-class span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; text-transform: uppercase; }
-.rankings-season select, .rankings-minimum-possessions input, .rankings-draft-class select { height: 38px; border: 1px solid #a6aaa4; border-radius: 0; padding: 0 28px 0 10px; background: #fffefa; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
+.rankings-table-toolbar p { margin: 0; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.rankings-table-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.rankings-season, .rankings-minimum-possessions, .rankings-team, .rankings-draft-class { display: flex; align-items: center; gap: 7px; color: #69716b; }
+.rankings-season span, .rankings-minimum-possessions span, .rankings-team span, .rankings-draft-class span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.rankings-season select, .rankings-minimum-possessions input, .rankings-team select, .rankings-draft-class select { height: 38px; border: 1px solid #a6aaa4; border-radius: 0; padding: 0 28px 0 10px; background: #fffefa; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
 .rankings-minimum-possessions input { width: 92px; padding-right: 8px; }
-.rankings-season select:focus, .rankings-minimum-possessions input:focus, .rankings-draft-class select:focus { outline: 2px solid #bde5d0; outline-offset: 2px; }
+.rankings-season select:focus, .rankings-minimum-possessions input:focus, .rankings-team select:focus, .rankings-draft-class select:focus { outline: 2px solid #bde5d0; outline-offset: 2px; }
 .rankings-search { width: min(300px, 100%); height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #a6aaa4; background: #fffefa; color: #68716a; }
 .rankings-search:focus-within { outline: 2px solid #bde5d0; outline-offset: 2px; }
 .rankings-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #17201c; font-size: 13px; }
 .rankings-table-wrap { overflow-x: auto; }
+.mobile-card-list, .mobile-sort-controls { display: none; }
 .rankings-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
 .rankings-table th, .rankings-table td { padding: 10px 8px; border-bottom: 1px solid #e2dfd7; text-align: left; }
 .rankings-table thead th { position: relative; z-index: 1; padding-top: 13px; padding-bottom: 12px; color: #68716a; font-size: 10px; text-transform: uppercase; }
@@ -394,17 +401,60 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .curve-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+@media (max-width: 720px) {
+  .rankings-table-toolbar { align-items: stretch; flex-direction: column; }
+  .rankings-table-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rankings-search, .mobile-sort-controls { grid-column: 1 / -1; width: 100%; }
+  .rankings-table-wrap { display: none; }
+  .mobile-sort-controls { display: flex; align-items: end; gap: 8px; }
+  .mobile-sort-controls label { display: grid; flex: 1; gap: 4px; color: #68716a; }
+  .mobile-sort-controls label > span { font-size: 9px; font-weight: 800; text-transform: uppercase; }
+  .mobile-sort-controls select { width: 100%; height: 38px; padding: 0 30px 0 9px; border: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #17201c; font-size: 12px; font-weight: 700; }
+  .mobile-sort-controls > button { width: 38px; height: 38px; display: grid; flex: 0 0 38px; place-items: center; padding: 0; border: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #245a47; }
+  .mobile-sort-controls > button:hover { border-color: #245a47; background: #edf2e9; }
+  .mobile-card-list { display: grid; gap: 10px; margin: 0; padding: 14px 0 0; list-style: none; }
+  .mobile-player-card, .mobile-lineup-card { min-width: 0; padding: 14px; border: 1px solid #d9d6ce; border-radius: 4px; background: #fffefa; }
+  .mobile-card-heading { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+  .mobile-card-rank { color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; }
+  .mobile-player-identity { min-width: 0; display: flex; align-items: center; gap: 9px; color: #17201c; text-decoration: none; }
+  .mobile-player-identity:hover strong { color: #245a47; text-decoration: underline; text-decoration-color: #e8502f; text-underline-offset: 3px; }
+  .mobile-player-identity .player-headshot { width: 42px; height: 42px; flex-basis: 42px; }
+  .mobile-player-identity > span { min-width: 0; display: grid; gap: 3px; }
+  .mobile-player-identity strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-player-identity small { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-primary-rating { display: grid; justify-items: end; gap: 3px; }
+  .mobile-primary-rating small { color: #68716a; font-size: 8px; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
+  .mobile-primary-rating .rating-value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 20px; font-weight: 900; line-height: 1; }
+  .mobile-metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 13px 0 0; border-top: 1px solid #e2dfd7; }
+  .mobile-metric-grid div { min-width: 0; padding: 9px 8px 7px 0; border-bottom: 1px solid #e2dfd7; }
+  .mobile-metric-grid dt { overflow: hidden; color: #68716a; font-size: 9px; font-weight: 700; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+  .mobile-metric-grid dd { margin: 4px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 800; }
+  .mobile-card-meta { margin: 9px 0 0; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+  .lineup-card-heading { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .mobile-lineup-team { font-size: 15px; }
+  .mobile-lineup-roster { display: flex; flex-wrap: wrap; gap: 3px 7px; margin-top: 11px; color: #17201c; font-size: 12px; font-weight: 750; line-height: 1.35; }
+  .mobile-lineup-roster .player-name-link:not(:last-child)::after { content: ","; color: #69716b; }
+  .mobile-lineup-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .mobile-lineup-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: 9px; }
+  .mobile-lineup-footer .mobile-card-meta { margin: 0; }
+  .mobile-lineup-footer .lineup-lab-actions { flex: 0 0 auto; margin: 0; padding: 0; border-top: 0; }
+}
+
 @media (max-width: 580px) {
   .lineup-columns { grid-template-columns: 1fr; gap: 28px; }
   .environment-control { align-items: flex-start; flex-direction: column; }
   .environment-toggle { width: 100%; }
   .environment-toggle button { flex: 1; min-width: 0; }
-  .header-meta { gap: 9px; }
+  .site-header { height: auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px 12px; padding: 10px 0 9px; }
+  .wordmark { grid-column: 1; grid-row: 1; }
+  .header-meta { display: contents; }
+  .header-links { grid-column: 2; grid-row: 2; justify-content: end; gap: 6px; }
   .header-navigation { gap: 9px; }
+  .header-navigation { grid-column: 1; grid-row: 2; }
   .header-navigation a { font-size: 11px; }
   .header-link { width: 24px; height: 24px; justify-content: center; }
   .header-link span { display: none; }
-  .season-chip { padding: 4px 6px; font-size: 11px; }
+  .season-chip { grid-column: 2; grid-row: 1; padding: 4px 6px; font-size: 11px; }
   .curve-columns, .curve-grid { grid-template-columns: 1fr; }
   .player-aging-chart-actions, .player-aging-chart-layer-controls { flex-wrap: wrap; }
   .about-hero { padding-bottom: 42px; }
@@ -418,8 +468,8 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .about-lede { font-size: 20px; }
   .rankings-hero > p:last-child { font-size: 19px; }
   .rankings-table-toolbar { align-items: stretch; flex-direction: column; }
-  .rankings-table-controls { align-items: stretch; flex-direction: column; }
-  .rankings-season, .rankings-minimum-possessions, .rankings-draft-class { justify-content: space-between; }
+  .rankings-table-controls { grid-template-columns: 1fr; }
+  .rankings-season, .rankings-minimum-possessions, .rankings-team, .rankings-draft-class { justify-content: space-between; }
   .rankings-search { width: 100%; }
   .model-identity { grid-template-columns: 1fr; gap: 12px; }
   .model-identity > p:last-child { grid-column: auto; }

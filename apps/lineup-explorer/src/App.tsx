@@ -110,6 +110,20 @@ function useAppView(): AppRoute {
   return view;
 }
 
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(query);
+    const updateMatches = () => setMatches(mediaQuery.matches);
+    updateMatches();
+    mediaQuery.addEventListener("change", updateMatches);
+    return () => mediaQuery.removeEventListener("change", updateMatches);
+  }, [query]);
+
+  return matches;
+}
+
 function playerProfileHref(playerId: number) {
   return `#player/${playerId}`;
 }
@@ -155,6 +169,26 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
   const coldStartDescription = player.profile_source === "draft_cold_start_prior"
     ? "This preseason rating uses the forward draft cold-start prior."
     : "This preseason rating uses the published replacement-level cold-start prior.";
+  const additiveProfileBreakdown = player.additive_profile_breakdown ?? [];
+  const additiveProfileValueByFeature = new Map(
+    additiveProfileBreakdown.map((component) => [component.feature, component.player_value]),
+  );
+  const additiveProfileEffectByFeature = new Map(
+    additiveProfileBreakdown.map((component) => [component.feature, component.contribution]),
+  );
+  const additiveProfileValue = (feature: string, fallback: number | null) => (
+    additiveProfileValueByFeature.get(feature) ?? fallback
+  );
+  const additiveProfileTiles = [
+    ["three_pa_per_100", "3PA / 100", player.three_pa_per_100],
+    ["three_pm_per_100", "3PM / 100", player.three_pm_per_100],
+    ["assists_per_100", "Assists / 100", player.assists_per_100],
+    ["turnovers_per_100", "Turnovers / 100", player.turnovers_per_100],
+    ["usage_per_100", "Usage / 100", player.usage_per_100],
+    ["steals_per_100", "Steals / 100", player.steals_per_100],
+    ["blocks_per_100", "Blocks / 100", player.blocks_per_100],
+    ["offensive_rebound_claim_total", "OREB claim %", player.offensive_rebound_pct],
+  ] as const;
 
   return (
     <article className="player-profile-page" aria-labelledby="player-profile-title">
@@ -199,15 +233,22 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
           <h2 id="profile-rates-title">Additive profile inputs.</h2>
         </div>
         <dl className="player-stat-grid player-additive-profile-grid">
-          <div><dt>3PA / 100</dt><dd>{number.format(player.three_pa_per_100!)}</dd></div>
-          <div><dt>3PM / 100</dt><dd>{number.format(player.three_pm_per_100!)}</dd></div>
-          <div><dt>Assists / 100</dt><dd>{number.format(player.assists_per_100!)}</dd></div>
-          <div><dt>Turnovers / 100</dt><dd>{number.format(player.turnovers_per_100!)}</dd></div>
-          <div><dt>Usage / 100</dt><dd>{number.format(player.usage_per_100!)}</dd></div>
-          <div><dt>Steals / 100</dt><dd>{number.format(player.steals_per_100!)}</dd></div>
-          <div><dt>Blocks / 100</dt><dd>{number.format(player.blocks_per_100!)}</dd></div>
-          <div><dt>OREB claim %</dt><dd>{number.format(player.offensive_rebound_pct!)}</dd></div>
+          {additiveProfileTiles.map(([feature, label, fallback]) => {
+            const effect = additiveProfileEffectByFeature.get(feature);
+            return <div key={feature}>
+              <dt>{label}</dt>
+              <dd>
+                <span>{number.format(additiveProfileValue(feature, fallback)!)}</span>
+                {effect !== undefined && <Rating value={effect} className="additive-profile-effect" />}
+              </dd>
+            </div>;
+          })}
         </dl>
+        {additiveProfileBreakdown.length > 0 &&
+          <p className="player-rating-path-note additive-profile-reference-note">
+            Smaller signed values are each input&apos;s additive contribution relative to the shared possession-weighted 2025-26 forecast-pool reference.
+          </p>
+        }
       </section>}
 
       {historyRows.length === 0 ? (
@@ -298,8 +339,9 @@ function TeamSplits({ point }: { point: Player["rating_history"][number] }) {
   return (
     <div className="player-team-splits">
       {point.team_splits.map((split) => (
-        <span key={split.team_id} className={split.team === point.team ? "primary" : ""}>
+        <span key={split.team_id} className={split.is_latest_team ? "latest" : ""}>
           <strong>{split.team}</strong> {wholeNumber.format(split.possessions)} poss. · {wholeNumber.format(split.games)} GP
+          {split.is_latest_team && <em>latest</em>}
         </span>
       ))}
     </div>
@@ -827,26 +869,28 @@ function App() {
             <a className={view === "lineups" ? "active" : ""} href="#lineups">Lineups</a>
             <a className={view === "about" ? "active" : ""} href="#about">About</a>
           </nav>
-          <a
-            className="header-link"
-            href="https://github.com/EvanZ/nba-lineup-model"
-            target="_blank"
-            rel="noreferrer"
-            aria-label="Open the NBA GESTALT GitHub repository"
-          >
-            <GitBranch size={15} aria-hidden="true" />
-            <span>GitHub</span>
-          </a>
-          <a
-            className="header-link"
-            href="https://evanz.github.io/nba-lineup-model/"
-            target="_blank"
-            rel="noreferrer"
-            aria-label="Open NBA GESTALT documentation"
-          >
-            <BookOpen size={15} aria-hidden="true" />
-            <span>Docs</span>
-          </a>
+          <span className="header-links">
+            <a
+              className="header-link"
+              href="https://github.com/EvanZ/nba-lineup-model"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open the NBA GESTALT GitHub repository"
+            >
+              <GitBranch size={15} aria-hidden="true" />
+              <span>GitHub</span>
+            </a>
+            <a
+              className="header-link"
+              href="https://evanz.github.io/nba-lineup-model/"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open NBA GESTALT documentation"
+            >
+              <BookOpen size={15} aria-hidden="true" />
+              <span>Docs</span>
+            </a>
+          </span>
           <span className="season-chip">2025-26 retrospective</span>
         </div>
       </header>
@@ -1134,11 +1178,13 @@ function AboutPage() {
 type RankingColumn = "rank" | "player_name" | "team" | "position" | "draft_number" | "rapm" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games";
 
 function RankingsPage() {
+  const isCompact = useMediaQuery("(max-width: 720px)");
   const [players, setPlayers] = useState<RankedPlayer[]>([]);
   const [selectedSeason, setSelectedSeason] = useState("2025-26");
   const [availableSeasons, setAvailableSeasons] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [minimumPossessions, setMinimumPossessions] = useState(500);
+  const [teamFilter, setTeamFilter] = useState("all");
   const [draftClassFilter, setDraftClassFilter] = useState("all");
   const [sortColumn, setSortColumn] = useState<RankingColumn>("rank");
   const [sortDirection, setSortDirection] = useState<"ascending" | "descending">("ascending");
@@ -1168,6 +1214,7 @@ function RankingsPage() {
   }, [selectedSeason]);
 
   useEffect(() => {
+    setTeamFilter("all");
     setDraftClassFilter("all");
     setMinimumPossessions(selectedSeason === "2026-27" ? 0 : 500);
   }, [selectedSeason]);
@@ -1177,14 +1224,15 @@ function RankingsPage() {
   const draftClasses = useMemo(() => [...new Set(
     players.flatMap((player) => player.draft_class_year === null ? [] : [player.draft_class_year]),
   )].sort((left, right) => right - left), [players]);
+  const teams = useMemo(() => [...new Set(players.map((player) => player.team))].sort(), [players]);
 
   const visiblePlayers = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     const rows = (normalized
-      ? players.filter((player) => [player.player_name, player.team, player.position]
-        .some((value) => value.toLocaleLowerCase().includes(normalized)))
+      ? players.filter((player) => player.player_name.toLocaleLowerCase().includes(normalized))
       : players)
       .filter((player) => player.possessions >= minimumPossessions)
+      .filter((player) => teamFilter === "all" || player.team === teamFilter)
       .filter((player) => {
         if (draftClassFilter === "all") return true;
         if (draftClassFilter === "undrafted") return player.is_undrafted === true;
@@ -1208,7 +1256,7 @@ function RankingsPage() {
       }
       return direction * String(leftValue).localeCompare(String(rightValue)) || left.rank - right.rank;
     });
-  }, [draftClassFilter, minimumPossessions, players, query, sortColumn, sortDirection]);
+  }, [draftClassFilter, minimumPossessions, players, query, sortColumn, sortDirection, teamFilter]);
 
   function changeSort(column: RankingColumn) {
     if (column === sortColumn) {
@@ -1275,6 +1323,13 @@ function RankingsPage() {
                 onChange={(event) => setMinimumPossessions(Math.max(0, Number(event.target.value) || 0))}
               />
             </label>
+            <label className="rankings-team">
+              <span>Team</span>
+              <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}>
+                <option value="all">All teams</option>
+                {teams.map((team) => <option key={team} value={team}>{team}</option>)}
+              </select>
+            </label>
             <label className="rankings-draft-class">
               <span>Draft class</span>
               <select value={draftClassFilter} onChange={(event) => setDraftClassFilter(event.target.value)}>
@@ -1285,12 +1340,35 @@ function RankingsPage() {
             </label>
             <label className="rankings-search">
               <Search size={17} aria-hidden="true" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search player or team" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search player" />
             </label>
+            <div className="mobile-sort-controls" aria-label="Player ranking sort controls">
+              <label>
+                <span>Sort by</span>
+                <select
+                  value={sortColumn}
+                  onChange={(event) => {
+                    const column = event.target.value as RankingColumn;
+                    setSortColumn(column);
+                    setSortDirection(column === "rank" || column === "player_name" || column === "team" || column === "position" ? "ascending" : "descending");
+                  }}
+                >
+                  {columns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => setSortDirection((direction) => direction === "ascending" ? "descending" : "ascending")}
+                aria-label={`Sort ${sortDirection === "ascending" ? "descending" : "ascending"}`}
+                title={`Sort ${sortDirection === "ascending" ? "descending" : "ascending"}`}
+              >
+                {sortDirection === "ascending" ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+            </div>
           </div>
         </div>
         {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
-        {!error && <div className="rankings-table-wrap">
+        {!error && !isCompact && <div className="rankings-table-wrap">
           <table className="rankings-table">
             <thead>
               <tr>
@@ -1320,6 +1398,31 @@ function RankingsPage() {
             </tbody>
           </table>
         </div>}
+        {!error && isCompact && <ol className="mobile-card-list mobile-player-rankings" aria-label={`${MODEL_LABEL} player rankings`}>
+          {visiblePlayers.map((player) => <li className="mobile-player-card" key={player.player_id}>
+            <div className="mobile-card-heading">
+              <span className="mobile-card-rank">#{player.rank}</span>
+              <a className="mobile-player-identity" href={playerProfileHref(player.player_id)}>
+                <PlayerHeadshot player={player} />
+                <span>
+                  <strong>{player.player_name}</strong>
+                  <small>{player.team} · {player.position} · Pick {formatDraftPick(player)}</small>
+                </span>
+              </a>
+              <span className="mobile-primary-rating">
+                <small>NAIL</small>
+                <Rating value={player.rapm} />
+              </span>
+            </div>
+            <dl className="mobile-metric-grid mobile-player-metrics">
+              <div><dt>Prior</dt><dd>{player.prior_rating === null ? "-" : <Rating value={player.prior_rating} />}</dd></div>
+              <div><dt>Season update</dt><dd>{player.season_update === null ? "-" : <Rating value={player.season_update} />}</dd></div>
+              <div><dt>Additive profile</dt><dd>{player.additive_profile_adjustment === null ? "-" : <Rating value={player.additive_profile_adjustment} />}</dd></div>
+              <div><dt>Non-additive edge</dt><dd>{player.observed_context_exposure === null ? "-" : <Rating value={player.observed_context_exposure} />}</dd></div>
+            </dl>
+            <p className="mobile-card-meta">{wholeNumber.format(player.possessions)} possessions · {player.games} games</p>
+          </li>)}
+        </ol>}
       </section>
     </article>
   );
@@ -1350,11 +1453,13 @@ function LineupRankingsPage({
 }: {
   onLoadInLab: (side: Side, lineup: RankedLineup, season: string) => void;
 }) {
+  const isCompact = useMediaQuery("(max-width: 720px)");
   const [lineups, setLineups] = useState<RankedLineup[]>([]);
   const [selectedSeason, setSelectedSeason] = useState("2025-26");
   const [availableSeasons, setAvailableSeasons] = useState<string[]>([]);
   const [minimumPossessions, setMinimumPossessions] = useState(500);
   const [query, setQuery] = useState("");
+  const [teamFilter, setTeamFilter] = useState("all");
   const [sortColumn, setSortColumn] = useState<LineupRankingColumn>("context_edge");
   const [sortDirection, setSortDirection] = useState<"ascending" | "descending">("descending");
   const [isLoading, setIsLoading] = useState(true);
@@ -1387,14 +1492,20 @@ function LineupRankingsPage({
     return () => controller.abort();
   }, [minimumPossessions, selectedSeason]);
 
+  useEffect(() => {
+    setTeamFilter("all");
+  }, [selectedSeason]);
+
+  const teams = useMemo(() => [...new Set(lineups.map((lineup) => lineup.team))].sort(), [lineups]);
+
   const visibleLineups = useMemo(() => {
     const tokens = query.split(",").map((token) => token.trim().toLocaleLowerCase()).filter(Boolean);
+    const teamLineups = teamFilter === "all" ? lineups : lineups.filter((lineup) => lineup.team === teamFilter);
     const filtered = tokens.length
-      ? lineups.filter((lineup) => tokens.every((token) =>
-        lineup.team.toLocaleLowerCase().includes(token)
-        || lineup.player_names.some((name) => name.toLocaleLowerCase().includes(token)),
+      ? teamLineups.filter((lineup) => tokens.every((token) =>
+        lineup.player_names.some((name) => name.toLocaleLowerCase().includes(token)),
       ))
-      : lineups;
+      : teamLineups;
     const direction = sortDirection === "ascending" ? 1 : -1;
     return [...filtered].sort((left, right) => {
       const leftValue = left[sortColumn];
@@ -1404,7 +1515,7 @@ function LineupRankingsPage({
       }
       return direction * String(leftValue).localeCompare(String(rightValue)) || left.rank - right.rank;
     });
-  }, [lineups, query, sortColumn, sortDirection]);
+  }, [lineups, query, sortColumn, sortDirection, teamFilter]);
 
   function changeSort(column: LineupRankingColumn) {
     if (column === sortColumn) {
@@ -1464,14 +1575,44 @@ function LineupRankingsPage({
                 onChange={(event) => setMinimumPossessions(Math.max(0, Number(event.target.value) || 0))}
               />
             </label>
+            <label className="rankings-team">
+              <span>Team</span>
+              <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}>
+                <option value="all">All teams</option>
+                {teams.map((team) => <option key={team} value={team}>{team}</option>)}
+              </select>
+            </label>
             <label className="rankings-search lineup-player-search">
               <Search size={17} aria-hidden="true" />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Contains players, comma-separated" />
             </label>
+            <div className="mobile-sort-controls" aria-label="Lineup ranking sort controls">
+              <label>
+                <span>Sort by</span>
+                <select
+                  value={sortColumn}
+                  onChange={(event) => {
+                    const column = event.target.value as LineupRankingColumn;
+                    setSortColumn(column);
+                    setSortDirection(column === "rank" ? "ascending" : "descending");
+                  }}
+                >
+                  {columns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => setSortDirection((direction) => direction === "ascending" ? "descending" : "ascending")}
+                aria-label={`Sort ${sortDirection === "ascending" ? "descending" : "ascending"}`}
+                title={`Sort ${sortDirection === "ascending" ? "descending" : "ascending"}`}
+              >
+                {sortDirection === "ascending" ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+            </div>
           </div>
         </div>
         {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
-        {!error && <div className="rankings-table-wrap">
+        {!error && !isCompact && <div className="rankings-table-wrap">
           <table className="rankings-table lineup-rankings-table">
             <thead>
               <tr>
@@ -1543,6 +1684,47 @@ function LineupRankingsPage({
             </tbody>
           </table>
         </div>}
+        {!error && isCompact && <ol className="mobile-card-list mobile-lineup-rankings" aria-label="Observed five-man lineup rankings">
+          {visibleLineups.map((lineup) => <li className="mobile-lineup-card" key={`${lineup.team_id}-${lineup.player_ids.join("-")}`}>
+            <div className="mobile-card-heading lineup-card-heading">
+              <span className="mobile-card-rank">#{lineup.rank}</span>
+              <strong className="mobile-lineup-team">{lineup.team}</strong>
+              <span className="mobile-primary-rating">
+                <small>Edge</small>
+                <Rating value={lineup.gestalt_score} />
+              </span>
+            </div>
+            <div className="mobile-lineup-roster">
+              {lineup.player_names.map((name, index) => <a key={lineup.player_ids[index]} className="player-name-link" href={playerProfileHref(lineup.player_ids[index])}>{name}</a>)}
+            </div>
+            <dl className="mobile-metric-grid mobile-lineup-metrics">
+              <div><dt>NAIL</dt><dd><Rating value={lineup.player_edge} /></dd></div>
+              <div><dt>Context</dt><dd><Rating value={lineup.context_edge} /></dd></div>
+              <div><dt>Net rating</dt><dd><Rating value={lineup.actual_net_rating} /></dd></div>
+            </dl>
+            <div className="mobile-lineup-footer">
+              <p className="mobile-card-meta">{wholeNumber.format(lineup.possessions)} possessions · {lineup.games} games</p>
+              <span className="lineup-lab-actions">
+                <button
+                  type="button"
+                  onClick={() => onLoadInLab("unit", lineup, selectedSeason)}
+                  aria-label={`Load ${lineup.lineup_label} as your unit in the Lineup Lab`}
+                  title="Load as your unit"
+                >
+                  <ArrowLeft size={13} aria-hidden="true" /> Your
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onLoadInLab("opponent", lineup, selectedSeason)}
+                  aria-label={`Load ${lineup.lineup_label} as the opponent in the Lineup Lab`}
+                  title="Load as opponent"
+                >
+                  Opponent <ArrowRight size={13} aria-hidden="true" />
+                </button>
+              </span>
+            </div>
+          </li>)}
+        </ol>}
       </section>
     </article>
   );

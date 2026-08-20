@@ -13,6 +13,12 @@ export type Player = {
   prior_rating?: number | null;
   season_update?: number | null;
   additive_profile_adjustment?: number | null;
+  additive_profile_breakdown?: Array<{
+    feature: string;
+    player_value: number;
+    reference_value: number;
+    contribution: number;
+  }>;
   observed_context_exposure: number | null;
   rating_season?: string;
   possessions: number;
@@ -52,6 +58,8 @@ export type Player = {
       team: string;
       possessions: number;
       games: number;
+      is_primary_team: boolean;
+      is_latest_team: boolean;
     }>;
   }>;
   league_leader_history?: Array<{
