@@ -23,7 +23,22 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .header-link { display: inline-flex; align-items: center; gap: 5px; color: #4f5851; font-size: 12px; font-weight: 700; text-decoration: none; }
 .header-link:hover { color: #245a47; text-decoration: underline; text-underline-offset: 3px; }
 .season-chip { padding: 5px 8px; background: #dce8db; color: #245a47; font-size: 12px; font-weight: 700; }
-.intro { padding: 62px 0 42px; }
+.intro {
+  position: relative;
+  margin: 0 -32px;
+  padding: 62px 32px 42px;
+  overflow: hidden;
+}
+.intro::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background: url("/social/gestalt-court-backdrop.png") right center / auto 100% no-repeat;
+  content: "";
+  opacity: 0.16;
+  pointer-events: none;
+}
+.intro > * { position: relative; z-index: 1; }
 .gestalt-entry { max-width: 850px; padding: 0 0 34px; border-bottom: 1px solid #d9d6ce; }
 .gestalt-entry-heading { display: flex; align-items: baseline; gap: 14px; }
 .gestalt-word { color: #17201c; font-family: Georgia, "Times New Roman", serif; font-size: clamp(54px, 7vw, 82px); line-height: 0.86; }
@@ -368,7 +383,8 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .model-formula, .about-equation > p:last-child, .about-formula-stack { grid-column: auto; }
   .about-steps { grid-template-columns: 1fr; gap: 22px; }
   .about-steps.two-up, .model-lexicon, .feature-contract { grid-template-columns: 1fr; }
-  .intro { padding: 52px 0 32px; }
+  .intro { margin: 0 -20px; padding: 52px 20px 32px; }
+  .intro::before { background-position: right top; background-size: auto 78%; opacity: 0.1; }
   .lab-grid { grid-template-columns: 1fr; }
   .builder-panel { padding: 24px 0 31px; border-right: 0; }
   .results-panel { min-height: 0; padding: 31px 0 0; border-top: 1px solid #d9d6ce; }
@@ -398,6 +414,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .gestalt-definition { font-size: 24px; }
   .gestalt-basketball-note { font-size: 13px; }
   .intro-prompt { padding-top: 28px; }
+  .intro::before { background-size: auto 68%; opacity: 0.08; }
   .about-lede { font-size: 20px; }
   .rankings-hero > p:last-child { font-size: 19px; }
   .rankings-table-toolbar { align-items: stretch; flex-direction: column; }
