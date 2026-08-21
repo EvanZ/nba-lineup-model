@@ -730,6 +730,8 @@ function App() {
   const [opponent, setOpponent] = useState<Player[]>([]);
   const [unitSeason, setUnitSeason] = useState("2025-26");
   const [opponentSeason, setOpponentSeason] = useState("2025-26");
+  const [unitTeam, setUnitTeam] = useState("all");
+  const [opponentTeam, setOpponentTeam] = useState("all");
   const [availableLabSeasons, setAvailableLabSeasons] = useState<string[]>(["2025-26"]);
   const [environment, setEnvironment] = useState<Environment>("unit");
   const [result, setResult] = useState<Matchup | null>(null);
@@ -762,6 +764,9 @@ function App() {
       const parameters = new URLSearchParams();
       const currentPlayers = side === "unit" ? unit : opponent;
       parameters.set("season", side === "unit" ? unitSeason : opponentSeason);
+      const selectedTeam = side === "unit" ? unitTeam : opponentTeam;
+      if (selectedTeam !== "all") parameters.set("team", selectedTeam);
+      parameters.set("count", String(5 - currentPlayers.length));
       currentPlayers.forEach((player) => {
         parameters.append("exclude_player_id", String(player.player_id));
       });
@@ -805,14 +810,16 @@ function App() {
       const parameters = new URLSearchParams({ season });
       lineup.player_ids.forEach((playerId) => parameters.append("player_id", String(playerId)));
       const response = await fetch(`/api/players/by-id?${parameters.toString()}`);
-      if (!response.ok) throw new Error("This lineup is unavailable in the Lineup Lab.");
+      if (!response.ok) throw new Error("This lineup is unavailable in the Matchup Lab.");
       const payload = (await response.json()) as { players: Player[] };
-      if (payload.players.length !== 5) throw new Error("This lineup is incomplete in the Lineup Lab.");
+      if (payload.players.length !== 5) throw new Error("This lineup is incomplete in the Matchup Lab.");
       if (side === "unit") {
         setUnitSeason(season);
+        setUnitTeam(lineup.team);
         setUnit(payload.players);
       } else {
         setOpponentSeason(season);
+        setOpponentTeam(lineup.team);
         setOpponent(payload.players);
       }
       setResult(null);
@@ -859,12 +866,12 @@ function App() {
   return (
     <main>
       <header className="site-header">
-        <a className="wordmark" href="#lab" aria-label="NBA GESTALT Lineup Lab">
+        <a className="wordmark" href="#lab" aria-label="NBA GESTALT Matchup Lab">
           <span>NBA</span> GESTALT
         </a>
         <div className="header-meta">
           <nav className="header-navigation" aria-label="Primary navigation">
-            <a className={view === "lab" ? "active" : ""} href="#lab">Lineup Lab</a>
+            <a className={view === "lab" ? "active" : ""} href="#lab">Lab</a>
             <a className={view === "rankings" ? "active" : ""} href="#rankings">Rankings</a>
             <a className={view === "lineups" ? "active" : ""} href="#lineups">Lineups</a>
             <a className={view === "about" ? "active" : ""} href="#about">About</a>
@@ -907,7 +914,7 @@ function App() {
             <p className="gestalt-basketball-note">In basketball, five players can create an edge that no sum of individual ratings fully explains.</p>
           </div>
           <div className="intro-prompt">
-            <p className="eyebrow">Lineup Lab</p>
+            <p className="eyebrow">Matchup Lab</p>
             <h1 id="page-title">Build the five.</h1>
           </div>
         </section>
@@ -920,13 +927,16 @@ function App() {
                 players={unit}
                 season={unitSeason}
                 availableSeasons={availableLabSeasons}
+                team={unitTeam}
                 isLoading={isLoadingUnit}
                 onRefresh={() => void loadRandomLineup("unit")}
                 onSeasonChange={(season) => {
                   setUnitSeason(season);
+                  setUnitTeam("all");
                   setUnit([]);
                   setResult(null);
                 }}
+                onTeamChange={setUnitTeam}
                 onAdd={(player) => {
                   setUnit((current) => [...current, player]);
                   setResult(null);
@@ -940,13 +950,16 @@ function App() {
                 players={opponent}
                 season={opponentSeason}
                 availableSeasons={availableLabSeasons}
+                team={opponentTeam}
                 isLoading={isLoadingOpponent}
                 onRefresh={() => void loadRandomLineup("opponent")}
                 onSeasonChange={(season) => {
                   setOpponentSeason(season);
+                  setOpponentTeam("all");
                   setOpponent([]);
                   setResult(null);
                 }}
+                onTeamChange={setOpponentTeam}
                 onAdd={(player) => {
                   setOpponent((current) => [...current, player]);
                   setResult(null);
@@ -1155,7 +1168,7 @@ function AboutPage() {
           </div>
           <p>
             The eight additive features compile exactly into the player rating. The six non-additive features remain
-            a separate unit-level term. In the Lineup Lab, the ledger shows both pieces. In player pages,
+            a separate unit-level term. In the Matchup Lab, the ledger shows both pieces. In player pages,
             <i> Non-Additive Lineup Edge</i> is a possession-weighted description of the units a player actually
             shared, not extra individual credit and not a causal allocation.
           </p>
@@ -1165,7 +1178,7 @@ function AboutPage() {
       <section className="about-footer-note">
         <p className="section-kicker">Current publication</p>
         <p>
-          The Lineup Lab serves the completed 2025-26 NAIL-RAPM v1.1 state with published statistic-specific
+          The Matchup Lab serves the completed 2025-26 NAIL-RAPM v1.1 state with published statistic-specific
           profile shrinkage. It is useful for retrospective
           lineup exploration and as the state carried forward into a forecast; it is not a live in-season update
           or a claim that the residual lineup effect belongs causally to a single player.
@@ -1628,7 +1641,7 @@ function LineupRankingsPage({
                 <th scope="col">
                   <span className="lineup-column-heading">
                     Five-man unit
-                    <span className="column-info" role="img" aria-label="The exact five players grouped together in regular-season stints. Use the buttons below the names to load the unit into the Lineup Lab." data-tooltip="The exact five players grouped together in regular-season stints. Use the buttons below the names to load the unit into the Lineup Lab.">
+                    <span className="column-info" role="img" aria-label="The exact five players grouped together in regular-season stints. Use the buttons below the names to load the unit into the Matchup Lab." data-tooltip="The exact five players grouped together in regular-season stints. Use the buttons below the names to load the unit into the Matchup Lab.">
                       <Info size={12} aria-hidden="true" />
                     </span>
                   </span>
@@ -1659,7 +1672,7 @@ function LineupRankingsPage({
                     <button
                       type="button"
                       onClick={() => onLoadInLab("unit", lineup, selectedSeason)}
-                      aria-label={`Load ${lineup.lineup_label} as your unit in the Lineup Lab`}
+                      aria-label={`Load ${lineup.lineup_label} as your unit in the Matchup Lab`}
                       title="Load as your unit"
                     >
                       <ArrowLeft size={13} aria-hidden="true" /> Your
@@ -1667,7 +1680,7 @@ function LineupRankingsPage({
                     <button
                       type="button"
                       onClick={() => onLoadInLab("opponent", lineup, selectedSeason)}
-                      aria-label={`Load ${lineup.lineup_label} as the opponent in the Lineup Lab`}
+                      aria-label={`Load ${lineup.lineup_label} as the opponent in the Matchup Lab`}
                       title="Load as opponent"
                     >
                       Opponent <ArrowRight size={13} aria-hidden="true" />
@@ -1708,7 +1721,7 @@ function LineupRankingsPage({
                 <button
                   type="button"
                   onClick={() => onLoadInLab("unit", lineup, selectedSeason)}
-                  aria-label={`Load ${lineup.lineup_label} as your unit in the Lineup Lab`}
+                  aria-label={`Load ${lineup.lineup_label} as your unit in the Matchup Lab`}
                   title="Load as your unit"
                 >
                   <ArrowLeft size={13} aria-hidden="true" /> Your
@@ -1716,7 +1729,7 @@ function LineupRankingsPage({
                 <button
                   type="button"
                   onClick={() => onLoadInLab("opponent", lineup, selectedSeason)}
-                  aria-label={`Load ${lineup.lineup_label} as the opponent in the Lineup Lab`}
+                  aria-label={`Load ${lineup.lineup_label} as the opponent in the Matchup Lab`}
                   title="Load as opponent"
                 >
                   Opponent <ArrowRight size={13} aria-hidden="true" />
@@ -1734,11 +1747,13 @@ type LineupSelectorProps = {
   side: Side;
   players: Player[];
   season: string;
+  team: string;
   availableSeasons: string[];
   onAdd: (player: Player) => void;
   onRemove: (playerId: number) => void;
   onClear: () => void;
   onSeasonChange: (season: string) => void;
+  onTeamChange: (team: string) => void;
   onError: (message: string) => void;
   isLoading?: boolean;
   onRefresh?: () => void;
@@ -1748,20 +1763,41 @@ function LineupSelector({
   side,
   players,
   season,
+  team,
   availableSeasons,
   onAdd,
   onRemove,
   onClear,
   onSeasonChange,
+  onTeamChange,
   onError,
   isLoading = false,
   onRefresh,
 }: LineupSelectorProps) {
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<Player[]>([]);
+  const [teams, setTeams] = useState<string[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const searchInput = useRef<HTMLInputElement>(null);
   const label = SIDE_LABELS[side];
+  const randomScope = team === "all" ? "randomly" : `from ${team}`;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`/api/teams?season=${encodeURIComponent(season)}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Team filter is unavailable.");
+        const payload = (await response.json()) as { teams: string[] };
+        setTeams(payload.teams);
+      } catch (teamError) {
+        if ((teamError as Error).name !== "AbortError") onError((teamError as Error).message);
+      }
+    })();
+    return () => controller.abort();
+  }, [onError, season]);
 
   useEffect(() => {
     if (!query.trim()) {
@@ -1772,7 +1808,9 @@ function LineupSelector({
     const delay = window.setTimeout(async () => {
       try {
         setIsSearching(true);
-        const response = await fetch(`/api/players?q=${encodeURIComponent(query)}&season=${encodeURIComponent(season)}&limit=10`, {
+        const parameters = new URLSearchParams({ q: query, season, limit: "10" });
+        if (team !== "all") parameters.set("team", team);
+        const response = await fetch(`/api/players?${parameters.toString()}`, {
           signal: controller.signal,
         });
         if (!response.ok) throw new Error("Player search is unavailable.");
@@ -1788,7 +1826,7 @@ function LineupSelector({
       controller.abort();
       window.clearTimeout(delay);
     };
-  }, [onError, players, query, season]);
+  }, [onError, players, query, season, team]);
 
   function addPlayer(player: Player) {
     if (players.length === 5) return;
@@ -1801,15 +1839,7 @@ function LineupSelector({
   return (
     <section className="lineup-column" aria-label={`${label} selections`}>
       <div className="lineup-column-header">
-        <div>
-          <h2>{label}</h2>
-          <label className="lineup-season">
-            <span>Season</span>
-            <select value={season} onChange={(event) => onSeasonChange(event.target.value)} disabled={isLoading}>
-              {availableSeasons.map((availableSeason) => <option key={availableSeason} value={availableSeason}>{availableSeason}</option>)}
-            </select>
-          </label>
-        </div>
+        <h2>{label}</h2>
         <span className="lineup-controls">
           {players.length}/5
           {onRefresh && (
@@ -1817,8 +1847,8 @@ function LineupSelector({
               className="refresh-button"
               onClick={onRefresh}
               disabled={isLoading || players.length === 5}
-              aria-label={`Fill open ${label.toLowerCase()} slots randomly`}
-              title={`Fill open ${label.toLowerCase()} slots randomly`}
+              aria-label={`Fill open ${label.toLowerCase()} slots ${randomScope}`}
+              title={`Fill open ${label.toLowerCase()} slots ${randomScope}`}
             >
               <Dices className={isLoading ? "spin" : ""} size={15} />
             </button>
@@ -1833,6 +1863,25 @@ function LineupSelector({
             <Trash2 size={15} />
           </button>
         </span>
+        <div className="lineup-filters">
+          <label className="lineup-season">
+            <span>Season</span>
+            <select value={season} onChange={(event) => onSeasonChange(event.target.value)} disabled={isLoading}>
+              {availableSeasons.map((availableSeason) => <option key={availableSeason} value={availableSeason}>{availableSeason}</option>)}
+            </select>
+          </label>
+          <label className="lineup-team">
+            <span>Team</span>
+            <select
+              value={team}
+              onChange={(event) => onTeamChange(event.target.value)}
+              disabled={isLoading}
+            >
+              <option value="all">All teams</option>
+              {teams.map((availableTeam) => <option key={availableTeam} value={availableTeam}>{availableTeam}</option>)}
+            </select>
+          </label>
+        </div>
       </div>
       <div className="slot-list">
         {[0, 1, 2, 3, 4].map((slot) => {

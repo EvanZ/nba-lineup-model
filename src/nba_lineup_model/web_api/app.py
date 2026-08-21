@@ -85,6 +85,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     def search_players(
         q: str = Query(min_length=1),
         season: str | None = None,
+        team: str | None = None,
         limit: int = Query(default=12, ge=1, le=25),
     ) -> dict[str, object]:
         state = get_evaluator()
@@ -92,7 +93,18 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             return {
                 "season": season or state.season,
                 "available_seasons": state.available_lab_seasons(),
-                "players": state.search_players(q, season=season, limit=limit),
+                "players": state.search_players(q, season=season, team=team, limit=limit),
+            }
+        except LineupEvaluationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/api/teams")
+    def teams(season: str | None = None) -> dict[str, object]:
+        state = get_evaluator()
+        try:
+            return {
+                "season": season or state.season,
+                "teams": state.teams(season=season),
             }
         except LineupEvaluationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
@@ -172,13 +184,17 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     @app.get("/api/default-opponent")
     def default_opponent(
         season: str | None = None,
+        team: str | None = None,
         exclude_player_id: Annotated[tuple[int, ...], Query()] = (),
+        count: int = Query(default=5, ge=1, le=5),
     ) -> dict[str, object]:
         try:
             return {
                 "players": get_evaluator().default_opponent(
                     season=season,
-                    excluded_player_ids=set(exclude_player_id)
+                    team=team,
+                    excluded_player_ids=set(exclude_player_id),
+                    count=count,
                 )
             }
         except LineupEvaluationError as error:

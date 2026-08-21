@@ -149,6 +149,12 @@ def test_search_and_matchup_endpoints() -> None:
     assert len(search.json()["players"][0]["rating_history"]) == 3
     assert search.json()["players"][0]["rookie_season"] == "2023-24"
     assert search.json()["players"][0]["age"] == 26.0
+    filtered_search = client.get("/api/players", params={"q": "Jokic", "team": "TST"})
+    assert filtered_search.status_code == 200
+    assert filtered_search.json()["players"][0]["team"] == "TST"
+    teams = client.get("/api/teams", params={"season": "2025-26"})
+    assert teams.status_code == 200
+    assert teams.json()["teams"] == ["TST"]
 
     lineup_players = client.get(
         "/api/players/by-id",
@@ -189,6 +195,16 @@ def test_search_and_matchup_endpoints() -> None:
     assert len(default_opponent.json()["players"]) == 5
     default_ids = {player["player_id"] for player in default_opponent.json()["players"]}
     assert default_ids == {6, 7, 8, 9, 10}
+
+    partial_team_fill = client.get(
+        "/api/default-opponent",
+        params={"team": "TST", "count": 2, "exclude_player_id": 1},
+    )
+    assert partial_team_fill.status_code == 200
+    partial_players = partial_team_fill.json()["players"]
+    assert len(partial_players) == 2
+    assert all(player["team"] == "TST" for player in partial_players)
+    assert all(player["player_id"] != 1 for player in partial_players)
 
     response = client.post(
         "/api/matchups",

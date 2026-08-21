@@ -433,7 +433,12 @@ class LineupEvaluator:
         return sorted(self.season_context_models, reverse=True) or [self.season]
 
     def search_players(
-        self, query: str, *, season: str | None = None, limit: int = 12
+        self,
+        query: str,
+        *,
+        season: str | None = None,
+        team: str | None = None,
+        limit: int = 12,
     ) -> list[dict[str, Any]]:
         """Return a short, deterministic player-name search result list."""
 
@@ -443,7 +448,15 @@ class LineupEvaluator:
         players = self._season_state(season or self.season).players
         names = players["player_name"].map(_normalize_search_text)
         matches = players.loc[names.str.contains(normalized, regex=False)]
+        if team:
+            matches = matches.loc[matches["team"].eq(team)]
         return _records(matches.head(max(1, min(limit, 25))))
+
+    def teams(self, *, season: str | None = None) -> list[str]:
+        """Return the current player-pool teams for one completed season."""
+
+        players = self._season_state(season or self.season).players
+        return sorted(players["team"].dropna().astype(str).unique().tolist())
 
     def players_by_id(
         self, player_ids: list[int], *, season: str | None = None
@@ -674,22 +687,35 @@ class LineupEvaluator:
         return sorted(seasons, reverse=True)
 
     def default_opponent(
-        self, *, season: str | None = None, excluded_player_ids: set[int] | None = None
+        self,
+        *,
+        season: str | None = None,
+        team: str | None = None,
+        excluded_player_ids: set[int] | None = None,
+        count: int = 5,
     ) -> list[dict[str, Any]]:
-        """Sample a plausible baseline opponent from high-possession players."""
+        """Sample high-possession players, optionally from one team."""
 
+        if count < 1 or count > 5:
+            raise LineupEvaluationError("Random lineup count must be between one and five")
         excluded = excluded_player_ids or set()
         players = self._season_state(season or self.season).players
-        eligible = players.loc[
-            players["possessions"].ge(players["possessions"].quantile(0.75))
-            & ~players["player_id"].isin(excluded)
-        ]
-        if len(eligible) < 5:
+        eligible = players.loc[~players["player_id"].isin(excluded)].copy()
+        if team:
+            eligible = eligible.loc[eligible["team"].eq(team)]
+            high_exposure_count = max(count, int(np.ceil(len(eligible) * 0.5)))
+            eligible = eligible.nlargest(high_exposure_count, "possessions", keep="all")
+        else:
+            eligible = eligible.loc[
+                eligible["possessions"].ge(eligible["possessions"].quantile(0.75))
+            ]
+        if len(eligible) < count:
+            scope = f" for {team}" if team else ""
             raise LineupEvaluationError(
-                "The loaded player catalog has too few high-possession players"
+                f"The loaded player catalog has too few high-possession players{scope}"
             )
         sample = eligible.sample(
-            n=5,
+            n=count,
             replace=False,
             random_state=random.SystemRandom().randrange(2**32),
         )
