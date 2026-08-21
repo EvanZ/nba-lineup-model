@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updated": "2026-08-18",
+  "updated": "2026-08-21",
   "default_metric": "rolling_regular_game_margin_rmse",
   "metrics": [
     {
@@ -849,6 +849,24 @@
         "frozen_regular_pythagorean_wins_rmse": 7.2757,
         "frozen_playoff_possession_rmse": 1.192740,
         "frozen_playoff_game_margin_rmse": 16.6267
+      }
+    },
+    {
+      "id": "nail-rapm-v12-gap-returner-priors",
+      "name": "NAIL-RAPM v1.2 Gap-Returner Priors",
+      "short_name": "NAIL-RAPM v1.2",
+      "parent": "nail-rapm-v11-stat-specific-padding",
+      "change": "+ advance established players through each unobserved season with the existing aging transition and retain their last observed padded profile on return.",
+      "docs": "./nail-rapm-v12-gap-returners/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197958,
+        "frozen_regular_game_margin_rmse": 14.0414,
+        "frozen_regular_full_game_margin_rmse": 14.2660,
+        "frozen_regular_game_winner_accuracy": 0.681572,
+        "frozen_regular_team_net_rating_rmse": 3.2908,
+        "frozen_regular_pythagorean_wins_rmse": 7.0899,
+        "frozen_playoff_possession_rmse": 1.192734,
+        "frozen_playoff_game_margin_rmse": 16.6148
       }
     },
     {

@@ -94,6 +94,10 @@ def _artifact_state(
         "ratings": pd.read_parquet(root / "player_season_ratings.parquet"),
         "models": joblib.load(root / "season_context_models.joblib"),
         "padding_contract": padding_contract,
+        "use_last_observed_profile": (
+            metadata.get("profile_padding_contract", {}).get("gap_returner_profile_method")
+            == "last_observed_padded_profile"
+        ),
     }
 
 
@@ -104,6 +108,7 @@ def _write_published_player_ratings(
     ratings: pd.DataFrame,
     models: dict[str, MatchupContextualModel],
     padding_contract: ProfilePaddingContract,
+    use_last_observed_profile: bool,
     **_: object,
 ) -> None:
     """Materialize compiled player ratings used by ranking and biography views."""
@@ -118,6 +123,7 @@ def _write_published_player_ratings(
         panel=panel,
         models=models,
         padding_contract=padding_contract,
+        use_last_observed_profile=use_last_observed_profile,
     ).to_parquet(output, index=False)
     print(f"Materialized published player ratings: {output}", flush=True)
 
@@ -130,6 +136,7 @@ def _write_season(
     coefficients: pd.DataFrame,
     models: dict[str, MatchupContextualModel],
     padding_contract: ProfilePaddingContract,
+    use_last_observed_profile: bool,
     **_: object,
 ) -> None:
     """Build one completed-fit observed-lineup table from shared artifact state."""
@@ -153,6 +160,7 @@ def _write_season(
         target_player_ids=player_ids,
         exposure_cohort=exposure_cohort,
         padding_contract=padding_contract,
+        use_last_observed_profile=use_last_observed_profile,
     )
     season_coefficients = coefficients.loc[
         coefficients["season"].astype(str).eq(season), ["player_id", "rapm"]

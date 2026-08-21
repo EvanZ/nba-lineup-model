@@ -58,6 +58,10 @@ def materialize_preseason_rankings(
     run_dir, run_id = _published_run(completed_season)
     metadata = json.loads((run_dir / "metadata.json").read_text())
     padding_contract = _published_profile_padding_contract(metadata)
+    use_last_observed_profile = (
+        metadata.get("profile_padding_contract", {}).get("gap_returner_profile_method")
+        == "last_observed_padded_profile"
+    )
     panel = pd.read_parquet(panel_path)
     roster = _load_roster(target_season)
     target_panel = _append_target_bios(panel, roster, target_season=target_season)
@@ -121,6 +125,7 @@ def materialize_preseason_rankings(
         target_player_ids=roster["player_id"].tolist(),
         exposure_cohort=pd.read_parquet(exposure_cohort_path(MODEL_ARTIFACT, run_id)),
         padding_contract=padding_contract,
+        use_last_observed_profile=use_last_observed_profile,
     )
     base = roster.loc[:, ["player_id", "base_prior"]].rename(columns={"base_prior": "rapm"})
     uncentered = _compiled_linear_x3_coefficients(base, profiles, context_model)

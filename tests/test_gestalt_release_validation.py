@@ -9,6 +9,7 @@ from nba_lineup_model.modeling.contextual_profiles import (
 )
 from nba_lineup_model.web_api.inference import (
     LineupEvaluationError,
+    MODEL_NAME,
     _published_profile_padding_contract,
 )
 from nba_lineup_model.web_api.release_validation import (
@@ -36,7 +37,7 @@ def test_published_padding_contract_rejects_one_stale_coefficient() -> None:
 
 def test_release_contract_rejects_a_different_context_alpha() -> None:
     metadata = {
-        "model": "forward_nail_rapm_v1_medvedovsky_padding",
+        "model": MODEL_NAME,
         "target_season": "2025-26",
         "context_alpha": EXPECTED_CONTEXT_ALPHA,
     }

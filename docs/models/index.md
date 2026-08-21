@@ -22,7 +22,7 @@ without a result under the selected contract remain visible in the unranked
 lane to preserve the full methodological lineage. The older frozen-2025-26 and
 in-season selectors remain available for their respective historical snapshots.
 
-<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260819-nail-fixed-context-grid">
+<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260821-nail-v12-leaderboard">
   <div class="model-tree__loading" role="status">Loading model evolution…</div>
 </div>
 
@@ -170,8 +170,12 @@ only in the immutable historical artifact used for the decision.
 
 [NAIL-RAPM v1.1](nail-rapm-v11-profile-padding.md) keeps that architecture and
 replaces universal 300-possession profile shrinkage with statistic-specific
-stabilization constants. It is the current full-game and team-level leader on
-the three-season frozen leaderboard.
+stabilization constants.
+
+[NAIL-RAPM v1.2](nail-rapm-v12-gap-returners.md) carries an established
+player's state through a missed season with the existing annual aging model and
+uses the player's last observed padded profile on return. It is the current
+full-game and team-level leader on the three-season frozen leaderboard.
 
 [NAIL-RAPM Context Regularization](nail-context-regularization.md) replaces the
 inherited raw context `alpha=10000` with a season-size-invariant penalty chosen

@@ -43,9 +43,9 @@ DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path(
     "artifacts/models/forward_draft_history_cold_start"
 )
 # Keep the artifact identifier distinct from the public release name.
-MODEL_ARTIFACT = "forward_nail_rapm_v1_medvedovsky_padding"
-MODEL_NAME = "forward_nail_rapm_v1_medvedovsky_padding"
-MODEL_DISPLAY_NAME = "NAIL-RAPM v1.1"
+MODEL_ARTIFACT = "forward_nail_rapm_v12_gap_returner_priors"
+MODEL_NAME = "forward_nail_rapm_v12_gap_returner_priors"
+MODEL_DISPLAY_NAME = "NAIL-RAPM v1.2"
 DISPLAY_SEASON = "2025-26"
 PRESEASON_PREVIEW_SEASON = "2026-27"
 RESPONSE_CURVE_POINTS = 33
@@ -183,6 +183,7 @@ class LineupEvaluator:
     response_cache: dict[int, tuple[np.ndarray, np.ndarray]]
     context_alpha: float | None = None
     profile_padding_contract: ProfilePaddingContract | None = None
+    use_last_observed_profile: bool = False
     lineup_rankings_root: Path | None = None
     player_rating_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     player_league_leader_histories: dict[int, list[dict[str, Any]]] = field(
@@ -235,6 +236,10 @@ class LineupEvaluator:
             raise LineupEvaluationError("The selected artifact has an unexpected target season")
 
         profile_padding_contract = _published_profile_padding_contract(metadata)
+        use_last_observed_profile = (
+            metadata.get("profile_padding_contract", {}).get("gap_returner_profile_method")
+            == "last_observed_padded_profile"
+        )
         historical_coefficients = pd.read_parquet(
             run_dir / "historical_player_coefficients.parquet"
         )
@@ -402,6 +407,7 @@ class LineupEvaluator:
             response_cache=response_cache,
             context_alpha=float(metadata["context_alpha"]),
             profile_padding_contract=profile_padding_contract,
+            use_last_observed_profile=use_last_observed_profile,
             lineup_rankings_root=DEFAULT_LINEUP_RANKINGS_CACHE_DIR / MODEL_ARTIFACT / run_id,
             player_rating_histories=player_rating_histories,
             player_league_leader_histories=player_league_leader_histories,
@@ -1128,6 +1134,7 @@ class LineupEvaluator:
                     if self.profile_padding_contract is not None
                     else {}
                 ),
+                use_last_observed_profile=self.use_last_observed_profile,
             )
         display_coefficients = _compiled_linear_x3_coefficients(
             coefficients,
@@ -1432,6 +1439,7 @@ def build_published_player_ratings(
     panel: pd.DataFrame,
     models: dict[str, MatchupContextualModel],
     padding_contract: ProfilePaddingContract | None = None,
+    use_last_observed_profile: bool = False,
 ) -> pd.DataFrame:
     """Compile additive NAIL credit into a consistent completed-fit rating history."""
 
@@ -1456,6 +1464,7 @@ def build_published_player_ratings(
                 if padding_contract is not None
                 else {}
             ),
+            use_last_observed_profile=use_last_observed_profile,
         )
         base = season_ratings.loc[:, ["player_id", "rapm"]].copy()
         uncentered = _compiled_linear_x3_coefficients(base, profiles, context_model)
@@ -3032,6 +3041,7 @@ def warm_player_context_exposure(
     *,
     panel_path: Path,
     padding_contract: ProfilePaddingContract | None = None,
+    use_last_observed_profile: bool = False,
 ) -> pd.DataFrame:
     """Aggregate each player's observed lineup-shape context over regular stints."""
 
@@ -3060,6 +3070,7 @@ def warm_player_context_exposure(
                 if padding_contract is not None
                 else {}
             ),
+            use_last_observed_profile=use_last_observed_profile,
         )
         additive_ids = {
             f"home_minus_away_{column}" for column in LINEAR_X3_ADDITIVE_FEATURES

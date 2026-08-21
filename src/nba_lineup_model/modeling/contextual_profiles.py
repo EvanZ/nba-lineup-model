@@ -141,6 +141,7 @@ def build_contextual_player_profiles(
     curated_dir: str = "data/curated",
     exposure_cohort: pd.DataFrame | None = None,
     padding_contract: ProfilePaddingContract = UNIFORM_300_PROFILE_PADDING,
+    use_last_observed_profile: bool = False,
 ) -> pd.DataFrame:
     """Build target player profiles using information available before a season.
 
@@ -205,8 +206,16 @@ def build_contextual_player_profiles(
     if historical_rates.loc[:, list(PROFILE_REBOUND_PERCENT_COLUMNS)].isna().any(axis=None):
         raise ValueError("Contextual rebound percentage profiles are incomplete")
     previous = historical_rates.loc[historical_rates["season"].eq(source)].copy()
+    if use_last_observed_profile:
+        previous = (
+            historical_rates.sort_values(["player_id", "season"], kind="stable")
+            .groupby("player_id", as_index=False, sort=False)
+            .tail(1)
+            .copy()
+        )
+    previous = previous.rename(columns={"season": "profile_source_season"})
     returners = target_bios.merge(
-        previous.loc[:, ["player_id", *PROFILE_COLUMNS]],
+        previous.loc[:, ["player_id", "profile_source_season", *PROFILE_COLUMNS]],
         on="player_id",
         how="left",
         validate="one_to_one",
@@ -225,7 +234,14 @@ def build_contextual_player_profiles(
         exposure_cohort=exposure_cohort,
     )
     output = returners.copy()
-    output["profile_source"] = np.where(has_prior_profile, "prior_season", "cold_start")
+    output["profile_gap_seasons"] = (
+        int(target[:4]) - output["profile_source_season"].astype("string").str[:4].astype(float) - 1
+    ).where(has_prior_profile, pd.NA).astype("Int64")
+    output["profile_source"] = np.where(
+        has_prior_profile & output["profile_gap_seasons"].eq(0),
+        "prior_season",
+        np.where(has_prior_profile, "last_observed_season", "cold_start"),
+    )
     output["profile_imputed"] = (~has_prior_profile).astype(int)
     output["profile_replacement_weight"] = 0.0
 
@@ -264,6 +280,7 @@ def build_contextual_player_profiles(
                 "profile_source",
                 "profile_imputed",
                 "profile_replacement_weight",
+                "profile_gap_seasons",
                 *PROFILE_COLUMNS,
             ],
         ]

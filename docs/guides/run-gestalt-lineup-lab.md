@@ -4,8 +4,10 @@ last_updated: "2026-08-13"
 
 # Run NBA GESTALT Locally
 
-NBA GESTALT is a local interactive Lineup Lab built around the completed
-2025-26 Value-Conditioned Aging HPM state.
+NBA GESTALT is a local interactive Matchup Lab built around the completed
+2025-26 NAIL-RAPM v1.2 state. This release carries a returner's last observed
+profile through an injury or other non-playing gap instead of replacing it
+with a generic cold-start profile.
 The browser app and API are separate processes during development.
 
 ## Install dependencies
@@ -111,7 +113,7 @@ its on-court possessions and games. Build the cached profile metadata with:
 uv run nba-build-gestalt-player-team-splits
 ```
 
-This is a display artifact only: a player's HIPSTER PM remains one completed
+This is a display artifact only: a player's NAIL-RAPM remains one completed
 season-wide estimate across all of that player's team stints.
 
 ## Current model contract

@@ -30,7 +30,7 @@ type AgingContributionKey = "prior" | "seasonUpdate" | "additiveProfile";
 
 const SIDE_LABELS: Record<Side, string> = { unit: "Your unit", opponent: "Opponent" };
 const MATERIAL_COMPONENT_CONTRIBUTION = 0.05;
-const MODEL_LABEL = "NAIL-RAPM v1.1";
+const MODEL_LABEL = "NAIL-RAPM v1.2";
 const FEATURE_DESCRIPTIONS: Record<string, string> = {
   home_minus_away_three_pa_per_100: "Sum of the five players' prior-season three-point attempts per 100 possessions.",
   home_minus_away_three_pm_per_100: "Sum of the five players' prior-season made three-pointers per 100 possessions.",
@@ -1120,7 +1120,7 @@ function AboutPage() {
           <p>
             After the raw player edge is removed from each completed stint, a second standardized Ridge
             regression fits the residual against a fixed, strictly lagged five-player feature contract.
-            The v1.1 model is linear in those features; it does not use splines or a black-box interaction network.
+            The v1.2 model is linear in those features; it does not use splines or a black-box interaction network.
           </p>
         </div>
         <div className="feature-contract">
@@ -1178,8 +1178,8 @@ function AboutPage() {
       <section className="about-footer-note">
         <p className="section-kicker">Current publication</p>
         <p>
-          The Matchup Lab serves the completed 2025-26 NAIL-RAPM v1.1 state with published statistic-specific
-          profile shrinkage. It is useful for retrospective
+          The Matchup Lab serves the completed 2025-26 NAIL-RAPM v1.2 state with published statistic-specific
+          profile shrinkage and gap-returner profile carry-forward. It is useful for retrospective
           lineup exploration and as the state carried forward into a forecast; it is not a live in-season update
           or a claim that the residual lineup effect belongs causally to a single player.
         </p>

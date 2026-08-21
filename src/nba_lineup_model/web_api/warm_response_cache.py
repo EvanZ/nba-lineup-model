@@ -57,6 +57,10 @@ def main() -> None:
             ratings,
             panel_path=Path("data/analytical/player_season_panel/player_seasons.parquet"),
             padding_contract=padding_contract,
+            use_last_observed_profile=(
+                metadata.get("profile_padding_contract", {}).get("gap_returner_profile_method")
+                == "last_observed_padded_profile"
+            ),
         ).to_parquet(context_output, index=False)
         print(f"Materialized player context exposure: {context_output}")
 

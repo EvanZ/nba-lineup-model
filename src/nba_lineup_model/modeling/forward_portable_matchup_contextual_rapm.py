@@ -188,6 +188,7 @@ def train_forward_portable_matchup_contextual_rapm(
     exposure_history: list[pd.DataFrame] = []
     replacement_tokens: list[dict[str, object]] = []
     prior_metadata: list[dict[str, object]] = []
+    gap_returner_states: list[pd.DataFrame] = []
     aging_models: dict[str, object] = {}
     aging_curve_grids: list[pd.DataFrame] = []
     box_score_residual_models: dict[str, object] = {}
@@ -313,12 +314,15 @@ def train_forward_portable_matchup_contextual_rapm(
         prior_row.update(compiled_prior_metadata)
         aging_model = prior_row.pop("_aging_model", None)
         aging_curve_grid = prior_row.pop("_aging_curve_grid", None)
+        gap_returner_state = prior_row.pop("_gap_returner_states", None)
         box_score_residual_model = prior_row.pop("_box_score_residual_model", None)
         box_score_residual_selection = prior_row.pop("box_score_residual_selection", None)
         if aging_model is not None:
             aging_models[season] = aging_model
         if isinstance(aging_curve_grid, pd.DataFrame):
             aging_curve_grids.append(aging_curve_grid)
+        if isinstance(gap_returner_state, pd.DataFrame) and not gap_returner_state.empty:
+            gap_returner_states.append(gap_returner_state.assign(season=season))
         if box_score_residual_model is not None:
             box_score_residual_models[season] = box_score_residual_model
         if isinstance(box_score_residual_selection, list):
@@ -500,6 +504,11 @@ def train_forward_portable_matchup_contextual_rapm(
         rebound_calibration_metadata=pd.DataFrame(rebound_calibration_metadata),
         usage_allocation_metadata=pd.DataFrame(usage_allocation_metadata),
         prior_metadata=pd.DataFrame(prior_metadata),
+        gap_returner_states=(
+            pd.concat(gap_returner_states, ignore_index=True)
+            if gap_returner_states
+            else pd.DataFrame()
+        ),
         target_priors=target_priors,
         target_profiles=target_profiles,
         forecast_reference=(
@@ -962,6 +971,7 @@ def _write_run(
     rebound_calibration_metadata: pd.DataFrame,
     usage_allocation_metadata: pd.DataFrame,
     prior_metadata: pd.DataFrame,
+    gap_returner_states: pd.DataFrame,
     target_priors: pd.DataFrame,
     target_profiles: pd.DataFrame,
     forecast_reference: pd.DataFrame,
@@ -1026,6 +1036,7 @@ def _write_run(
                 compiled_additive_prior_coefficients
             ),
             "season_player_prior_metadata.parquet": prior_metadata,
+            "gap_returner_projected_states.parquet": gap_returner_states,
             "frozen_2025_26_player_priors.parquet": target_priors,
             "target_player_profiles.parquet": target_profiles,
             "forecast_reference_units.parquet": forecast_reference,
