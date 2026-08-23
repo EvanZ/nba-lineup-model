@@ -1,4 +1,4 @@
-"""Persist and render the Critical Spacing coefficient time series."""
+"""Persist and render the full non-additive Critical Spacing contract."""
 
 from __future__ import annotations
 
@@ -28,12 +28,12 @@ DEFAULT_OUTPUT_ROOT = Path("artifacts/models/analysis/nail_critical_spacing_weig
 DEFAULT_CHART_PATH = Path(
     "docs/assets/images/nail-critical-spacing/critical-spacing-weight-trajectory.svg"
 )
-FEATURES = ("critical_spacing",)
+FEATURES = ("usage_concentration", "top_two_assists", "critical_spacing")
 
 
 @dataclass(frozen=True)
 class NailCriticalSpacingWeightAuditRun:
-    """Persisted standardized-coefficient audit for Critical Spacing."""
+    """Persisted standardized-coefficient audit for the candidate contract."""
 
     run_dir: Path
     source_run_dir: Path
@@ -47,7 +47,7 @@ def build_nail_critical_spacing_weight_audit(
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
     chart_path: Path | str = DEFAULT_CHART_PATH,
 ) -> NailCriticalSpacingWeightAuditRun:
-    """Extract and render the candidate's coefficient across source seasons."""
+    """Extract and render every non-additive candidate coefficient by season."""
 
     source = (
         Path(source_run_dir)
@@ -72,10 +72,10 @@ def build_nail_critical_spacing_weight_audit(
         weights,
         summary,
         rendered_chart,
-        title="Critical Spacing weight by completed source season",
+        title="Critical Spacing non-additive weights by completed source season",
         features=FEATURES,
         accent_features=frozenset(FEATURES),
-        legend="Orange: non-additive lineup-context term",
+        legend="Orange: non-additive lineup-context term in the candidate fit",
     )
 
     root = Path(output_root)
@@ -111,7 +111,7 @@ def build_nail_critical_spacing_weight_audit(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Audit Critical Spacing coefficient history")
+    parser = argparse.ArgumentParser(description="Audit Critical Spacing non-additive weights")
     parser.add_argument("--source-run-dir")
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--chart-path", default=str(DEFAULT_CHART_PATH))
@@ -121,7 +121,7 @@ def main() -> None:
         output_root=args.output_root,
         chart_path=args.chart_path,
     )
-    print(f"Critical Spacing coefficient audit: run={run.run_dir}; chart={run.chart_path}")
+    print(f"Critical Spacing non-additive audit: run={run.run_dir}; chart={run.chart_path}")
 
 
 if __name__ == "__main__":

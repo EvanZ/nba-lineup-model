@@ -80,7 +80,12 @@ a meaningful advantage.
 | 2024-25 | -0.0083 | [-0.0157, -0.0008] | Pass |
 | 2025-26 | +0.0176 | [+0.0003, +0.0348] | Pass |
 
-## Coefficient Stability
+## Non-Additive Coefficient Audit
+
+The chart reports the full three-term non-additive contract from the candidate
+fit: the two retained v1.2.1 terms plus Critical Spacing. This is required to
+inspect possible coefficient displacement rather than assessing the new term
+in isolation.
 
 Across 29 completed source-season states, the standardized critical-spacing
 coefficient is negative in 19 seasons and positive in 10. The agreed stability
@@ -92,7 +97,14 @@ downward historical path, with the large-magnitude observations concentrated on
 the expected negative side. The small positive crossings are real but do not
 overturn the directional-mass evidence.
 
-![Critical Spacing standardized coefficient by source season](../assets/images/nail-critical-spacing/critical-spacing-weight-trajectory.svg)
+![Critical Spacing non-additive coefficient trajectories by source season](../assets/images/nail-critical-spacing/critical-spacing-weight-trajectory.svg)
+
+The candidate does not materially displace either incumbent term. Matched
+source-season weights for `usage_concentration` have Pearson correlation
+`0.9885` with v1.2.1 and mean absolute change `0.0449` standardized units;
+`top_two_assists` has correlation `0.9868` and mean absolute change `0.0850`.
+Critical Spacing therefore adds a mostly independent third non-additive signal
+rather than substituting for either retained feature.
 
 ## Decision
 
