@@ -33,6 +33,7 @@ uv run nba-build-gestalt-lineup-rankings --all-seasons
 uv run nba-build-gestalt-player-team-splits
 uv run nba-build-gestalt-response-cache --all-seasons
 uv run nba-build-gestalt-historical-profiles
+uv run nba-build-gestalt-realized-profiles
 uv run nba-build-gestalt-preseason-rankings
 uv run nba-validate-gestalt-release
 ```

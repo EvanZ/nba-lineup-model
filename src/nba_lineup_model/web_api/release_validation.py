@@ -24,6 +24,7 @@ from nba_lineup_model.web_api.inference import (
     _published_profile_padding_contract,
     exposure_cohort_path,
     historical_profiles_path,
+    historical_realized_profiles_path,
     lineup_rankings_path,
     player_context_exposure_path,
     player_team_splits_path,
@@ -142,17 +143,41 @@ def validate_release_bundle(
 
     historical_path = historical_profiles_path(MODEL_ARTIFACT, selected_run_id)
     historical_profiles = _read_parquet(historical_path, row_counts=row_counts)
+    historical_profile_columns = tuple(
+        column for column in PROFILE_COLUMNS if column in historical_profiles.columns
+    )
+    missing_profile_columns = set(PROFILE_COLUMNS) - set(historical_profile_columns)
+    legacy_usage_contract = (
+        "usage_percentage_pseudo_possessions"
+        not in metadata.get("profile_padding_contract", {})
+    )
+    if missing_profile_columns and not (
+        legacy_usage_contract and missing_profile_columns == {"usage_pct"}
+    ):
+        raise ReleaseValidationError(
+            "historical player profiles lack required columns "
+            + ", ".join(sorted(missing_profile_columns))
+        )
     _validate_season_player_table(
         historical_profiles,
         label="historical player profiles",
         required_seasons=model_seasons,
-        finite_columns=PROFILE_COLUMNS,
+        finite_columns=historical_profile_columns,
     )
     _validate_target_profiles(
         historical_profiles,
         target_profiles_path=run_dir / "target_player_profiles.parquet",
         target_season=season,
         row_counts=row_counts,
+        profile_columns=historical_profile_columns,
+    )
+    realized_path = historical_realized_profiles_path(MODEL_ARTIFACT, selected_run_id)
+    realized_profiles = _read_parquet(realized_path, row_counts=row_counts)
+    _validate_season_player_table(
+        realized_profiles,
+        label="historical realized player profiles",
+        required_seasons=model_seasons,
+        finite_columns=PROFILE_COLUMNS,
     )
 
     preseason_path = preseason_rankings_path(
@@ -181,6 +206,7 @@ def validate_release_bundle(
         context_exposure_path,
         cohort_path,
         historical_path,
+        realized_path,
         preseason_path,
         preseason_metadata_path,
     ]
@@ -306,6 +332,7 @@ def _validate_target_profiles(
     target_profiles_path: Path,
     target_season: str,
     row_counts: dict[Path, int],
+    profile_columns: tuple[str, ...] = PROFILE_COLUMNS,
 ) -> None:
     target = _read_parquet(target_profiles_path, row_counts=row_counts).set_index("player_id")
     cached = historical_profiles.loc[
@@ -316,7 +343,7 @@ def _validate_target_profiles(
             "The completed-season historical profile cache has a different player pool"
         )
     cached = cached.loc[target.index]
-    for column in PROFILE_COLUMNS:
+    for column in profile_columns:
         _require_close(
             cached[column],
             target[column],

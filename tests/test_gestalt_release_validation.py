@@ -8,8 +8,8 @@ from nba_lineup_model.modeling.contextual_profiles import (
     MEDVEDOVSKY_2020_PROFILE_PADDING,
 )
 from nba_lineup_model.web_api.inference import (
-    LineupEvaluationError,
     MODEL_NAME,
+    LineupEvaluationError,
     _published_profile_padding_contract,
 )
 from nba_lineup_model.web_api.release_validation import (
@@ -33,6 +33,15 @@ def test_published_padding_contract_rejects_one_stale_coefficient() -> None:
     }
     with pytest.raises(LineupEvaluationError, match="statistic-specific"):
         _published_profile_padding_contract({"profile_padding_contract": stale})
+
+
+def test_published_padding_contract_accepts_pre_usage_percentage_artifact() -> None:
+    legacy = MEDVEDOVSKY_2020_PROFILE_PADDING.metadata()
+    legacy.pop("usage_percentage_pseudo_possessions")
+
+    selected = _published_profile_padding_contract({"profile_padding_contract": legacy})
+
+    assert selected is MEDVEDOVSKY_2020_PROFILE_PADDING
 
 
 def test_release_contract_rejects_a_different_context_alpha() -> None:

@@ -80,6 +80,14 @@ def _published_profile_padding_contract(
 
     actual = metadata.get("profile_padding_contract")
     expected = MEDVEDOVSKY_2020_PROFILE_PADDING.metadata()
+    # v1.2.1 predates the standard-USG% coordinate. Its immutable metadata
+    # therefore omits this new padding field, whose default remains 300.
+    if isinstance(actual, dict) and "usage_percentage_pseudo_possessions" not in actual:
+        expected = {
+            key: value
+            for key, value in expected.items()
+            if key != "usage_percentage_pseudo_possessions"
+        }
     if not isinstance(actual, dict) or any(
         actual.get(key) != value for key, value in expected.items()
     ):
