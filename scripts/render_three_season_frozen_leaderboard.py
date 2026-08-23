@@ -118,6 +118,27 @@ CANDIDATES = (
         },
     },
     {
+        "model": "[NAIL Critical Spacing candidate](nail-critical-spacing.md)",
+        "regular": {
+            "possession_rmse": 1.197954,
+            "possession_mae": 1.141347,
+            "possession_skill": 0.001264,
+            "eligible_game_margin_rmse": 14.024052,
+            "eligible_game_skill": 0.182063,
+            "full_game_margin_rmse": 14.253192,
+            "game_winner_accuracy": 0.684705,
+            "team_net_rating_rmse": 3.280515,
+            "pythagorean_win_rmse": 7.060052,
+        },
+        "playoffs": {
+            "possession_rmse": 1.192706,
+            "possession_mae": 1.137609,
+            "possession_skill": 0.000652,
+            "eligible_game_margin_rmse": 16.589610,
+            "eligible_game_skill": 0.077902,
+        },
+    },
+    {
         "model": (
             "[NAIL-RAPM v1.2.2 defensive-rebound profile (not promoted)]"
             "(nail-rapm-v122-defensive-rebound-profile.md)"

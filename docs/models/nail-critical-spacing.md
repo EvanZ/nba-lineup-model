@@ -83,20 +83,24 @@ a meaningful advantage.
 ## Coefficient Stability
 
 Across 29 completed source-season states, the standardized critical-spacing
-coefficient is negative in 19 seasons and positive in 10. Its median is
-`-0.20`, mean absolute magnitude is `0.40`, and range is `-1.55` to `+0.59`.
-The broad sign reversal is not consistent with a stable, portable spacing
-penalty under this definition.
+coefficient is negative in 19 seasons and positive in 10. The agreed stability
+measure is **total one-sided mass**, not binary sign count: the negative side
+accounts for `9.38` coefficient-mass versus `2.36` on the positive side, or a
+**79.9% negative directional-mass share**. Its median is `-0.20`, mean absolute
+magnitude is `0.40`, and range is `-1.55` to `+0.59`. The chart shows a broadly
+downward historical path, with the large-magnitude observations concentrated on
+the expected negative side. The small positive crossings are real but do not
+overturn the directional-mass evidence.
 
 ![Critical Spacing standardized coefficient by source season](../assets/images/nail-critical-spacing/critical-spacing-weight-trajectory.svg)
 
 ## Decision
 
-Do **not** promote the candidate. It clears the non-promotion gate, so the
-feature is not demonstrated to be materially harmful, but it neither produces
-a meaningful pooled improvement nor clears the historical directional-stability
-standard used to retain v1.2.1's two non-additive terms. The website and
-production bundle remain on v1.2.1.
+Do **not yet** promote the candidate. It clears the non-promotion gate and the
+directional-mass audit supports a negative Critical Spacing effect. The reason
+to hold the production model at v1.2.1 is narrower: there is no meaningful
+pooled full-game improvement (`+0.0011` RMSE). This candidate remains a
+directionally credible feature rather than a rejected one.
 
 ## Artifacts
 

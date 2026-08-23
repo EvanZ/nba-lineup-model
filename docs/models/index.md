@@ -185,8 +185,9 @@ regular-season leader on the three-season frozen leaderboard.
 It adds one non-additive indicator to v1.2.1: whether a unit has at least two
 players below that season's prior-derived lower-tercile threshold for shrunk
 three-point makes per 100 possessions. It clears the no-material-harm gate but
-is not promoted: it has no meaningful pooled lift and its coefficient reverses
-sign across the historical panel.
+is not yet promoted: it has no meaningful pooled lift. Its coefficient has a
+79.9% negative total one-sided mass index despite several small positive-sign
+seasons, supporting the hypothesized long-run direction.
 
 [NAIL-RAPM v1.2.1.1](nail-rapm-v1211-standard-usage.md) replaces the internal
 usage-events rate in v1.2.1 with conventional box-score USG%. It passes the

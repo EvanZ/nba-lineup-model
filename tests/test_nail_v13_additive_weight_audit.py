@@ -20,7 +20,11 @@ def test_weight_summary_ranks_consistent_direction_before_magnitude() -> None:
     assert summary["feature"].tolist() == ["steady", "mixed"]
     steady = summary.iloc[0]
     assert steady["dominant_sign_share"] == 1.0
+    assert steady["dominant_directional_mass_share"] == 1.0
     assert steady["mean_absolute_standardized_weight"] == 0.35
     mixed = summary.iloc[1]
     assert mixed["dominant_sign_share"] == 0.5
+    assert mixed["positive_directional_mass"] == 2.0
+    assert mixed["negative_directional_mass"] == 2.0
+    assert mixed["dominant_directional_mass_share"] == 0.5
     assert mixed["is_v13_addition"]

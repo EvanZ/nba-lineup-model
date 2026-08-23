@@ -160,6 +160,12 @@ def summarize_additive_weights(weights: pd.DataFrame) -> pd.DataFrame:
         values = group["standardized_weight"].to_numpy(dtype=float)
         positive_share = float(np.mean(values > 0))
         negative_share = float(np.mean(values < 0))
+        positive_mass = float(np.clip(values, a_min=0.0, a_max=None).sum())
+        negative_mass = float(np.clip(-values, a_min=0.0, a_max=None).sum())
+        total_directional_mass = positive_mass + negative_mass
+        positive_directional_mass_share = (
+            positive_mass / total_directional_mass if total_directional_mass else 0.5
+        )
         rows.append(
             {
                 "feature": feature,
@@ -170,13 +176,20 @@ def summarize_additive_weights(weights: pd.DataFrame) -> pd.DataFrame:
                 "mean_absolute_standardized_weight": float(np.mean(np.abs(values))),
                 "positive_season_share": positive_share,
                 "dominant_sign_share": max(positive_share, negative_share),
+                "positive_directional_mass": positive_mass,
+                "negative_directional_mass": negative_mass,
+                "positive_directional_mass_share": positive_directional_mass_share,
+                "dominant_directional_mass_share": max(
+                    positive_directional_mass_share,
+                    1.0 - positive_directional_mass_share,
+                ),
                 "standard_deviation": float(np.std(values, ddof=0)),
                 "minimum_weight": float(np.min(values)),
                 "maximum_weight": float(np.max(values)),
             }
         )
     return pd.DataFrame(rows).sort_values(
-        ["dominant_sign_share", "mean_absolute_standardized_weight"],
+        ["dominant_directional_mass_share", "mean_absolute_standardized_weight"],
         ascending=[False, False],
         kind="stable",
     ).reset_index(drop=True)
@@ -223,7 +236,7 @@ def render_additive_weight_trajectories(
             0.98,
             0.04,
             (
-                f"same sign {statistic.dominant_sign_share:.0%}\n"
+                f"one-sided mass {statistic.dominant_directional_mass_share:.0%}\n"
                 f"mean |w| {statistic.mean_absolute_standardized_weight:.2f}"
             ),
             transform=axis.transAxes,
