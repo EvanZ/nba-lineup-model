@@ -45,7 +45,7 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
   home_minus_away_bottom_two_three_pm: "Combined made three-pointers per 100 possessions for the two least prolific shooters in the unit.",
   home_minus_away_credible_shooter_count: "Number of players with at least two made three-pointers per 100 possessions in the prior season.",
   home_minus_away_top_two_assists: "Combined assists per 100 possessions for the two highest-assist players in the unit.",
-  home_minus_away_usage_concentration: "Share of the unit's usage events supplied by its two highest-usage players.",
+  home_minus_away_usage_concentration: "Share of all five players' usage events supplied by the two highest-usage players. One usage event is FGA + 0.44 x FTA + TOV per 100 possessions; this is not conventional USG%.",
   home_minus_away_sqrt_offensive_rebounds: "Square root of the unit's total offensive rebounds per 100 possessions, encoding diminishing returns.",
   home_minus_away_sqrt_defensive_rebounds: "Square root of the unit's total defensive rebounds per 100 possessions, encoding diminishing returns.",
   home_minus_away_imputed_count: "Number of players whose profile is a cold-start or replacement estimate rather than a prior-season box-score profile.",
@@ -2186,6 +2186,7 @@ function ContextCurveExplorer({
             signals={result.composition_feature_contributions}
             responseCurves={new Map()}
             kind="composition"
+            showAllSignals
           />
         ) : (
           <>
@@ -2216,15 +2217,19 @@ function ContextCurveGroup({
   signals,
   responseCurves,
   kind,
+  showAllSignals = false,
 }: {
   title: string;
   value: number;
   signals: ContextFeature[];
   responseCurves: Map<string, FeatureResponseCurve>;
   kind: "composition" | "matchup";
+  showAllSignals?: boolean;
 }) {
   const rankedSignals = signals.filter(
-    (signal) => Math.abs(signal.contribution) >= MATERIAL_COMPONENT_CONTRIBUTION,
+    (signal) => showAllSignals
+      ? true
+      : Math.abs(signal.contribution) >= MATERIAL_COMPONENT_CONTRIBUTION,
   ).sort(
     (left, right) => Math.abs(right.contribution) - Math.abs(left.contribution),
   );
@@ -2255,9 +2260,79 @@ function ContextCurveGroup({
               showOpponent={kind === "composition"}
             />
           )}
+          {signal.detail && <ContextFeatureDerivation signal={signal} />}
         </article>
       ))}
       </div>
+    </div>
+  );
+}
+
+function ContextFeatureDerivation({ signal }: { signal: ContextFeature }) {
+  const detail = signal.detail!;
+  const isUsage = detail.kind === "usage_concentration";
+  const isAssists = detail.kind === "top_two_assists";
+  const valueUnit = isUsage ? "%" : " / 100";
+  const formatValue = (value: number) => isUsage ? `${(value * 100).toFixed(1)}%` : value.toFixed(1);
+  const formatDifference = (value: number) => {
+    const prefix = value >= 0 ? "+" : "";
+    return isUsage
+      ? `${prefix}${(value * 100).toFixed(1)} pp`
+      : `${prefix}${value.toFixed(1)}${valueUnit}`;
+  };
+  const leaders = (players: NonNullable<typeof detail.unit_top_players>) =>
+    players.map((player) => `${player.player_name} ${player.value.toFixed(1)}`).join(" + ");
+  const unitFormula = isUsage
+    ? `(${leaders(detail.unit_top_players ?? [])}) / ${(detail.unit_total ?? 0).toFixed(1)} = ${formatValue(detail.unit_value)}`
+    : `(${leaders(detail.unit_top_players ?? [])}) = ${formatValue(detail.unit_value)} AST / 100`;
+  const opponentFormula = isUsage
+    ? `(${leaders(detail.opponent_top_players ?? [])}) / ${(detail.opponent_total ?? 0).toFixed(1)} = ${formatValue(detail.opponent_value)}`
+    : `(${leaders(detail.opponent_top_players ?? [])}) = ${formatValue(detail.opponent_value)} AST / 100`;
+
+  return (
+    <div className="context-derivation">
+      {(isUsage || isAssists) && (
+        <div className="context-formulae">
+          {isUsage && (
+            <p className="context-feature-definition">
+              Usage events per 100 = FGA + 0.44 x FTA + TOV. This is distinct from conventional USG%.
+            </p>
+          )}
+          <p><span>Your unit</span>{unitFormula}</p>
+          <p><span>Opponent</span>{opponentFormula}</p>
+        </div>
+      )}
+      <dl className="context-math-grid">
+        <div>
+          <dt>Difference</dt>
+          <dd className={detail.difference < 0 ? "negative" : ""}>{formatDifference(detail.difference)}</dd>
+        </div>
+        <div>
+          <dt>Seasonal SD</dt>
+          <dd>{isUsage ? `${(detail.standard_deviation * 100).toFixed(1)} pp` : detail.standard_deviation.toFixed(1)}</dd>
+        </div>
+        <div>
+          <dt>Standardized gap</dt>
+          <dd className={detail.standardized_difference < 0 ? "negative" : ""}>
+            {detail.standardized_difference >= 0 ? "+" : ""}{detail.standardized_difference.toFixed(2)} SD
+          </dd>
+        </div>
+        <div>
+          <dt>Fitted weight</dt>
+          <dd className={detail.standardized_coefficient < 0 ? "negative" : ""}>
+            {detail.standardized_coefficient >= 0 ? "+" : ""}{detail.standardized_coefficient.toFixed(2)} / SD
+          </dd>
+        </div>
+        <div>
+          <dt>Rating contribution</dt>
+          <dd><Rating value={signal.contribution} /></dd>
+        </div>
+      </dl>
+      <p className="context-derivation-note">
+        {isUsage
+          ? "Top-two share uses the selected season's statistically padded usage-event profiles for all five players."
+          : "Top-two assists uses the selected season's statistically padded assist profiles for the two highest-assist players."}
+      </p>
     </div>
   );
 }

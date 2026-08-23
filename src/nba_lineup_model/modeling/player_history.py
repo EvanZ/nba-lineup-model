@@ -207,6 +207,26 @@ def aggregate_box_score_features(players: pd.DataFrame) -> pd.DataFrame:
     played["is_starter"] = played["starter"].astype(str).eq("1").astype("int64")
     for output, source in _COUNTING_STATS.items():
         played[output] = pd.to_numeric(played[source], errors="raise").astype(float)
+    played["usage_events"] = (
+        played["field_goals_attempted"]
+        + 0.44 * played["free_throws_attempted"]
+        + played["turnovers"]
+    )
+    team_usage = played.groupby(["game_id", "team_id"], as_index=False).agg(
+        team_minutes=("minutes", "sum"),
+        team_usage_events=("usage_events", "sum"),
+    )
+    played = played.merge(
+        team_usage,
+        on=["game_id", "team_id"],
+        how="left",
+        validate="many_to_one",
+    )
+    played["usage_opportunities"] = (
+        played["minutes"] / (played["team_minutes"] / 5.0)
+    ) * played["team_usage_events"]
+    if played["usage_opportunities"].le(0).any():
+        raise ValueError("Player boxscores contain invalid usage opportunities")
 
     grouped = played.groupby("player_id", sort=True)
     output = grouped.agg(
@@ -215,6 +235,8 @@ def aggregate_box_score_features(players: pd.DataFrame) -> pd.DataFrame:
         games_started=("is_starter", "sum"),
         minutes=("minutes", "sum"),
         team_count=("team_id", "nunique"),
+        usage_events=("usage_events", "sum"),
+        usage_opportunities=("usage_opportunities", "sum"),
         **{feature: (feature, "sum") for feature in _COUNTING_STATS},
     ).reset_index()
     primary_teams = (
@@ -273,6 +295,10 @@ def aggregate_box_score_features(players: pd.DataFrame) -> pd.DataFrame:
     output["true_shooting_percentage"] = _safe_rate(
         output["points"],
         2.0 * (output["field_goals_attempted"] + 0.44 * output["free_throws_attempted"]),
+    )
+    output["usage_pct"] = 100.0 * _safe_rate(
+        output["usage_events"],
+        output["usage_opportunities"],
     )
     return output.sort_values("player_id", kind="stable").reset_index(drop=True)
 

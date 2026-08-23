@@ -38,6 +38,9 @@ DEFAULT_LINEUP_RANKINGS_CACHE_DIR = Path("artifacts/web/lineup_rankings")
 DEFAULT_PLAYER_TEAM_SPLITS_CACHE_DIR = Path("artifacts/web/player_team_splits")
 DEFAULT_EXPOSURE_COHORT_CACHE_DIR = Path("artifacts/web/exposure_cohorts")
 DEFAULT_HISTORICAL_PROFILE_CACHE_DIR = Path("artifacts/web/historical_profiles")
+DEFAULT_HISTORICAL_REALIZED_PROFILE_CACHE_DIR = Path(
+    "artifacts/web/historical_realized_profiles"
+)
 DEFAULT_PRESEASON_RANKINGS_CACHE_DIR = Path("artifacts/web/preseason_rankings")
 DEFAULT_TEAM_ROSTERS_DIR = Path("data/curated/team_rosters")
 DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path(
@@ -210,6 +213,7 @@ class LineupEvaluator:
     player_season_panel: pd.DataFrame = field(default_factory=pd.DataFrame)
     exposure_cohort: pd.DataFrame = field(default_factory=pd.DataFrame)
     historical_profiles: pd.DataFrame = field(default_factory=pd.DataFrame)
+    historical_realized_profiles: pd.DataFrame = field(default_factory=pd.DataFrame)
     season_states: dict[str, SeasonLineupState] = field(default_factory=dict)
     response_caches: dict[str, dict[int, tuple[np.ndarray, np.ndarray]]] = field(
         default_factory=dict
@@ -254,8 +258,8 @@ class LineupEvaluator:
         ].copy()
         if coefficients.empty or coefficients["player_id"].duplicated().any():
             raise LineupEvaluationError("The artifact has invalid completed player coefficients")
-        profiles = pd.read_parquet(run_dir / "target_player_profiles.parquet")
-        if profiles["player_id"].duplicated().any():
+        prior_profiles = pd.read_parquet(run_dir / "target_player_profiles.parquet")
+        if prior_profiles["player_id"].duplicated().any():
             raise LineupEvaluationError("The artifact has duplicate player profiles")
         raw_seasonal_ratings = pd.read_parquet(run_dir / "player_season_ratings.parquet")
         models = joblib.load(run_dir / "season_context_models.joblib")
@@ -273,11 +277,6 @@ class LineupEvaluator:
             else raw_seasonal_ratings
         )
         rookie_seasons = _rookie_seasons(seasonal_ratings)
-        display_coefficients = _compiled_linear_x3_coefficients(
-            coefficients,
-            profiles,
-            context_model,
-        )
         team_splits_cache_path = player_team_splits_path(MODEL_ARTIFACT, run_id)
         team_splits_frame = (
             pd.read_parquet(team_splits_cache_path)
@@ -335,22 +334,79 @@ class LineupEvaluator:
             player_rating_histories,
             active_through_years=_player_active_through_years(Path(panel_path)),
         )
+        cache_path = response_cache_path(MODEL_ARTIFACT, run_id)
+        response_cache = joblib.load(cache_path) if cache_path.is_file() else {}
+        player_season_panel = pd.read_parquet(panel_path)
+        cohort_path = exposure_cohort_path(MODEL_ARTIFACT, run_id)
+        exposure_cohort = (
+            pd.read_parquet(cohort_path)
+            if cohort_path.is_file()
+            else prepare_player_exposure_cohort(
+                player_season_panel.loc[
+                    player_season_panel["season"].astype(str).le(season)
+                ],
+                through_season=season,
+            )
+        )
+        profile_cache_path = historical_profiles_path(MODEL_ARTIFACT, run_id)
+        historical_profiles = (
+            pd.read_parquet(profile_cache_path)
+            if profile_cache_path.is_file()
+            else pd.DataFrame()
+        )
+        realized_profile_cache_path = historical_realized_profiles_path(MODEL_ARTIFACT, run_id)
+        historical_realized_profiles = (
+            pd.read_parquet(realized_profile_cache_path)
+            if realized_profile_cache_path.is_file()
+            else pd.DataFrame()
+        )
+        realized_profiles = historical_realized_profiles.loc[
+            historical_realized_profiles.get("season", pd.Series(dtype=str))
+            .astype(str)
+            .eq(season)
+        ].copy()
+        if not realized_profiles.empty:
+            realized_profiles = realized_profiles.drop(columns="season")
+        expected_player_ids = set(coefficients["player_id"].astype(int))
+        if (
+            realized_profiles.empty
+            or set(realized_profiles.get("player_id", pd.Series(dtype=int)).astype(int))
+            != expected_player_ids
+            or realized_profiles["player_id"].duplicated().any()
+        ):
+            realized_profiles = build_contextual_player_profiles(
+                player_season_panel,
+                target_season=season,
+                target_player_ids=expected_player_ids,
+                exposure_cohort=exposure_cohort,
+                **(
+                    {"padding_contract": profile_padding_contract}
+                    if profile_padding_contract is not None
+                    else {}
+                ),
+                profile_timing="realized",
+            )
+        display_coefficients = _compiled_linear_x3_coefficients(
+            coefficients,
+            prior_profiles,
+            context_model,
+        )
         players = _player_catalog(
             display_coefficients,
-            profiles,
+            realized_profiles,
             panel_path=Path(panel_path),
             season=season,
             player_latest_teams=player_latest_teams,
         )
         display_coefficients = _compiled_linear_x3_coefficients(
             coefficients,
-            profiles,
+            prior_profiles,
             context_model,
             center=_player_rating_center(display_coefficients, players),
         )
         players = _player_catalog(
             display_coefficients,
-            profiles,
+            realized_profiles,
             panel_path=Path(panel_path),
             season=season,
             player_latest_teams=player_latest_teams,
@@ -379,26 +435,6 @@ class LineupEvaluator:
                 player_rating_histories.get(int(player_id), [{}])[-1].get("age")
             )
         )
-        cache_path = response_cache_path(MODEL_ARTIFACT, run_id)
-        response_cache = joblib.load(cache_path) if cache_path.is_file() else {}
-        player_season_panel = pd.read_parquet(panel_path)
-        cohort_path = exposure_cohort_path(MODEL_ARTIFACT, run_id)
-        exposure_cohort = (
-            pd.read_parquet(cohort_path)
-            if cohort_path.is_file()
-            else prepare_player_exposure_cohort(
-                player_season_panel.loc[
-                    player_season_panel["season"].astype(str).le(season)
-                ],
-                through_season=season,
-            )
-        )
-        profile_cache_path = historical_profiles_path(MODEL_ARTIFACT, run_id)
-        historical_profiles = (
-            pd.read_parquet(profile_cache_path)
-            if profile_cache_path.is_file()
-            else pd.DataFrame()
-        )
         rankings_path = lineup_rankings_path(MODEL_ARTIFACT, run_id, season)
         observed_lineups = (
             pd.read_parquet(rankings_path) if rankings_path.is_file() else pd.DataFrame()
@@ -407,7 +443,7 @@ class LineupEvaluator:
             season=season,
             run_id=run_id,
             coefficients=coefficients,
-            profiles=profiles,
+            profiles=realized_profiles,
             players=players,
             context_model=context_model,
             response_cache=response_cache,
@@ -428,11 +464,12 @@ class LineupEvaluator:
             player_season_panel=player_season_panel,
             exposure_cohort=exposure_cohort,
             historical_profiles=historical_profiles,
+            historical_realized_profiles=historical_realized_profiles,
             season_states={
                 season: SeasonLineupState(
                     season=season,
                     coefficients=coefficients,
-                    profiles=profiles,
+                    profiles=realized_profiles,
                     players=players,
                 )
             },
@@ -1045,6 +1082,15 @@ class LineupEvaluator:
             total_contributions,
             feature_set=context_model.feature_set,
             include_ids=set(feature_ids) - additive_ids,
+            details=_compiled_linear_feature_details(
+                context_model,
+                unit_features,
+                opponent_features,
+                unit_player_ids,
+                opponent_player_ids,
+                unit_state,
+                opponent_state,
+            ),
         )
         additive_unit = float(sum(unit_map[player_id] for player_id in unit_player_ids))
         additive_opponent = float(
@@ -1118,8 +1164,10 @@ class LineupEvaluator:
                 ],
                 through_season=season,
             )
-        profiles = self.historical_profiles.loc[
-            self.historical_profiles.get("season", pd.Series(dtype=str)).astype(str).eq(season)
+        profiles = self.historical_realized_profiles.loc[
+            self.historical_realized_profiles.get("season", pd.Series(dtype=str))
+            .astype(str)
+            .eq(season)
         ].copy()
         if not profiles.empty:
             profiles = profiles.drop(columns="season")
@@ -1142,6 +1190,7 @@ class LineupEvaluator:
                     else {}
                 ),
                 use_last_observed_profile=self.use_last_observed_profile,
+                profile_timing="realized",
             )
         display_coefficients = _compiled_linear_x3_coefficients(
             coefficients,
@@ -2553,27 +2602,142 @@ def _side_feature_contributions(
     return output
 
 
+def _compiled_linear_feature_details(
+    context_model: MatchupContextualModel,
+    unit_features: pd.DataFrame,
+    opponent_features: pd.DataFrame,
+    unit_player_ids: list[int],
+    opponent_player_ids: list[int],
+    unit_state: SeasonLineupState,
+    opponent_state: SeasonLineupState,
+) -> dict[str, dict[str, Any]]:
+    """Expose the exact inputs and Ridge scaling behind linear context cards."""
+
+    try:
+        scale = context_model.pipeline.named_steps["scale"]
+        ridge = context_model.pipeline.named_steps["ridge"]
+    except (AttributeError, KeyError) as error:
+        raise LineupEvaluationError(
+            "Compiled NAIL-RAPM context details require a scaled Ridge model"
+        ) from error
+
+    feature_columns = contextual_feature_columns(context_model.feature_set)
+    side_columns = side_context_feature_columns(context_model.feature_set)
+    coefficients = np.asarray(ridge.coef_, dtype=float)
+    scales = np.asarray(scale.scale_, dtype=float)
+    if len(feature_columns) != len(side_columns) or len(coefficients) != len(feature_columns):
+        raise LineupEvaluationError("Compiled NAIL-RAPM context feature layout is invalid")
+
+    details: dict[str, dict[str, Any]] = {}
+    for index, (feature_id, side_column) in enumerate(
+        zip(feature_columns, side_columns, strict=True)
+    ):
+        unit_value = float(unit_features.iloc[0][side_column])
+        opponent_value = float(opponent_features.iloc[0][side_column])
+        difference = unit_value - opponent_value
+        feature_scale = float(scales[index])
+        standardized_coefficient = float(coefficients[index])
+        detail: dict[str, Any] = {
+            "kind": "generic",
+            "unit_value": unit_value,
+            "opponent_value": opponent_value,
+            "difference": difference,
+            "standard_deviation": feature_scale,
+            "standardized_difference": difference / feature_scale if feature_scale else 0.0,
+            "standardized_coefficient": standardized_coefficient,
+            "raw_coefficient": standardized_coefficient / feature_scale if feature_scale else 0.0,
+        }
+        if side_column == "usage_concentration":
+            detail.update(
+                {
+                    "kind": "usage_concentration",
+                    "unit_top_players": _profile_leaders(
+                        unit_player_ids, unit_state, "usage_per_100"
+                    ),
+                    "opponent_top_players": _profile_leaders(
+                        opponent_player_ids, opponent_state, "usage_per_100"
+                    ),
+                    "unit_total": _profile_total(
+                        unit_player_ids, unit_state, "usage_per_100"
+                    ),
+                    "opponent_total": _profile_total(
+                        opponent_player_ids, opponent_state, "usage_per_100"
+                    ),
+                }
+            )
+        elif side_column == "top_two_assists":
+            detail.update(
+                {
+                    "kind": "top_two_assists",
+                    "unit_top_players": _profile_leaders(
+                        unit_player_ids, unit_state, "assists_per_100"
+                    ),
+                    "opponent_top_players": _profile_leaders(
+                        opponent_player_ids, opponent_state, "assists_per_100"
+                    ),
+                }
+            )
+        details[feature_id] = detail
+    return details
+
+
+def _profile_leaders(
+    player_ids: list[int], state: SeasonLineupState, profile_column: str
+) -> list[dict[str, Any]]:
+    """Return the two player-profile values that define a top-two feature."""
+
+    profile_rows = state.profiles.set_index("player_id")
+    player_rows = state.players.set_index("player_id")
+    leaders = []
+    for player_id in player_ids:
+        if player_id not in profile_rows.index or player_id not in player_rows.index:
+            raise LineupEvaluationError("A selected player is missing a published profile")
+        leaders.append(
+            {
+                "player_name": str(player_rows.at[player_id, "player_name"]),
+                "value": float(profile_rows.at[player_id, profile_column]),
+            }
+        )
+    return sorted(leaders, key=lambda row: float(row["value"]), reverse=True)[:2]
+
+
+def _profile_total(
+    player_ids: list[int], state: SeasonLineupState, profile_column: str
+) -> float:
+    """Return the five-player total for one profile coordinate."""
+
+    profile_rows = state.profiles.set_index("player_id")
+    missing = set(player_ids) - set(profile_rows.index.astype(int))
+    if missing:
+        raise LineupEvaluationError("A selected player is missing a published profile")
+    return float(profile_rows.loc[player_ids, profile_column].sum())
+
+
 def _feature_rows(
     features: pd.DataFrame,
     contributions: np.ndarray,
     *,
     feature_set: str = CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
     include_ids: set[str] | None = None,
+    details: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Package sortable original-feature attributions for the browser response."""
 
-    rows = [
-        {
+    rows = []
+    for column, contribution in zip(
+        contextual_feature_columns(feature_set), contributions, strict=True
+    ):
+        if include_ids is not None and column not in include_ids:
+            continue
+        row = {
             "id": column,
             "label": _feature_label(column),
             "value": float(features.iloc[0][column]),
             "contribution": float(contribution),
         }
-        for column, contribution in zip(
-            contextual_feature_columns(feature_set), contributions, strict=True
-        )
-        if include_ids is None or column in include_ids
-    ]
+        if details is not None and column in details:
+            row["detail"] = details[column]
+        rows.append(row)
     rows.sort(key=lambda row: abs(float(row["contribution"])), reverse=True)
     return rows
 
@@ -2744,6 +2908,14 @@ def historical_profiles_path(model_artifact: str, run_id: str) -> Path:
     """Return the compact completed-season player-profile cache for the public API."""
 
     return DEFAULT_HISTORICAL_PROFILE_CACHE_DIR / model_artifact / f"{run_id}.parquet"
+
+
+def historical_realized_profiles_path(model_artifact: str, run_id: str) -> Path:
+    """Return the realized profile cache used by retrospective Lab evaluations."""
+
+    return (
+        DEFAULT_HISTORICAL_REALIZED_PROFILE_CACHE_DIR / model_artifact / f"{run_id}.parquet"
+    )
 
 
 def published_player_ratings_path(model_artifact: str, run_id: str) -> Path:

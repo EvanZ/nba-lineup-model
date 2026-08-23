@@ -103,6 +103,9 @@ nba-train-frozen-offense-defense-rapm = "nba_lineup_model.modeling.offense_defen
 nba-rank-offense-defense-rapm = "nba_lineup_model.modeling.offense_defense_rapm:rankings_main"
 nba-build-rapm-case-study = "nba_lineup_model.modeling.case_study:main"
 nba-build-player-season-panel = "nba_lineup_model.modeling.player_history:main"
+nba-train-nail-v1211-standard-usage = "nba_lineup_model.modeling.forward_nail_v1211_standard_usage:main"
+nba-backtest-nail-v1211-standard-usage = "nba_lineup_model.modeling.nail_v1211_standard_usage_frozen_backtest:main"
+nba-bootstrap-nail-v1211-standard-usage = "nba_lineup_model.modeling.nail_v1211_standard_usage_bootstrap:main"
 nba-backfill-history = "nba_lineup_model.flows.backfill_history:main"
 nba-compact-season = "nba_lineup_model.flows.compact_season:main"
 nba-recover-modeling-coverage = "nba_lineup_model.flows.recover_modeling_coverage:main"
@@ -205,6 +208,7 @@ nba-build-gestalt-lineup-rankings = "nba_lineup_model.web_api.lineup_rankings_ca
 nba-build-gestalt-player-team-splits = "nba_lineup_model.web_api.player_team_splits_cache:main"
 nba-build-gestalt-exposure-cohort = "nba_lineup_model.web_api.exposure_cohort_cache:main"
 nba-build-gestalt-historical-profiles = "nba_lineup_model.web_api.historical_profile_cache:main"
+nba-build-gestalt-realized-profiles = "nba_lineup_model.web_api.historical_realized_profile_cache:main"
 nba-build-gestalt-preseason-rankings = "nba_lineup_model.web_api.preseason_rankings_cache:main"
 nba-validate-gestalt-release = "nba_lineup_model.web_api.release_validation:main"
 

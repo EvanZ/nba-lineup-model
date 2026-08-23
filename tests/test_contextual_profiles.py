@@ -7,6 +7,7 @@ from nba_lineup_model.modeling.contextual_profiles import (
     MEDVEDOVSKY_2020_PROFILE_PADDING,
     UNIFORM_300_PROFILE_PADDING,
     _pad_rebound_percentages,
+    _pad_usage_percentages,
     _rate_frame,
 )
 
@@ -64,6 +65,24 @@ def test_rebound_percentage_padding_uses_possession_weighted_season_reference() 
     reference = (100.0 * 0.20 + 300.0 * 0.05) / 400.0
     expected = (100.0 * 0.20 + 98.55 * reference) / (100.0 + 98.55)
     assert np.isclose(padded.loc[0, "offensive_rebound_pct"], expected)
+
+
+def test_usage_percentage_padding_uses_team_opportunity_exposure() -> None:
+    rates = pd.DataFrame(
+        {
+            "season": ["2023-24", "2023-24"],
+            "player_id": [1, 2],
+            "usage_events": [30.0, 70.0],
+            "usage_opportunities": [100.0, 300.0],
+            "usage_pct": [30.0, 70.0 / 3.0],
+        }
+    )
+
+    padded = _pad_usage_percentages(rates, padding_contract=UNIFORM_300_PROFILE_PADDING)
+
+    reference = (30.0 + 70.0) / (100.0 + 300.0)
+    expected = 100.0 * (30.0 + 300.0 * reference) / (100.0 + 300.0)
+    assert np.isclose(padded.loc[0, "usage_pct"], expected)
 
 
 def _player_seasons() -> pd.DataFrame:

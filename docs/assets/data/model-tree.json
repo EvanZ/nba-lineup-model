@@ -888,6 +888,24 @@
       }
     },
     {
+      "id": "nail-rapm-v1211-standard-usage",
+      "name": "NAIL-RAPM v1.2.1.1 Standard USG% (Not Promoted)",
+      "short_name": "NAIL-RAPM v1.2.1.1",
+      "parent": "nail-rapm-v121-pruned-nonadditive",
+      "change": "~ replace internal action-events-per-on-court-possession usage with conventional box-score USG% in both additive profile and usage concentration. Cleared the direct no-material-harm bootstrap gate, but did not materially change interpretation and is not promoted.",
+      "docs": "./nail-rapm-v1211-standard-usage/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197951,
+        "frozen_regular_game_margin_rmse": 14.0264,
+        "frozen_regular_full_game_margin_rmse": 14.2516,
+        "frozen_regular_game_winner_accuracy": 0.681003,
+        "frozen_regular_team_net_rating_rmse": 3.2658,
+        "frozen_regular_pythagorean_wins_rmse": 7.0279,
+        "frozen_playoff_possession_rmse": 1.192708,
+        "frozen_playoff_game_margin_rmse": 16.5989
+      }
+    },
+    {
       "id": "nail-rapm-v122-defensive-rebound-profile",
       "name": "NAIL-RAPM v1.2.2 Defensive-Rebound Profile (Not Promoted)",
       "short_name": "NAIL-RAPM v1.2.2",

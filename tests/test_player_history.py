@@ -94,6 +94,22 @@ def test_aggregate_box_score_features_ignores_dnp_and_derives_rates():
     assert player["box_primary_team_tricode"] == "AAA"
 
 
+def test_aggregate_box_score_features_derives_conventional_usage_percentage():
+    player = _boxscore_row(game_id="001", player_id=1, minutes="PT30M00.00S")
+    teammates = [
+        _boxscore_row(game_id="001", player_id=player_id, minutes="PT52M30.00S")
+        for player_id in range(2, 6)
+    ]
+
+    features = aggregate_box_score_features(pd.DataFrame([player, *teammates]))
+
+    first = features.loc[features["player_id"].eq(1)].iloc[0]
+    player_events = 10.0 + 0.44 * 8.0 + 3.0
+    team_events = 5.0 * player_events
+    estimated_opportunities = (30.0 / 48.0) * team_events
+    assert first["usage_pct"] == pytest.approx(100.0 * player_events / estimated_opportunities)
+
+
 def test_aggregate_box_score_features_adapts_legacy_boxscore_fields():
     row = _boxscore_row(game_id="001")
     for column in (

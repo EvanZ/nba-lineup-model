@@ -71,6 +71,30 @@ PLAYOFFS = TableSpec(
 CANDIDATES = (
     {
         "model": (
+            "[NAIL-RAPM v1.2.1.1 standard USG% (not promoted)]"
+            "(nail-rapm-v1211-standard-usage.md)"
+        ),
+        "regular": {
+            "possession_rmse": 1.197951,
+            "possession_mae": 1.141332,
+            "possession_skill": 0.001269,
+            "eligible_game_margin_rmse": 14.026373,
+            "eligible_game_skill": 0.181792,
+            "full_game_margin_rmse": 14.251590,
+            "game_winner_accuracy": 0.681003,
+            "team_net_rating_rmse": 3.265764,
+            "pythagorean_win_rmse": 7.027857,
+        },
+        "playoffs": {
+            "possession_rmse": 1.192708,
+            "possession_mae": 1.137593,
+            "possession_skill": 0.000649,
+            "eligible_game_margin_rmse": 16.598860,
+            "eligible_game_skill": 0.076873,
+        },
+    },
+    {
+        "model": (
             "[NAIL-RAPM v1.2.1 pruned non-additive context]"
             "(nail-rapm-v121-pruned-nonadditive.md)"
         ),
@@ -272,7 +296,7 @@ def main() -> None:
         PLAYOFFS,
         tuple({"model": candidate["model"], **candidate["playoffs"]} for candidate in CANDIDATES),
     )
-    lines[1] = 'last_updated: "2026-08-22"'
+    lines[1] = 'last_updated: "2026-08-23"'
     PAGE.write_text("\n".join(lines) + "\n")
 
 

@@ -181,6 +181,12 @@ historically resolved non-additive terms: usage concentration and top-two
 assists. It clears its direct bootstrap gate versus v1.2 and is the current
 regular-season leader on the three-season frozen leaderboard.
 
+[NAIL-RAPM v1.2.1.1](nail-rapm-v1211-standard-usage.md) replaces the internal
+usage-events rate in v1.2.1 with conventional box-score USG%. It passes the
+same no-material-harm bootstrap gate, improving interpretability while leaving
+the frozen predictive result effectively unchanged; it is not promoted because
+the standard convention does not materially alter the lineup interpretation.
+
 [NAIL-RAPM v1.2.2](nail-rapm-v122-defensive-rebound-profile.md) tests
 defensive rebound percentage as a ninth additive profile coordinate. Its
 bootstrap is non-inferior, but the feature is positive in only 72.4% of

@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-13"
+last_updated: "2026-08-22"
 ---
 
 # Run NBA GESTALT Locally
@@ -91,10 +91,20 @@ season's contextual functions score their profiles:
 - **Neutral** averages those two directional estimates. It is symmetric, but
   is not yet a separately trained era-neutral model.
 
-Player ratings and prior-season profile inputs remain tied to each unit's own
-selected season. The environment changes only the contextual response surface.
-This makes the era assumption visible rather than silently comparing raw
-historical profiles on one fixed season's scale.
+Player ratings remain tied to each unit's own completed season. The Lab uses
+the selected season's realized, statistically padded player profiles for its
+context calculation, while the environment changes only the contextual response
+surface. This makes a historical matchup internally retrospective rather than
+combining completed player ratings with prior-season profile inputs.
+
+Materialize the compact cache of realized profiles for every completed season:
+
+```bash
+uv run nba-build-gestalt-realized-profiles
+```
+
+This cache is display-only. The frozen prior-season profiles used by leaderboard
+and preseason-prediction workflows remain a separate artifact contract.
 
 Warm all completed historical response surfaces once with:
 

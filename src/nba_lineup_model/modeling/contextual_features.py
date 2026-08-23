@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from nba_lineup_model.modeling.contextual_profiles import PROFILE_COLUMNS, PROFILE_RATE_COLUMNS
+from nba_lineup_model.modeling.contextual_profiles import PROFILE_RATE_COLUMNS
 
 if TYPE_CHECKING:
     from nba_lineup_model.modeling.rebound_opportunity import ReboundOpportunityModel
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 SHOOTING_COLUMN = "three_pm_per_100"
 PASSING_COLUMN = "assists_per_100"
 USAGE_COLUMN = "usage_per_100"
+STANDARD_USAGE_COLUMN = "usage_pct"
 OFFENSIVE_REBOUND_COLUMN = "offensive_rebounds_per_100"
 DEFENSIVE_REBOUND_COLUMN = "defensive_rebounds_per_100"
 CREDIBLE_SHOOTER_THREE_PM_PER_100 = 2.0
@@ -32,6 +33,7 @@ CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL = "x2_orb_per_100_total"
 CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT = "x3_v1_orb_claim_replacement"
 CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY = "x3_without_uncertainty"
 CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE = "nail_v12_1_pruned_nonadditive"
+CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE = "nail_v12_1_1_standard_usage"
 CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE = "nail_v12_2_defensive_rebound_profile"
 CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE = "nail_v12_3_free_throw_profile"
 CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT = (
@@ -91,6 +93,10 @@ LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES = (
     "blocks_per_100",
     "offensive_rebound_claim_total",
 )
+LINEAR_NAIL_V1211_BASKETBALL_ADDITIVE_FEATURES = tuple(
+    STANDARD_USAGE_COLUMN if feature == USAGE_COLUMN else feature
+    for feature in LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES
+)
 LINEAR_NAIL_V13_BASKETBALL_ADDITIVE_FEATURES = (
     *LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES,
     "defensive_rebound_pct",
@@ -146,6 +152,7 @@ def available_context_feature_sets() -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
         CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
         CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
+        CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
         CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE,
         CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE,
         CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT,
@@ -430,6 +437,12 @@ def side_context_feature_columns(
             "top_two_assists",
             "usage_concentration",
         )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE:
+        return (
+            *LINEAR_NAIL_V1211_BASKETBALL_ADDITIVE_FEATURES,
+            "top_two_assists",
+            "usage_concentration",
+        )
     if feature_set == CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE:
         return (
             *LINEAR_NAIL_V122_BASKETBALL_ADDITIVE_FEATURES,
@@ -527,7 +540,7 @@ def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION,
         CONTEXT_FEATURE_SET_V23_SHOT_PORTFOLIO,
     }:
-        return PROFILE_COLUMNS
+        return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct", "defensive_rebound_pct")
     if feature_set == CONTEXT_FEATURE_SET_X1_ORB_CLAIM_TOTAL:
         return ("offensive_rebound_pct",)
     if feature_set == CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL:
@@ -539,6 +552,8 @@ def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
     }:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE:
+        return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct", STANDARD_USAGE_COLUMN)
     if feature_set == CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct", "defensive_rebound_pct")
     if feature_set == CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE:
@@ -659,6 +674,16 @@ def _side_feature_row(
             for column in side_context_feature_columns(
                 CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE
             )
+        }
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE:
+        standard_usage_lineup = lineup.assign(**{USAGE_COLUMN: lineup[STANDARD_USAGE_COLUMN]})
+        base = _side_feature_row(
+            standard_usage_lineup,
+            CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
+        )
+        result = {
+            (STANDARD_USAGE_COLUMN if column == USAGE_COLUMN else column): value
+            for column, value in base.items()
         }
     elif feature_set == CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE:
         base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE)

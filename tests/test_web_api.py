@@ -276,6 +276,21 @@ def test_compiled_linear_matchup_returns_nonadditive_side_scores() -> None:
         payload["unit_composition_rating"] - payload["opponent_composition_rating"],
         payload["contextual_adjustment"],
     )
+    usage = next(
+        row
+        for row in payload["composition_feature_contributions"]
+        if row["id"] == "home_minus_away_usage_concentration"
+    )
+    detail = usage["detail"]
+    assert detail["kind"] == "usage_concentration"
+    assert len(detail["unit_top_players"]) == 2
+    assert len(detail["opponent_top_players"]) == 2
+    assert detail["unit_total"] > 0.0
+    assert detail["standard_deviation"] > 0.0
+    assert np.isclose(
+        detail["standardized_difference"],
+        detail["difference"] / detail["standard_deviation"],
+    )
 
 
 def test_matchup_endpoint_accepts_season_scoped_units_and_neutral_environment() -> None:
@@ -360,6 +375,7 @@ def test_historical_lab_state_uses_published_exposure_cache(monkeypatch) -> None
         },
         exposure_cohort=cached_cohort,
         historical_profiles=evaluator.profiles.assign(season="2024-25"),
+        historical_realized_profiles=evaluator.profiles.assign(season="2024-25"),
     )
     monkeypatch.setattr(
         web_inference,

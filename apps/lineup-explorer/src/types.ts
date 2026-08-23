@@ -96,11 +96,27 @@ export type RankedLineup = {
   actual_net_rating: number;
 };
 
+export type ContextFeatureDetail = {
+  kind: "generic" | "usage_concentration" | "top_two_assists";
+  unit_value: number;
+  opponent_value: number;
+  difference: number;
+  standard_deviation: number;
+  standardized_difference: number;
+  standardized_coefficient: number;
+  raw_coefficient: number;
+  unit_total?: number;
+  opponent_total?: number;
+  unit_top_players?: Array<{ player_name: string; value: number }>;
+  opponent_top_players?: Array<{ player_name: string; value: number }>;
+};
+
 export type ContextFeature = {
   id: string;
   label: string;
   value: number;
   contribution: number;
+  detail?: ContextFeatureDetail;
 };
 
 export type FeatureResponseCurve = {

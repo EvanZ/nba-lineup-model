@@ -62,10 +62,12 @@ PROFILE_REBOUND_PERCENT_COLUMNS = (
     "offensive_rebound_pct",
     "defensive_rebound_pct",
 )
+PROFILE_USAGE_PERCENT_COLUMNS = ("usage_pct",)
 PROFILE_COLUMNS = (
     *PROFILE_RATE_COLUMNS,
     *EXTRA_PROFILE_RATE_COLUMNS,
     *PROFILE_REBOUND_PERCENT_COLUMNS,
+    *PROFILE_USAGE_PERCENT_COLUMNS,
     *ASSISTED_SHOT_RATE_COLUMNS,
 )
 PROFILE_PSEUDO_POSSESSIONS = 300.0
@@ -81,6 +83,7 @@ class ProfilePaddingContract:
     reference_mode: str = "expanding"
     three_point_percentage_attempts: float | None = None
     usage_component_pseudo_possessions: Mapping[str, float] | None = None
+    usage_percentage_pseudo_possessions: float = PROFILE_PSEUDO_POSSESSIONS
     rebound_percentage_pseudo_possessions: Mapping[str, float] | None = None
     source: str | None = None
 
@@ -95,6 +98,7 @@ class ProfilePaddingContract:
                 if self.usage_component_pseudo_possessions is not None
                 else None
             ),
+            "usage_percentage_pseudo_possessions": self.usage_percentage_pseudo_possessions,
             "rebound_percentage_pseudo_possessions": (
                 dict(self.rebound_percentage_pseudo_possessions)
                 if self.rebound_percentage_pseudo_possessions is not None
@@ -161,22 +165,30 @@ def build_contextual_player_profiles(
     exposure_cohort: pd.DataFrame | None = None,
     padding_contract: ProfilePaddingContract = UNIFORM_300_PROFILE_PADDING,
     use_last_observed_profile: bool = False,
+    profile_timing: str = "prior",
 ) -> pd.DataFrame:
-    """Build target player profiles using information available before a season.
+    """Build padded player profiles for a target season.
 
-    ``target_player_ids`` is an oracle roster/lineup universe, which is allowed
-    under the frozen evaluation contract. No target-season box-score or RAPM
-    outcome is read to form the returned traits.
+    ``profile_timing="prior"`` is the frozen forecasting contract: returning
+    players use their prior-season rates, and no target-season box-score or RAPM
+    outcome is read. ``profile_timing="realized"`` uses the selected season's
+    completed box-score profile for retrospective display only.
     """
 
     target = validate_season(target_season)
+    if profile_timing not in {"prior", "realized"}:
+        raise ValueError("profile_timing must be 'prior' or 'realized'")
     source = _previous_season(target)
     _validate_panel(panel)
     player_ids = np.array(sorted({int(value) for value in target_player_ids}), dtype=np.int64)
     if len(player_ids) == 0:
         raise ValueError("Contextual profiles require at least one target player")
 
-    history = panel.loc[panel["season"].astype(str).lt(target)].copy()
+    history_mask = panel["season"].astype(str).lt(target)
+    if profile_timing == "realized":
+        history_mask = panel["season"].astype(str).le(target)
+        source = target
+    history = panel.loc[history_mask].copy()
     if history.empty:
         raise ValueError("Contextual profiles require earlier player-season history")
     target_bios = panel.loc[
@@ -219,6 +231,20 @@ def build_contextual_player_profiles(
         validate="one_to_one",
     )
     historical_rates = historical_rates.merge(
+        _usage_percentage_frame(
+            tuple(
+                sorted(
+                    history["season"].astype(str).unique(),
+                    key=lambda value: int(value[:4]),
+                )
+            ),
+            curated_dir=curated_dir,
+        ),
+        on=["season", "player_id"],
+        how="left",
+        validate="one_to_one",
+    )
+    historical_rates = historical_rates.merge(
         _assisted_shot_rate_frame(
             history,
             analytical_dir=analytical_dir,
@@ -231,10 +257,14 @@ def build_contextual_player_profiles(
         historical_rates,
         padding_contract=padding_contract,
     )
+    historical_rates = _pad_usage_percentages(
+        historical_rates,
+        padding_contract=padding_contract,
+    )
     if historical_rates.loc[:, list(PROFILE_COLUMNS)].isna().any(axis=None):
         raise ValueError("Contextual player profiles are incomplete")
     previous = historical_rates.loc[historical_rates["season"].eq(source)].copy()
-    if use_last_observed_profile:
+    if use_last_observed_profile and profile_timing == "prior":
         previous = (
             historical_rates.sort_values(["player_id", "season"], kind="stable")
             .groupby("player_id", as_index=False, sort=False)
@@ -262,14 +292,24 @@ def build_contextual_player_profiles(
         exposure_cohort=exposure_cohort,
     )
     output = returners.copy()
-    output["profile_gap_seasons"] = (
-        int(target[:4]) - output["profile_source_season"].astype("string").str[:4].astype(float) - 1
-    ).where(has_prior_profile, pd.NA).astype("Int64")
-    output["profile_source"] = np.where(
-        has_prior_profile & output["profile_gap_seasons"].eq(0),
-        "prior_season",
-        np.where(has_prior_profile, "last_observed_season", "cold_start"),
-    )
+    if profile_timing == "realized":
+        output["profile_gap_seasons"] = pd.Series(
+            0, index=output.index, dtype="Int64"
+        ).where(has_prior_profile, pd.NA)
+        output["profile_source"] = np.where(
+            has_prior_profile, "selected_season", "cold_start"
+        )
+    else:
+        output["profile_gap_seasons"] = (
+            int(target[:4])
+            - output["profile_source_season"].astype("string").str[:4].astype(float)
+            - 1
+        ).where(has_prior_profile, pd.NA).astype("Int64")
+        output["profile_source"] = np.where(
+            has_prior_profile & output["profile_gap_seasons"].eq(0),
+            "prior_season",
+            np.where(has_prior_profile, "last_observed_season", "cold_start"),
+        )
     output["profile_imputed"] = (~has_prior_profile).astype(int)
     output["profile_replacement_weight"] = 0.0
 
@@ -350,9 +390,14 @@ def _rate_frame(
         references,
         padding_contract=padding_contract,
     )
-    return output.loc[
-        :, ["season", "player_id", "_possessions", *PROFILE_RATE_COLUMNS, *EXTRA_PROFILE_RATE_COLUMNS]
+    columns = [
+        "season",
+        "player_id",
+        "_possessions",
+        *PROFILE_RATE_COLUMNS,
+        *EXTRA_PROFILE_RATE_COLUMNS,
     ]
+    return output.loc[:, columns]
 
 
 def _pad_possession_rate(
@@ -501,7 +546,10 @@ def _pad_rebound_percentages(
 def _assisted_shot_rate_frame(frame: pd.DataFrame, *, analytical_dir: str) -> pd.DataFrame:
     """Return selected source-season assisted-shot rates without target leakage."""
 
-    path = Path(analytical_dir) / "assisted_shot_taxonomy/player_season_assisted_shot_profiles.parquet"
+    path = (
+        Path(analytical_dir)
+        / "assisted_shot_taxonomy/player_season_assisted_shot_profiles.parquet"
+    )
     assisted = pd.read_parquet(path)
     source = frame.loc[:, ["season", "player_id", "rapm_possessions"]].copy()
     source["player_id"] = pd.to_numeric(source["player_id"], errors="raise").astype("int64")
@@ -524,12 +572,13 @@ def _assisted_shot_rate_frame(frame: pd.DataFrame, *, analytical_dir: str) -> pd
     possessions = pd.to_numeric(merged["rapm_possessions"], errors="raise").astype(float)
     result = merged.loc[:, ["season", "player_id"]].copy()
     for trait, (pseudo_possessions, center_mode) in ASSISTED_SHOT_PROFILE_PADDING.items():
-        counts = pd.to_numeric(merged[trait], errors="raise").astype(float)
         values = np.empty(len(merged), dtype=float)
         for _, members in merged.groupby("season", sort=False):
             member_counts = pd.to_numeric(members[trait], errors="raise").to_numpy(dtype=float)
             member_possessions = possessions.loc[members.index].to_numpy(dtype=float)
-            reference = _assisted_shot_reference_rate(member_counts, member_possessions, center_mode)
+            reference = _assisted_shot_reference_rate(
+                member_counts, member_possessions, center_mode
+            )
             values[members.index] = 100.0 * (
                 member_counts + pseudo_possessions * reference / 100.0
             ) / (member_possessions + pseudo_possessions)
@@ -565,6 +614,7 @@ def _validate_padding_contract(contract: ProfilePaddingContract) -> None:
     if missing:
         raise ValueError(f"Profile padding is missing traits: {sorted(missing)}")
     values = list(contract.rate_pseudo_possessions.values())
+    values.append(contract.usage_percentage_pseudo_possessions)
     if contract.three_point_percentage_attempts is not None:
         values.append(contract.three_point_percentage_attempts)
     if contract.usage_component_pseudo_possessions is not None:
@@ -768,6 +818,113 @@ def _count_columns() -> tuple[str, ...]:
 def _rebound_percentage_frame(seasons: tuple[str, ...], *, curated_dir: str) -> pd.DataFrame:
     frames = [_season_rebound_percentage(season, curated_dir) for season in seasons]
     return pd.concat(frames, ignore_index=True)
+
+
+def _pad_usage_percentages(
+    rates: pd.DataFrame,
+    *,
+    padding_contract: ProfilePaddingContract,
+) -> pd.DataFrame:
+    """Empirical-Bayes shrinkage for conventional USG%.
+
+    ``usage_opportunities`` is the game-level estimate of team possession
+    opportunities while the player was on court. It is the denominator of the
+    conventional USG% definition, so it is the compatible exposure unit for
+    shrinkage rather than RAPM possession exposure.
+    """
+
+    output = rates.copy()
+    required = {"usage_events", "usage_opportunities", "usage_pct"}
+    missing = required - set(output)
+    if missing:
+        raise ValueError(f"Usage percentage frame missing columns: {sorted(missing)}")
+    opportunities = pd.to_numeric(output["usage_opportunities"], errors="raise").astype(float)
+    events = pd.to_numeric(output["usage_events"], errors="raise").astype(float)
+    if opportunities.le(0).any() or events.lt(0).any():
+        raise ValueError("Usage percentage inputs must be non-negative with positive exposure")
+    if padding_contract.reference_mode == "expanding":
+        output["usage_reference"] = float(events.sum() / opportunities.sum())
+    else:
+        reference = (
+            output.groupby("season", sort=False, group_keys=False)
+            .apply(
+                lambda frame: float(frame["usage_events"].sum())
+                / float(frame["usage_opportunities"].sum()),
+                include_groups=False,
+            )
+            .rename("usage_reference")
+        )
+        output = output.merge(
+            reference,
+            left_on="season",
+            right_index=True,
+            validate="many_to_one",
+        )
+        events = pd.to_numeric(output["usage_events"], errors="raise").astype(float)
+        opportunities = pd.to_numeric(output["usage_opportunities"], errors="raise").astype(float)
+    pseudo = padding_contract.usage_percentage_pseudo_possessions
+    output["usage_pct"] = 100.0 * (
+        events.to_numpy(dtype=float)
+        + pseudo * output["usage_reference"].to_numpy(dtype=float)
+    ) / (opportunities.to_numpy(dtype=float) + pseudo)
+    return output.drop(columns="usage_reference")
+
+
+def _usage_percentage_frame(seasons: tuple[str, ...], *, curated_dir: str) -> pd.DataFrame:
+    frames = [_season_usage_percentage(season, curated_dir) for season in seasons]
+    return pd.concat(frames, ignore_index=True)
+
+
+@cache
+def _season_usage_percentage(season: str, curated_dir: str) -> pd.DataFrame:
+    """Calculate conventional player USG% from game-level team opportunities."""
+
+    path = Path(curated_dir) / "players" / season / "regular"
+    players = pd.read_parquet(path)
+    required = {
+        "game_id",
+        "team_id",
+        "personId",
+        "statistics_minutes",
+        "statistics_fieldGoalsAttempted",
+        "statistics_freeThrowsAttempted",
+        "statistics_turnovers",
+    }
+    missing = required - set(players)
+    if missing:
+        raise ValueError(f"Player boxscores missing usage percentage columns: {sorted(missing)}")
+    players = players.copy()
+    players["minutes"] = pd.to_timedelta(
+        players["statistics_minutes"], errors="coerce"
+    ).dt.total_seconds() / 60.0
+    players = players.loc[players["minutes"].gt(0)].copy()
+    if players.empty:
+        raise ValueError(f"Usage percentage requires positive-minute rows in {season}")
+    players["player_id"] = pd.to_numeric(players["personId"], errors="raise").astype("int64")
+    players["usage_events"] = (
+        pd.to_numeric(players["statistics_fieldGoalsAttempted"], errors="raise").astype(float)
+        + 0.44
+        * pd.to_numeric(players["statistics_freeThrowsAttempted"], errors="raise").astype(float)
+        + pd.to_numeric(players["statistics_turnovers"], errors="raise").astype(float)
+    )
+    team = players.groupby(["game_id", "team_id"], as_index=False).agg(
+        team_minutes=("minutes", "sum"),
+        team_usage_events=("usage_events", "sum"),
+    )
+    players = players.merge(team, on=["game_id", "team_id"], validate="many_to_one")
+    players["usage_opportunities"] = (
+        players["minutes"] / (players["team_minutes"] / 5.0)
+    ) * players["team_usage_events"]
+    if players["usage_opportunities"].le(0).any():
+        raise ValueError(f"Invalid usage opportunities in {season}")
+    output = players.groupby("player_id", as_index=False).agg(
+        usage_events=("usage_events", "sum"),
+        usage_opportunities=("usage_opportunities", "sum"),
+    )
+    output["usage_pct"] = 100.0 * output["usage_events"] / output["usage_opportunities"]
+    return output.loc[:, ["player_id", "usage_events", "usage_opportunities", "usage_pct"]].assign(
+        season=season
+    )
 
 
 @cache
