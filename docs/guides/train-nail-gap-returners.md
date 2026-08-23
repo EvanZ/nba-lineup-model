@@ -1,6 +1,6 @@
 ---
 title: Train NAIL Gap-Returner Priors
-last_updated: "2026-08-21"
+last_updated: "2026-08-22"
 ---
 
 # Train NAIL Gap-Returner Priors
@@ -13,6 +13,12 @@ bootstrap non-promotion gate.
 uv run nba-train-nail-gap-returners --through-season 2025-26
 uv run nba-evaluate-nail-gap-returners
 uv run nba-bootstrap-nail-gap-returners
+```
+
+Render the production model's 14-panel context-coefficient audit:
+
+```sh
+uv run nba-audit-nail-v12-context-weights
 ```
 
 The training command writes an immutable recursive run beneath

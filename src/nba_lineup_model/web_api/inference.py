@@ -14,9 +14,10 @@ import numpy as np
 import pandas as pd
 
 from nba_lineup_model.modeling.contextual_features import (
+    CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
     CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
     CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
-    LINEAR_X3_ADDITIVE_FEATURES,
+    LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES,
     contextual_feature_columns,
     lineup_side_context_features,
     side_context_feature_columns,
@@ -43,9 +44,9 @@ DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path(
     "artifacts/models/forward_draft_history_cold_start"
 )
 # Keep the artifact identifier distinct from the public release name.
-MODEL_ARTIFACT = "forward_nail_rapm_v12_gap_returner_priors"
-MODEL_NAME = "forward_nail_rapm_v12_gap_returner_priors"
-MODEL_DISPLAY_NAME = "NAIL-RAPM v1.2"
+MODEL_ARTIFACT = "forward_nail_rapm_v121_pruned_nonadditive"
+MODEL_NAME = "forward_nail_rapm_v121_pruned_nonadditive"
+MODEL_DISPLAY_NAME = "NAIL-RAPM v1.2.1"
 DISPLAY_SEASON = "2025-26"
 PRESEASON_PREVIEW_SEASON = "2026-27"
 RESPONSE_CURVE_POINTS = 33
@@ -145,6 +146,11 @@ _LINEAR_X3_ADDITIVE_FEATURE_TO_PROFILE = {
 def _linear_x3_additive_feature_map(feature_set: str) -> dict[str, str]:
     """Return the player-compilable coordinates for one x3 artifact contract."""
 
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE:
+        return {
+            feature: _LINEAR_X3_ADDITIVE_FEATURE_TO_PROFILE[feature]
+            for feature in LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES
+        }
     if feature_set == CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY:
         return {
             feature: profile_column
@@ -1002,7 +1008,8 @@ class LineupEvaluator:
         )
         total_contributions = _antisymmetric_feature_contributions(context_model, features)[0]
         additive_ids = {
-            f"home_minus_away_{column}" for column in LINEAR_X3_ADDITIVE_FEATURES
+            f"home_minus_away_{column}"
+            for column in _linear_x3_additive_feature_map(context_model.feature_set)
         }
         feature_ids = contextual_feature_columns(context_model.feature_set)
         additive_context = float(
@@ -2264,6 +2271,7 @@ def _is_compiled_linear_x3(context_model: MatchupContextualModel) -> bool:
     return (
         context_model.feature_set
         in {
+            CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
             CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
             CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
         }
@@ -2281,7 +2289,8 @@ def _compiled_linear_x3_nonadditive_side_scores(
     side_columns = side_context_feature_columns(context_model.feature_set)
     relative_columns = contextual_feature_columns(context_model.feature_set)
     additive_ids = {
-        f"home_minus_away_{column}" for column in LINEAR_X3_ADDITIVE_FEATURES
+        f"home_minus_away_{column}"
+        for column in _linear_x3_additive_feature_map(context_model.feature_set)
     }
     nonadditive_columns = [
         side_column
@@ -2826,7 +2835,8 @@ def build_observed_lineup_rankings(
     if _is_compiled_linear_x3(context_model):
         side_columns = side_context_feature_columns(context_model.feature_set)
         additive_ids = {
-            f"home_minus_away_{column}" for column in LINEAR_X3_ADDITIVE_FEATURES
+            f"home_minus_away_{column}"
+            for column in _linear_x3_additive_feature_map(context_model.feature_set)
         }
         nonadditive_columns = [
             side_column
@@ -3073,7 +3083,8 @@ def warm_player_context_exposure(
             use_last_observed_profile=use_last_observed_profile,
         )
         additive_ids = {
-            f"home_minus_away_{column}" for column in LINEAR_X3_ADDITIVE_FEATURES
+            f"home_minus_away_{column}"
+            for column in _linear_x3_additive_feature_map(model.feature_set)
         }
         side_columns = side_context_feature_columns(model.feature_set)
         nonadditive_columns = [

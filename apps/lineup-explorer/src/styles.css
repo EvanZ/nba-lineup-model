@@ -94,6 +94,21 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .feature-contract p:not(.section-kicker) { margin: 0; color: #5d655f; font-size: 13px; line-height: 1.55; }
 .feature-list { margin: 16px 0 0; padding: 0; color: #4f5851; font-size: 13px; line-height: 1.55; list-style: none; }
 .feature-list li { padding: 6px 0; border-top: 1px solid #d9d6ce; }
+.promotion-tests { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 26px; max-width: 1080px; margin-top: 32px; }
+.promotion-tests section { padding-top: 15px; border-top: 2px solid #17201c; }
+.promotion-tests h3 { margin: 0 0 9px; color: #17201c; font-size: 16px; }
+.promotion-tests p { margin: 0; color: #5d655f; font-size: 13px; line-height: 1.55; }
+.coefficient-chart-grid { display: grid; gap: 28px; margin-top: 32px; }
+.coefficient-chart-panel { min-width: 0; margin: 0; padding: 18px 0 0; border-top: 2px solid #17201c; }
+.coefficient-chart-panel figcaption { display: grid; gap: 5px; margin: 0 0 16px; }
+.coefficient-chart-panel figcaption strong { color: #17201c; font-family: Georgia, "Times New Roman", serif; font-size: 23px; font-weight: 400; line-height: 1.1; }
+.coefficient-chart-label { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.coefficient-chart-label.additive { color: #2563a8; }
+.coefficient-chart-label.nonadditive { color: #cf6e1b; }
+.coefficient-chart-panel img { display: block; width: 100%; height: auto; border: 1px solid #d9d6ce; background: #fffefa; }
+.coefficient-audit-link { margin: 24px 0 0; }
+.coefficient-audit-link a { display: inline-flex; align-items: center; gap: 5px; color: #245a47; font-size: 14px; font-weight: 800; text-decoration-color: #e8502f; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.coefficient-audit-link a:hover { color: #17201c; }
 .about-footer-note { max-width: 700px; padding: 36px 0 8px; }
 .about-footer-note > p:last-child { margin: 0; color: #5d655f; font-size: 14px; line-height: 1.55; }
 .rankings-page { padding-top: 72px; }
@@ -393,7 +408,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .about-equation { grid-template-columns: 1fr; gap: 20px; }
   .model-formula, .about-equation > p:last-child, .about-formula-stack { grid-column: auto; }
   .about-steps { grid-template-columns: 1fr; gap: 22px; }
-  .about-steps.two-up, .model-lexicon, .feature-contract { grid-template-columns: 1fr; }
+  .about-steps.two-up, .model-lexicon, .feature-contract, .promotion-tests { grid-template-columns: 1fr; }
   .intro { margin: 0 -20px; padding: 52px 20px 32px; }
   .intro::before { background-position: right top; background-size: auto 78%; opacity: 0.1; }
   .lab-grid { grid-template-columns: 1fr; }

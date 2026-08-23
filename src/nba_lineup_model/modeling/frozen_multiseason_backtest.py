@@ -46,6 +46,7 @@ from nba_lineup_model.modeling.frozen_prior_evaluation import (
 )
 from nba_lineup_model.modeling.matchup_contextual import MatchupContextualModel
 from nba_lineup_model.modeling.neural_data import read_neural_possessions
+from nba_lineup_model.modeling.progress import format_progress_bar
 from nba_lineup_model.modeling.replacement_level import prepare_player_exposure_cohort
 from nba_lineup_model.modeling.shot_portfolio import add_shot_portfolio_profiles
 from nba_lineup_model.modeling.stints import read_rapm_stints
@@ -171,7 +172,7 @@ def run_frozen_multiseason_backtest(
     analytical_root = Path(analytical_dir)
     curated_root = Path(curated_dir)
     for target_index, target in enumerate(target_seasons, start=1):
-        print(f"Replaying season {target} ({target_index}/{len(target_seasons)})", flush=True)
+        print(f"Starting frozen replay for {target}", flush=True)
         source = _previous_season(target)
         target_stints = read_rapm_stints(target, analytical_dir=analytical_root)
         source_stints = read_rapm_stints(source, analytical_dir=analytical_root)
@@ -257,6 +258,14 @@ def run_frozen_multiseason_backtest(
                 context_correction=context_correction,
             )
             evaluations.append({"candidate": candidate, "target": target, **evaluation})
+        print(
+            format_progress_bar(
+                target_index,
+                len(target_seasons),
+                label=f"Completed frozen replay for {target}",
+            ),
+            flush=True,
+        )
     outputs = _collect_outputs(evaluations)
     run = _write_run(
         target_seasons=target_seasons,

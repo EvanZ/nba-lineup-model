@@ -7,6 +7,11 @@ from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE,
     CONTEXT_FEATURE_SET_LINEAR_X3_ADDITIVE_QUADRATIC_SIDE,
     CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
+    CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
+    CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE,
+    CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE,
+    CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT,
+    CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE,
     CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING,
     CONTEXT_FEATURE_SET_V2_DEPTH_AWARE_SHOOTING,
     CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY,
@@ -55,6 +60,10 @@ def test_relative_context_features_equal_the_difference_of_side_features() -> No
                 "player_id": player_id,
                 **_rates(player_id),
                 "offensive_rebound_pct": 0.1,
+                "defensive_rebound_pct": 0.2,
+                "free_throw_attempts_per_100": 1.0,
+                "unassisted_rim_makes_per_100": 0.5,
+                "unassisted_three_makes_per_100": 0.25,
                 "profile_imputed": 0,
                 "profile_replacement_weight": 0.0,
             }
@@ -134,6 +143,181 @@ def test_nail_additive_only_contract_retains_only_player_additive_coordinates() 
         "blocks_per_100",
         "offensive_rebound_claim_total",
     )
+
+
+def test_nail_v121_contract_retains_only_two_resolved_nonadditive_terms() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "offensive_rebound_pct": 0.1,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id in range(1, 6)
+        ]
+    )
+
+    features = lineup_side_context_features(
+        [[1, 2, 3, 4, 5]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
+    )
+
+    assert tuple(features.columns) == (
+        "three_pa_per_100",
+        "three_pm_per_100",
+        "assists_per_100",
+        "turnovers_per_100",
+        "usage_per_100",
+        "steals_per_100",
+        "blocks_per_100",
+        "offensive_rebound_claim_total",
+        "top_two_assists",
+        "usage_concentration",
+    )
+
+
+def test_nail_v122_adds_only_defensive_rebound_percentage() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "offensive_rebound_pct": 0.1,
+                "defensive_rebound_pct": 0.2,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id in range(1, 6)
+        ]
+    )
+
+    features = lineup_side_context_features(
+        [[1, 2, 3, 4, 5]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE,
+    )
+
+    assert tuple(features.columns) == (
+        "three_pa_per_100",
+        "three_pm_per_100",
+        "assists_per_100",
+        "turnovers_per_100",
+        "usage_per_100",
+        "steals_per_100",
+        "blocks_per_100",
+        "offensive_rebound_claim_total",
+        "defensive_rebound_pct",
+        "top_two_assists",
+        "usage_concentration",
+    )
+    assert features.loc[0, "defensive_rebound_pct"] == 1.0
+
+
+def test_nail_v123_adds_only_free_throw_attempts() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "offensive_rebound_pct": 0.1,
+                "free_throw_attempts_per_100": 1.0,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id in range(1, 6)
+        ]
+    )
+
+    features = lineup_side_context_features(
+        [[1, 2, 3, 4, 5]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE,
+    )
+
+    assert tuple(features.columns) == (
+        "three_pa_per_100",
+        "three_pm_per_100",
+        "assists_per_100",
+        "turnovers_per_100",
+        "usage_per_100",
+        "steals_per_100",
+        "blocks_per_100",
+        "offensive_rebound_claim_total",
+        "free_throw_attempts_per_100",
+        "top_two_assists",
+        "usage_concentration",
+    )
+    assert features.loc[0, "free_throw_attempts_per_100"] == 5.0
+
+
+def test_nail_v124_replaces_usage_with_free_throw_attempts() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "offensive_rebound_pct": 0.1,
+                "free_throw_attempts_per_100": 1.0,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id in range(1, 6)
+        ]
+    )
+
+    features = lineup_side_context_features(
+        [[1, 2, 3, 4, 5]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT,
+    )
+
+    assert tuple(features.columns) == (
+        "three_pa_per_100",
+        "three_pm_per_100",
+        "assists_per_100",
+        "turnovers_per_100",
+        "steals_per_100",
+        "blocks_per_100",
+        "offensive_rebound_claim_total",
+        "free_throw_attempts_per_100",
+        "top_two_assists",
+        "usage_concentration",
+    )
+    assert features.loc[0, "free_throw_attempts_per_100"] == 5.0
+
+
+def test_nail_v131_contract_removes_only_usage_and_three_point_attempts() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "offensive_rebound_pct": 0.1,
+                "defensive_rebound_pct": 0.2,
+                "free_throw_attempts_per_100": 1.0,
+                "unassisted_rim_makes_per_100": 0.5,
+                "unassisted_three_makes_per_100": 0.25,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id in range(1, 6)
+        ]
+    )
+
+    features = lineup_side_context_features(
+        [[1, 2, 3, 4, 5]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE,
+    )
+
+    assert "three_pa_per_100" not in features
+    assert "usage_per_100" not in features
+    assert "three_pm_per_100" in features
+    assert "unassisted_three_makes_per_100" in features
+    assert "bottom_two_three_pm" in features
 
 
 def test_x3_without_uncertainty_removes_only_profile_quality_terms() -> None:

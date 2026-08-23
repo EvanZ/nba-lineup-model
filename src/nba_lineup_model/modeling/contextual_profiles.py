@@ -48,13 +48,26 @@ PROFILE_COUNTS = {
     "defensive_rebounds": "rebounds_defensive",
     "steals": "steals",
     "blocks": "blocks",
+    "free_throw_attempts": "free_throws_attempted",
 }
-PROFILE_RATE_COLUMNS = tuple(f"{trait}_per_100" for trait in PROFILE_COUNTS)
+PROFILE_RATE_COLUMNS = tuple(
+    f"{trait}_per_100" for trait in PROFILE_COUNTS if trait != "free_throw_attempts"
+)
+EXTRA_PROFILE_RATE_COLUMNS = ("free_throw_attempts_per_100",)
+ASSISTED_SHOT_RATE_COLUMNS = (
+    "unassisted_rim_makes_per_100",
+    "unassisted_three_makes_per_100",
+)
 PROFILE_REBOUND_PERCENT_COLUMNS = (
     "offensive_rebound_pct",
     "defensive_rebound_pct",
 )
-PROFILE_COLUMNS = (*PROFILE_RATE_COLUMNS, *PROFILE_REBOUND_PERCENT_COLUMNS)
+PROFILE_COLUMNS = (
+    *PROFILE_RATE_COLUMNS,
+    *EXTRA_PROFILE_RATE_COLUMNS,
+    *PROFILE_REBOUND_PERCENT_COLUMNS,
+    *ASSISTED_SHOT_RATE_COLUMNS,
+)
 PROFILE_PSEUDO_POSSESSIONS = 300.0
 REPLACEMENT_SHARE_CUTOFF = 0.05
 
@@ -116,6 +129,7 @@ MEDVEDOVSKY_2020_PROFILE_PADDING = ProfilePaddingContract(
         "defensive_rebounds": 109.0,
         "steals": 632.61,
         "blocks": 151.22,
+        "free_throw_attempts": 197.58,
     },
     reference_mode="season",
     three_point_percentage_attempts=242.61,
@@ -130,6 +144,11 @@ MEDVEDOVSKY_2020_PROFILE_PADDING = ProfilePaddingContract(
     },
     source="https://kmedved.com/2020/08/06/nba-stabilization-rates-and-the-padding-approach/",
 )
+
+ASSISTED_SHOT_PROFILE_PADDING = {
+    "unassisted_rim_makes": (480.0, "qualified_player_median"),
+    "unassisted_three_makes": (480.0, "possession_weighted_mean"),
+}
 
 
 def build_contextual_player_profiles(
@@ -199,12 +218,21 @@ def build_contextual_player_profiles(
         how="left",
         validate="one_to_one",
     )
+    historical_rates = historical_rates.merge(
+        _assisted_shot_rate_frame(
+            history,
+            analytical_dir=analytical_dir,
+        ),
+        on=["season", "player_id"],
+        how="left",
+        validate="one_to_one",
+    )
     historical_rates = _pad_rebound_percentages(
         historical_rates,
         padding_contract=padding_contract,
     )
-    if historical_rates.loc[:, list(PROFILE_REBOUND_PERCENT_COLUMNS)].isna().any(axis=None):
-        raise ValueError("Contextual rebound percentage profiles are incomplete")
+    if historical_rates.loc[:, list(PROFILE_COLUMNS)].isna().any(axis=None):
+        raise ValueError("Contextual player profiles are incomplete")
     previous = historical_rates.loc[historical_rates["season"].eq(source)].copy()
     if use_last_observed_profile:
         previous = (
@@ -322,7 +350,9 @@ def _rate_frame(
         references,
         padding_contract=padding_contract,
     )
-    return output.loc[:, ["season", "player_id", "_possessions", *PROFILE_RATE_COLUMNS]]
+    return output.loc[
+        :, ["season", "player_id", "_possessions", *PROFILE_RATE_COLUMNS, *EXTRA_PROFILE_RATE_COLUMNS]
+    ]
 
 
 def _pad_possession_rate(
@@ -466,6 +496,61 @@ def _pad_rebound_percentages(
                 values * weights + pseudo_possessions * reference
             ) / (weights + pseudo_possessions)
     return output
+
+
+def _assisted_shot_rate_frame(frame: pd.DataFrame, *, analytical_dir: str) -> pd.DataFrame:
+    """Return selected source-season assisted-shot rates without target leakage."""
+
+    path = Path(analytical_dir) / "assisted_shot_taxonomy/player_season_assisted_shot_profiles.parquet"
+    assisted = pd.read_parquet(path)
+    source = frame.loc[:, ["season", "player_id", "rapm_possessions"]].copy()
+    source["player_id"] = pd.to_numeric(source["player_id"], errors="raise").astype("int64")
+    required = {"season", "player_id", "on_court_possessions", *ASSISTED_SHOT_PROFILE_PADDING}
+    missing = required - set(assisted)
+    if missing:
+        raise ValueError(f"Assisted shot profiles missing columns: {sorted(missing)}")
+    assisted = assisted.loc[
+        :, ["season", "player_id", "on_court_possessions", *ASSISTED_SHOT_PROFILE_PADDING]
+    ].copy()
+    assisted["player_id"] = pd.to_numeric(assisted["player_id"], errors="raise").astype("int64")
+    merged = source.merge(
+        assisted,
+        on=["season", "player_id"],
+        how="left",
+        validate="one_to_one",
+    )
+    if merged.loc[:, list(ASSISTED_SHOT_PROFILE_PADDING)].isna().any(axis=None):
+        raise ValueError("Assisted shot profiles do not cover contextual history")
+    possessions = pd.to_numeric(merged["rapm_possessions"], errors="raise").astype(float)
+    result = merged.loc[:, ["season", "player_id"]].copy()
+    for trait, (pseudo_possessions, center_mode) in ASSISTED_SHOT_PROFILE_PADDING.items():
+        counts = pd.to_numeric(merged[trait], errors="raise").astype(float)
+        values = np.empty(len(merged), dtype=float)
+        for _, members in merged.groupby("season", sort=False):
+            member_counts = pd.to_numeric(members[trait], errors="raise").to_numpy(dtype=float)
+            member_possessions = possessions.loc[members.index].to_numpy(dtype=float)
+            reference = _assisted_shot_reference_rate(member_counts, member_possessions, center_mode)
+            values[members.index] = 100.0 * (
+                member_counts + pseudo_possessions * reference / 100.0
+            ) / (member_possessions + pseudo_possessions)
+        result[f"{trait}_per_100"] = values
+    return result
+
+
+def _assisted_shot_reference_rate(
+    counts: np.ndarray,
+    possessions: np.ndarray,
+    center_mode: str,
+) -> float:
+    if center_mode == "possession_weighted_mean":
+        return float(100.0 * counts.sum() / possessions.sum())
+    qualified = possessions >= 500.0
+    if not qualified.any():
+        raise ValueError("Assisted-shot profile reference has no qualified players")
+    rates = 100.0 * counts[qualified] / possessions[qualified]
+    if center_mode == "qualified_player_median":
+        return float(np.median(rates))
+    raise ValueError(f"Unsupported assisted-shot profile center: {center_mode}")
 
 
 def _validate_padding_contract(contract: ProfilePaddingContract) -> None:

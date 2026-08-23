@@ -4,17 +4,159 @@ import numpy as np
 import pandas as pd
 
 from nba_lineup_model.modeling.contextual_features import (
+    CONTEXT_FEATURE_SET_NAIL_V13,
+    CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE,
     CONTEXT_FEATURE_SET_V2_DEPTH_AWARE_SHOOTING,
+    LINEAR_NAIL_V131_PRUNED_BASKETBALL_ADDITIVE_FEATURES,
     contextual_feature_columns,
     side_context_feature_columns,
 )
 from nba_lineup_model.modeling.matchup_contextual import (
     fit_bounded_hierarchical_matchup_contextual_model,
+    fit_kalman_filtered_linear_ridge_matchup_contextual_model,
     fit_linear_ridge_matchup_contextual_model,
     fit_matchup_contextual_model,
+    fit_mean_reverting_linear_ridge_matchup_contextual_model,
     fit_normalized_linear_ridge_matchup_contextual_model,
     isolated_feature_component,
 )
+
+
+def test_kalman_linear_ridge_carries_only_additive_coefficients() -> None:
+    """The Kalman state must persist only the twelve additive coefficients."""
+
+    columns = side_context_feature_columns(CONTEXT_FEATURE_SET_NAIL_V13)
+    generator = np.random.default_rng(7)
+    home = pd.DataFrame(generator.normal(size=(96, len(columns))), columns=columns)
+    away = pd.DataFrame(generator.normal(size=(96, len(columns))), columns=columns)
+    additive_target = home["assists_per_100"].to_numpy(dtype=float) - away[
+        "assists_per_100"
+    ].to_numpy(dtype=float)
+    previous = fit_kalman_filtered_linear_ridge_matchup_contextual_model(
+        home,
+        away,
+        additive_target,
+        np.ones(len(home)),
+        alpha=1.0,
+        process_variance_multiplier=1.0,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V13,
+    )
+    changed = fit_kalman_filtered_linear_ridge_matchup_contextual_model(
+        home,
+        away,
+        -additive_target,
+        np.ones(len(home)),
+        alpha=1.0,
+        process_variance_multiplier=1.0,
+        previous_model=previous,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V13,
+    )
+    unfiltered = fit_linear_ridge_matchup_contextual_model(
+        home,
+        away,
+        -additive_target,
+        np.ones(len(home)),
+        alpha=1.0,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V13,
+    )
+    scale = changed.pipeline.named_steps["scale"]
+    ridge = changed.pipeline.named_steps["ridge"]
+    weights = pd.Series(ridge.coef_, index=scale.feature_names_in_)
+    assert previous.additive_kalman_mean_raw is not None
+    assert previous.additive_kalman_covariance_raw is not None
+    assert previous.additive_kalman_mean_raw.shape == (12,)
+    assert previous.additive_kalman_covariance_raw.shape == (12, 12)
+    assert changed.additive_kalman_process_multiplier == 1.0
+    assert changed.additive_state_precision is not None
+    assert changed.additive_state_source_season == "previous_completed_season"
+    unfiltered_weights = pd.Series(
+        unfiltered.pipeline.named_steps["ridge"].coef_,
+        index=unfiltered.pipeline.named_steps["scale"].feature_names_in_,
+    )
+    previous_weights = pd.Series(
+        previous.pipeline.named_steps["ridge"].coef_,
+        index=previous.pipeline.named_steps["scale"].feature_names_in_,
+    )
+    feature = "home_minus_away_assists_per_100"
+    # The second-season posterior must move toward its evidence without fully
+    # discarding the first-season additive posterior.
+    assert unfiltered_weights[feature] < weights[feature] < previous_weights[feature]
+
+
+def test_dynamic_additive_state_is_feature_specific_and_forward_only() -> None:
+    """The v1.3.2 state carries ten raw coordinates and a prior-only history."""
+
+    features = tuple(LINEAR_NAIL_V131_PRUNED_BASKETBALL_ADDITIVE_FEATURES)
+    columns = side_context_feature_columns(CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE)
+    generator = np.random.default_rng(19)
+    home = pd.DataFrame(generator.normal(size=(128, len(columns))), columns=columns)
+    away = pd.DataFrame(generator.normal(size=(128, len(columns))), columns=columns)
+    target = home["assists_per_100"].to_numpy(dtype=float) - away[
+        "assists_per_100"
+    ].to_numpy(dtype=float)
+    stable = frozenset(set(features) - {"unassisted_three_makes_per_100"})
+    regime = frozenset({"unassisted_three_makes_per_100"})
+    first = fit_mean_reverting_linear_ridge_matchup_contextual_model(
+        home,
+        away,
+        target,
+        np.ones(len(home)),
+        alpha=1.0,
+        additive_features=features,
+        stable_features=stable,
+        regime_features=regime,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE,
+    )
+    second = fit_mean_reverting_linear_ridge_matchup_contextual_model(
+        home,
+        away,
+        -target,
+        np.ones(len(home)),
+        alpha=1.0,
+        additive_features=features,
+        stable_features=stable,
+        regime_features=regime,
+        previous_model=first,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE,
+    )
+
+    assert first.additive_dynamic_history_raw is not None
+    assert first.additive_dynamic_history_raw.shape == (1, 10)
+    assert second.additive_dynamic_history_raw is not None
+    assert second.additive_dynamic_history_raw.shape == (2, 10)
+    assert second.additive_dynamic_feature_names == features
+    assert second.additive_dynamic_long_run_mean_raw is not None
+    assert second.additive_dynamic_mean_reversion is not None
+    assert second.additive_dynamic_process_variance_raw is not None
+    assert second.additive_dynamic_zero_gated_features == ()
+    assert np.all(second.additive_dynamic_process_variance_raw > 0)
+
+
+def test_dynamic_additive_state_zero_gate_constrains_a_feature() -> None:
+    features = tuple(LINEAR_NAIL_V131_PRUNED_BASKETBALL_ADDITIVE_FEATURES)
+    columns = side_context_feature_columns(CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE)
+    generator = np.random.default_rng(23)
+    home = pd.DataFrame(generator.normal(size=(128, len(columns))), columns=columns)
+    away = pd.DataFrame(generator.normal(size=(128, len(columns))), columns=columns)
+    target = 100.0 * (
+        home["assists_per_100"].to_numpy(dtype=float)
+        - away["assists_per_100"].to_numpy(dtype=float)
+    )
+    model = fit_mean_reverting_linear_ridge_matchup_contextual_model(
+        home,
+        away,
+        target,
+        np.ones(len(home)),
+        alpha=1.0,
+        additive_features=features,
+        stable_features=frozenset(set(features) - {"assists_per_100"}),
+        regime_features=frozenset(),
+        zero_gated_features=frozenset({"assists_per_100"}),
+        feature_set=CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE,
+    )
+
+    assert model.additive_kalman_mean_raw is not None
+    assert abs(model.additive_kalman_mean_raw[features.index("assists_per_100")]) < 1e-7
 
 
 def test_matchup_context_is_antisymmetric_and_reference_identified() -> None:

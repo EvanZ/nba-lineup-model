@@ -1,0 +1,161 @@
+"""Paired-bootstrap non-promotion gate for Kalman NAIL-RAPM v1.4."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+from uuid import uuid4
+
+import pandas as pd
+
+from nba_lineup_model.modeling.forward_nail_gap_returners import MODEL_NAME as INCUMBENT_MODEL_NAME
+from nba_lineup_model.modeling.forward_nail_v14_filtered_additive_profiles import (
+    MODEL_NAME as CANDIDATE_MODEL_NAME,
+)
+from nba_lineup_model.modeling.frozen_model_tournament import _paired_metrics
+from nba_lineup_model.modeling.frozen_multiseason_backtest import DEFAULT_SEASONS
+
+DEFAULT_BACKTEST_ROOT = Path(
+    "artifacts/models/nail_v14_kalman_additive_profiles_frozen_backtest/"
+    "frozen_multiseason_backtest/2023-24_to_2025-26"
+)
+DEFAULT_OUTPUT_ROOT = Path(
+    "artifacts/models/nail_v14_kalman_additive_profiles_bootstrap/2023-24_to_2025-26"
+)
+DEFAULT_DRAWS = 10_000
+DEFAULT_SEED = 20_260_821
+PRIMARY_METRIC = "full_game_margin_rmse"
+RELATIVE_HARM_THRESHOLD = 0.005
+
+
+def run_nail_v14_kalman_additive_profiles_bootstrap(
+    *,
+    draws: int = DEFAULT_DRAWS,
+    seed: int = DEFAULT_SEED,
+    backtest_root: Path | str = DEFAULT_BACKTEST_ROOT,
+    output_root: Path | str = DEFAULT_OUTPUT_ROOT,
+) -> Path:
+    """Persist pooled and seasonal paired-bootstrap non-promotion decisions."""
+
+    if draws < 1:
+        raise ValueError("Bootstrap draws must be positive")
+    source_run = _latest_directory(Path(backtest_root))
+    games = pd.read_parquet(source_run / "regular_game_predictions.parquet")
+    possessions = pd.read_parquet(source_run / "possession_predictions.parquet")
+    sources = {
+        model: _source(games, possessions, model)
+        for model in (INCUMBENT_MODEL_NAME, CANDIDATE_MODEL_NAME)
+    }
+    scopes: list[tuple[str, dict[str, pd.DataFrame], dict[str, pd.DataFrame]]] = [
+        ("pooled", sources[INCUMBENT_MODEL_NAME], sources[CANDIDATE_MODEL_NAME])
+    ]
+    scopes.extend(
+        (
+            season,
+            _filter_season(sources[INCUMBENT_MODEL_NAME], season),
+            _filter_season(sources[CANDIDATE_MODEL_NAME], season),
+        )
+        for season in DEFAULT_SEASONS
+    )
+    metric_rows: list[pd.DataFrame] = []
+    gate_rows: list[dict[str, object]] = []
+    for scope_index, (scope, incumbent, candidate) in enumerate(scopes):
+        result = _paired_metrics(
+            incumbent, candidate, draws=draws, seed=seed + 10 * scope_index
+        )
+        result.insert(0, "scope", scope)
+        result.insert(1, "incumbent_model", INCUMBENT_MODEL_NAME)
+        result.insert(2, "challenger_model", CANDIDATE_MODEL_NAME)
+        metric_rows.append(result)
+        primary = result.loc[result["metric"].eq(PRIMARY_METRIC)].iloc[0]
+        practical_harm = float(primary["incumbent_value"]) * RELATIVE_HARM_THRESHOLD
+        gate_rows.append(
+            {
+                "scope": scope,
+                "metric": PRIMARY_METRIC,
+                "incumbent_value": float(primary["incumbent_value"]),
+                "challenger_value": float(primary["challenger_value"]),
+                "difference_candidate_minus_incumbent": float(
+                    primary["difference_candidate_minus_incumbent"]
+                ),
+                "ci_lower": float(primary["ci_lower"]),
+                "ci_upper": float(primary["ci_upper"]),
+                "relative_harm_threshold": RELATIVE_HARM_THRESHOLD,
+                "absolute_harm_threshold": practical_harm,
+                "non_promotion_gate_passed": bool(
+                    float(primary["ci_upper"]) <= practical_harm
+                ),
+            }
+        )
+    metrics = pd.concat(metric_rows, ignore_index=True)
+    gate = pd.DataFrame(gate_rows)
+    root = Path(output_root)
+    run_id = (
+        "nail-v14-kalman-additive-profiles-bootstrap-"
+        f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{uuid4().hex[:8]}"
+    )
+    run_dir = root / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    metrics.to_parquet(run_dir / "paired_bootstrap_metrics.parquet", index=False)
+    gate.to_parquet(run_dir / "non_promotion_gate.parquet", index=False)
+    metadata = {
+        "run_id": run_id,
+        "source_run_dir": str(source_run),
+        "draws": draws,
+        "seed": seed,
+        "resampling_unit": "games stratified within frozen season",
+        "incumbent_model": INCUMBENT_MODEL_NAME,
+        "challenger_model": CANDIDATE_MODEL_NAME,
+        "primary_metric": PRIMARY_METRIC,
+        "relative_harm_threshold": RELATIVE_HARM_THRESHOLD,
+        "promotion_rule": (
+            "candidate is eligible for promotion only when the upper endpoint of the "
+            "paired 95% confidence interval for candidate-minus-incumbent full-game "
+            "RMSE is at most +0.5% of incumbent RMSE in the pooled and each frozen season"
+        ),
+        "non_promotion_gate_passed": bool(gate["non_promotion_gate_passed"].all()),
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    (root / "latest.json").write_text(json.dumps({"run_id": run_id}, indent=2) + "\n")
+    return run_dir
+
+
+def _source(games: pd.DataFrame, possessions: pd.DataFrame, model: str) -> dict[str, pd.DataFrame]:
+    return {
+        "games": games.loc[games["model"].eq(model)].copy(),
+        "possessions": possessions.loc[
+            possessions["model"].eq(model) & possessions["cohort"].eq("regular_season")
+        ].copy(),
+    }
+
+
+def _filter_season(source: dict[str, pd.DataFrame], season: str) -> dict[str, pd.DataFrame]:
+    return {name: frame.loc[frame["season"].eq(season)].copy() for name, frame in source.items()}
+
+
+def _latest_directory(root: Path) -> Path:
+    pointer = root / "latest.json"
+    if pointer.is_file():
+        return root / str(json.loads(pointer.read_text())["run_id"])
+    candidates = sorted(path for path in root.iterdir() if path.is_dir())
+    if not candidates:
+        raise FileNotFoundError(f"No frozen Kalman v1.4 runs under {root}")
+    return candidates[-1]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Bootstrap Kalman NAIL-RAPM v1.4")
+    parser.add_argument("--draws", type=int, default=DEFAULT_DRAWS)
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    args = parser.parse_args()
+    run_dir = run_nail_v14_kalman_additive_profiles_bootstrap(
+        draws=args.draws, seed=args.seed
+    )
+    print(f"NAIL-RAPM v1.4 bootstrap: run={run_dir}")
+
+
+if __name__ == "__main__":
+    main()

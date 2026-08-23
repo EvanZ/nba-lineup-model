@@ -13,6 +13,7 @@ from sklearn.preprocessing import SplineTransformer, StandardScaler
 
 from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_V1,
+    LINEAR_NAIL_V13_BASKETBALL_ADDITIVE_FEATURES,
     contextual_feature_columns,
     lineup_side_context_features,
     side_context_feature_columns,
@@ -44,6 +45,20 @@ class MatchupContextualModel:
     configured_regularization: float | None = field(default=None, kw_only=True)
     effective_ridge_alpha: float | None = field(default=None, kw_only=True)
     training_weight_sum: float | None = field(default=None, kw_only=True)
+    additive_state_precision: float | None = field(default=None, kw_only=True)
+    additive_state_source_season: str | None = field(default=None, kw_only=True)
+    additive_kalman_mean_raw: np.ndarray | None = field(default=None, kw_only=True)
+    additive_kalman_covariance_raw: np.ndarray | None = field(default=None, kw_only=True)
+    additive_kalman_process_multiplier: float | None = field(default=None, kw_only=True)
+    additive_kalman_observation_variance: float | None = field(default=None, kw_only=True)
+    additive_dynamic_feature_names: tuple[str, ...] | None = field(default=None, kw_only=True)
+    additive_dynamic_history_raw: np.ndarray | None = field(default=None, kw_only=True)
+    additive_dynamic_long_run_mean_raw: np.ndarray | None = field(default=None, kw_only=True)
+    additive_dynamic_mean_reversion: np.ndarray | None = field(default=None, kw_only=True)
+    additive_dynamic_process_variance_raw: np.ndarray | None = field(default=None, kw_only=True)
+    additive_dynamic_zero_gated_features: tuple[str, ...] | None = field(
+        default=None, kw_only=True
+    )
 
     def predict_lineups(
         self,
@@ -278,6 +293,401 @@ def fit_linear_ridge_matchup_contextual_model(
     )
 
 
+def fit_kalman_filtered_linear_ridge_matchup_contextual_model(
+    home_features: pd.DataFrame,
+    away_features: pd.DataFrame,
+    target: np.ndarray,
+    sample_weight: np.ndarray,
+    *,
+    alpha: float,
+    process_variance_multiplier: float,
+    curvature_alpha: float = 0.0,
+    temporal_alpha: float = 0.0,
+    previous_model: MatchupContextualModel | None = None,
+    feature_set: str = CONTEXT_FEATURE_SET_V1,
+) -> MatchupContextualModel:
+    """Fit linear Ridge with a forward Kalman state for additive profiles.
+
+    The persisted state is an additive-coefficient posterior mean and
+    covariance in raw feature units. Before fitting season ``t``, the filter
+    applies a diagonal random-walk process covariance and maps that prior into
+    the current season's standardized coordinates. The weighted normal matrix
+    supplies the season's measurement update. Non-additive terms remain
+    zero-centered Ridge nuisance coefficients rather than state variables.
+    """
+
+    if alpha <= 0 or process_variance_multiplier < 0:
+        raise ValueError(
+            "Kalman linear Ridge requires positive alpha and non-negative process multiplier"
+        )
+    if curvature_alpha or temporal_alpha:
+        raise ValueError("Kalman linear Ridge does not use spline penalties")
+    if previous_model is not None and previous_model.feature_set != feature_set:
+        raise ValueError("Forward additive state requires the same feature set")
+    home = _validated_side_features(home_features, feature_set)
+    away = _validated_side_features(away_features, feature_set)
+    target_values = np.asarray(target, dtype=float)
+    weights = np.asarray(sample_weight, dtype=float)
+    if len(home) != len(away) or len(home) != len(target_values) or len(home) != len(weights):
+        raise ValueError("Contextual training inputs must have equal lengths")
+    if (
+        not np.isfinite(target_values).all()
+        or not np.isfinite(weights).all()
+        or (weights <= 0).any()
+    ):
+        raise ValueError("Contextual targets and weights must be finite, with positive weights")
+
+    relative = _relative_features(home, away, feature_set)
+    augmented_features = pd.concat([relative, -relative], ignore_index=True)
+    augmented_target = np.concatenate([target_values, -target_values])
+    augmented_weight = np.concatenate([weights, weights])
+    scale = StandardScaler()
+    design = scale.fit_transform(augmented_features)
+    columns = list(scale.feature_names_in_)
+    additive_columns = [
+        f"home_minus_away_{feature}"
+        for feature in LINEAR_NAIL_V13_BASKETBALL_ADDITIVE_FEATURES
+    ]
+    additive_indices = np.asarray([columns.index(column) for column in additive_columns])
+    weighted_design = design * augmented_weight[:, None]
+    base_precision = design.T @ weighted_design + alpha * np.eye(design.shape[1])
+    base_information = design.T @ (augmented_weight * augmented_target)
+    base_coefficients = np.linalg.solve(base_precision, base_information)
+    base_residual = augmented_target - design @ base_coefficients
+    observation_variance = float(
+        np.sum(augmented_weight * np.square(base_residual)) / augmented_weight.sum()
+    )
+    observation_variance = max(observation_variance, np.finfo(float).eps)
+    posterior_precision = base_precision.copy()
+    posterior_information = base_information.copy()
+    state_source_season: str | None = None
+    state_precision_summary: float | None = None
+    if previous_model is not None:
+        prior_mean_raw, prior_covariance_raw = _kalman_additive_state(
+            previous_model, feature_set
+        )
+        current_scale = np.asarray(scale.scale_, dtype=float)[additive_indices]
+        process_covariance_raw = np.diag(
+            process_variance_multiplier * np.diag(prior_covariance_raw)
+        )
+        prior_covariance_raw = prior_covariance_raw + process_covariance_raw
+        prior_mean = current_scale * prior_mean_raw
+        prior_covariance = (
+            current_scale[:, None] * prior_covariance_raw * current_scale[None, :]
+        )
+        prior_precision = observation_variance * np.linalg.pinv(prior_covariance)
+        posterior_precision[np.ix_(additive_indices, additive_indices)] += prior_precision
+        posterior_information[additive_indices] += prior_precision @ prior_mean
+        state_source_season = "previous_completed_season"
+        state_precision_summary = float(np.trace(prior_precision) / len(additive_indices))
+    coefficients = np.linalg.solve(posterior_precision, posterior_information)
+    posterior_covariance = observation_variance * np.linalg.pinv(posterior_precision)
+    raw_scale = np.asarray(scale.scale_, dtype=float)[additive_indices]
+    additive_mean_raw = coefficients[additive_indices] / raw_scale
+    additive_covariance_raw = posterior_covariance[np.ix_(additive_indices, additive_indices)]
+    additive_covariance_raw = additive_covariance_raw / (
+        raw_scale[:, None] * raw_scale[None, :]
+    )
+    # Fit once to populate scikit-learn's estimator metadata, then replace its
+    # coefficients with the closed-form Kalman posterior solution.
+    ridge = Ridge(alpha=alpha, fit_intercept=False).fit(
+        design,
+        augmented_target,
+        sample_weight=augmented_weight,
+    )
+    ridge.coef_ = coefficients
+    pipeline = Pipeline([("scale", scale), ("ridge", ridge)])
+    reference_features, reference_weights = _reference_distribution(
+        home, away, weights, feature_set
+    )
+    return MatchupContextualModel(
+        pipeline,
+        reference_features,
+        reference_weights,
+        feature_set=feature_set,
+        regularization_contract="weighted_sum_loss_with_kalman_additive_state",
+        configured_regularization=float(alpha),
+        effective_ridge_alpha=float(alpha),
+        training_weight_sum=float(augmented_weight.sum()),
+        additive_state_precision=state_precision_summary,
+        additive_state_source_season=state_source_season,
+        additive_kalman_mean_raw=additive_mean_raw,
+        additive_kalman_covariance_raw=additive_covariance_raw,
+        additive_kalman_process_multiplier=float(process_variance_multiplier),
+        additive_kalman_observation_variance=observation_variance,
+    )
+
+
+def _kalman_additive_state(
+    model: MatchupContextualModel,
+    feature_set: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return a persisted additive posterior in raw feature coordinates."""
+
+    if model.feature_set != feature_set:
+        raise ValueError("Forward additive state requires a matching feature contract")
+    mean = getattr(model, "additive_kalman_mean_raw", None)
+    covariance = getattr(model, "additive_kalman_covariance_raw", None)
+    expected = len(LINEAR_NAIL_V13_BASKETBALL_ADDITIVE_FEATURES)
+    if mean is None or covariance is None:
+        raise ValueError("Previous context model has no Kalman additive state")
+    mean_values = np.asarray(mean, dtype=float)
+    covariance_values = np.asarray(covariance, dtype=float)
+    if mean_values.shape != (expected,) or covariance_values.shape != (expected, expected):
+        raise ValueError("Previous Kalman additive state has an invalid shape")
+    if (
+        not np.isfinite(mean_values).all()
+        or not np.isfinite(covariance_values).all()
+        or (np.diag(covariance_values) <= 0).any()
+    ):
+        raise ValueError("Previous Kalman additive state is not a valid covariance posterior")
+    return mean_values, covariance_values
+
+
+def fit_mean_reverting_linear_ridge_matchup_contextual_model(
+    home_features: pd.DataFrame,
+    away_features: pd.DataFrame,
+    target: np.ndarray,
+    sample_weight: np.ndarray,
+    *,
+    alpha: float,
+    additive_features: tuple[str, ...],
+    stable_features: frozenset[str],
+    regime_features: frozenset[str],
+    zero_gated_features: frozenset[str] = frozenset(),
+    mean_reversion_prior_strength: float = 6.0,
+    process_variance_floor_ratio: float = 0.10,
+    curvature_alpha: float = 0.0,
+    temporal_alpha: float = 0.0,
+    previous_model: MatchupContextualModel | None = None,
+    feature_set: str = CONTEXT_FEATURE_SET_V1,
+) -> MatchupContextualModel:
+    """Fit a forward mean-reverting empirical-Bayes additive state.
+
+    Each raw additive coefficient follows a feature-specific AR(1) transition
+    toward its running completed-season mean. Innovation variances are learned
+    from prior posterior innovations and floored by prior uncertainty. Features
+    in ``zero_gated_features`` are constrained to zero in every season.
+    """
+
+    if alpha <= 0 or mean_reversion_prior_strength < 0 or process_variance_floor_ratio < 0:
+        raise ValueError(
+            "Dynamic linear Ridge requires positive alpha and non-negative state terms"
+        )
+    if curvature_alpha or temporal_alpha:
+        raise ValueError("Dynamic linear Ridge does not use spline penalties")
+    all_classified = stable_features | regime_features | zero_gated_features
+    if set(additive_features) != all_classified:
+        raise ValueError("Every dynamic additive feature must have exactly one state category")
+    if (stable_features & regime_features) or (stable_features & zero_gated_features) or (
+        regime_features & zero_gated_features
+    ):
+        raise ValueError("Dynamic additive state categories must be disjoint")
+    if previous_model is not None and previous_model.feature_set != feature_set:
+        raise ValueError("Forward additive state requires the same feature set")
+
+    home = _validated_side_features(home_features, feature_set)
+    away = _validated_side_features(away_features, feature_set)
+    target_values = np.asarray(target, dtype=float)
+    weights = np.asarray(sample_weight, dtype=float)
+    if len(home) != len(away) or len(home) != len(target_values) or len(home) != len(weights):
+        raise ValueError("Contextual training inputs must have equal lengths")
+    if (
+        not np.isfinite(target_values).all()
+        or not np.isfinite(weights).all()
+        or (weights <= 0).any()
+    ):
+        raise ValueError("Contextual targets and weights must be finite, with positive weights")
+
+    relative = _relative_features(home, away, feature_set)
+    augmented_features = pd.concat([relative, -relative], ignore_index=True)
+    augmented_target = np.concatenate([target_values, -target_values])
+    augmented_weight = np.concatenate([weights, weights])
+    scale = StandardScaler()
+    design = scale.fit_transform(augmented_features)
+    columns = list(scale.feature_names_in_)
+    additive_indices = np.asarray(
+        [columns.index(f"home_minus_away_{feature}") for feature in additive_features]
+    )
+    weighted_design = design * augmented_weight[:, None]
+    base_precision = design.T @ weighted_design + alpha * np.eye(design.shape[1])
+    base_information = design.T @ (augmented_weight * augmented_target)
+    base_coefficients = np.linalg.solve(base_precision, base_information)
+    base_residual = augmented_target - design @ base_coefficients
+    observation_variance = float(
+        np.sum(augmented_weight * np.square(base_residual)) / augmented_weight.sum()
+    )
+    observation_variance = max(observation_variance, np.finfo(float).eps)
+
+    posterior_precision = base_precision.copy()
+    posterior_information = base_information.copy()
+    state_source_season: str | None = None
+    state_precision_summary: float | None = None
+    previous_history: np.ndarray | None = None
+    if previous_model is not None:
+        previous_history, previous_covariance = _dynamic_additive_state(
+            previous_model, feature_set, additive_features
+        )
+        long_run_mean, mean_reversion, process_variance = _dynamic_transition(
+            previous_history,
+            np.diag(previous_covariance),
+            additive_features,
+            stable_features,
+            regime_features,
+            zero_gated_features,
+            mean_reversion_prior_strength=mean_reversion_prior_strength,
+            process_variance_floor_ratio=process_variance_floor_ratio,
+        )
+        phi = np.diag(mean_reversion)
+        prior_mean_raw = long_run_mean + mean_reversion * (
+            previous_history[-1] - long_run_mean
+        )
+        prior_covariance_raw = phi @ previous_covariance @ phi + np.diag(process_variance)
+        current_scale = np.asarray(scale.scale_, dtype=float)[additive_indices]
+        prior_mean = current_scale * prior_mean_raw
+        prior_covariance = (
+            current_scale[:, None] * prior_covariance_raw * current_scale[None, :]
+        )
+        prior_precision = observation_variance * np.linalg.pinv(prior_covariance)
+        posterior_precision[np.ix_(additive_indices, additive_indices)] += prior_precision
+        posterior_information[additive_indices] += prior_precision @ prior_mean
+        state_source_season = "previous_completed_season"
+        state_precision_summary = float(np.trace(prior_precision) / len(additive_indices))
+    else:
+        long_run_mean = np.zeros(len(additive_features), dtype=float)
+        mean_reversion = _dynamic_default_reversion(
+            additive_features, stable_features, regime_features, zero_gated_features
+        )
+        process_variance = np.zeros(len(additive_features), dtype=float)
+
+    for feature_index, feature in enumerate(additive_features):
+        if feature in zero_gated_features:
+            design_index = additive_indices[feature_index]
+            posterior_precision[design_index, design_index] += 1e12
+
+    coefficients = np.linalg.solve(posterior_precision, posterior_information)
+    posterior_covariance = observation_variance * np.linalg.pinv(posterior_precision)
+    raw_scale = np.asarray(scale.scale_, dtype=float)[additive_indices]
+    additive_mean_raw = coefficients[additive_indices] / raw_scale
+    additive_covariance_raw = posterior_covariance[np.ix_(additive_indices, additive_indices)]
+    additive_covariance_raw = additive_covariance_raw / (
+        raw_scale[:, None] * raw_scale[None, :]
+    )
+    if previous_model is None:
+        process_variance = process_variance_floor_ratio * np.diag(additive_covariance_raw)
+    history = (
+        additive_mean_raw[None, :]
+        if previous_history is None
+        else np.vstack([previous_history, additive_mean_raw])
+    )
+
+    ridge = Ridge(alpha=alpha, fit_intercept=False).fit(
+        design,
+        augmented_target,
+        sample_weight=augmented_weight,
+    )
+    ridge.coef_ = coefficients
+    pipeline = Pipeline([("scale", scale), ("ridge", ridge)])
+    reference_features, reference_weights = _reference_distribution(
+        home, away, weights, feature_set
+    )
+    return MatchupContextualModel(
+        pipeline,
+        reference_features,
+        reference_weights,
+        feature_set=feature_set,
+        regularization_contract="weighted_sum_loss_with_dynamic_additive_state",
+        configured_regularization=float(alpha),
+        effective_ridge_alpha=float(alpha),
+        training_weight_sum=float(augmented_weight.sum()),
+        additive_state_precision=state_precision_summary,
+        additive_state_source_season=state_source_season,
+        additive_kalman_mean_raw=additive_mean_raw,
+        additive_kalman_covariance_raw=additive_covariance_raw,
+        additive_kalman_observation_variance=observation_variance,
+        additive_dynamic_feature_names=additive_features,
+        additive_dynamic_history_raw=history,
+        additive_dynamic_long_run_mean_raw=long_run_mean,
+        additive_dynamic_mean_reversion=mean_reversion,
+        additive_dynamic_process_variance_raw=process_variance,
+        additive_dynamic_zero_gated_features=tuple(sorted(zero_gated_features)),
+    )
+
+
+def _dynamic_additive_state(
+    model: MatchupContextualModel,
+    feature_set: str,
+    features: tuple[str, ...],
+) -> tuple[np.ndarray, np.ndarray]:
+    if model.feature_set != feature_set:
+        raise ValueError("Forward dynamic state requires a matching feature contract")
+    if tuple(getattr(model, "additive_dynamic_feature_names", ())) != features:
+        raise ValueError("Previous dynamic state has an incompatible feature contract")
+    history = np.asarray(getattr(model, "additive_dynamic_history_raw", None), dtype=float)
+    covariance = np.asarray(getattr(model, "additive_kalman_covariance_raw", None), dtype=float)
+    expected = len(features)
+    if history.ndim != 2 or history.shape[1] != expected or len(history) < 1:
+        raise ValueError("Previous dynamic state has an invalid coefficient history")
+    if covariance.shape != (expected, expected) or (np.diag(covariance) <= 0).any():
+        raise ValueError("Previous dynamic state has an invalid covariance posterior")
+    return history, covariance
+
+
+def _dynamic_default_reversion(
+    features: tuple[str, ...],
+    stable_features: frozenset[str],
+    regime_features: frozenset[str],
+    zero_gated_features: frozenset[str],
+) -> np.ndarray:
+    return np.asarray(
+        [
+            0.90 if feature in stable_features else 0.60 if feature in regime_features else 0.0
+            for feature in features
+        ],
+        dtype=float,
+    )
+
+
+def _dynamic_transition(
+    history: np.ndarray,
+    previous_variance: np.ndarray,
+    features: tuple[str, ...],
+    stable_features: frozenset[str],
+    regime_features: frozenset[str],
+    zero_gated_features: frozenset[str],
+    *,
+    mean_reversion_prior_strength: float,
+    process_variance_floor_ratio: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    long_run_mean = history.mean(axis=0)
+    default_reversion = _dynamic_default_reversion(
+        features, stable_features, regime_features, zero_gated_features
+    )
+    if len(history) < 3:
+        process_variance = process_variance_floor_ratio * previous_variance
+        return long_run_mean, default_reversion, process_variance
+    previous = history[:-1] - long_run_mean
+    current = history[1:] - long_run_mean
+    scale = np.maximum(np.mean(np.square(previous), axis=0), np.finfo(float).eps)
+    numerator = np.sum(previous * current, axis=0) + (
+        mean_reversion_prior_strength * default_reversion * scale
+    )
+    denominator = np.sum(np.square(previous), axis=0) + mean_reversion_prior_strength * scale
+    reversion = numerator / denominator
+    lower = np.asarray([-0.25 if feature in regime_features else 0.0 for feature in features])
+    upper = np.asarray([0.85 if feature in regime_features else 0.98 for feature in features])
+    reversion = np.clip(reversion, lower, upper)
+    reversion = np.where(
+        np.asarray([feature in zero_gated_features for feature in features]), 0.0, reversion
+    )
+    innovation = current - reversion * previous
+    empirical_variance = np.mean(np.square(innovation), axis=0)
+    process_variance = np.maximum(
+        empirical_variance, process_variance_floor_ratio * previous_variance
+    )
+    return long_run_mean, reversion, process_variance
+
+
 def fit_normalized_linear_ridge_matchup_contextual_model(
     home_features: pd.DataFrame,
     away_features: pd.DataFrame,
@@ -487,6 +897,16 @@ def model_metadata(model: MatchupContextualModel) -> dict[str, object]:
         ),
         "context_effective_ridge_alpha": getattr(model, "effective_ridge_alpha", None),
         "context_training_weight_sum": getattr(model, "training_weight_sum", None),
+        "context_additive_state_precision": getattr(model, "additive_state_precision", None),
+        "context_additive_state_source_season": getattr(
+            model, "additive_state_source_season", None
+        ),
+        "context_kalman_process_multiplier": getattr(
+            model, "additive_kalman_process_multiplier", None
+        ),
+        "context_kalman_observation_variance": getattr(
+            model, "additive_kalman_observation_variance", None
+        ),
     }
 
 

@@ -31,6 +31,14 @@ CONTEXT_FEATURE_SET_X1_ORB_CLAIM_TOTAL = "x1_orb_claim_total"
 CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL = "x2_orb_per_100_total"
 CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT = "x3_v1_orb_claim_replacement"
 CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY = "x3_without_uncertainty"
+CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE = "nail_v12_1_pruned_nonadditive"
+CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE = "nail_v12_2_defensive_rebound_profile"
+CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE = "nail_v12_3_free_throw_profile"
+CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT = (
+    "nail_v12_4_free_throw_replacement"
+)
+CONTEXT_FEATURE_SET_NAIL_V13 = "nail_v13_additive_profile"
+CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE = "nail_v13_1_pruned_additive_profile"
 CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY = "nail_additive_only"
 CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY = "x4_orb_claim_blocks_only"
 CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION = "x5_orb_claim_interaction_creation"
@@ -83,6 +91,31 @@ LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES = (
     "blocks_per_100",
     "offensive_rebound_claim_total",
 )
+LINEAR_NAIL_V13_BASKETBALL_ADDITIVE_FEATURES = (
+    *LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES,
+    "defensive_rebound_pct",
+    "free_throw_attempts_per_100",
+    "unassisted_rim_makes_per_100",
+    "unassisted_three_makes_per_100",
+)
+LINEAR_NAIL_V122_BASKETBALL_ADDITIVE_FEATURES = (
+    *LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES,
+    "defensive_rebound_pct",
+)
+LINEAR_NAIL_V123_BASKETBALL_ADDITIVE_FEATURES = (
+    *LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES,
+    "free_throw_attempts_per_100",
+)
+LINEAR_NAIL_V124_BASKETBALL_ADDITIVE_FEATURES = tuple(
+    feature
+    for feature in LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES
+    if feature != "usage_per_100"
+) + ("free_throw_attempts_per_100",)
+LINEAR_NAIL_V131_PRUNED_BASKETBALL_ADDITIVE_FEATURES = tuple(
+    feature
+    for feature in LINEAR_NAIL_V13_BASKETBALL_ADDITIVE_FEATURES
+    if feature not in {"three_pa_per_100", "usage_per_100"}
+)
 
 # The original x3 and quadratic feature contracts additionally used two
 # profile-quality calibration coordinates. Keep the immutable legacy contract
@@ -112,6 +145,12 @@ def available_context_feature_sets() -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL,
         CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
         CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+        CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
+        CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE,
+        CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE,
+        CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT,
+        CONTEXT_FEATURE_SET_NAIL_V13,
+        CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE,
         CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
         CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY,
         CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION,
@@ -385,8 +424,42 @@ def side_context_feature_columns(
             )
             if column not in {"imputed_count", "replacement_weight"}
         )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE:
+        return (
+            *LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES,
+            "top_two_assists",
+            "usage_concentration",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE:
+        return (
+            *LINEAR_NAIL_V122_BASKETBALL_ADDITIVE_FEATURES,
+            "top_two_assists",
+            "usage_concentration",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE:
+        return (
+            *LINEAR_NAIL_V123_BASKETBALL_ADDITIVE_FEATURES,
+            "top_two_assists",
+            "usage_concentration",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT:
+        return (
+            *LINEAR_NAIL_V124_BASKETBALL_ADDITIVE_FEATURES,
+            "top_two_assists",
+            "usage_concentration",
+        )
     if feature_set == CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY:
         return LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V13:
+        return (
+            *LINEAR_NAIL_V13_BASKETBALL_ADDITIVE_FEATURES,
+            *side_context_feature_columns(CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE),
+        )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE:
+        return (
+            *LINEAR_NAIL_V131_PRUNED_BASKETBALL_ADDITIVE_FEATURES,
+            *side_context_feature_columns(CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE),
+        )
     if feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
         excluded = (
             V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
@@ -462,8 +535,15 @@ def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
     if feature_set in {
         CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
         CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+        CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
         CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
     }:
+        return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE:
+        return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct", "defensive_rebound_pct")
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE:
+        return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
     if feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
@@ -572,9 +652,67 @@ def _side_feature_row(
             for column, value in result.items()
             if column not in {"imputed_count", "replacement_weight"}
         }
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE:
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY)
+        result = {
+            column: base[column]
+            for column in side_context_feature_columns(
+                CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE
+            )
+        }
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE:
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE)
+        base["defensive_rebound_pct"] = float(lineup["defensive_rebound_pct"].sum())
+        result = {
+            column: base[column]
+            for column in side_context_feature_columns(
+                CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE
+            )
+        }
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE:
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE)
+        base["free_throw_attempts_per_100"] = float(
+            lineup["free_throw_attempts_per_100"].sum()
+        )
+        result = {
+            column: base[column]
+            for column in side_context_feature_columns(
+                CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE
+            )
+        }
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT:
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE)
+        base.pop("usage_per_100")
+        base["free_throw_attempts_per_100"] = float(
+            lineup["free_throw_attempts_per_100"].sum()
+        )
+        result = {
+            column: base[column]
+            for column in side_context_feature_columns(
+                CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT
+            )
+        }
     elif feature_set == CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY:
         base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY)
         result = {column: base[column] for column in LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES}
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_V13:
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY)
+        result = {column: base[column] for column in LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES}
+        result.update(
+            {
+                column: float(lineup[column].sum())
+                for column in LINEAR_NAIL_V13_BASKETBALL_ADDITIVE_FEATURES[8:]
+            }
+        )
+        result.update(_side_feature_row(lineup, CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE))
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE:
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V13)
+        result = {
+            column: base[column]
+            for column in side_context_feature_columns(
+                CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE
+            )
+        }
     elif feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
         excluded = (
             V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]

@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-21"
+last_updated: "2026-08-22"
 ---
 
 # NAIL-RAPM v1.2: Gap-Returner Priors
@@ -51,6 +51,22 @@ This first candidate deliberately does not impose an additional reliability
 decay on stale profile possessions. Each annual aging transition already applies
 the learned value shrinkage to the player prior. Separating profile-decay tuning
 from the missing-season state correction keeps the experiment interpretable.
+
+## Context Coefficient Trajectories
+
+The production v1.2 context fit has fourteen coordinates: eight additive
+player-profile totals and six non-additive lineup-composition terms. The
+panel below extracts each standardized Ridge coefficient from every completed
+source-season fit. A point is the conditional effect of a one-standard-
+deviation home-minus-away feature differential, holding the other thirteen
+coordinates fixed. It is not a player rating or a causal estimate.
+
+Blue traces are additive player-profile totals that can be compiled into a
+player's NAIL rating. Orange traces are non-additive lineup terms that remain
+at the five-man-unit level. This provides the appropriate historical baseline
+for later v1.3 and dynamic-state coefficient audits.
+
+![NAIL-RAPM v1.2 context coefficient trajectories](../assets/images/nail-v12/context-weight-trajectories.svg)
 
 ## Unchanged Cases
 
@@ -114,5 +130,6 @@ gaps in their observed histories.
 - Recursive candidate: `artifacts/models/forward_nail_rapm_v12_gap_returner_priors/2025-26/forward-nail-rapm-v12-gap-returner-priors-2025-26-20260821T140232Z-da227de3`
 - Frozen replay: `artifacts/models/nail_gap_returner_frozen_backtest/frozen_multiseason_backtest/2023-24_to_2025-26/frozen_multiseason_backtest-2023-24-to-2025-26-20260821T141549Z-b96d8a74`
 - Bootstrap gate: `artifacts/models/nail_gap_returner_bootstrap/2023-24_to_2025-26/nail-gap-returner-bootstrap-20260821T141615Z-c5a3d781`
+- Context coefficient audit: `artifacts/models/analysis/nail_v12_context_weight_audit/nail-v12-context-weight-audit-20260822T164418Z-99d6a7b8`
 
 Reproduction commands are in [Train NAIL Gap-Returner Priors](../guides/train-nail-gap-returners.md).

@@ -63,6 +63,7 @@ from nba_lineup_model.modeling.prior_rapm import (
     _available_processed_playoff_game_ids,
     fit_forward_lagged_rapm_season,
 )
+from nba_lineup_model.modeling.progress import format_progress_bar
 from nba_lineup_model.modeling.rebound_opportunity import (
     ReboundOpportunityModel,
     fit_rebound_opportunity_model,
@@ -122,6 +123,7 @@ def train_forward_portable_matchup_contextual_rapm(
     player_prior_description: str = "forward exposure-gated RAPM plus portable-matchup context",
     context_fit: Callable[..., MatchupContextualModel] = fit_matchup_contextual_model,
     context_metadata: Callable[[MatchupContextualModel], dict[str, object]] = model_metadata,
+    context_fit_kwargs: dict[str, object] | None = None,
     context_feature_set: str = CONTEXT_FEATURE_SET_V1,
     profile_builder: Callable[..., pd.DataFrame] | None = None,
     profile_contract_metadata: dict[str, object] | None = None,
@@ -206,8 +208,12 @@ def train_forward_portable_matchup_contextual_rapm(
     prior_builder = player_prior_builder or _exposure_gated_player_priors
     resolved_profile_builder = profile_builder or build_contextual_player_profiles
 
-    for season in seasons:
-        print(f"Fitting portable-plus-matchup context state for {season}", flush=True)
+    for season_index, season in enumerate(seasons, start=1):
+        print(
+            f"Starting seasonal context state for {season} "
+            f"({season_index}/{len(seasons)})",
+            flush=True,
+        )
         raw_stints = read_rapm_stints(season, analytical_dir=analytical_dir)
         regular_stint_count = len(raw_stints)
         playoff_game_count = 0
@@ -414,6 +420,7 @@ def train_forward_portable_matchup_contextual_rapm(
                 previous_model=previous_model,
                 context_fit=context_fit,
                 context_metadata=context_metadata,
+                context_fit_kwargs=context_fit_kwargs,
                 context_feature_set=context_feature_set,
                 rebound_model=rebound_model,
                 usage_model=usage_model,
@@ -433,6 +440,14 @@ def train_forward_portable_matchup_contextual_rapm(
                         reattribution_weight=context_reattribution_weight,
                     )
                 )
+        print(
+            format_progress_bar(
+                season_index,
+                len(seasons),
+                label=f"Completed seasonal context state for {season}",
+            ),
+            flush=True,
+        )
         if season == target:
             target_priors = priors.rename(columns={PRIOR_MEAN_COLUMN: "prior_rapm_mean"})
             target_profiles = profiles if profiles is not None else pd.DataFrame()
@@ -891,6 +906,7 @@ def _fit_matchup_contextual_season(
     previous_model: MatchupContextualModel | None = None,
     context_fit: Callable[..., MatchupContextualModel] = fit_matchup_contextual_model,
     context_metadata: Callable[[MatchupContextualModel], dict[str, object]] = model_metadata,
+    context_fit_kwargs: dict[str, object] | None = None,
     context_feature_set: str = CONTEXT_FEATURE_SET_V1,
     rebound_model: ReboundOpportunityModel | None = None,
     usage_model: UsageAllocationModel | None = None,
@@ -925,6 +941,7 @@ def _fit_matchup_contextual_season(
         temporal_alpha=temporal_alpha,
         previous_model=previous_model,
         feature_set=context_feature_set,
+        **(context_fit_kwargs or {}),
     )
     if rebound_model is not None or usage_model is not None:
         model = replace(model, rebound_model=rebound_model, usage_model=usage_model)
@@ -939,6 +956,11 @@ def _fit_matchup_contextual_season(
         "context_temporal_alpha": temporal_alpha,
         "context_temporal_source_season": (
             _previous_season(fitted.season) if previous_model is not None else pd.NA
+        ),
+        "context_forward_additive_state_source_season": (
+            _previous_season(fitted.season)
+            if getattr(model, "additive_state_source_season", None) is not None
+            else pd.NA
         ),
         "context_training_stint_count": len(stints),
         "context_unknown_player_exposures": int(unknown.sum()),

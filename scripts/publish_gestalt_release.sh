@@ -5,9 +5,9 @@ set -euo pipefail
 # Historical raw/processed data is intentionally excluded; it belongs in S3 archive storage.
 
 BUCKET="${GESTALT_S3_BUCKET:-nba-gestalt-data}"
-MODEL_ARTIFACT="forward_nail_rapm_v12_gap_returner_priors"
+MODEL_ARTIFACT="forward_nail_rapm_v121_pruned_nonadditive"
 DISPLAY_SEASON="2025-26"
-RUN_ID="${GESTALT_RUN_ID:-forward-nail-rapm-v12-gap-returner-priors-2025-26-20260821T140232Z-da227de3}"
+RUN_ID="${GESTALT_RUN_ID:-forward-nail-rapm-v121-pruned-nonadditive-2025-26-20260822T171824Z-bd4da5c4}"
 RELEASE_ID="${GESTALT_RELEASE_ID:-${RUN_ID}}"
 STAGING_DIR="${GESTALT_STAGING_DIR:-/tmp/nba-gestalt-${RELEASE_ID}}"
 
@@ -75,7 +75,7 @@ cat > "$STAGING_DIR/release.json" <<EOF
 {
   "release_id": "${RELEASE_ID}",
   "git_sha": "$(git rev-parse HEAD)",
-  "model_display_name": "NAIL-RAPM v1.2",
+  "model_display_name": "NAIL-RAPM v1.2.1",
   "model_artifact": "${MODEL_ARTIFACT}",
   "display_season": "${DISPLAY_SEASON}",
   "run_id": "${RUN_ID}",

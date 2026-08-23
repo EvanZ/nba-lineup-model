@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-18"
+last_updated: "2026-08-22"
 ---
 
 # Models
@@ -22,7 +22,7 @@ without a result under the selected contract remain visible in the unranked
 lane to preserve the full methodological lineage. The older frozen-2025-26 and
 in-season selectors remain available for their respective historical snapshots.
 
-<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260821-nail-v12-leaderboard">
+<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260822-nail-v122-defensive-rebound-profile">
   <div class="model-tree__loading" role="status">Loading model evolution…</div>
 </div>
 
@@ -174,8 +174,39 @@ stabilization constants.
 
 [NAIL-RAPM v1.2](nail-rapm-v12-gap-returners.md) carries an established
 player's state through a missed season with the existing annual aging model and
-uses the player's last observed padded profile on return. It is the current
-full-game and team-level leader on the three-season frozen leaderboard.
+uses the player's last observed padded profile on return.
+
+[NAIL-RAPM v1.2.1](nail-rapm-v121-pruned-nonadditive.md) retains only the two
+historically resolved non-additive terms: usage concentration and top-two
+assists. It clears its direct bootstrap gate versus v1.2 and is the current
+regular-season leader on the three-season frozen leaderboard.
+
+[NAIL-RAPM v1.2.2](nail-rapm-v122-defensive-rebound-profile.md) tests
+defensive rebound percentage as a ninth additive profile coordinate. Its
+bootstrap is non-inferior, but the feature is positive in only 72.4% of
+source seasons, below the 80% stability gate, so it is retained as a rejected
+experiment rather than a promoted release.
+
+[NAIL-RAPM v1.2.3](nail-rapm-v123-free-throw-profile.md) instead tests
+free-throw attempts per 100 as the ninth additive coordinate. FTA/100 is
+directionally stable, but it does not improve the primary three-season frozen
+margin metrics, so it is also retained as a non-promoted sibling experiment.
+
+[NAIL-RAPM v1.2.4](nail-rapm-v124-free-throw-replacement.md) replaces
+additive Usage/100 with FTA/100 to remove their conditional collinearity.
+FTA/100 remains highly stable, but the frozen margin metrics still do not
+improve, so v1.2.1 remains the promoted model.
+
+[NAIL-RAPM v1.3](nail-rapm-v13-additive-profiles.md) adds four additive
+box-score profile measures, including self-created rim and three-point makes.
+It remains visible in the leaderboard and model tree, but is not promoted: its
+paired full-game bootstrap gate failed.
+
+[NAIL-RAPM v1.3.1](nail-rapm-v131-pruned-additive-profiles.md) removes only
+three-point attempts per 100 and usage per 100 from v1.3 after the partial-effect
+stability audit. It is the preferred parsimonious contract within that branch:
+the direct bootstrap comparison found no practically material frozen-prediction
+loss, though v1.2.1 is the global regular-season leader.
 
 [NAIL-RAPM Context Regularization](nail-context-regularization.md) replaces the
 inherited raw context `alpha=10000` with a season-size-invariant penalty chosen

@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updated": "2026-08-21",
+  "updated": "2026-08-22",
   "default_metric": "rolling_regular_game_margin_rmse",
   "metrics": [
     {
@@ -867,6 +867,132 @@
         "frozen_regular_pythagorean_wins_rmse": 7.0899,
         "frozen_playoff_possession_rmse": 1.192734,
         "frozen_playoff_game_margin_rmse": 16.6148
+      }
+    },
+    {
+      "id": "nail-rapm-v121-pruned-nonadditive",
+      "name": "NAIL-RAPM v1.2.1 Pruned Non-Additive Context",
+      "short_name": "NAIL-RAPM v1.2.1",
+      "parent": "nail-rapm-v12-gap-returner-priors",
+      "change": "- four directionally unresolved non-additive terms; retain only usage concentration and top-two assists. Cleared the direct full-game bootstrap gate versus v1.2.",
+      "docs": "./nail-rapm-v121-pruned-nonadditive/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197952,
+        "frozen_regular_game_margin_rmse": 14.0246,
+        "frozen_regular_full_game_margin_rmse": 14.2521,
+        "frozen_regular_game_winner_accuracy": 0.682427,
+        "frozen_regular_team_net_rating_rmse": 3.2706,
+        "frozen_regular_pythagorean_wins_rmse": 7.0351,
+        "frozen_playoff_possession_rmse": 1.192709,
+        "frozen_playoff_game_margin_rmse": 16.5942
+      }
+    },
+    {
+      "id": "nail-rapm-v122-defensive-rebound-profile",
+      "name": "NAIL-RAPM v1.2.2 Defensive-Rebound Profile (Not Promoted)",
+      "short_name": "NAIL-RAPM v1.2.2",
+      "parent": "nail-rapm-v121-pruned-nonadditive",
+      "change": "+ defensive rebound percentage as a ninth additive profile coordinate. Cleared the no-material-harm bootstrap gate, but failed the 80% positive-sign stability gate (21 of 29 seasons).",
+      "docs": "./nail-rapm-v122-defensive-rebound-profile/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197952,
+        "frozen_regular_game_margin_rmse": 14.0238,
+        "frozen_regular_full_game_margin_rmse": 14.2529,
+        "frozen_regular_game_winner_accuracy": 0.683851,
+        "frozen_regular_team_net_rating_rmse": 3.2723,
+        "frozen_regular_pythagorean_wins_rmse": 7.0434,
+        "frozen_playoff_possession_rmse": 1.192702,
+        "frozen_playoff_game_margin_rmse": 16.5875
+      }
+    },
+    {
+      "id": "nail-rapm-v123-free-throw-profile",
+      "name": "NAIL-RAPM v1.2.3 Free-Throw Profile (Not Promoted)",
+      "short_name": "NAIL-RAPM v1.2.3",
+      "parent": "nail-rapm-v121-pruned-nonadditive",
+      "change": "+ free-throw attempts per 100 as a ninth additive profile coordinate. Directionally stable, but not competitive on the primary frozen margin metrics.",
+      "docs": "./nail-rapm-v123-free-throw-profile/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197964,
+        "frozen_regular_game_margin_rmse": 14.0456,
+        "frozen_regular_full_game_margin_rmse": 14.2726,
+        "frozen_regular_game_winner_accuracy": 0.684705,
+        "frozen_regular_team_net_rating_rmse": 3.2974,
+        "frozen_regular_pythagorean_wins_rmse": 7.0511,
+        "frozen_playoff_possession_rmse": 1.192714,
+        "frozen_playoff_game_margin_rmse": 16.6157
+      }
+    },
+    {
+      "id": "nail-rapm-v124-free-throw-replacement",
+      "name": "NAIL-RAPM v1.2.4 Free-Throw Replacement (Not Promoted)",
+      "short_name": "NAIL-RAPM v1.2.4",
+      "parent": "nail-rapm-v121-pruned-nonadditive",
+      "change": "- additive usage per 100; + free-throw attempts per 100. Resolves additive collinearity, but does not improve frozen margin metrics.",
+      "docs": "./nail-rapm-v124-free-throw-replacement/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197966,
+        "frozen_regular_game_margin_rmse": 14.0457,
+        "frozen_regular_full_game_margin_rmse": 14.2733,
+        "frozen_regular_game_winner_accuracy": 0.681857,
+        "frozen_regular_team_net_rating_rmse": 3.2933,
+        "frozen_regular_pythagorean_wins_rmse": 7.0459,
+        "frozen_playoff_possession_rmse": 1.192706,
+        "frozen_playoff_game_margin_rmse": 16.5988
+      }
+    },
+    {
+      "id": "nail-rapm-v13-additive-profiles",
+      "name": "NAIL-RAPM v1.3 Expanded Additive Profiles",
+      "short_name": "NAIL-RAPM v1.3",
+      "parent": "nail-rapm-v12-gap-returner-priors",
+      "change": "+ defensive rebound percentage, free-throw rate, unassisted rim makes, and unassisted three makes in the additive player profile. Not promoted after failing the full-game bootstrap gate.",
+      "docs": "./nail-rapm-v13-additive-profiles/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197987,
+        "frozen_regular_game_margin_rmse": 14.0811,
+        "frozen_regular_full_game_margin_rmse": 14.2981,
+        "frozen_regular_game_winner_accuracy": 0.684420,
+        "frozen_regular_team_net_rating_rmse": 3.3320,
+        "frozen_regular_pythagorean_wins_rmse": 7.0619,
+        "frozen_playoff_possession_rmse": 1.192630,
+        "frozen_playoff_game_margin_rmse": 16.5034
+      }
+    },
+    {
+      "id": "nail-rapm-v131-pruned-additive-profiles",
+      "name": "NAIL-RAPM v1.3.1 Pruned Additive Profile",
+      "short_name": "NAIL-RAPM v1.3.1",
+      "parent": "nail-rapm-v13-additive-profiles",
+      "change": "- three-point attempts/100 and usage/100 after the partial-effect stability audit; retains the remaining additive profiles and non-additive lineup terms. Preferred within the v1.3 branch after passing the direct bootstrap gate.",
+      "docs": "./nail-rapm-v131-pruned-additive-profiles/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197990,
+        "frozen_regular_game_margin_rmse": 14.0891,
+        "frozen_regular_full_game_margin_rmse": 14.3072,
+        "frozen_regular_game_winner_accuracy": 0.683566,
+        "frozen_regular_team_net_rating_rmse": 3.3446,
+        "frozen_regular_pythagorean_wins_rmse": 7.1012,
+        "frozen_playoff_possession_rmse": 1.192646,
+        "frozen_playoff_game_margin_rmse": 16.5248
+      }
+    },
+    {
+      "id": "nail-rapm-v14-kalman-additive-profiles",
+      "name": "NAIL-RAPM v1.4 Kalman Additive Profiles",
+      "short_name": "NAIL-RAPM v1.4 Kalman",
+      "parent": "nail-rapm-v13-additive-profiles",
+      "change": "Replace the discarded fixed pseudo-observation state with a proper forward Kalman posterior mean and covariance for the 12 additive profile coefficients; retain independent zero-centered coefficients for the six non-additive lineup terms. Not promoted after a 2024-25 full-game bootstrap-gate failure.",
+      "docs": "./nail-rapm-v14-filtered-additive-profiles/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197972,
+        "frozen_regular_game_margin_rmse": 14.0630,
+        "frozen_regular_full_game_margin_rmse": 14.2750,
+        "frozen_regular_game_winner_accuracy": 0.683851,
+        "frozen_regular_team_net_rating_rmse": 3.3174,
+        "frozen_regular_pythagorean_wins_rmse": 7.0088,
+        "frozen_playoff_possession_rmse": 1.192674,
+        "frozen_playoff_game_margin_rmse": 16.5836
       }
     },
     {

@@ -30,7 +30,8 @@ type AgingContributionKey = "prior" | "seasonUpdate" | "additiveProfile";
 
 const SIDE_LABELS: Record<Side, string> = { unit: "Your unit", opponent: "Opponent" };
 const MATERIAL_COMPONENT_CONTRIBUTION = 0.05;
-const MODEL_LABEL = "NAIL-RAPM v1.2";
+const MODEL_LABEL = "NAIL-RAPM v1.2.1";
+const V121_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/models/nail-rapm-v121-pruned-nonadditive/";
 const FEATURE_DESCRIPTIONS: Record<string, string> = {
   home_minus_away_three_pa_per_100: "Sum of the five players' prior-season three-point attempts per 100 possessions.",
   home_minus_away_three_pm_per_100: "Sum of the five players' prior-season made three-pointers per 100 possessions.",
@@ -1022,10 +1023,10 @@ function AboutPage() {
 
       <section className="model-identity" aria-labelledby="model-name-title">
         <div>
-          <p className="section-kicker">Current model</p>
+          <p className="section-kicker">Current release</p>
           <h2 id="model-name-title">{MODEL_LABEL}</h2>
         </div>
-        <p className="model-identity-name">Forward, age-informed, residual-lineup RAPM</p>
+        <p className="model-identity-name">Forward, age-informed, pruned residual-lineup RAPM</p>
         <p>
           <b>N</b>on-<b>A</b>dditive <b>I</b>nteractions in <b>L</b>ineups,
           Regularized Adjusted Plus-Minus.
@@ -1120,7 +1121,8 @@ function AboutPage() {
           <p>
             After the raw player edge is removed from each completed stint, a second standardized Ridge
             regression fits the residual against a fixed, strictly lagged five-player feature contract.
-            The v1.2 model is linear in those features; it does not use splines or a black-box interaction network.
+            {MODEL_LABEL} is linear in those features; it does not use splines or a black-box
+            interaction network.
           </p>
         </div>
         <div className="feature-contract">
@@ -1140,18 +1142,95 @@ function AboutPage() {
           </section>
           <section>
             <p className="section-kicker">Lineup-only features</p>
-            <h3>Six non-additive shape coordinates.</h3>
+            <h3>Two retained non-additive coordinates.</h3>
             <p>
               These deliberately depend on the group rather than independent player totals, so they remain as a
-              unit-level edge instead of being allocated to any one player.
+              unit-level edge instead of being allocated to any one player. Four less stable candidates were
+              removed for v1.2.1.
             </p>
             <ul className="feature-list">
-              <li>Bottom-two shooting and credible-shooter count</li>
-              <li>Top-two assists and usage concentration</li>
-              <li>Shooting-by-usage and shooter-by-passing</li>
+              <li>Usage concentration</li>
+              <li>Top-two assists</li>
             </ul>
           </section>
         </div>
+      </section>
+
+      <section className="about-section promotion-evidence" aria-labelledby="promotion-title">
+        <div className="about-section-heading">
+          <p className="section-kicker">Promotion evidence</p>
+          <h2 id="promotion-title">A feature must earn its place twice.</h2>
+          <p>
+            The v1.2.1 release is selected because it preserves or improves frozen predictive performance while
+            making the residual contract smaller and more stable. Selection uses completed seasons only; the
+            target season is never used to construct its own prior or feature state.
+          </p>
+        </div>
+        <div className="promotion-tests">
+          <section>
+            <h3>Three-season frozen replay</h3>
+            <p>
+              Forecast 2023-24, 2024-25, and 2025-26 from each preceding information set. Against v1.2,
+              v1.2.1 lowers pooled full-game RMSE from 14.2660 to 14.2521 and improves team net-rating and
+              Pythagorean-win RMSE.
+            </p>
+          </section>
+          <section>
+            <h3>Paired uncertainty gate</h3>
+            <p>
+              A paired game-block bootstrap checks that pruning does not materially degrade full-game
+              prediction. The predefined gate passes in the pooled replay and in each of the three target seasons.
+            </p>
+          </section>
+          <section>
+            <h3>Coefficient stability</h3>
+            <p>
+              Retained terms must show a persistent direction across completed source seasons. Usage
+              concentration is positive in all 29 states; top-two assists is positive in 26 of 29. The four
+              directionally unresolved terms are excluded.
+            </p>
+          </section>
+        </div>
+      </section>
+
+      <section className="about-section coefficient-audit" aria-labelledby="coefficient-audit-title">
+        <div className="about-section-heading">
+          <p className="section-kicker">Coefficient audit</p>
+          <h2 id="coefficient-audit-title">The accepted contract is visible over time.</h2>
+          <p>
+            Each line is a standardized Ridge coefficient fit from one completed source season. Blue coordinates
+            are additive and compile exactly back to players. Orange coordinates are the retained non-additive
+            lineup terms, which remain unit-level credit. These histories are diagnostics for stability, not
+            player ratings or causal effects.
+          </p>
+        </div>
+        <div className="coefficient-chart-grid">
+          <figure className="coefficient-chart-panel">
+            <figcaption>
+              <span className="coefficient-chart-label additive">Additive profile</span>
+              <strong>Eight player-attributable coefficients</strong>
+            </figcaption>
+            <img
+              src="/model/nail-v121-additive-profile-weight-trajectories.svg"
+              alt="Blue coefficient trajectories for the eight additive NAIL-RAPM v1.2.1 player-profile features."
+            />
+          </figure>
+          <figure className="coefficient-chart-panel">
+            <figcaption>
+              <span className="coefficient-chart-label nonadditive">Non-additive lineup context</span>
+              <strong>Two retained unit-level coefficients</strong>
+            </figcaption>
+            <img
+              src="/model/nail-v121-pruned-nonadditive-weight-trajectories.svg"
+              alt="Orange coefficient trajectories for the retained NAIL-RAPM v1.2.1 non-additive lineup features."
+            />
+          </figure>
+        </div>
+        <p className="coefficient-audit-link">
+          <a href={V121_DOCUMENTATION_URL} target="_blank" rel="noreferrer">
+            Read the full v1.2.1 feature contract, frozen results, and bootstrap audit <ArrowUpRight size={14} />
+          </a>
+        </p>
       </section>
 
       <section className="about-section" aria-labelledby="attribution-title">
@@ -1167,7 +1246,7 @@ function AboutPage() {
             <BlockMath math={String.raw`\operatorname{Edge}(U,O) = \operatorname{Player}(U) - \operatorname{Player}(O) + C_{\mathrm{nonadd},t}(U,O)`} />
           </div>
           <p>
-            The eight additive features compile exactly into the player rating. The six non-additive features remain
+            The eight additive features compile exactly into the player rating. The two retained non-additive features remain
             a separate unit-level term. In the Matchup Lab, the ledger shows both pieces. In player pages,
             <i> Non-Additive Lineup Edge</i> is a possession-weighted description of the units a player actually
             shared, not extra individual credit and not a causal allocation.
@@ -1178,7 +1257,7 @@ function AboutPage() {
       <section className="about-footer-note">
         <p className="section-kicker">Current publication</p>
         <p>
-          The Matchup Lab serves the completed 2025-26 NAIL-RAPM v1.2 state with published statistic-specific
+          The Matchup Lab serves the completed 2025-26 {MODEL_LABEL} state with published statistic-specific
           profile shrinkage and gap-returner profile carry-forward. It is useful for retrospective
           lineup exploration and as the state carried forward into a forecast; it is not a live in-season update
           or a claim that the residual lineup effect belongs causally to a single player.
