@@ -96,7 +96,7 @@ CANDIDATES = (
     {
         "model": (
             "[NAIL-RAPM v1.2.1 pruned non-additive context]"
-            "(nail-rapm-v121-pruned-nonadditive.md)"
+            "(nail-rapm-v121-pruned-nonadditive.md) **(Production)**"
         ),
         "regular": {
             "possession_rmse": 1.197952,
