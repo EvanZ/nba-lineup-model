@@ -8,6 +8,7 @@ from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_LINEAR_X3_ADDITIVE_QUADRATIC_SIDE,
     CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
     CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
+    CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE,
     CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
     CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE,
     CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE,
@@ -223,6 +224,30 @@ def test_critical_spacing_activates_for_two_low_threat_players() -> None:
     )
     assert side["critical_spacing"].tolist() == [1.0, 0.0]
     assert relative.loc[0, "home_minus_away_critical_spacing"] == 1.0
+
+
+def test_critical_spacing_quintile_only_flags_bottom_fifth_players() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "offensive_rebound_pct": 0.1,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id in range(1, 11)
+        ]
+    )
+    profiles["three_pm_per_100"] = np.arange(10, dtype=float)
+
+    side = lineup_side_context_features(
+        [[1, 2, 3, 4, 5], [2, 3, 6, 7, 8]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE,
+    )
+
+    assert side["critical_spacing"].tolist() == [1.0, 0.0]
 
 
 def test_nail_v122_adds_only_defensive_rebound_percentage() -> None:

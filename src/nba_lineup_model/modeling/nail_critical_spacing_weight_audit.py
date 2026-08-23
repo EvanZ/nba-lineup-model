@@ -46,24 +46,30 @@ def build_nail_critical_spacing_weight_audit(
     artifacts_dir: Path | str = DEFAULT_ARTIFACTS_DIR,
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
     chart_path: Path | str = DEFAULT_CHART_PATH,
+    model_name: str = MODEL_NAME,
+    feature_set: str = CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
+    features: tuple[str, ...] = FEATURES,
+    run_label: str = "nail-critical-spacing-weight-audit",
+    chart_title: str = "Critical Spacing non-additive weights by completed source season",
+    legend: str = "Orange: non-additive lineup-context term in the candidate fit",
 ) -> NailCriticalSpacingWeightAuditRun:
     """Extract and render every non-additive candidate coefficient by season."""
 
     source = (
         Path(source_run_dir)
         if source_run_dir is not None
-        else _latest_run(Path(artifacts_dir) / MODEL_NAME / DEFAULT_ARTIFACT_SEASON)
+        else _latest_run(Path(artifacts_dir) / model_name / DEFAULT_ARTIFACT_SEASON)
     )
     metadata = json.loads((source / "metadata.json").read_text())
-    if metadata.get("model") != MODEL_NAME:
-        raise ValueError("Weight audit requires a NAIL critical-spacing artifact")
+    if metadata.get("model") != model_name:
+        raise ValueError(f"Weight audit requires a {model_name} artifact")
 
     models = joblib.load(source / "season_context_models.joblib")
     weights = standardized_additive_weights(
         models,
-        feature_set=CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
-        features=FEATURES,
-        accent_features=frozenset(FEATURES),
+        feature_set=feature_set,
+        features=features,
+        accent_features=frozenset(features),
     )
     summary = summarize_additive_weights(weights)
     rendered_chart = Path(chart_path)
@@ -72,15 +78,15 @@ def build_nail_critical_spacing_weight_audit(
         weights,
         summary,
         rendered_chart,
-        title="Critical Spacing non-additive weights by completed source season",
-        features=FEATURES,
-        accent_features=frozenset(FEATURES),
-        legend="Orange: non-additive lineup-context term in the candidate fit",
+        title=chart_title,
+        features=features,
+        accent_features=frozenset(features),
+        legend=legend,
     )
 
     root = Path(output_root)
     run_id = (
-        "nail-critical-spacing-weight-audit-"
+        f"{run_label}-"
         f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{uuid4().hex[:8]}"
     )
     run_dir = root / run_id
@@ -92,8 +98,9 @@ def build_nail_critical_spacing_weight_audit(
             {
                 "run_id": run_id,
                 "source_run_dir": str(source),
-                "feature_set": CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
-                "features": list(FEATURES),
+                "model_name": model_name,
+                "feature_set": feature_set,
+                "features": list(features),
                 "weight_definition": (
                     "Ridge coefficient after StandardScaler of the home-minus-away "
                     "five-man feature"

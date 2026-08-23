@@ -34,6 +34,7 @@ CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT = "x3_v1_orb_claim_replacement"
 CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY = "x3_without_uncertainty"
 CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE = "nail_v12_1_pruned_nonadditive"
 CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING = "nail_critical_spacing"
+CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE = "nail_critical_spacing_quintile"
 CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE = "nail_v12_1_1_standard_usage"
 CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE = "nail_v12_2_defensive_rebound_profile"
 CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE = "nail_v12_3_free_throw_profile"
@@ -272,9 +273,10 @@ def lineup_side_context_features(
         raise ValueError("Usage-allocation features require a usage allocation model")
     values = profiles.set_index("player_id")
     lineup_values = [_lineup_values(lineup, values) for lineup in lineups]
+    critical_spacing_quantile = _critical_spacing_quantile(feature_set)
     critical_spacing_threshold = (
-        _critical_spacing_threshold(profiles)
-        if feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING
+        _critical_spacing_threshold(profiles, quantile=critical_spacing_quantile)
+        if critical_spacing_quantile is not None
         else None
     )
     rebound_rates = _rebound_rates(lineup_values, rebound_model)
@@ -455,6 +457,11 @@ def side_context_feature_columns(
             *side_context_feature_columns(CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE),
             "critical_spacing",
         )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE:
+        return (
+            *side_context_feature_columns(CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE),
+            "critical_spacing",
+        )
     if feature_set == CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE:
         return (
             *LINEAR_NAIL_V1211_BASKETBALL_ADDITIVE_FEATURES,
@@ -552,13 +559,26 @@ def _lineup_values(lineup: Sequence[int], values: pd.DataFrame) -> pd.DataFrame:
     return values.loc[player_ids]
 
 
-def _critical_spacing_threshold(profiles: pd.DataFrame) -> float:
-    """Return the season-specific lower-tercile shrunk 3PM/100 cutoff."""
+def _critical_spacing_quantile(feature_set: str) -> float | None:
+    """Return the forward-safe low-shooting quantile for a spacing candidate."""
+
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING:
+        return 1.0 / 3.0
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE:
+        return 1.0 / 5.0
+    return None
+
+
+def _critical_spacing_threshold(profiles: pd.DataFrame, *, quantile: float) -> float:
+    """Return a season-specific lower-quantile shrunk 3PM/100 cutoff."""
+
+    if not 0.0 < quantile < 1.0:
+        raise ValueError("Critical-spacing quantile must be strictly between zero and one")
 
     shooting = pd.to_numeric(profiles[SHOOTING_COLUMN], errors="raise").to_numpy(dtype=float)
     if shooting.size == 0 or not np.isfinite(shooting).all():
         raise ValueError("Critical-spacing profiles require finite 3PM/100 values")
-    return float(np.quantile(shooting, 1.0 / 3.0))
+    return float(np.quantile(shooting, quantile))
 
 
 def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
@@ -577,6 +597,7 @@ def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
         CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
         CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
+        CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE,
         CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
     }:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
@@ -704,7 +725,10 @@ def _side_feature_row(
                 CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE
             )
         }
-    elif feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING:
+    elif feature_set in {
+        CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
+        CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE,
+    }:
         if critical_spacing_threshold is None:
             raise ValueError("Critical-spacing features require a season profile threshold")
         base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE)

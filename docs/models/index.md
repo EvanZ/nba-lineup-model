@@ -182,6 +182,10 @@ assists. It clears its direct bootstrap gate versus v1.2 and is the current
 regular-season leader on the three-season frozen leaderboard.
 
 [Critical Spacing](nail-critical-spacing.md) is the next controlled candidate.
+
+[Lower-Quintile Critical Spacing](nail-critical-spacing-quintile.md) tests a
+stricter version of the same threshold and was rejected after the frozen
+comparison and full non-additive coefficient audit.
 It adds one non-additive indicator to v1.2.1: whether a unit has at least two
 players below that season's prior-derived lower-tercile threshold for shrunk
 three-point makes per 100 possessions. It clears the no-material-harm gate but
