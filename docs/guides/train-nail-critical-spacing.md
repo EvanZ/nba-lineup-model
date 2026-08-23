@@ -34,3 +34,10 @@ uv run nba-evaluate-nail-critical-spacing \
   --log-path artifacts/logs/nail-critical-spacing-frozen.log
 uv run nba-bootstrap-nail-critical-spacing
 ```
+
+Every candidate requires a published coefficient time series before a
+promotion decision. Build it after the recursive fit:
+
+```bash
+uv run nba-audit-nail-critical-spacing-weights
+```

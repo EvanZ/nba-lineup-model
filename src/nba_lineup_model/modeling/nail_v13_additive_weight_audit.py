@@ -43,6 +43,7 @@ FEATURE_LABELS = {
     "credible_shooter_count": "Credible shooter count",
     "top_two_assists": "Top-two assists / 100",
     "usage_concentration": "Usage concentration",
+    "critical_spacing": "Critical spacing",
     "shooting_usage_interaction": "Shooting-by-usage",
     "shooter_passing_interaction": "Shooter-by-passing",
 }

@@ -88,6 +88,8 @@ coefficient is negative in 19 seasons and positive in 10. Its median is
 The broad sign reversal is not consistent with a stable, portable spacing
 penalty under this definition.
 
+![Critical Spacing standardized coefficient by source season](../assets/images/nail-critical-spacing/critical-spacing-weight-trajectory.svg)
+
 ## Decision
 
 Do **not** promote the candidate. It clears the non-promotion gate, so the
@@ -101,6 +103,7 @@ production bundle remain on v1.2.1.
 - Recursive candidate: `artifacts/models/forward_nail_rapm_critical_spacing/2025-26/forward-nail-critical-spacing-2025-26-20260823T223333Z-f9430d81`
 - Frozen replay: `artifacts/models/nail_critical_spacing_frozen_backtest/frozen_multiseason_backtest/2023-24_to_2025-26/frozen_multiseason_backtest-2023-24-to-2025-26-20260823T224105Z-a201166a`
 - Paired bootstrap: `artifacts/models/nail_critical_spacing_bootstrap/2023-24_to_2025-26/nail-critical-spacing-bootstrap-20260823T224136Z-c1b037d5`
+- Coefficient audit: `artifacts/models/analysis/nail_critical_spacing_weight_audit/`
 
 ## Reproduction
 

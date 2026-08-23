@@ -153,6 +153,7 @@ nba-audit-nail-v121-pruned-nonadditive-weights = "nba_lineup_model.modeling.nail
 nba-train-nail-critical-spacing = "nba_lineup_model.modeling.forward_nail_critical_spacing:main"
 nba-evaluate-nail-critical-spacing = "nba_lineup_model.modeling.nail_critical_spacing_frozen_backtest:main"
 nba-bootstrap-nail-critical-spacing = "nba_lineup_model.modeling.nail_critical_spacing_bootstrap:main"
+nba-audit-nail-critical-spacing-weights = "nba_lineup_model.modeling.nail_critical_spacing_weight_audit:main"
 nba-train-nail-v122-defensive-rebound-profile = "nba_lineup_model.modeling.forward_nail_v122_defensive_rebound_profile:main"
 nba-evaluate-nail-v122-defensive-rebound-profile = "nba_lineup_model.modeling.nail_v122_defensive_rebound_profile_frozen_backtest:main"
 nba-bootstrap-nail-v122-defensive-rebound-profile = "nba_lineup_model.modeling.nail_v122_defensive_rebound_profile_bootstrap:main"
