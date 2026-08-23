@@ -181,6 +181,13 @@ historically resolved non-additive terms: usage concentration and top-two
 assists. It clears its direct bootstrap gate versus v1.2 and is the current
 regular-season leader on the three-season frozen leaderboard.
 
+[Critical Spacing](nail-critical-spacing.md) is the next controlled candidate.
+It adds one non-additive indicator to v1.2.1: whether a unit has at least two
+players below that season's prior-derived lower-tercile threshold for shrunk
+three-point makes per 100 possessions. It clears the no-material-harm gate but
+is not promoted: it has no meaningful pooled lift and its coefficient reverses
+sign across the historical panel.
+
 [NAIL-RAPM v1.2.1.1](nail-rapm-v1211-standard-usage.md) replaces the internal
 usage-events rate in v1.2.1 with conventional box-score USG%. It passes the
 same no-material-harm bootstrap gate, improving interpretability while leaving

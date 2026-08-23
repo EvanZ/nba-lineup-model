@@ -33,6 +33,7 @@ CONTEXT_FEATURE_SET_X2_ORB_PER_100_TOTAL = "x2_orb_per_100_total"
 CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT = "x3_v1_orb_claim_replacement"
 CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY = "x3_without_uncertainty"
 CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE = "nail_v12_1_pruned_nonadditive"
+CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING = "nail_critical_spacing"
 CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE = "nail_v12_1_1_standard_usage"
 CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE = "nail_v12_2_defensive_rebound_profile"
 CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE = "nail_v12_3_free_throw_profile"
@@ -152,6 +153,7 @@ def available_context_feature_sets() -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
         CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
         CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
+        CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
         CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
         CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE,
         CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE,
@@ -270,10 +272,21 @@ def lineup_side_context_features(
         raise ValueError("Usage-allocation features require a usage allocation model")
     values = profiles.set_index("player_id")
     lineup_values = [_lineup_values(lineup, values) for lineup in lineups]
+    critical_spacing_threshold = (
+        _critical_spacing_threshold(profiles)
+        if feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING
+        else None
+    )
     rebound_rates = _rebound_rates(lineup_values, rebound_model)
     usage_features = _usage_features(lineup_values, usage_model)
     rows = [
-        _side_feature_row(lineup, feature_set, rebound_rate=rate, usage_feature=usage)
+        _side_feature_row(
+            lineup,
+            feature_set,
+            rebound_rate=rate,
+            usage_feature=usage,
+            critical_spacing_threshold=critical_spacing_threshold,
+        )
         for lineup, rate, usage in zip(lineup_values, rebound_rates, usage_features, strict=True)
     ]
     return pd.DataFrame(rows, columns=side_context_feature_columns(feature_set))
@@ -437,6 +450,11 @@ def side_context_feature_columns(
             "top_two_assists",
             "usage_concentration",
         )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING:
+        return (
+            *side_context_feature_columns(CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE),
+            "critical_spacing",
+        )
     if feature_set == CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE:
         return (
             *LINEAR_NAIL_V1211_BASKETBALL_ADDITIVE_FEATURES,
@@ -534,6 +552,15 @@ def _lineup_values(lineup: Sequence[int], values: pd.DataFrame) -> pd.DataFrame:
     return values.loc[player_ids]
 
 
+def _critical_spacing_threshold(profiles: pd.DataFrame) -> float:
+    """Return the season-specific lower-tercile shrunk 3PM/100 cutoff."""
+
+    shooting = pd.to_numeric(profiles[SHOOTING_COLUMN], errors="raise").to_numpy(dtype=float)
+    if shooting.size == 0 or not np.isfinite(shooting).all():
+        raise ValueError("Critical-spacing profiles require finite 3PM/100 values")
+    return float(np.quantile(shooting, 1.0 / 3.0))
+
+
 def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
     if feature_set in {
         CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY,
@@ -549,6 +576,7 @@ def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
         CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
         CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
+        CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
         CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
     }:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
@@ -580,6 +608,7 @@ def _side_feature_row(
     *,
     rebound_rate: tuple[float, float] | None = None,
     usage_feature: dict[str, float] | None = None,
+    critical_spacing_threshold: float | None = None,
 ) -> dict[str, float]:
     if feature_set == CONTEXT_FEATURE_SET_V1 or feature_set in V1_KNOCKOUT_EXCLUSIONS:
         result = {column: float(lineup[column].sum()) for column in PROFILE_RATE_COLUMNS}
@@ -674,6 +703,16 @@ def _side_feature_row(
             for column in side_context_feature_columns(
                 CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE
             )
+        }
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING:
+        if critical_spacing_threshold is None:
+            raise ValueError("Critical-spacing features require a season profile threshold")
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE)
+        result = {
+            **base,
+            "critical_spacing": float(
+                (lineup[SHOOTING_COLUMN] < critical_spacing_threshold).sum() >= 2
+            ),
         }
     elif feature_set == CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE:
         standard_usage_lineup = lineup.assign(**{USAGE_COLUMN: lineup[STANDARD_USAGE_COLUMN]})

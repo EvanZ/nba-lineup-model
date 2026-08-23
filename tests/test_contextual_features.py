@@ -7,6 +7,7 @@ from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE,
     CONTEXT_FEATURE_SET_LINEAR_X3_ADDITIVE_QUADRATIC_SIDE,
     CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
+    CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
     CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
     CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE,
     CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE,
@@ -177,6 +178,51 @@ def test_nail_v121_contract_retains_only_two_resolved_nonadditive_terms() -> Non
         "top_two_assists",
         "usage_concentration",
     )
+
+
+def test_critical_spacing_activates_for_two_low_threat_players() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "offensive_rebound_pct": 0.1,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id in range(1, 11)
+        ]
+    )
+    profiles.loc[profiles["player_id"].isin([1, 2]), "three_pm_per_100"] = [0.1, 0.2]
+    profiles.loc[profiles["player_id"].isin(range(3, 11)), "three_pm_per_100"] = 4.0
+
+    side = lineup_side_context_features(
+        [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
+    )
+    relative = lineup_context_features(
+        [[1, 2, 3, 4, 5]],
+        [[6, 7, 8, 9, 10]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
+    )
+
+    assert tuple(side.columns) == (
+        "three_pa_per_100",
+        "three_pm_per_100",
+        "assists_per_100",
+        "turnovers_per_100",
+        "usage_per_100",
+        "steals_per_100",
+        "blocks_per_100",
+        "offensive_rebound_claim_total",
+        "top_two_assists",
+        "usage_concentration",
+        "critical_spacing",
+    )
+    assert side["critical_spacing"].tolist() == [1.0, 0.0]
+    assert relative.loc[0, "home_minus_away_critical_spacing"] == 1.0
 
 
 def test_nail_v122_adds_only_defensive_rebound_percentage() -> None:
