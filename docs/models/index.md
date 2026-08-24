@@ -22,7 +22,7 @@ without a result under the selected contract remain visible in the unranked
 lane to preserve the full methodological lineage. The older frozen-2025-26 and
 in-season selectors remain available for their respective historical snapshots.
 
-<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260824-nail-quartile-spacing-standard-usage">
+<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260824-nail-b2b-schedule-control">
   <div class="model-tree__loading" role="status">Loading model evolution…</div>
 </div>
 

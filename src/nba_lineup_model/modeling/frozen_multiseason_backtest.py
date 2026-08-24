@@ -7,7 +7,7 @@ import hashlib
 import json
 import shutil
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -48,6 +48,10 @@ from nba_lineup_model.modeling.matchup_contextual import MatchupContextualModel
 from nba_lineup_model.modeling.neural_data import read_neural_possessions
 from nba_lineup_model.modeling.progress import format_progress_bar
 from nba_lineup_model.modeling.replacement_level import prepare_player_exposure_cohort
+from nba_lineup_model.modeling.schedule_controls import (
+    BackToBackScheduleModel,
+    build_back_to_back_game_features,
+)
 from nba_lineup_model.modeling.shot_portfolio import add_shot_portfolio_profiles
 from nba_lineup_model.modeling.stints import read_rapm_stints
 from nba_lineup_model.season.schema import validate_season
@@ -66,6 +70,7 @@ class BacktestModel:
     profile_transformer: Callable[[pd.DataFrame, str], pd.DataFrame] | None = None
     profile_builder: Callable[..., pd.DataFrame] | None = None
     uses_context: bool = True
+    uses_schedule_control: bool = False
     run_target_season: str | None = None
 
 
@@ -131,6 +136,7 @@ def run_frozen_multiseason_backtest(
     player_season_panel_path: Path | str = DEFAULT_PANEL_PATH,
     analytical_dir: Path | str = DEFAULT_ANALYTICAL_DIR,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
+    game_catalog_path: Path | str = Path("data/catalog/games.parquet"),
     docs_path: Path | str | None = DEFAULT_DOCS_PATH,
     output_artifacts_dir: Path | str | None = None,
     score_possessions: bool = True,
@@ -154,6 +160,11 @@ def run_frozen_multiseason_backtest(
     source_rows: list[dict[str, object]] = []
     evaluations: list[dict[str, object]] = []
     states: list[_RecursiveState] = []
+    schedule_features = (
+        build_back_to_back_game_features(pd.read_parquet(game_catalog_path))
+        if any(candidate.uses_schedule_control for candidate in models)
+        else None
+    )
     for candidate in models:
         run_target = candidate.run_target_season or target_seasons[-1]
         run_dir = _latest_recursive_run(root / candidate.model / run_target)
@@ -242,6 +253,9 @@ def run_frozen_multiseason_backtest(
                     home_features,
                     away_features,
                 )
+            schedule_model = state.schedule_models.get(source)
+            if candidate.uses_schedule_control and schedule_model is None:
+                raise ValueError(f"{candidate.label} lacks a schedule state for {source}")
             evaluation = _replay_regular_target_season(
                 target,
                 state=state,
@@ -256,6 +270,8 @@ def run_frozen_multiseason_backtest(
                 source_possessions=source_possessions,
                 pythagorean=pythagorean,
                 context_correction=context_correction,
+                schedule_model=schedule_model,
+                schedule_features=schedule_features,
             )
             evaluations.append({"candidate": candidate, "target": target, **evaluation})
         print(
@@ -308,6 +324,7 @@ class _RecursiveState:
     priors: pd.DataFrame
     coefficients: pd.DataFrame
     context_models: dict[str, MatchupContextualModel]
+    schedule_models: dict[str, BackToBackScheduleModel] = field(default_factory=dict)
 
 
 def _load_state(
@@ -324,6 +341,8 @@ def _load_state(
     priors = pd.read_parquet(run_dir / "season_player_priors.parquet")
     coefficients = pd.read_parquet(run_dir / "historical_player_coefficients.parquet")
     models = joblib.load(run_dir / "season_context_models.joblib")
+    schedule_path = run_dir / "season_schedule_models.joblib"
+    schedule_models = joblib.load(schedule_path) if schedule_path.is_file() else {}
     required_priors = {"season", "player_id", "prior_rapm"}
     required_coefficients = {"season", "player_id", "rapm"}
     if required_priors - set(priors) or required_coefficients - set(coefficients):
@@ -338,6 +357,8 @@ def _load_state(
             raise ValueError(f"{candidate.label} lacks player coefficients for {source}")
         if candidate.uses_context and source not in models:
             raise ValueError(f"{candidate.label} lacks context state for {source}")
+        if candidate.uses_schedule_control and source not in schedule_models:
+            raise ValueError(f"{candidate.label} lacks schedule state for {source}")
     return _RecursiveState(
         candidate=candidate,
         run_dir=run_dir,
@@ -345,6 +366,7 @@ def _load_state(
         priors=priors,
         coefficients=coefficients,
         context_models=models,
+        schedule_models=schedule_models,
     )
 
 
@@ -363,6 +385,8 @@ def _replay_regular_target_season(
     source_possessions: pd.DataFrame | None = None,
     pythagorean: PythagoreanWinModel | None = None,
     context_correction: np.ndarray | None = None,
+    schedule_model: BackToBackScheduleModel | None = None,
+    schedule_features: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame | dict[str, object]]:
     """Replay regular season and, when available, playoffs from one frozen state."""
 
@@ -382,6 +406,11 @@ def _replay_regular_target_season(
         )
     model = state.context_models.get(source)
     context_predictor = model.predict_lineups if model is not None else _zero_context_predictor
+    schedule_predictor = (
+        _schedule_predictor(schedule_model, schedule_features)
+        if schedule_model is not None and schedule_features is not None
+        else None
+    )
     stint_context_predictor = (
         _fixed_context_predictor(context_correction)
         if context_correction is not None
@@ -419,6 +448,7 @@ def _replay_regular_target_season(
             cohort="regular_season",
             profiles=profiles,
             context_predictor=context_predictor,
+            schedule_predictor=schedule_predictor,
             priors=prior_frame,
             source_mean=source_mean,
             source_home_intercept=source_home_intercept,
@@ -438,6 +468,7 @@ def _replay_regular_target_season(
                 cohort="playoffs",
                 profiles=profiles,
                 context_predictor=context_predictor,
+                schedule_predictor=schedule_predictor,
                 priors=prior_frame,
                 source_mean=source_mean,
                 source_home_intercept=source_home_intercept,
@@ -456,6 +487,7 @@ def _replay_regular_target_season(
         context_predictor=stint_context_predictor,
         priors=prior_frame,
         source_home_intercept=source_home_intercept,
+        schedule_predictor=schedule_predictor,
     )
     win_model = pythagorean
     if win_model is None:
@@ -489,6 +521,7 @@ def _replay_regular_target_season(
             "source_run_id": state.run_id,
             "replay_mode": "persisted_recursive_state_no_refit",
             "replay_context_model_season": source if model is not None else None,
+            "replay_schedule_model_season": source if schedule_model is not None else None,
             "replay_player_prior_season": target,
         },
         "cohort_metrics": (
@@ -523,6 +556,18 @@ def _zero_context_predictor(
 
     del away_lineups, profiles
     return np.zeros(len(home_lineups), dtype=float)  # type: ignore[arg-type]
+
+
+def _schedule_predictor(
+    model: BackToBackScheduleModel,
+    schedule_features: pd.DataFrame,
+) -> Callable[[pd.DataFrame], np.ndarray]:
+    """Bind one frozen schedule state to the canonical game schedule."""
+
+    def predict(rows: pd.DataFrame) -> np.ndarray:
+        return model.predict_games(rows, schedule_features)
+
+    return predict
 
 
 def _fixed_context_predictor(correction: np.ndarray) -> Callable[..., np.ndarray]:

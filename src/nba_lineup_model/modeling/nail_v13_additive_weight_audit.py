@@ -32,6 +32,7 @@ FEATURE_LABELS = {
     "assists_per_100": "Assists / 100",
     "turnovers_per_100": "Turnovers / 100",
     "usage_per_100": "Usage / 100",
+    "usage_pct": "Conventional USG%",
     "steals_per_100": "Steals / 100",
     "blocks_per_100": "Blocks / 100",
     "offensive_rebound_claim_total": "Offensive-rebound claim total",

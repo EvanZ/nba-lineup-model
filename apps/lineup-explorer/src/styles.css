@@ -253,6 +253,15 @@ h1 { margin: 0; max-width: 720px; font-family: Georgia, "Times New Roman", serif
 .environment-toggle button:hover { background: #edf2e9; color: #245a47; }
 .environment-toggle button.active { background: #245a47; color: #fffefa; }
 .environment-toggle button:disabled { cursor: not-allowed; background: #f0eee8; color: #8b908b; }
+.scenario-control { display: grid; gap: 10px; margin: 16px 0 0; padding: 0 0 16px; border-bottom: 1px solid #d9d6ce; }
+.scenario-control > span, .scenario-control-group > small { color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.scenario-control-groups { display: flex; flex-wrap: wrap; gap: 10px 18px; }
+.scenario-control-group { display: flex; align-items: center; border: 1px solid #a6aaa4; background: #fffefa; }
+.scenario-control-group > small { align-self: stretch; display: grid; place-items: center; padding: 0 8px; border-right: 1px solid #a6aaa4; background: #f0eee8; }
+.scenario-control-group button { height: 30px; padding: 0 9px; border: 0; border-right: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #68716a; font-size: 11px; font-weight: 700; }
+.scenario-control-group button:last-child { border-right: 0; }
+.scenario-control-group button:hover { background: #edf2e9; color: #245a47; }
+.scenario-control-group button.active { background: #245a47; color: #fffefa; }
 .lineup-controls { display: inline-flex; align-items: center; gap: 6px; }
 .refresh-button, .clear-button { width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 50%; }
 .refresh-button { background: #dce8db; color: #245a47; }
@@ -346,6 +355,9 @@ small { color: #6b736d; font-size: 12px; }
 .gestalt-score strong { font-family: Georgia, "Times New Roman", serif; font-size: 68px; font-weight: 400; line-height: 0.88; }
 .gestalt-score > span { color: #17201c; font-size: 13px; font-weight: 800; text-transform: uppercase; }
 .gestalt-score small { font-size: 12px; }
+.win-probability { display: flex; align-items: baseline; justify-content: space-between; margin-top: 8px; padding-top: 10px; border-top: 1px solid #e2dfd7; }
+.win-probability span { color: #68716a; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.win-probability strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 18px; font-weight: 800; line-height: 1; }
 .rating-ledger { width: 100%; margin: 18px 0 29px; border-collapse: collapse; font-size: 12px; }
 .rating-ledger th, .rating-ledger td { padding: 10px 6px; border-bottom: 1px solid #e2dfd7; text-align: right; }
 .rating-ledger thead th { color: #68716a; font-size: 10px; font-weight: 700; text-transform: uppercase; }
@@ -354,6 +366,7 @@ small { color: #6b736d; font-size: 12px; }
 .rating-ledger td { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
 .rating-ledger .ledger-subtotal th, .rating-ledger .ledger-subtotal td { border-top: 2px solid #17201c; }
 .rating-ledger .ledger-total th, .rating-ledger .ledger-total td { border-bottom: 0; color: #17201c; font-size: 16px; font-weight: 800; }
+.scenario-note { margin: -17px 0 24px; color: #68716a; font-size: 11px; line-height: 1.45; }
 .signal-section, .roster-summary { padding-top: 23px; border-top: 1px solid #d9d6ce; }
 .roster-summary { margin-top: 25px; }
 h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: uppercase; }
@@ -475,6 +488,9 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .environment-control { align-items: flex-start; flex-direction: column; }
   .environment-toggle { width: 100%; }
   .environment-toggle button { flex: 1; min-width: 0; }
+  .scenario-control-groups { width: 100%; display: grid; grid-template-columns: 1fr; }
+  .scenario-control-group { width: 100%; }
+  .scenario-control-group button { flex: 1; min-width: 0; }
   .site-header { height: auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px 12px; padding: 10px 0 9px; }
   .wordmark { grid-column: 1; grid-row: 1; }
   .header-meta { display: contents; }

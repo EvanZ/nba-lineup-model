@@ -26,18 +26,20 @@ type Side = "unit" | "opponent";
 type AppView = "lab" | "rankings" | "lineups" | "about" | "player";
 type AppRoute = { view: AppView; playerId?: number };
 type Environment = "unit" | "neutral" | "opponent";
+type Court = "neutral" | "unit_home" | "opponent_home";
 type AgingContributionKey = "prior" | "seasonUpdate" | "additiveProfile";
 
 const SIDE_LABELS: Record<Side, string> = { unit: "Your unit", opponent: "Opponent" };
 const MATERIAL_COMPONENT_CONTRIBUTION = 0.05;
-const MODEL_LABEL = "NAIL-RAPM v1.2.1";
-const V121_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/models/nail-rapm-v121-pruned-nonadditive/";
+const MODEL_LABEL = "NAIL-RAPM v1.2.1.2";
+const V121_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/models/nail-rapm-v1212-back-to-back/";
 const FEATURE_DESCRIPTIONS: Record<string, string> = {
   home_minus_away_three_pa_per_100: "Sum of the five players' prior-season three-point attempts per 100 possessions.",
   home_minus_away_three_pm_per_100: "Sum of the five players' prior-season made three-pointers per 100 possessions.",
   home_minus_away_assists_per_100: "Sum of the five players' prior-season assists per 100 possessions.",
   home_minus_away_turnovers_per_100: "Sum of the five players' prior-season turnovers per 100 possessions.",
   home_minus_away_usage_per_100: "Sum of the five players' prior-season usage events per 100 possessions.",
+  home_minus_away_usage_pct: "Sum of the five players' prior-season conventional USG% values.",
   home_minus_away_offensive_rebounds_per_100: "Sum of the five players' prior-season offensive rebounds per 100 possessions.",
   home_minus_away_defensive_rebounds_per_100: "Sum of the five players' prior-season defensive rebounds per 100 possessions.",
   home_minus_away_steals_per_100: "Sum of the five players' prior-season steals per 100 possessions.",
@@ -64,6 +66,10 @@ function formatRating(value: number) {
 
 function formatChartRating(value: number) {
   return value.toFixed(1);
+}
+
+function formatWinPct(value: number) {
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 const TEAM_LOGO_SLUGS: Record<string, string> = {
@@ -735,6 +741,9 @@ function App() {
   const [opponentTeam, setOpponentTeam] = useState("all");
   const [availableLabSeasons, setAvailableLabSeasons] = useState<string[]>(["2025-26"]);
   const [environment, setEnvironment] = useState<Environment>("unit");
+  const [court, setCourt] = useState<Court>("neutral");
+  const [unitBackToBack, setUnitBackToBack] = useState(false);
+  const [opponentBackToBack, setOpponentBackToBack] = useState(false);
   const [result, setResult] = useState<Matchup | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isLoadingUnit, setIsLoadingUnit] = useState(false);
@@ -850,6 +859,9 @@ function App() {
           unit_season: unitSeason,
           opponent_season: opponentSeason,
           environment,
+          court,
+          unit_back_to_back: unitBackToBack,
+          opponent_back_to_back: opponentBackToBack,
           include_response_curves: true,
         }),
       });
@@ -993,6 +1005,44 @@ function App() {
               </div>
             </section>
 
+            <section className="scenario-control" aria-label="Game scenario">
+              <span>Game scenario</span>
+              <div className="scenario-control-groups">
+                <div className="scenario-control-group" role="radiogroup" aria-label="Court status">
+                  <small>Court</small>
+                  {([
+                    ["neutral", "Neutral"],
+                    ["unit_home", "Your home"],
+                    ["opponent_home", "Opponent home"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={court === value}
+                      className={court === value ? "active" : ""}
+                      onClick={() => { setCourt(value); setResult(null); }}
+                    >{label}</button>
+                  ))}
+                </div>
+                <div className="scenario-control-group" aria-label="Rest status">
+                  <small>Rest</small>
+                  <button
+                    type="button"
+                    aria-pressed={unitBackToBack}
+                    className={unitBackToBack ? "active" : ""}
+                    onClick={() => { setUnitBackToBack((value) => !value); setResult(null); }}
+                  >Your unit B2B</button>
+                  <button
+                    type="button"
+                    aria-pressed={opponentBackToBack}
+                    className={opponentBackToBack ? "active" : ""}
+                    onClick={() => { setOpponentBackToBack((value) => !value); setResult(null); }}
+                  >Opponent B2B</button>
+                </div>
+              </div>
+            </section>
+
             <button className="evaluate-button" onClick={() => void evaluate()} disabled={!canEvaluate || isEvaluating}>
               {isEvaluating ? <LoaderCircle className="spin" size={18} /> : <Sparkles size={18} />}
               {isEvaluating ? "Evaluating" : "Evaluate matchup"}
@@ -1040,7 +1090,7 @@ function AboutPage() {
         </div>
         <div className="about-formula-stack">
           <div className="model-formula">
-            <BlockMath math={String.raw`\hat{y}_s = b_{\mathrm{home}} + \sum_{i \in H_s} r_{i,t} - \sum_{j \in A_s} r_{j,t} + C_t(H_s, A_s) + \varepsilon_s`} />
+            <BlockMath math={String.raw`\hat{y}_s = b_{\mathrm{home}} + \beta^{\mathrm{B2B}}_t x_s + \sum_{i \in H_s} r_{i,t} - \sum_{j \in A_s} r_{j,t} + C_t(H_s, A_s) + \varepsilon_s`} />
           </div>
           <div className="model-subformula">
             <BlockMath math={String.raw`C_t(H,A) = C_{\mathrm{add},t}(H,A) + C_{\mathrm{nonadd},t}(H,A)`} />
@@ -1048,9 +1098,34 @@ function AboutPage() {
         </div>
         <p>
           Each row is a possession-weighted stint. <i>y_s</i> is its home-minus-away net-rating outcome,
-          <i> b_home</i> is home court, and the two five-player sums are the raw player edge. <i>C</i> is
-          the lineup-profile correction. The model estimates all reported ratings on a per-100-possession scale.
+          <i> b_home</i> is home court, <i>x</i> is the home-minus-away back-to-back indicator, and the two
+          five-player sums are the raw player edge. <i>C</i> is the lineup-profile correction. The model
+          estimates all reported ratings on a per-100-possession scale.
         </p>
+      </section>
+
+      <section className="about-section" aria-labelledby="game-controls-title">
+        <div className="about-section-heading">
+          <p className="section-kicker">Game-level controls</p>
+          <h2 id="game-controls-title">Home court and rest are not player value.</h2>
+          <p>
+            Court location and back-to-back status are known before tipoff. NAIL controls them separately so a
+            recurring venue advantage or calendar disadvantage is not assigned to players or to a particular
+            five-man unit.
+          </p>
+        </div>
+        <div className="about-formula-callout">
+          <div className="model-formula">
+            <BlockMath math={String.raw`\widehat{\mathrm{game}}_{s,t} = b_{\mathrm{home},t-1}c_s + \beta^{\mathrm{B2B}}_{t-1}\!\left(\mathbb{1}[\mathrm{home\ B2B}] - \mathbb{1}[\mathrm{away\ B2B}]\right)`} />
+          </div>
+          <p>
+            Here <i>c</i> is +1 for home court, -1 for away court, and 0 for neutral court. The back-to-back
+            term is +1 when the home team played the previous calendar day and the visitor did not, -1 in the
+            reverse situation, and 0 otherwise. The completed source season supplies both coefficients for the
+            following season, and the same control is removed before the player RAPM refit. The Matchup Lab
+            keeps its core lineup edge date-free, then exposes home court and rest as optional scenarios.
+          </p>
+        </div>
       </section>
 
       <section className="about-section" aria-labelledby="forward-title">
@@ -1211,8 +1286,8 @@ function AboutPage() {
               <strong>Eight player-attributable coefficients</strong>
             </figcaption>
             <img
-              src="/model/nail-v121-additive-profile-weight-trajectories.svg"
-              alt="Blue coefficient trajectories for the eight additive NAIL-RAPM v1.2.1 player-profile features."
+              src="/model/nail-v1212-additive-profile-weight-trajectories.svg"
+              alt="Blue coefficient trajectories for the eight additive NAIL-RAPM v1.2.1.2 player-profile features."
             />
           </figure>
           <figure className="coefficient-chart-panel">
@@ -1221,14 +1296,14 @@ function AboutPage() {
               <strong>Two retained unit-level coefficients</strong>
             </figcaption>
             <img
-              src="/model/nail-v121-pruned-nonadditive-weight-trajectories.svg"
-              alt="Orange coefficient trajectories for the retained NAIL-RAPM v1.2.1 non-additive lineup features."
+              src="/model/nail-v1212-retained-nonadditive-weight-trajectories.svg"
+              alt="Orange coefficient trajectories for the retained NAIL-RAPM v1.2.1.2 non-additive lineup features."
             />
           </figure>
         </div>
         <p className="coefficient-audit-link">
           <a href={V121_DOCUMENTATION_URL} target="_blank" rel="noreferrer">
-            Read the full v1.2.1 feature contract, frozen results, and bootstrap audit <ArrowUpRight size={14} />
+            Read the full v1.2.1.2 feature contract, frozen results, and bootstrap audit <ArrowUpRight size={14} />
           </a>
         </p>
       </section>
@@ -2094,10 +2169,13 @@ function Results({ result }: {
     );
   }
   const compiledLinear = result.model_form === "compiled_linear_x3";
+  const scenarioActive = result.court !== "neutral"
+    || result.unit_back_to_back
+    || result.opponent_back_to_back;
   return (
     <aside className="results-panel" aria-live="polite">
       <div className="result-heading">
-        <span>Neutral-court estimate</span>
+        <span>{scenarioActive ? "Scenario-adjusted estimate" : "Neutral-court estimate"}</span>
         <small>
           {result.environment === "neutral"
             ? `${MODEL_LABEL} · mean of ${result.unit_season} and ${result.opponent_season} eras`
@@ -2110,6 +2188,12 @@ function Results({ result }: {
         </strong>
         <span>GESTALT score</span>
         <small>Expected net rating per 100 possessions</small>
+        <div className="win-probability">
+          <span>Your unit win probability</span>
+          <strong className={result.predicted_win_pct < 0.5 ? "negative" : ""}>
+            {formatWinPct(result.predicted_win_pct)}
+          </strong>
+        </div>
       </div>
       <table className="rating-ledger" aria-label="Lineup rating calculation">
         <thead>
@@ -2156,14 +2240,45 @@ function Results({ result }: {
               </tr>
             </>
           )}
+          {scenarioActive && (
+            <tr className="ledger-subtotal">
+              <th scope="row">Core lineup edge</th>
+              <td />
+              <td />
+              <td><Rating value={result.base_predicted_net_rating} /></td>
+            </tr>
+          )}
+          {result.court !== "neutral" && (
+            <tr>
+              <th scope="row">Home-court adjustment</th>
+              <td />
+              <td />
+              <td><Rating value={result.home_court_adjustment} /></td>
+            </tr>
+          )}
+          {(result.unit_back_to_back || result.opponent_back_to_back) && (
+            <tr>
+              <th scope="row">Back-to-back adjustment</th>
+              <td />
+              <td />
+              <td><Rating value={result.back_to_back_adjustment} /></td>
+            </tr>
+          )}
           <tr className="ledger-total">
-            <th scope="row">GESTALT score</th>
+            <th scope="row">{scenarioActive ? "Scenario score" : "GESTALT score"}</th>
             <td />
             <td />
             <td><Rating value={result.predicted_net_rating} /></td>
           </tr>
         </tbody>
       </table>
+      {scenarioActive && (
+        <p className="scenario-note">
+          Scenario controls use mean-reverted, possession-weighted historical references: home court
+          {" "}{formatRating(result.home_court_reference)} and B2B {formatRating(result.back_to_back_reference)}
+          {" "}per 100 across {result.schedule_control_source_season_count} completed seasons.
+        </p>
+      )}
       <ContextCurveExplorer result={result} />
     </aside>
   );

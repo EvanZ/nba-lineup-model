@@ -15,8 +15,10 @@ import pandas as pd
 
 from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
+    CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
     CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
     CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+    LINEAR_NAIL_V1211_BASKETBALL_ADDITIVE_FEATURES,
     LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES,
     contextual_feature_columns,
     lineup_side_context_features,
@@ -47,9 +49,9 @@ DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path(
     "artifacts/models/forward_draft_history_cold_start"
 )
 # Keep the artifact identifier distinct from the public release name.
-MODEL_ARTIFACT = "forward_nail_rapm_v121_pruned_nonadditive"
-MODEL_NAME = "forward_nail_rapm_v121_pruned_nonadditive"
-MODEL_DISPLAY_NAME = "NAIL-RAPM v1.2.1"
+MODEL_ARTIFACT = "forward_nail_rapm_v1212_back_to_back"
+MODEL_NAME = "forward_nail_rapm_v1212_back_to_back"
+MODEL_DISPLAY_NAME = "NAIL-RAPM v1.2.1.2"
 DISPLAY_SEASON = "2025-26"
 PRESEASON_PREVIEW_SEASON = "2026-27"
 RESPONSE_CURVE_POINTS = 33
@@ -57,6 +59,8 @@ RESPONSE_CURVE_POINTS = 33
 # adds warmup cost without increasing the published curve resolution.
 WARM_RESPONSE_CURVE_POINTS = RESPONSE_CURVE_POINTS
 LINEUP_REFERENCE_SAMPLE_SIZE = 512
+WIN_PCT_INTERCEPT = 0.499583
+WIN_PCT_PER_NET_RATING = 0.030250
 
 
 def build_contextual_player_profiles(*args: Any, **kwargs: Any) -> pd.DataFrame:
@@ -114,12 +118,114 @@ def _previous_season(season: str) -> str:
     start = int(season[:4]) - 1
     return f"{start}-{str(start + 1)[-2:]}"
 
+
+def projected_win_pct(net_rating: float) -> float:
+    """Convert a neutral-court NetRtg estimate into the published win-rate scale."""
+
+    return float(
+        np.clip(WIN_PCT_INTERCEPT + WIN_PCT_PER_NET_RATING * net_rating, 0.0, 1.0)
+    )
+
+
+def _mean_reverted_schedule_controls(
+    season_metadata: pd.DataFrame,
+    schedule_metadata: pd.DataFrame,
+) -> MeanRevertedScheduleControls:
+    """Pool completed schedule states into stable Lab reference coefficients."""
+
+    home_court = _weighted_completed_mean(
+        season_metadata,
+        value_column="context_home_intercept",
+        weight_column="context_training_weight_sum",
+        label="home-court",
+    )
+    back_to_back = _weighted_completed_mean(
+        schedule_metadata,
+        value_column="schedule_control_raw_weight",
+        weight_column="schedule_training_stint_count",
+        label="back-to-back",
+    )
+    source_seasons = int(
+        min(
+            season_metadata["season"].astype(str).nunique(),
+            schedule_metadata["season"].astype(str).nunique(),
+        )
+    )
+    if source_seasons < 1:
+        raise LineupEvaluationError("The artifact has no completed schedule-control states")
+    return MeanRevertedScheduleControls(
+        home_court=home_court,
+        back_to_back=back_to_back,
+        source_season_count=source_seasons,
+    )
+
+
+def _weighted_completed_mean(
+    frame: pd.DataFrame,
+    *,
+    value_column: str,
+    weight_column: str,
+    label: str,
+) -> float:
+    """Return a possession-weighted historical mean after rejecting stale metadata."""
+
+    required = {value_column, weight_column}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise LineupEvaluationError(f"The artifact lacks {label} control metadata: {missing}")
+    values = pd.to_numeric(frame[value_column], errors="coerce").to_numpy(dtype=float)
+    weights = pd.to_numeric(frame[weight_column], errors="coerce").to_numpy(dtype=float)
+    valid = np.isfinite(values) & np.isfinite(weights) & (weights > 0)
+    if not valid.any():
+        raise LineupEvaluationError(f"The artifact has no valid {label} control states")
+    return float(np.average(values[valid], weights=weights[valid]))
+
+
+def _apply_schedule_scenario(
+    result: dict[str, Any],
+    *,
+    controls: MeanRevertedScheduleControls | None,
+    court: str,
+    unit_back_to_back: bool,
+    opponent_back_to_back: bool,
+) -> dict[str, Any]:
+    """Overlay a transparent, date-free schedule scenario on a matchup edge."""
+
+    if controls is None:
+        raise LineupEvaluationError("The artifact does not contain Lab schedule controls")
+    court_sign = {"neutral": 0.0, "unit_home": 1.0, "opponent_home": -1.0}[court]
+    home_court_adjustment = court_sign * controls.home_court
+    back_to_back_difference = int(unit_back_to_back) - int(opponent_back_to_back)
+    back_to_back_adjustment = back_to_back_difference * controls.back_to_back
+    schedule_adjustment = home_court_adjustment + back_to_back_adjustment
+    base_net_rating = float(result["predicted_net_rating"])
+    adjusted_net_rating = base_net_rating + schedule_adjustment
+    updated = result.copy()
+    updated.update(
+        {
+            "base_predicted_net_rating": base_net_rating,
+            "court": court,
+            "unit_back_to_back": unit_back_to_back,
+            "opponent_back_to_back": opponent_back_to_back,
+            "home_court_adjustment": home_court_adjustment,
+            "back_to_back_adjustment": back_to_back_adjustment,
+            "schedule_adjustment": schedule_adjustment,
+            "home_court_reference": controls.home_court,
+            "back_to_back_reference": controls.back_to_back,
+            "schedule_control_source_season_count": controls.source_season_count,
+            "predicted_net_rating": adjusted_net_rating,
+            "predicted_win_pct": projected_win_pct(adjusted_net_rating),
+        }
+    )
+    return updated
+
 _FEATURE_LABELS = {
     "home_minus_away_three_pa_per_100": "Three-point attempt volume",
     "home_minus_away_three_pm_per_100": "Three-point makes",
     "home_minus_away_assists_per_100": "Assists",
     "home_minus_away_turnovers_per_100": "Turnovers",
     "home_minus_away_usage_per_100": "Usage events",
+    "home_minus_away_usage_pct": "Usage percentage",
     "home_minus_away_offensive_rebounds_per_100": "Offensive rebounds",
     "home_minus_away_defensive_rebounds_per_100": "Defensive rebounds",
     "home_minus_away_steals_per_100": "Steals",
@@ -162,6 +268,15 @@ def _linear_x3_additive_feature_map(feature_set: str) -> dict[str, str]:
             feature: _LINEAR_X3_ADDITIVE_FEATURE_TO_PROFILE[feature]
             for feature in LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES
         }
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE:
+        return {
+            feature: (
+                "usage_pct"
+                if feature == "usage_pct"
+                else _LINEAR_X3_ADDITIVE_FEATURE_TO_PROFILE[feature]
+            )
+            for feature in LINEAR_NAIL_V1211_BASKETBALL_ADDITIVE_FEATURES
+        }
     if feature_set == CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY:
         return {
             feature: profile_column
@@ -188,6 +303,15 @@ class SeasonLineupState:
 
 
 @dataclass(frozen=True)
+class MeanRevertedScheduleControls:
+    """Long-run schedule coefficients used for date-free Lab scenarios."""
+
+    home_court: float
+    back_to_back: float
+    source_season_count: int
+
+
+@dataclass(frozen=True)
 class LineupEvaluator:
     """Serve one completed contextual RAPM state without reading raw possession data."""
 
@@ -199,6 +323,7 @@ class LineupEvaluator:
     context_model: MatchupContextualModel
     response_cache: dict[int, tuple[np.ndarray, np.ndarray]]
     context_alpha: float | None = None
+    schedule_controls: MeanRevertedScheduleControls | None = None
     profile_padding_contract: ProfilePaddingContract | None = None
     use_last_observed_profile: bool = False
     lineup_rankings_root: Path | None = None
@@ -270,6 +395,10 @@ class LineupEvaluator:
         if prior_profiles["player_id"].duplicated().any():
             raise LineupEvaluationError("The artifact has duplicate player profiles")
         raw_seasonal_ratings = pd.read_parquet(run_dir / "player_season_ratings.parquet")
+        schedule_controls = _mean_reverted_schedule_controls(
+            pd.read_parquet(run_dir / "season_model_metadata.parquet"),
+            pd.read_parquet(run_dir / "season_schedule_control_metadata.parquet"),
+        )
         models = joblib.load(run_dir / "season_context_models.joblib")
         context_model = models.get(season)
         if context_model is None:
@@ -456,6 +585,7 @@ class LineupEvaluator:
             context_model=context_model,
             response_cache=response_cache,
             context_alpha=float(metadata["context_alpha"]),
+            schedule_controls=schedule_controls,
             profile_padding_contract=profile_padding_contract,
             use_last_observed_profile=use_last_observed_profile,
             lineup_rankings_root=DEFAULT_LINEUP_RANKINGS_CACHE_DIR / MODEL_ARTIFACT / run_id,
@@ -786,6 +916,9 @@ class LineupEvaluator:
         unit_season: str | None = None,
         opponent_season: str | None = None,
         environment: str = "unit",
+        court: str = "neutral",
+        unit_back_to_back: bool = False,
+        opponent_back_to_back: bool = False,
         include_response_curves: bool = False,
         response_curve_feature_id: str | None = None,
         response_curve_kind: str | None = None,
@@ -796,6 +929,8 @@ class LineupEvaluator:
         selected_opponent_season = opponent_season or self.season
         if environment not in {"unit", "opponent", "neutral"}:
             raise LineupEvaluationError("Environment must be unit, neutral, or opponent")
+        if court not in {"neutral", "unit_home", "opponent_home"}:
+            raise LineupEvaluationError("Court must be neutral, unit_home, or opponent_home")
         unit_state = self._season_state(selected_unit_season)
         opponent_state = self._season_state(selected_opponent_season)
         if environment == "unit":
@@ -853,7 +988,13 @@ class LineupEvaluator:
                 "environment_seasons": environment_seasons,
             }
         )
-        return result
+        return _apply_schedule_scenario(
+            result,
+            controls=self.schedule_controls,
+            court=court,
+            unit_back_to_back=unit_back_to_back,
+            opponent_back_to_back=opponent_back_to_back,
+        )
 
     def _evaluate_in_environment(
         self,
@@ -996,6 +1137,7 @@ class LineupEvaluator:
             opponent_composition_contributions,
             feature_ids=matchup_feature_ids,
         ) if include_response_curves else []
+        predicted_net_rating = additive_margin + contextual_adjustment
         response = {
             "season": environment_season,
             "run_id": self.run_id,
@@ -1010,7 +1152,8 @@ class LineupEvaluator:
             "opponent_composition_rating": opponent_composition_rating,
             "portable_composition_margin": portable_composition_margin,
             "matchup_adjustment": matchup_adjustment,
-            "predicted_net_rating": additive_margin + contextual_adjustment,
+            "predicted_net_rating": predicted_net_rating,
+            "predicted_win_pct": projected_win_pct(predicted_net_rating),
             "feature_contributions": feature_rows,
             "composition_feature_contributions": composition_feature_rows,
             "matchup_feature_contributions": matchup_feature_rows,
@@ -1105,6 +1248,7 @@ class LineupEvaluator:
             sum(opponent_map[player_id] for player_id in opponent_player_ids)
         )
         additive_margin = additive_unit - additive_opponent
+        predicted_net_rating = additive_margin + shape_context
         return {
             "season": environment_season,
             "run_id": self.run_id,
@@ -1120,7 +1264,8 @@ class LineupEvaluator:
             "opponent_composition_rating": opponent_composition_rating,
             "portable_composition_margin": shape_context,
             "matchup_adjustment": 0.0,
-            "predicted_net_rating": additive_margin + shape_context,
+            "predicted_net_rating": predicted_net_rating,
+            "predicted_win_pct": projected_win_pct(predicted_net_rating),
             "feature_contributions": shape_rows,
             "composition_feature_contributions": shape_rows,
             "matchup_feature_contributions": [],
@@ -2329,6 +2474,7 @@ def _is_compiled_linear_x3(context_model: MatchupContextualModel) -> bool:
         context_model.feature_set
         in {
             CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
+            CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
             CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
             CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
         }

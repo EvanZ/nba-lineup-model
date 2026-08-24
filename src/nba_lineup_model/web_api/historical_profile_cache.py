@@ -11,6 +11,7 @@ from nba_lineup_model.web_api.inference import (
     DISPLAY_SEASON,
     MODEL_ARTIFACT,
     LineupEvaluator,
+    build_contextual_player_profiles,
     historical_profiles_path,
 )
 
@@ -36,7 +37,20 @@ def main() -> None:
             f"Materializing historical profiles for {season} ({index}/{len(seasons)})",
             flush=True,
         )
-        profiles = evaluator._season_state(season).profiles.copy()
+        player_ids = evaluator.historical_coefficients.loc[
+            evaluator.historical_coefficients["season"].eq(season), "player_id"
+        ].astype(int)
+        profiles = build_contextual_player_profiles(
+            evaluator.player_season_panel,
+            target_season=season,
+            target_player_ids=player_ids,
+            exposure_cohort=evaluator.exposure_cohort.loc[
+                evaluator.exposure_cohort["season"].astype(str).le(season)
+            ],
+            padding_contract=evaluator.profile_padding_contract,
+            use_last_observed_profile=evaluator.use_last_observed_profile,
+            profile_timing="prior",
+        )
         profiles.insert(0, "season", season)
         frames.append(profiles)
 

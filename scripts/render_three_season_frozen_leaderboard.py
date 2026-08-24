@@ -95,6 +95,30 @@ CANDIDATES = (
     },
     {
         "model": (
+            "[NAIL-RAPM v1.2.1.2 back-to-back schedule control (not promoted)]"
+            "(nail-rapm-v1212-back-to-back.md)"
+        ),
+        "regular": {
+            "possession_rmse": 1.197946,
+            "possession_mae": 1.141313,
+            "possession_skill": 0.001279,
+            "eligible_game_margin_rmse": 14.010671,
+            "eligible_game_skill": 0.183623,
+            "full_game_margin_rmse": 14.233033,
+            "game_winner_accuracy": 0.679578,
+            "team_net_rating_rmse": 3.284716,
+            "pythagorean_win_rmse": 7.055059,
+        },
+        "playoffs": {
+            "possession_rmse": 1.192710,
+            "possession_mae": 1.137604,
+            "possession_skill": 0.000645,
+            "eligible_game_margin_rmse": 16.603182,
+            "eligible_game_skill": 0.076393,
+        },
+    },
+    {
+        "model": (
             "[NAIL-RAPM v1.2.1 pruned non-additive context]"
             "(nail-rapm-v121-pruned-nonadditive.md) **(Production)**"
         ),

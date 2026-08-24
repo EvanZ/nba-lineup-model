@@ -55,6 +55,7 @@ RUN_PREFIX = "contextual-prior"
 ContextPredictor = Callable[
     [Sequence[Sequence[int]], Sequence[Sequence[int]], pd.DataFrame], np.ndarray
 ]
+SchedulePredictor = Callable[[pd.DataFrame], np.ndarray]
 
 
 @dataclass(frozen=True)
@@ -329,6 +330,7 @@ def _evaluate_target(
     curated_dir: Path,
     evaluation_model: str = MODEL_NAME,
     context_predictor: ContextPredictor | None = None,
+    schedule_predictor: SchedulePredictor | None = None,
 ) -> dict[str, pd.DataFrame | dict[str, object]]:
     source = _previous_season(target)
     prior_frame = priors.loc[priors["season"].eq(target), ["player_id", "prior_rapm"]].rename(
@@ -351,6 +353,7 @@ def _evaluate_target(
         cohort="regular_season",
         profiles=profiles,
         context_predictor=predictor,
+        schedule_predictor=schedule_predictor,
         priors=prior_frame,
         source_mean=source_mean,
         source_home_intercept=source_home_intercept,
@@ -360,6 +363,7 @@ def _evaluate_target(
         cohort="playoffs",
         profiles=profiles,
         context_predictor=predictor,
+        schedule_predictor=schedule_predictor,
         priors=prior_frame,
         source_mean=source_mean,
         source_home_intercept=source_home_intercept,
@@ -387,6 +391,7 @@ def _evaluate_target(
         target_stints,
         profiles=profiles,
         context_predictor=predictor,
+        schedule_predictor=schedule_predictor,
         priors=prior_frame,
         source_home_intercept=source_home_intercept,
     )
@@ -446,6 +451,7 @@ def _score_possessions(
     cohort: str,
     profiles: pd.DataFrame,
     context_predictor: ContextPredictor,
+    schedule_predictor: SchedulePredictor | None = None,
     priors: pd.DataFrame,
     source_mean: float,
     source_home_intercept: float,
@@ -488,8 +494,17 @@ def _score_possessions(
     )
     sign = output["home_offense_sign"].to_numpy(dtype=float)
     output["contextual_correction_home_net_rating"] = correction
-    output["prediction_home_margin"] += correction / 200.0
-    output["prediction_offense_margin"] += sign * correction / 200.0
+    schedule_correction = (
+        np.asarray(schedule_predictor(possessions), dtype=float)
+        if schedule_predictor is not None
+        else np.zeros(len(output), dtype=float)
+    )
+    if len(schedule_correction) != len(output) or not np.isfinite(schedule_correction).all():
+        raise ValueError("Schedule predictor must return one finite adjustment per possession")
+    output["schedule_correction_home_net_rating"] = schedule_correction
+    total_correction = correction + schedule_correction
+    output["prediction_home_margin"] += total_correction / 200.0
+    output["prediction_offense_margin"] += sign * total_correction / 200.0
     output["residual_offense_margin"] = (
         output["target_offense_margin"] - output["prediction_offense_margin"]
     )
@@ -503,6 +518,7 @@ def _contextual_stint_predictions(
     context_predictor: ContextPredictor,
     priors: pd.DataFrame,
     source_home_intercept: float,
+    schedule_predictor: SchedulePredictor | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     prior_map = dict(zip(priors["player_id"].astype(int), priors["prior_rapm_mean"], strict=True))
     effects, _ = _lineup_effects(stints, prior_map)
@@ -511,6 +527,14 @@ def _contextual_stint_predictions(
         stints["away_player_ids"].tolist(),
         profiles,
     )
+    schedule_correction = (
+        np.asarray(schedule_predictor(stints), dtype=float)
+        if schedule_predictor is not None
+        else np.zeros(len(stints), dtype=float)
+    )
+    if len(schedule_correction) != len(stints) or not np.isfinite(schedule_correction).all():
+        raise ValueError("Schedule predictor must return one finite adjustment per stint")
+    correction = np.asarray(correction, dtype=float) + schedule_correction
     base = stints.loc[
         :,
         [

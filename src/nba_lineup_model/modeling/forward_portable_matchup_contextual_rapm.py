@@ -72,6 +72,13 @@ from nba_lineup_model.modeling.replacement_level import (
     player_exposure_shares,
     prepare_player_exposure_cohort,
 )
+from nba_lineup_model.modeling.schedule_controls import (
+    BackToBackScheduleModel,
+    attach_back_to_back_feature,
+    build_back_to_back_game_features,
+    fit_back_to_back_schedule_model,
+    schedule_model_metadata,
+)
 from nba_lineup_model.modeling.stints import (
     build_rapm_stints_from_legacy_processed_games,
     modeling_code_fingerprint,
@@ -116,6 +123,9 @@ def train_forward_portable_matchup_contextual_rapm(
     compiled_additive_prior: bool = False,
     include_historical_playoffs: bool = False,
     use_context: bool = True,
+    include_back_to_back_control: bool = False,
+    schedule_alpha: float | None = None,
+    game_catalog_path: Path | str = Path("data/catalog/games.parquet"),
     evaluate_target: bool = True,
     model_name: str = MODEL_NAME,
     run_prefix: str = RUN_PREFIX,
@@ -149,6 +159,8 @@ def train_forward_portable_matchup_contextual_rapm(
         raise ValueError("context_reattribution_weight must be between zero and one")
     if context_reattribution_weight and not use_context:
         raise ValueError("Context reattribution requires context_enabled")
+    if schedule_alpha is not None and schedule_alpha <= 0:
+        raise ValueError("Schedule-control alpha must be positive")
     if compiled_additive_prior:
         if not use_context:
             raise ValueError("Compiled additive prior transfer requires context_enabled")
@@ -161,6 +173,12 @@ def train_forward_portable_matchup_contextual_rapm(
                 "Compiled additive prior transfer cannot be combined with context reattribution"
             )
     panel = pd.read_parquet(player_season_panel_path)
+    resolved_schedule_alpha = context_alpha if schedule_alpha is None else schedule_alpha
+    schedule_features = (
+        build_back_to_back_game_features(pd.read_parquet(game_catalog_path))
+        if include_back_to_back_control
+        else None
+    )
     artifact_root = Path(artifacts_dir)
     reference_root = _latest_reference_run(
         artifact_root / "forward_exposure_gated_rapm",
@@ -196,9 +214,11 @@ def train_forward_portable_matchup_contextual_rapm(
     box_score_residual_models: dict[str, object] = {}
     box_score_residual_selections: list[pd.DataFrame] = []
     contextual_models: dict[str, MatchupContextualModel] = {}
+    schedule_models: dict[str, BackToBackScheduleModel] = {}
     contextual_metadata: list[dict[str, object]] = []
     rebound_calibration_metadata: list[dict[str, object]] = []
     usage_allocation_metadata: list[dict[str, object]] = []
+    schedule_metadata: list[dict[str, object]] = []
     context_reattributions: dict[str, ContextProjection] = {}
     context_reattribution_metadata: list[dict[str, object]] = []
     compiled_additive_prior_coefficients: list[pd.DataFrame] = []
@@ -236,6 +256,8 @@ def train_forward_portable_matchup_contextual_rapm(
                 f"  Added {playoff_game_count:,} completed playoff games to {season}",
                 flush=True,
             )
+        if schedule_features is not None:
+            raw_stints = attach_back_to_back_feature(raw_stints, schedule_features)
         training_metadata.append(
             {
                 "season": season,
@@ -248,6 +270,7 @@ def train_forward_portable_matchup_contextual_rapm(
         )
         participants = set().union(*raw_stints["home_player_ids"], *raw_stints["away_player_ids"])
         previous_model = contextual_models.get(_previous_season(season))
+        previous_schedule_model = schedule_models.get(_previous_season(season))
         previous_reattribution = context_reattributions.get(_previous_season(season))
         priors, prior_row = prior_builder(
             season=season,
@@ -306,6 +329,8 @@ def train_forward_portable_matchup_contextual_rapm(
             )
         else:
             offset = np.zeros(len(raw_stints), dtype=float)
+        if previous_schedule_model is not None and schedule_features is not None:
+            offset = offset + previous_schedule_model.predict_games(raw_stints, schedule_features)
         adjusted_stints = raw_stints.copy()
         adjusted_stints["target_home_net_rating"] = (
             raw_stints["target_home_net_rating"].to_numpy(dtype=float) - offset
@@ -361,6 +386,16 @@ def train_forward_portable_matchup_contextual_rapm(
         replacement_tokens.append(
             _fit_replacement_token(season, adjusted_stints, exposure, fitted, panel)
         )
+        schedule_adjustment = np.zeros(len(raw_stints), dtype=float)
+        if schedule_features is not None:
+            schedule_model, schedule_row = _fit_back_to_back_schedule_season(
+                raw_stints,
+                fitted,
+                alpha=resolved_schedule_alpha,
+            )
+            schedule_models[season] = schedule_model
+            schedule_metadata.append({"season": season, **schedule_row})
+            schedule_adjustment = schedule_model.predict_games(raw_stints, schedule_features)
         if use_context and profiles is not None:
             rebound_model = (
                 fit_rebound_opportunity_model(season, profiles, curated_dir=curated_dir)
@@ -424,6 +459,7 @@ def train_forward_portable_matchup_contextual_rapm(
                 context_feature_set=context_feature_set,
                 rebound_model=rebound_model,
                 usage_model=usage_model,
+                schedule_adjustment=schedule_adjustment,
             )
             contextual_models[season] = model
             contextual_metadata.append(row)
@@ -484,6 +520,11 @@ def train_forward_portable_matchup_contextual_rapm(
                 if forecast_model is not None and compiled_additive_prior
                 else _zero_context_predictor
             ),
+            schedule_predictor=(
+                _schedule_predictor(schedule_models.get(source), schedule_features)
+                if schedule_features is not None and schedule_models.get(source) is not None
+                else None
+            ),
         )
         if evaluate_target
         else _empty_target_evaluation(target=target, source=source)
@@ -516,6 +557,7 @@ def train_forward_portable_matchup_contextual_rapm(
         priors=state_priors,
         contextual_models=contextual_models,
         contextual_metadata=pd.DataFrame(contextual_metadata),
+        schedule_metadata=pd.DataFrame(schedule_metadata),
         rebound_calibration_metadata=pd.DataFrame(rebound_calibration_metadata),
         usage_allocation_metadata=pd.DataFrame(usage_allocation_metadata),
         prior_metadata=pd.DataFrame(prior_metadata),
@@ -561,6 +603,9 @@ def train_forward_portable_matchup_contextual_rapm(
             else pd.DataFrame()
         ),
         training_metadata=pd.DataFrame(training_metadata),
+        schedule_models=schedule_models,
+        schedule_enabled=include_back_to_back_control,
+        schedule_alpha=resolved_schedule_alpha if include_back_to_back_control else None,
         profile_contract_metadata=profile_contract_metadata,
         artifacts_dir=artifact_root,
     )
@@ -583,6 +628,46 @@ def _context_offset(
         return full_context
     projected = _project_reattributed_player_context(stints, reattribution)
     return full_context - reattribution_weight * projected
+
+
+def _schedule_predictor(
+    model: BackToBackScheduleModel,
+    schedule_features: pd.DataFrame,
+) -> Callable[[pd.DataFrame], np.ndarray]:
+    """Bind an immutable source-season schedule model to the game catalog."""
+
+    def predict(rows: pd.DataFrame) -> np.ndarray:
+        return model.predict_games(rows, schedule_features)
+
+    return predict
+
+
+def _fit_back_to_back_schedule_season(
+    stints: pd.DataFrame,
+    fitted: ForwardLaggedRapmSeason,
+    *,
+    alpha: float,
+) -> tuple[BackToBackScheduleModel, dict[str, object]]:
+    """Fit the known schedule effect after the season's player update."""
+
+    coefficients = fitted.player_estimates.loc[:, ["player_id", "rapm"]]
+    values = dict(zip(coefficients["player_id"].astype(int), coefficients["rapm"], strict=True))
+    effects, unknown = _lineup_effects(stints, values)
+    intercept = _recover_home_intercept(stints, coefficients)
+    target = stints["target_home_net_rating"].to_numpy(dtype=float) - effects - intercept
+    print(f"  Fitting back-to-back schedule control on {len(stints):,} stints", flush=True)
+    model = fit_back_to_back_schedule_model(
+        stints,
+        target,
+        alpha=alpha,
+        source_season=fitted.season,
+    )
+    return model, {
+        "schedule_training_stint_count": len(stints),
+        "schedule_unknown_player_exposures": int(unknown.sum()),
+        "schedule_home_intercept": intercept,
+        **schedule_model_metadata(model, stints, alpha=alpha),
+    }
 
 
 def _linear_raw_context_coefficients(model: MatchupContextualModel) -> pd.Series:
@@ -910,6 +995,7 @@ def _fit_matchup_contextual_season(
     context_feature_set: str = CONTEXT_FEATURE_SET_V1,
     rebound_model: ReboundOpportunityModel | None = None,
     usage_model: UsageAllocationModel | None = None,
+    schedule_adjustment: np.ndarray | None = None,
 ) -> tuple[MatchupContextualModel, dict[str, object]]:
     coefficients = fitted.player_estimates.loc[:, ["player_id", "rapm"]]
     values = dict(zip(coefficients["player_id"].astype(int), coefficients["rapm"], strict=True))
@@ -930,6 +1016,11 @@ def _fit_matchup_contextual_season(
         usage_model=usage_model,
     )
     target = stints["target_home_net_rating"].to_numpy(dtype=float) - effects - intercept
+    if schedule_adjustment is not None:
+        adjustment = np.asarray(schedule_adjustment, dtype=float)
+        if len(adjustment) != len(target) or not np.isfinite(adjustment).all():
+            raise ValueError("Schedule adjustment must be finite and align with contextual stints")
+        target = target - adjustment
     print(f"  Fitting antisymmetric context model on {len(stints):,} stints", flush=True)
     model = context_fit(
         home,
@@ -990,6 +1081,7 @@ def _write_run(
     priors: pd.DataFrame,
     contextual_models: dict[str, MatchupContextualModel],
     contextual_metadata: pd.DataFrame,
+    schedule_metadata: pd.DataFrame,
     rebound_calibration_metadata: pd.DataFrame,
     usage_allocation_metadata: pd.DataFrame,
     prior_metadata: pd.DataFrame,
@@ -1015,6 +1107,9 @@ def _write_run(
     box_score_residual_models: dict[str, object],
     box_score_residual_selection: pd.DataFrame,
     training_metadata: pd.DataFrame,
+    schedule_models: dict[str, BackToBackScheduleModel],
+    schedule_enabled: bool,
+    schedule_alpha: float | None,
     profile_contract_metadata: dict[str, object] | None,
     artifacts_dir: Path,
 ) -> ForwardPortableMatchupContextualRapmRun:
@@ -1051,6 +1146,7 @@ def _write_run(
             "season_model_metadata.parquet": season_model_metadata,
             "season_player_priors.parquet": priors,
             "season_context_metadata.parquet": contextual_metadata,
+            "season_schedule_control_metadata.parquet": schedule_metadata,
             "season_rebound_calibration_metadata.parquet": rebound_calibration_metadata,
             "season_usage_allocation_metadata.parquet": usage_allocation_metadata,
             "season_context_reattribution_metadata.parquet": context_reattribution_metadata,
@@ -1097,6 +1193,8 @@ def _write_run(
         for filename, frame in tables.items():
             frame.to_parquet(temporary / filename, index=False)
         joblib.dump(contextual_models, temporary / "season_context_models.joblib")
+        if schedule_models:
+            joblib.dump(schedule_models, temporary / "season_schedule_models.joblib")
         if aging_models:
             joblib.dump(aging_models, temporary / "season_aging_models.joblib")
         if box_score_residual_models:
@@ -1113,6 +1211,8 @@ def _write_run(
             "context_curvature_alpha": context_curvature_alpha,
             "context_temporal_alpha": context_temporal_alpha,
             "context_enabled": context_enabled,
+            "back_to_back_schedule_control_enabled": schedule_enabled,
+            "back_to_back_schedule_control_alpha": schedule_alpha,
             "context_reattribution_weight": context_reattribution_weight,
             "compiled_additive_prior": compiled_additive_prior,
             "profile_padding_contract": profile_contract_metadata,
@@ -1125,6 +1225,12 @@ def _write_run(
                 "before season t RAPM"
                 if context_enabled
                 else "C_(t-1)(home, away) is identically zero in the controlled ablation"
+            ),
+            "schedule_offset_contract": (
+                "The source-season Ridge estimate of home B2B minus away B2B is subtracted "
+                "before each subsequent player RAPM fit and added back only at evaluation."
+                if schedule_enabled
+                else "No schedule adjustment is applied."
             ),
             "created_at": now.isoformat(),
             "code_version": modeling_code_fingerprint(

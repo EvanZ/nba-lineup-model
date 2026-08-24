@@ -147,7 +147,18 @@ export type Matchup = {
   opponent_composition_rating: number;
   portable_composition_margin: number;
   matchup_adjustment: number;
+  base_predicted_net_rating: number;
+  court: "neutral" | "unit_home" | "opponent_home";
+  unit_back_to_back: boolean;
+  opponent_back_to_back: boolean;
+  home_court_adjustment: number;
+  back_to_back_adjustment: number;
+  schedule_adjustment: number;
+  home_court_reference: number;
+  back_to_back_reference: number;
+  schedule_control_source_season_count: number;
   predicted_net_rating: number;
+  predicted_win_pct: number;
   feature_contributions: ContextFeature[];
   composition_feature_contributions: ContextFeature[];
   matchup_feature_contributions: ContextFeature[];
