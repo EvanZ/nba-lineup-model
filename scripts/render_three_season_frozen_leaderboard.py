@@ -264,7 +264,13 @@ def _render(
     start, end = _table_bounds(lines, spec.heading)
     rows = _read_rows(lines, start, end, spec)
     candidate_models = {str(candidate["model"]) for candidate in candidate_metrics}
-    rows = [row for row in rows if str(row["model"]) not in candidate_models]
+    candidate_pages = {_model_page(model) for model in candidate_models}
+    rows = [
+        row
+        for row in rows
+        if str(row["model"]) not in candidate_models
+        and _model_page(str(row["model"])) not in candidate_pages
+    ]
     rows.extend(candidate_metrics)
     ranks = {
         metric: _rank(rows, metric, direction)
@@ -303,6 +309,13 @@ def _render(
             cells.append(value)
         rendered.append("| " + " | ".join(cells) + " |")
     lines[start:end] = rendered
+
+
+def _model_page(model: str) -> str | None:
+    """Return a Markdown model link target to make label changes idempotent."""
+
+    match = re.search(r"\]\(([^)]+\.md)\)", model)
+    return match.group(1) if match else None
 
 
 def main() -> None:
