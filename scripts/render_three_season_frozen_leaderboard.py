@@ -95,8 +95,8 @@ CANDIDATES = (
     },
     {
         "model": (
-            "[NAIL-RAPM v1.2.1.2 back-to-back schedule control (not promoted)]"
-            "(nail-rapm-v1212-back-to-back.md)"
+            "[NAIL-RAPM v1.2.1.2 back-to-back schedule control]"
+            "(nail-rapm-v1212-back-to-back.md) **(Production)**"
         ),
         "regular": {
             "possession_rmse": 1.197946,
@@ -120,7 +120,7 @@ CANDIDATES = (
     {
         "model": (
             "[NAIL-RAPM v1.2.1 pruned non-additive context]"
-            "(nail-rapm-v121-pruned-nonadditive.md) **(Production)**"
+            "(nail-rapm-v121-pruned-nonadditive.md)"
         ),
         "regular": {
             "possession_rmse": 1.197952,

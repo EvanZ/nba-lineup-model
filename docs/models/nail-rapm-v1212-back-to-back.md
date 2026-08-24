@@ -63,8 +63,10 @@ most 0.5% practical harm. A lower difference favors the candidate.
 | 2025-26 | +0.0246 | [-0.0661, +0.1141] | -- | Fail |
 
 The pooled estimate favors the B2B control but its confidence interval crosses
-zero, and the final frozen season fails the gate. Combined with weaker team and
-playoff metrics, v1.2.1.2 is **not promoted**.
+zero, and the final frozen season fails the gate. It has weaker team and playoff
+metrics, which remain visible in the leaderboard. It is nevertheless **promoted
+for the website** because it has the best median regular-season rank and the
+best pooled full-game RMSE, while passing the direct pooled no-material-harm gate.
 
 ## Annual Schedule Effect
 

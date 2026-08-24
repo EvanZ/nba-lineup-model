@@ -178,8 +178,8 @@ uses the player's last observed padded profile on return.
 
 [NAIL-RAPM v1.2.1](nail-rapm-v121-pruned-nonadditive.md) retains only the two
 historically resolved non-additive terms: usage concentration and top-two
-assists. It clears its direct bootstrap gate versus v1.2 and is the current
-regular-season leader on the three-season frozen leaderboard.
+assists. It clears its direct bootstrap gate versus v1.2 and establishes the
+non-additive contract inherited by the current production release.
 
 [Critical Spacing](nail-critical-spacing.md) adds one non-additive indicator to
 v1.2.1: whether a unit has at least two
@@ -199,6 +199,12 @@ same no-material-harm bootstrap gate, improving interpretability while leaving
 the frozen predictive result effectively unchanged; it is not promoted because
 the standard convention does not materially alter the lineup interpretation.
 
+[NAIL-RAPM v1.2.1.2](nail-rapm-v1212-back-to-back.md) adds a known-before-tipoff
+back-to-back control. It has the best median regular-season rank and pooled
+full-game RMSE on the three-season frozen leaderboard, so it is the current
+website production model. Its weaker team and playoff metrics remain explicit
+in the leaderboard rather than being hidden by the promotion decision.
+
 [NAIL-RAPM v1.2.2](nail-rapm-v122-defensive-rebound-profile.md) tests
 defensive rebound percentage as a ninth additive profile coordinate. Its
 bootstrap is non-inferior, but the feature is positive in only 72.4% of
@@ -213,7 +219,7 @@ margin metrics, so it is also retained as a non-promoted sibling experiment.
 [NAIL-RAPM v1.2.4](nail-rapm-v124-free-throw-replacement.md) replaces
 additive Usage/100 with FTA/100 to remove their conditional collinearity.
 FTA/100 remains highly stable, but the frozen margin metrics still do not
-improve, so v1.2.1 remains the promoted model.
+improve, so v1.2.1.2 remains the promoted model.
 
 [Quartile Critical Spacing Plus Standard USG%](nail-critical-spacing-quartile-standard-usage.md)
 tests a narrower 25th-percentile threshold while replacing the internal
@@ -230,12 +236,12 @@ paired full-game bootstrap gate failed.
 three-point attempts per 100 and usage per 100 from v1.3 after the partial-effect
 stability audit. It is the preferred parsimonious contract within that branch:
 the direct bootstrap comparison found no practically material frozen-prediction
-loss, though v1.2.1 is the global regular-season leader.
+loss, though v1.2.1.2 is the global regular-season leader.
 
 [NAIL-RAPM Context Regularization](nail-context-regularization.md) replaces the
 inherited raw context `alpha=10000` with a season-size-invariant penalty chosen
 over 23 pre-frozen seasons. Its playoff replay improves slightly, but the
-regular-season frozen bootstrap rejects it, so v1.1 remains promoted.
+regular-season frozen bootstrap rejects it, so v1.2.1.2 remains promoted.
 
 [Forward Compiled-Additive-Prior HPM x3](forward-compiled-additive-prior-hpm-x3.md)
 tests the resulting attribution contract recursively: learned additive player

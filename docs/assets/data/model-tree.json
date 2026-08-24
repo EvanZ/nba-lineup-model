@@ -907,10 +907,10 @@
     },
     {
       "id": "nail-rapm-v1212-back-to-back",
-      "name": "NAIL-RAPM v1.2.1.2 Back-to-Back Control (Not Promoted)",
+      "name": "NAIL-RAPM v1.2.1.2 Back-to-Back Control (Production)",
       "short_name": "NAIL-RAPM v1.2.1.2",
       "parent": "nail-rapm-v1211-standard-usage",
-      "change": "+ one known-before-tipoff schedule covariate: home back-to-back minus away back-to-back, fit as a forward weighted-Ridge control separate from player and lineup features. Best regular full-game RMSE, but weaker team and playoff metrics; not promoted.",
+      "change": "+ one known-before-tipoff schedule covariate: home back-to-back minus away back-to-back, fit as a forward weighted-Ridge control separate from player and lineup features. Best regular full-game RMSE and median regular-season rank; promoted for the website while retaining its weaker team and playoff metrics for comparison.",
       "docs": "./nail-rapm-v1212-back-to-back/",
       "metrics": {
         "frozen_regular_possession_rmse": 1.197946,

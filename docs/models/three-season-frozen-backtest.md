@@ -9,8 +9,8 @@ available before each target season begins. Target-season lineup allocation is
 an oracle input; target outcomes never enter the frozen forecast. Bold values
 are pooled leaders. Lower is better except skill and winner accuracy.
 
-> **Current website production model:** [NAIL-RAPM v1.2.1 pruned non-additive
-> context](nail-rapm-v121-pruned-nonadditive.md). Its table row is marked
+> **Current website production model:** [NAIL-RAPM v1.2.1.2 back-to-back schedule
+> control](nail-rapm-v1212-back-to-back.md). Its table row is marked
 > **(Production)**. All other rows are evaluated experiments unless explicitly
 > promoted and deployed.
 
@@ -22,9 +22,9 @@ their displayed metric ranks. Ties are ordered by mean rank, then game RMSE.
 
 | Model | Median rank | Poss. RMSE | Poss. MAE | Poss. skill | Eligible game RMSE | Eligible game skill | Full-game RMSE | Winner accuracy | Team NetRtg RMSE | Pythagorean-win RMSE |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [NAIL-RAPM v1.2.1.2 back-to-back schedule control (not promoted)](nail-rapm-v1212-back-to-back.md) | **1** | **1.197946 (1)** | **1.141313 (1)** | **0.1279% (1)** | **14.0107 (1)** | **18.3623% (1)** | **14.2330 (1)** | 67.96% (16) | 3.2847 (6) | 7.0551 (8) |
+| [NAIL-RAPM v1.2.1.2 back-to-back schedule control](nail-rapm-v1212-back-to-back.md) **(Production)** | **1** | **1.197946 (1)** | **1.141313 (1)** | **0.1279% (1)** | **14.0107 (1)** | **18.3623% (1)** | **14.2330 (1)** | 67.96% (16) | 3.2847 (6) | 7.0551 (8) |
 | [NAIL-RAPM v1.2.1.1 standard USG% (not promoted)](nail-rapm-v1211-standard-usage.md) | 2 | 1.197951 (2) | 1.141332 (4) | 0.1269% (2) | 14.0264 (5) | 18.1792% (5) | 14.2516 (2) | 68.10% (13) | **3.2658 (1)** | 7.0279 (2) |
-| [NAIL-RAPM v1.2.1 pruned non-additive context](nail-rapm-v121-pruned-nonadditive.md) **(Production)** | 3 | 1.197952 (3) | 1.141355 (8) | 0.1268% (3) | 14.0245 (4) | 18.2005% (4) | 14.2521 (3) | 68.24% (9) | 3.2706 (2) | 7.0351 (3) |
+| [NAIL-RAPM v1.2.1 pruned non-additive context](nail-rapm-v121-pruned-nonadditive.md) | 3 | 1.197952 (3) | 1.141355 (8) | 0.1268% (3) | 14.0245 (4) | 18.2005% (4) | 14.2521 (3) | 68.24% (9) | 3.2706 (2) | 7.0351 (3) |
 | [NAIL-RAPM v1.2.2 defensive-rebound profile (not promoted)](nail-rapm-v122-defensive-rebound-profile.md) | 4 | 1.197952 (4) | 1.141364 (9) | 0.1268% (4) | 14.0238 (2) | 18.2094% (2) | 14.2529 (4) | 68.39% (6) | 3.2723 (3) | 7.0434 (4) |
 | [NAIL Critical Spacing candidate](nail-critical-spacing.md) | 5 | 1.197954 (5) | 1.141347 (7) | 0.1264% (6) | 14.0241 (3) | 18.2063% (3) | 14.2532 (5) | 68.47% (3) | 3.2805 (5) | 7.0601 (9) |
 | [NAIL quartile Critical Spacing plus standard USG% (not promoted)](nail-critical-spacing-quartile-standard-usage.md) | 6 | 1.197954 (5) | 1.141327 (2) | 0.1265% (5) | 14.0304 (6) | 18.1317% (6) | 14.2584 (6) | 68.10% (13) | 3.2787 (4) | 7.0460 (6) |
@@ -59,7 +59,8 @@ their displayed metric ranks. Ties are ordered by mean rank, then game RMSE.
 
 NAIL-RAPM v1.3.1 is the preferred, parsimonious version of the non-promoted
 v1.3 branch: it passed its direct no-material-harm gate versus v1.3, but it
-does not supersede v1.2.1 as the global regular-season leader. See its
+does not supersede the production v1.2.1.2 model as the global regular-season
+leader. See its
 [experiment record](nail-rapm-v131-pruned-additive-profiles.md).
 
 ## Playoffs
@@ -79,9 +80,9 @@ ordering and tie-breakers as the regular-season table.
 | [NAIL-RAPM v1.2.4 free-throw replacement (not promoted)](nail-rapm-v124-free-throw-replacement.md) | 5 | 1.192706 (5) | 1.137567 (2) | 0.0652% (5) | 16.5988 (10) | 7.6880% (10) |
 | [NAIL Critical Spacing candidate](nail-critical-spacing.md) | 6 | 1.192706 (6) | 1.137609 (12) | 0.0652% (6) | 16.5896 (6) | 7.7902% (6) |
 | [NAIL-RAPM v1.2.1.1 standard USG% (not promoted)](nail-rapm-v1211-standard-usage.md) | 7 | 1.192708 (7) | 1.137593 (6) | 0.0649% (7) | 16.5989 (11) | 7.6873% (11) |
-| [NAIL-RAPM v1.2.1 pruned non-additive context](nail-rapm-v121-pruned-nonadditive.md) **(Production)** | 8 | 1.192709 (8) | 1.137608 (10) | 0.0647% (8) | 16.5942 (7) | 7.7392% (7) |
+| [NAIL-RAPM v1.2.1 pruned non-additive context](nail-rapm-v121-pruned-nonadditive.md) | 8 | 1.192709 (8) | 1.137608 (10) | 0.0647% (8) | 16.5942 (7) | 7.7392% (7) |
 | [Compiled-additive HPM x3 plus quadratic side context](linear-hpm-x3-quadratic-side-context.md) | 8 | 1.192719 (12) | **1.137554 (1)** | 0.0630% (12) | 16.5978 (8) | 7.6986% (8) |
-| [NAIL-RAPM v1.2.1.2 back-to-back schedule control (not promoted)](nail-rapm-v1212-back-to-back.md) | 9 | 1.192710 (9) | 1.137604 (8) | 0.0645% (9) | 16.6032 (12) | 7.6393% (12) |
+| [NAIL-RAPM v1.2.1.2 back-to-back schedule control](nail-rapm-v1212-back-to-back.md) **(Production)** | 9 | 1.192710 (9) | 1.137604 (8) | 0.0645% (9) | 16.6032 (12) | 7.6393% (12) |
 | [NAIL quartile Critical Spacing plus standard USG% (not promoted)](nail-critical-spacing-quartile-standard-usage.md) | 10 | 1.192713 (10) | 1.137596 (7) | 0.0640% (10) | 16.6145 (15) | 7.5130% (15) |
 | [NAIL-RAPM v1.2.3 free-throw profile (not promoted)](nail-rapm-v123-free-throw-profile.md) | 11 | 1.192714 (11) | 1.137583 (4) | 0.0638% (11) | 16.6157 (17) | 7.5004% (17) |
 | [NAIL-RAPM normalized context penalty](nail-context-regularization.md) | 13 | 1.192726 (13) | 1.137680 (23) | 0.0618% (13) | 16.5979 (9) | 7.6979% (9) |
@@ -108,7 +109,8 @@ ordering and tie-breakers as the regular-season table.
 
 NAIL-RAPM v1.3.1 is the preferred, parsimonious version of the non-promoted
 v1.3 branch: it passed its direct no-material-harm gate versus v1.3, but it
-does not supersede v1.2.1 as the global regular-season leader. See its
+does not supersede the production v1.2.1.2 model as the global regular-season
+leader. See its
 [experiment record](nail-rapm-v131-pruned-additive-profiles.md).
 
 See [Forward RAPM Memory Baselines](forward-rapm-memory-baselines.md) and
