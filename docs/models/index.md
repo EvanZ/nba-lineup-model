@@ -181,17 +181,17 @@ historically resolved non-additive terms: usage concentration and top-two
 assists. It clears its direct bootstrap gate versus v1.2 and is the current
 regular-season leader on the three-season frozen leaderboard.
 
-[Critical Spacing](nail-critical-spacing.md) is the next controlled candidate.
-
-[Lower-Quintile Critical Spacing](nail-critical-spacing-quintile.md) tests a
-stricter version of the same threshold and was rejected after the frozen
-comparison and full non-additive coefficient audit.
-It adds one non-additive indicator to v1.2.1: whether a unit has at least two
+[Critical Spacing](nail-critical-spacing.md) adds one non-additive indicator to
+v1.2.1: whether a unit has at least two
 players below that season's prior-derived lower-tercile threshold for shrunk
 three-point makes per 100 possessions. It clears the no-material-harm gate but
 is not yet promoted: it has no meaningful pooled lift. Its coefficient has a
 79.9% negative total one-sided mass index despite several small positive-sign
 seasons, supporting the hypothesized long-run direction.
+
+[Lower-Quintile Critical Spacing](nail-critical-spacing-quintile.md) tests a
+stricter version of the same threshold and was rejected after the frozen
+comparison and full non-additive coefficient audit.
 
 [NAIL-RAPM v1.2.1.1](nail-rapm-v1211-standard-usage.md) replaces the internal
 usage-events rate in v1.2.1 with conventional box-score USG%. It passes the
@@ -214,6 +214,12 @@ margin metrics, so it is also retained as a non-promoted sibling experiment.
 additive Usage/100 with FTA/100 to remove their conditional collinearity.
 FTA/100 remains highly stable, but the frozen margin metrics still do not
 improve, so v1.2.1 remains the promoted model.
+
+[Quartile Critical Spacing Plus Standard USG%](nail-critical-spacing-quartile-standard-usage.md)
+tests a narrower 25th-percentile threshold while replacing the internal
+usage-events coordinate with conventional box-score USG%. It is effectively
+tied at possession level but worse on the primary pooled game metrics, so it
+is not promoted.
 
 [NAIL-RAPM v1.3](nail-rapm-v13-additive-profiles.md) adds four additive
 box-score profile measures, including self-created rim and three-point makes.

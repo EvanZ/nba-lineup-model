@@ -35,6 +35,9 @@ CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY = "x3_without_uncertainty"
 CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE = "nail_v12_1_pruned_nonadditive"
 CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING = "nail_critical_spacing"
 CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE = "nail_critical_spacing_quintile"
+CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE = (
+    "nail_critical_spacing_quartile_standard_usage"
+)
 CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE = "nail_v12_1_1_standard_usage"
 CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE = "nail_v12_2_defensive_rebound_profile"
 CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE = "nail_v12_3_free_throw_profile"
@@ -462,6 +465,11 @@ def side_context_feature_columns(
             *side_context_feature_columns(CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE),
             "critical_spacing",
         )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE:
+        return (
+            *side_context_feature_columns(CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE),
+            "critical_spacing",
+        )
     if feature_set == CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE:
         return (
             *LINEAR_NAIL_V1211_BASKETBALL_ADDITIVE_FEATURES,
@@ -566,6 +574,8 @@ def _critical_spacing_quantile(feature_set: str) -> float | None:
         return 1.0 / 3.0
     if feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE:
         return 1.0 / 5.0
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE:
+        return 1.0 / 4.0
     return None
 
 
@@ -601,7 +611,10 @@ def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY,
     }:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
-    if feature_set == CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE:
+    if feature_set in {
+        CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
+        CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE,
+    }:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct", STANDARD_USAGE_COLUMN)
     if feature_set == CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct", "defensive_rebound_pct")
@@ -732,6 +745,16 @@ def _side_feature_row(
         if critical_spacing_threshold is None:
             raise ValueError("Critical-spacing features require a season profile threshold")
         base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE)
+        result = {
+            **base,
+            "critical_spacing": float(
+                (lineup[SHOOTING_COLUMN] < critical_spacing_threshold).sum() >= 2
+            ),
+        }
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE:
+        if critical_spacing_threshold is None:
+            raise ValueError("Critical-spacing features require a season profile threshold")
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE)
         result = {
             **base,
             "critical_spacing": float(
