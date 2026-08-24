@@ -924,6 +924,24 @@
       }
     },
     {
+      "id": "nail-critical-spacing-quartile-standard-usage",
+      "name": "NAIL Quartile Critical Spacing Plus Standard USG% (Not Promoted)",
+      "short_name": "Quartile Spacing + USG%",
+      "parent": "nail-rapm-v121-pruned-nonadditive",
+      "change": "+ lower-quartile two-low-threat Critical Spacing indicator; ~ replace internal usage-events rate with conventional USG%. Near-tied possession error but worse primary pooled game metrics.",
+      "docs": "./nail-critical-spacing-quartile-standard-usage/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197954,
+        "frozen_regular_game_margin_rmse": 14.0304,
+        "frozen_regular_full_game_margin_rmse": 14.2584,
+        "frozen_regular_game_winner_accuracy": 0.681003,
+        "frozen_regular_team_net_rating_rmse": 3.2787,
+        "frozen_regular_pythagorean_wins_rmse": 7.0460,
+        "frozen_playoff_possession_rmse": 1.192713,
+        "frozen_playoff_game_margin_rmse": 16.6145
+      }
+    },
+    {
       "id": "nail-rapm-v122-defensive-rebound-profile",
       "name": "NAIL-RAPM v1.2.2 Defensive-Rebound Profile (Not Promoted)",
       "short_name": "NAIL-RAPM v1.2.2",

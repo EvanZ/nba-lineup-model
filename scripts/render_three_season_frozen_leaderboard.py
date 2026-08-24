@@ -140,6 +140,30 @@ CANDIDATES = (
     },
     {
         "model": (
+            "[NAIL quartile Critical Spacing plus standard USG% (not promoted)]"
+            "(nail-critical-spacing-quartile-standard-usage.md)"
+        ),
+        "regular": {
+            "possession_rmse": 1.197954,
+            "possession_mae": 1.141327,
+            "possession_skill": 0.001265,
+            "eligible_game_margin_rmse": 14.030448,
+            "eligible_game_skill": 0.181317,
+            "full_game_margin_rmse": 14.258396,
+            "game_winner_accuracy": 0.681003,
+            "team_net_rating_rmse": 3.278702,
+            "pythagorean_win_rmse": 7.045978,
+        },
+        "playoffs": {
+            "possession_rmse": 1.192713,
+            "possession_mae": 1.137596,
+            "possession_skill": 0.000640,
+            "eligible_game_margin_rmse": 16.614526,
+            "eligible_game_skill": 0.075130,
+        },
+    },
+    {
+        "model": (
             "[NAIL-RAPM v1.2.2 defensive-rebound profile (not promoted)]"
             "(nail-rapm-v122-defensive-rebound-profile.md)"
         ),
@@ -330,7 +354,7 @@ def main() -> None:
         PLAYOFFS,
         tuple({"model": candidate["model"], **candidate["playoffs"]} for candidate in CANDIDATES),
     )
-    lines[1] = 'last_updated: "2026-08-23"'
+    lines[1] = 'last_updated: "2026-08-24"'
     PAGE.write_text("\n".join(lines) + "\n")
 
 

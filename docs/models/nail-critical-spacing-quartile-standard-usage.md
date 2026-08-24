@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-23"
+last_updated: "2026-08-24"
 ---
 
 # NAIL Quartile Critical Spacing Plus Standard USG%
