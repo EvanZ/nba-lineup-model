@@ -110,6 +110,7 @@ nba-train-nail-v1212-back-to-back = "nba_lineup_model.modeling.forward_nail_v121
 nba-backtest-nail-v1212-back-to-back = "nba_lineup_model.modeling.nail_v1212_back_to_back_frozen_backtest:main"
 nba-bootstrap-nail-v1212-back-to-back = "nba_lineup_model.modeling.nail_v1212_back_to_back_bootstrap:main"
 nba-audit-nail-v1212-back-to-back-weights = "nba_lineup_model.modeling.nail_v1212_back_to_back_weight_audit:main"
+nba-screen-frozen-feature = "nba_lineup_model.modeling.frozen_feature_screen:main"
 nba-backfill-history = "nba_lineup_model.flows.backfill_history:main"
 nba-compact-season = "nba_lineup_model.flows.compact_season:main"
 nba-recover-modeling-coverage = "nba_lineup_model.flows.recover_modeling_coverage:main"

@@ -118,6 +118,7 @@ nav = [
     {"Audit portable context attribution" = "guides/build-portable-context-attribution-audit.md"},
     {"Audit Linear HPM x3 compilation" = "guides/audit-linear-hpm-x3-compilation.md"},
     {"Audit frozen vs completed NAIL context" = "guides/audit-nail-context-stability.md"},
+    {"Screen frozen lineup-context features" = "guides/screen-frozen-feature.md"},
     {"Build Context-Reattributed RAPM audit" = "guides/build-context-reattributed-rapm-audit.md"},
     {"Train Forward Context-Reattributed HPM" = "guides/train-forward-context-reattributed-hpm.md"},
     {"Train Forward Box-Score Residual HPM" = "guides/train-forward-box-score-residual-hpm.md"},
