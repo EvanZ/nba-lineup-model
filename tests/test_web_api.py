@@ -32,6 +32,7 @@ from nba_lineup_model.web_api.inference import (
     _preseason_ranking_catalog,
     _warm_response_cache,
     build_player_team_splits,
+    build_published_player_ratings,
 )
 
 
@@ -398,6 +399,29 @@ def test_historical_lab_state_uses_published_exposure_cache(monkeypatch) -> None
 
     assert response.status_code == 200, response.text
     assert len(response.json()["players"]) == 5
+
+
+def test_published_player_ratings_retains_initial_rapm_season_without_context_model() -> None:
+    ratings = pd.DataFrame(
+        {
+            "season": ["1996-97"],
+            "player_id": [23],
+            "player_name": ["Michael Jordan"],
+            "rapm": [5.4],
+            "prior_rapm": [0.0],
+            "rapm_adjustment_from_prior": [5.4],
+        }
+    )
+
+    published = build_published_player_ratings(
+        ratings,
+        panel=pd.DataFrame(),
+        models={},
+    )
+
+    assert published["season"].tolist() == ["1996-97"]
+    assert published["rapm"].tolist() == [5.4]
+    assert published["additive_profile_adjustment"].tolist() == [0.0]
 
 
 def test_lineup_rankings_endpoint_filters_by_possessions_and_players() -> None:

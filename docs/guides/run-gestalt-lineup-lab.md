@@ -56,8 +56,10 @@ uv run nba-build-gestalt-lineup-rankings --all-seasons
 
 Each table uses that season's completed-fit player ratings and contextual
 model, while player and context edges are weighted by the opponents a unit
-actually faced. The initial 1996-97 fit is excluded because it initializes the
-forward context state and has no completed contextual model.
+actually faced. The initial 1996-97 fit is excluded from the Lineups page
+because it initializes the forward context state and has no completed
+contextual model. Player Rankings nevertheless include 1996-97 as the
+initial, zero-prior RAPM fit; its additive-profile adjustment is zero.
 
 ## Start the Lineup Lab
 

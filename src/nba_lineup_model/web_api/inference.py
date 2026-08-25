@@ -1659,6 +1659,11 @@ def build_published_player_ratings(
         season = str(season)
         context_model = models.get(season)
         if context_model is None:
+            # The initial archive season initializes the recursive state. It has
+            # observed RAPM, but no prior-season context model to compile.
+            initial = season_ratings.copy()
+            initial["additive_profile_adjustment"] = 0.0
+            compiled_seasons.append(initial)
             continue
         player_ids = set(season_ratings["player_id"].astype(int))
         exposure_cohort = prepare_player_exposure_cohort(
