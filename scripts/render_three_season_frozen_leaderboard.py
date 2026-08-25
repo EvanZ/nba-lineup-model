@@ -258,6 +258,30 @@ CANDIDATES = (
             "eligible_game_skill": 0.0768799964,
         },
     },
+    {
+        "model": (
+            "[State-Precision NAIL (posterior uncertainty, no forgetting; not promoted)]"
+            "(state-precision-no-forgetting.md)"
+        ),
+        "regular": {
+            "possession_rmse": 1.197970,
+            "possession_mae": 1.141453,
+            "possession_skill": 0.001239,
+            "eligible_game_margin_rmse": 14.025485,
+            "eligible_game_skill": 0.181896,
+            "full_game_margin_rmse": 14.278278,
+            "game_winner_accuracy": 0.678439,
+            "team_net_rating_rmse": 3.405061,
+            "pythagorean_win_rmse": 7.164385,
+        },
+        "playoffs": {
+            "possession_rmse": 1.192641,
+            "possession_mae": 1.137743,
+            "possession_skill": 0.000760,
+            "eligible_game_margin_rmse": 16.519090,
+            "eligible_game_skill": 0.085725,
+        },
+    },
 )
 
 

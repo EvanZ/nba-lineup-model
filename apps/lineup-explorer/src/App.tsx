@@ -204,7 +204,7 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
         <div>
           <p className="eyebrow">{player.team} · {player.position} · Age {player.age === null ? "-" : number.format(player.age)}</p>
           <h1 id="player-profile-title">{player.player_name}</h1>
-          <p className="player-profile-meta">{draftSummary(player)} · Rookie season {player.rookie_season ?? "-"}</p>
+          <p className="player-profile-meta">{playerDraftMeta(player)}</p>
         </div>
         <div className="profile-hero-rating">
           <span>{ratingSeasonLabel}</span>
@@ -316,6 +316,15 @@ function draftSummary(player: Player): string {
     player.draft_number === null ? null : `No. ${player.draft_number} overall`,
   ].filter((value): value is string => value !== null);
   return details.length ? details.join(" · ") : "Draft information unavailable";
+}
+
+function playerDraftMeta(player: Player): string {
+  const rookieSeason = (
+    player.is_undrafted === true && player.rookie_season !== null
+      ? `Rookie season ${player.rookie_season}`
+      : null
+  );
+  return [draftSummary(player), rookieSeason].filter(Boolean).join(" · ");
 }
 
 function completePlayerHistory(player: Player): PlayerHistoryRow[] {

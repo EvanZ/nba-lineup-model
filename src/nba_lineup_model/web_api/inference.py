@@ -693,6 +693,8 @@ class LineupEvaluator:
                     "rookie_season",
                     "profile_source",
                 ):
+                    if column == "rookie_season" and preview[column] is None:
+                        continue
                     player[column] = preview[column]
                 player["rating_season"] = PRESEASON_PREVIEW_SEASON
             player.setdefault("draft_class_year", None)

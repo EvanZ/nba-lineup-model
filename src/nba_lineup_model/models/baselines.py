@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy import sparse
+from scipy import linalg, sparse
 from sklearn.linear_model import Ridge
 
 
@@ -144,6 +144,165 @@ class PriorCenteredRidgeLineupModel:
         if self.prior is None:
             raise ValueError("Model has not been fitted")
         return self.prior
+
+
+class PriorPrecisionRidgeLineupModel:
+    """Prior-centered ridge with a separate relative precision per coefficient.
+
+    The penalty is ``regularization * sum_i precision_i *
+    (coefficient_i - prior_i)^2`` under the same sample-size-normalized
+    convention as :class:`RidgeLineupModel`. Reparameterizing each adjustment
+    by ``sqrt(precision_i)`` permits an exact implementation through the
+    existing uniform-penalty solver.
+    """
+
+    def __init__(self, regularization: float = 1.0) -> None:
+        if regularization < 0:
+            raise ValueError("regularization must be non-negative")
+        self.regularization = float(regularization)
+        self.residual_model = RidgeLineupModel(regularization)
+        self.prior: np.ndarray | None = None
+        self.relative_precision: np.ndarray | None = None
+        self.adjustment: np.ndarray | None = None
+        self.posterior_variance: np.ndarray | None = None
+
+    def fit(
+        self,
+        features: sparse.spmatrix | np.ndarray,
+        target: np.ndarray,
+        sample_weight: np.ndarray,
+        coefficient_prior: np.ndarray,
+        relative_precision: np.ndarray,
+    ) -> PriorPrecisionRidgeLineupModel:
+        prior = np.asarray(coefficient_prior, dtype=float)
+        precision = np.asarray(relative_precision, dtype=float)
+        if prior.ndim != 1 or features.shape[1] != len(prior):
+            raise ValueError("Coefficient prior must match the feature columns")
+        if precision.ndim != 1 or features.shape[1] != len(precision):
+            raise ValueError("Relative precision must match the feature columns")
+        if not np.isfinite(prior).all():
+            raise ValueError("Coefficient prior must be finite")
+        if not np.isfinite(precision).all() or not np.all(precision > 0):
+            raise ValueError("Relative precision must be finite and positive")
+        values = np.asarray(target, dtype=float)
+        if features.shape[0] != len(values):
+            raise ValueError("Feature and target rows must match")
+
+        adjustment_scale = 1.0 / np.sqrt(precision)
+        # Preserve the incumbent solver input exactly for the parity case.
+        transformed = (
+            features
+            if np.array_equal(precision, np.ones_like(precision))
+            else _scale_feature_columns(features, adjustment_scale)
+        )
+        offset = np.asarray(features @ prior, dtype=float).reshape(-1)
+        self.residual_model.fit(transformed, values - offset, sample_weight)
+        self.prior = prior
+        self.relative_precision = precision
+        self.adjustment = self.residual_model.coef_ * adjustment_scale
+        self.posterior_variance = _ridge_posterior_variance(
+            features,
+            values,
+            sample_weight,
+            self.coef_,
+            self.intercept_,
+            self.sklearn_alpha,
+            precision,
+        )
+        return self
+
+    def predict(self, features: sparse.spmatrix | np.ndarray) -> np.ndarray:
+        prior = self._prior()
+        precision = self._relative_precision()
+        transformed = (
+            features
+            if np.array_equal(precision, np.ones_like(precision))
+            else _scale_feature_columns(features, 1.0 / np.sqrt(precision))
+        )
+        offset = np.asarray(features @ prior, dtype=float).reshape(-1)
+        return self.residual_model.predict(transformed) + offset
+
+    @property
+    def intercept_(self) -> float:
+        return self.residual_model.intercept_
+
+    @property
+    def coef_(self) -> np.ndarray:
+        return self._prior() + self.adjustment_
+
+    @property
+    def adjustment_(self) -> np.ndarray:
+        if self.adjustment is None:
+            raise ValueError("Model has not been fitted")
+        return self.adjustment.copy()
+
+    @property
+    def sklearn_alpha(self) -> float:
+        alpha = self.residual_model.sklearn_alpha
+        if alpha is None:
+            raise ValueError("Model has not been fitted")
+        return alpha
+
+    @property
+    def posterior_variance_(self) -> np.ndarray:
+        if self.posterior_variance is None:
+            raise ValueError("Model has not been fitted")
+        return self.posterior_variance.copy()
+
+    def _prior(self) -> np.ndarray:
+        if self.prior is None:
+            raise ValueError("Model has not been fitted")
+        return self.prior
+
+    def _relative_precision(self) -> np.ndarray:
+        if self.relative_precision is None:
+            raise ValueError("Model has not been fitted")
+        return self.relative_precision
+
+
+def _scale_feature_columns(
+    features: sparse.spmatrix | np.ndarray,
+    scale: np.ndarray,
+) -> sparse.spmatrix | np.ndarray:
+    """Scale a dense or sparse feature matrix without changing its row shape."""
+
+    if sparse.issparse(features):
+        return features @ sparse.diags(scale, format="csr")
+    return np.asarray(features, dtype=float) * scale
+
+
+def _ridge_posterior_variance(
+    features: sparse.spmatrix | np.ndarray,
+    target: np.ndarray,
+    sample_weight: np.ndarray,
+    coefficients: np.ndarray,
+    intercept: float,
+    alpha: float,
+    relative_precision: np.ndarray,
+) -> np.ndarray:
+    """Return a diagonal Laplace covariance for a prior-precision ridge fit."""
+
+    values = np.asarray(target, dtype=float)
+    weights = _validated_weights(sample_weight, len(values))
+    normalized = weights / np.mean(weights)
+    matrix = sparse.csr_matrix(features, dtype=float)
+    weighted_matrix = matrix.multiply(normalized[:, None])
+    gram = (matrix.T @ weighted_matrix).toarray()
+    feature_mean = np.asarray(matrix.T @ normalized, dtype=float).reshape(-1) / normalized.sum()
+    gram -= normalized.sum() * np.outer(feature_mean, feature_mean)
+    precision = gram + alpha * np.diag(relative_precision)
+    factor, lower = linalg.cho_factor(precision, check_finite=False)
+    inverse = linalg.cho_solve(
+        (factor, lower),
+        np.eye(precision.shape[0]),
+        check_finite=False,
+    )
+    prediction = np.asarray(matrix @ coefficients, dtype=float).reshape(-1) + intercept
+    residual = values - prediction
+    effective_df = float(np.trace(gram @ inverse) + 1.0)
+    degrees_of_freedom = max(float(len(values)) - effective_df, 1.0)
+    noise_variance = float(np.dot(normalized, residual**2) / degrees_of_freedom)
+    return noise_variance * np.diag(inverse)
 
 
 def entity_vocabulary(

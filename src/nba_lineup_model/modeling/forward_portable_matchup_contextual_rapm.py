@@ -79,6 +79,11 @@ from nba_lineup_model.modeling.schedule_controls import (
     fit_back_to_back_schedule_model,
     schedule_model_metadata,
 )
+from nba_lineup_model.modeling.state_precision import (
+    PlayerStatePrecisionConfig,
+    advance_state_variance,
+    relative_precision_from_variance,
+)
 from nba_lineup_model.modeling.stints import (
     build_rapm_stints_from_legacy_processed_games,
     modeling_code_fingerprint,
@@ -88,6 +93,7 @@ from nba_lineup_model.modeling.usage_allocation import (
     UsageAllocationModel,
     fit_usage_allocation_model,
 )
+from nba_lineup_model.models.baselines import entity_vocabulary
 from nba_lineup_model.season.schema import validate_season
 
 MODEL_NAME = "forward_portable_matchup_contextual_rapm"
@@ -138,6 +144,8 @@ def train_forward_portable_matchup_contextual_rapm(
     profile_builder: Callable[..., pd.DataFrame] | None = None,
     profile_contract_metadata: dict[str, object] | None = None,
     profile_transformer: Callable[[pd.DataFrame, str], pd.DataFrame] | None = None,
+    use_player_state_precision: bool = False,
+    player_state_precision_config: PlayerStatePrecisionConfig | None = None,
     player_season_panel_path: Path | str = DEFAULT_PANEL_PATH,
     analytical_dir: Path | str = DEFAULT_ANALYTICAL_DIR,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
@@ -151,6 +159,10 @@ def train_forward_portable_matchup_contextual_rapm(
     """
 
     target = validate_season(through_season)
+    if player_state_precision_config is not None and not use_player_state_precision:
+        raise ValueError("Player state precision config requires player state precision")
+    if player_state_precision_config is not None:
+        player_state_precision_config.validate()
     if use_context and (
         context_alpha <= 0 or context_curvature_alpha < 0 or context_temporal_alpha < 0
     ):
@@ -209,6 +221,7 @@ def train_forward_portable_matchup_contextual_rapm(
     replacement_tokens: list[dict[str, object]] = []
     prior_metadata: list[dict[str, object]] = []
     gap_returner_states: list[pd.DataFrame] = []
+    kalman_player_states: list[pd.DataFrame] = []
     aging_models: dict[str, object] = {}
     aging_curve_grids: list[pd.DataFrame] = []
     box_score_residual_models: dict[str, object] = {}
@@ -223,6 +236,9 @@ def train_forward_portable_matchup_contextual_rapm(
     context_reattribution_metadata: list[dict[str, object]] = []
     compiled_additive_prior_coefficients: list[pd.DataFrame] = []
     training_metadata: list[dict[str, object]] = []
+    posterior_variance_by_player: dict[int, float] = {}
+    state_last_seen_index: dict[int, int] = {}
+    state_precision_history: list[pd.DataFrame] = []
     target_priors: pd.DataFrame | None = None
     target_profiles: pd.DataFrame | None = None
     prior_builder = player_prior_builder or _exposure_gated_player_priors
@@ -341,11 +357,17 @@ def train_forward_portable_matchup_contextual_rapm(
             reattribution_weight=context_reattribution_weight,
         )
         prior_row = dict(prior_row)
+        prior_row["player_state_precision_enabled"] = use_player_state_precision
+        prior_row["player_state_precision_mode"] = (
+            "posterior_variance" if player_state_precision_config is not None
+            else "uniform_parity" if use_player_state_precision else "disabled"
+        )
         prior_row.update(reattribution_prior_metadata)
         prior_row.update(compiled_prior_metadata)
         aging_model = prior_row.pop("_aging_model", None)
         aging_curve_grid = prior_row.pop("_aging_curve_grid", None)
         gap_returner_state = prior_row.pop("_gap_returner_states", None)
+        kalman_player_state = prior_row.pop("_kalman_player_states", None)
         box_score_residual_model = prior_row.pop("_box_score_residual_model", None)
         box_score_residual_selection = prior_row.pop("box_score_residual_selection", None)
         if aging_model is not None:
@@ -354,6 +376,8 @@ def train_forward_portable_matchup_contextual_rapm(
             aging_curve_grids.append(aging_curve_grid)
         if isinstance(gap_returner_state, pd.DataFrame) and not gap_returner_state.empty:
             gap_returner_states.append(gap_returner_state.assign(season=season))
+        if isinstance(kalman_player_state, pd.DataFrame) and not kalman_player_state.empty:
+            kalman_player_states.append(kalman_player_state.assign(target_season=season))
         if box_score_residual_model is not None:
             box_score_residual_models[season] = box_score_residual_model
         if isinstance(box_score_residual_selection, list):
@@ -370,13 +394,40 @@ def train_forward_portable_matchup_contextual_rapm(
         season_lambda = float(lambda_schedule.loc[season])
         if not np.isfinite(season_lambda) or season_lambda < 0:
             raise ValueError(f"Published RAPM lambda is invalid for {season}")
+        relative_precision: np.ndarray | None = None
+        prior_variance: np.ndarray | None = None
+        if player_state_precision_config is not None:
+            player_ids = _stint_player_ids(adjusted_stints)
+            prior_variance = _advance_player_state_variance(
+                player_ids,
+                season_index=season_index,
+                posterior_variance_by_player=posterior_variance_by_player,
+                last_seen_index=state_last_seen_index,
+                config=player_state_precision_config,
+            )
+            relative_precision = relative_precision_from_variance(
+                prior_variance,
+                config=player_state_precision_config,
+            )
         fitted = fit_forward_lagged_rapm_season(
             season,
             adjusted_stints,
             priors,
             lambda_grid=(season_lambda,),
+            use_prior_precision=use_player_state_precision,
+            relative_precision=relative_precision,
         )
         results.append(fitted)
+        if player_state_precision_config is not None:
+            _record_player_state_precision(
+                fitted.player_estimates,
+                prior_variance=prior_variance,
+                season=season,
+                season_index=season_index,
+                posterior_variance_by_player=posterior_variance_by_player,
+                last_seen_index=state_last_seen_index,
+                history=state_precision_history,
+            )
         exposure = player_exposure_shares(raw_stints)
         exposure_history.append(
             panel.loc[panel["season"].eq(season)].merge(
@@ -564,6 +615,16 @@ def train_forward_portable_matchup_contextual_rapm(
         gap_returner_states=(
             pd.concat(gap_returner_states, ignore_index=True)
             if gap_returner_states
+            else pd.DataFrame()
+        ),
+        kalman_player_states=(
+            pd.concat(kalman_player_states, ignore_index=True)
+            if kalman_player_states
+            else pd.DataFrame()
+        ),
+        player_state_precision_history=(
+            pd.concat(state_precision_history, ignore_index=True)
+            if state_precision_history
             else pd.DataFrame()
         ),
         target_priors=target_priors,
@@ -1086,6 +1147,8 @@ def _write_run(
     usage_allocation_metadata: pd.DataFrame,
     prior_metadata: pd.DataFrame,
     gap_returner_states: pd.DataFrame,
+    kalman_player_states: pd.DataFrame,
+    player_state_precision_history: pd.DataFrame,
     target_priors: pd.DataFrame,
     target_profiles: pd.DataFrame,
     forecast_reference: pd.DataFrame,
@@ -1155,6 +1218,8 @@ def _write_run(
             ),
             "season_player_prior_metadata.parquet": prior_metadata,
             "gap_returner_projected_states.parquet": gap_returner_states,
+            "kalman_player_states.parquet": kalman_player_states,
+            "player_state_precision_history.parquet": player_state_precision_history,
             "frozen_2025_26_player_priors.parquet": target_priors,
             "target_player_profiles.parquet": target_profiles,
             "forecast_reference_units.parquet": forecast_reference,
@@ -1354,6 +1419,67 @@ def _season_model_metadata(
     output["configured_context_curvature_alpha"] = context_curvature_alpha
     output["configured_context_temporal_alpha"] = context_temporal_alpha
     return output.sort_values("season", kind="stable").reset_index(drop=True)
+
+
+def _advance_player_state_variance(
+    player_ids: tuple[int, ...],
+    *,
+    season_index: int,
+    posterior_variance_by_player: dict[int, float],
+    last_seen_index: dict[int, int],
+    config: PlayerStatePrecisionConfig,
+) -> np.ndarray:
+    """Return each active player's forward-only prior variance."""
+
+    values = np.full(len(player_ids), config.initial_variance, dtype=float)
+    for index, player_id in enumerate(player_ids):
+        previous = posterior_variance_by_player.get(player_id)
+        if previous is None:
+            continue
+        elapsed = season_index - last_seen_index[player_id]
+        values[index] = advance_state_variance(
+            np.asarray([previous]),
+            elapsed_seasons=float(elapsed),
+            config=config,
+        )[0]
+    return values
+
+
+def _record_player_state_precision(
+    estimates: pd.DataFrame,
+    *,
+    prior_variance: np.ndarray | None,
+    season: str,
+    season_index: int,
+    posterior_variance_by_player: dict[int, float],
+    last_seen_index: dict[int, int],
+    history: list[pd.DataFrame],
+) -> None:
+    """Persist fitted uncertainty and carry it into the following season."""
+
+    if prior_variance is None or "posterior_variance" not in estimates:
+        raise ValueError("State-precision fit must return prior and posterior variance")
+    state = estimates.loc[
+        :, ["player_id", "relative_prior_precision", "posterior_variance"]
+    ].copy()
+    state.insert(0, "season", season)
+    state.insert(2, "prior_variance", prior_variance)
+    history.append(state)
+    for row in state.itertuples(index=False):
+        player_id = int(row.player_id)
+        posterior_variance_by_player[player_id] = float(row.posterior_variance)
+        last_seen_index[player_id] = season_index
+
+
+def _stint_player_ids(stints: pd.DataFrame) -> tuple[int, ...]:
+    """Use the same player ordering as the RAPM design matrix."""
+
+    return entity_vocabulary(
+        stints,
+        "home_player_ids",
+        "away_player_ids",
+        multiple=True,
+    )
 
 
 def _serialize_nested_metadata(frame: pd.DataFrame) -> pd.DataFrame:

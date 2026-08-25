@@ -36,6 +36,7 @@ from nba_lineup_model.modeling.train import (
 from nba_lineup_model.models.baselines import (
     FittedMeanModel,
     PriorCenteredRidgeLineupModel,
+    PriorPrecisionRidgeLineupModel,
     entity_vocabulary,
     signed_entity_matrix,
     vocabulary_mapping,
@@ -223,6 +224,8 @@ def fit_forward_lagged_rapm_season(
     *,
     lambda_grid: tuple[float, ...] = DEFAULT_LAMBDA_GRID,
     split_config: ChronologicalSplitConfig | None = None,
+    use_prior_precision: bool = False,
+    relative_precision: np.ndarray | None = None,
 ) -> ForwardLaggedRapmSeason:
     """Tune on chronological folds, then refit a completed season on all rows.
 
@@ -251,6 +254,11 @@ def fit_forward_lagged_rapm_season(
         multiple=True,
     )
     prior, prior_frame = _prior_vector(player_ids, priors)
+    precision = _relative_precision_vector(
+        player_ids,
+        relative_precision,
+        use_prior_precision=use_prior_precision,
+    )
     target = stints["target_home_net_rating"].to_numpy(dtype=float)
     weights = stints["possessions"].to_numpy(dtype=float)
     game_ids = stints["game_id"].astype(str).to_numpy()
@@ -269,13 +277,25 @@ def fit_forward_lagged_rapm_season(
             game_ids,
             split_plan,
             lambda_grid,
+            use_prior_precision=use_prior_precision,
+            relative_precision=precision,
         )
         selected_lambda = _select_lambda(cv_results)
-    fitted = PriorCenteredRidgeLineupModel(selected_lambda).fit(
-        matrix,
-        target,
-        weights,
-        prior,
+    fitted = (
+        PriorPrecisionRidgeLineupModel(selected_lambda).fit(
+            matrix,
+            target,
+            weights,
+            prior,
+            precision,
+        )
+        if use_prior_precision
+        else PriorCenteredRidgeLineupModel(selected_lambda).fit(
+            matrix,
+            target,
+            weights,
+            prior,
+        )
     )
     estimates = pd.DataFrame(
         {
@@ -287,6 +307,9 @@ def fit_forward_lagged_rapm_season(
         }
     ).merge(prior_frame.loc[:, ["player_id", "prior_available"]], on="player_id")
     estimates["selected_lambda"] = selected_lambda
+    if use_prior_precision:
+        estimates["relative_prior_precision"] = precision
+        estimates["posterior_variance"] = fitted.posterior_variance_  # type: ignore[union-attr]
     estimates = estimates.sort_values("player_id", kind="stable").reset_index(drop=True)
     return ForwardLaggedRapmSeason(
         season=season,
@@ -783,6 +806,25 @@ def _prior_vector(
     return prior, frame
 
 
+def _relative_precision_vector(
+    player_ids: tuple[int, ...],
+    relative_precision: np.ndarray | None,
+    *,
+    use_prior_precision: bool,
+) -> np.ndarray:
+    if relative_precision is None:
+        precision = np.ones(len(player_ids), dtype=float)
+    else:
+        precision = np.asarray(relative_precision, dtype=float)
+    if precision.ndim != 1 or len(precision) != len(player_ids):
+        raise ValueError("Relative precision must align with the player vocabulary")
+    if not np.isfinite(precision).all() or not np.all(precision > 0):
+        raise ValueError("Relative precision must be finite and positive")
+    if not use_prior_precision and not np.allclose(precision, 1.0, rtol=0.0, atol=0.0):
+        raise ValueError("Non-uniform relative precision requires use_prior_precision")
+    return precision
+
+
 def _cross_validate(
     stints: pd.DataFrame,
     matrix: object,
@@ -792,14 +834,29 @@ def _cross_validate(
     game_ids: np.ndarray,
     split_plan: GameSplitPlan,
     lambda_grid: tuple[float, ...],
+    *,
+    use_prior_precision: bool = False,
+    relative_precision: np.ndarray | None = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, float | int | str]] = []
     for fold in split_plan.folds:
         train = np.isin(game_ids, fold.train_game_ids)
         validation = np.isin(game_ids, fold.validation_game_ids)
         for regularization in lambda_grid:
-            model = PriorCenteredRidgeLineupModel(regularization).fit(
-                matrix[train], target[train], weights[train], prior
+            model = (
+                PriorPrecisionRidgeLineupModel(regularization).fit(
+                    matrix[train],
+                    target[train],
+                    weights[train],
+                    prior,
+                    relative_precision
+                    if relative_precision is not None
+                    else np.ones(matrix.shape[1], dtype=float),
+                )
+                if use_prior_precision
+                else PriorCenteredRidgeLineupModel(regularization).fit(
+                    matrix[train], target[train], weights[train], prior
+                )
             )
             rows.append(
                 _metric_row(
