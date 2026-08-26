@@ -156,8 +156,10 @@ nav = [
     {"Train RAPM + Transformer" = "guides/train-transformer.md"},
     {"Train CatBoost" = "guides/train-catboost.md"},
     {"Run cross-season audits" = "guides/cross-season-audit.md"},
+    {"Evaluate L1 minute-share persistence" = "guides/evaluate-l1-minute-share-persistence.md"},
+    {"Evaluate L5 median-minutes persistence" = "guides/evaluate-l5-median-minutes-persistence.md"},
   ]},
-  {"Models" = [
+  {"Ratings Models" = [
     {"Overview" = "models/index.md"},
     {"Frozen Preseason Leaderboard" = "models/preseason-leaderboard.md"},
     {"Three-Season Frozen Leaderboard" = "models/three-season-frozen-backtest.md"},
@@ -252,6 +254,11 @@ nav = [
     {"2025-26 Bayesian RAPM case study" = "models/2025-26-bayesian-rapm-case-study.md"},
     {"Promoted rankings" = "models/rankings.md"},
     {"Modeling Roadmap" = "models/roadmap.md"},
+  ]},
+  {"Rotation Models" = [
+    {"Overview" = "rotation-models/index.md"},
+    {"L1-MSP v0.0" = "rotation-models/l1-minute-share-persistence.md"},
+    {"L5-MMP v0.1" = "rotation-models/l5-median-minutes-persistence.md"},
   ]},
   {"API reference" = [
     {"Build pipeline" = "reference/build-game.md"},

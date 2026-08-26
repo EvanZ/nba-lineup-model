@@ -2,7 +2,7 @@
 last_updated: "2026-08-24"
 ---
 
-# Models
+# Ratings Models
 
 The modeling program starts with transparent predictive baselines before adding
 player priors, separate offensive and defensive effects, or nonlinear lineup
