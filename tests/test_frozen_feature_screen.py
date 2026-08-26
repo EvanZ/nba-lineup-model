@@ -14,6 +14,7 @@ from nba_lineup_model.modeling.frozen_feature_screen import (
 def test_production_nonadditive_candidates_are_registered() -> None:
     assert set(available_feature_candidates()) >= {
         "median_three_pm_per_100",
+        "rim_protection_ceiling",
         "top_two_assists",
         "usage_concentration",
     }
@@ -36,6 +37,21 @@ def test_median_three_pm_candidate_uses_the_third_ranked_player() -> None:
     )
 
     assert values.tolist() == [2.0]
+
+
+def test_rim_protection_ceiling_uses_the_highest_block_profile() -> None:
+    profiles = pd.DataFrame(
+        {
+            "player_id": [1, 2, 3, 4, 5],
+            "blocks_per_100": [0.2, 1.1, 0.7, 3.4, 1.9],
+        }
+    )
+
+    values = FEATURE_CANDIDATES["rim_protection_ceiling"].side_feature(
+        [(5, 1, 4, 2, 3)], profiles
+    )
+
+    assert values.tolist() == [3.4]
 
 
 def test_summarize_feature_bins_uses_deciles_for_continuous_candidates() -> None:

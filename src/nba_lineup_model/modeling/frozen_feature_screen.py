@@ -80,6 +80,17 @@ def _median_three_pm_per_100(
     )
 
 
+def _max_blocks_per_100(
+    lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
+) -> np.ndarray:
+    """Return each unit's strongest strictly lagged rim-protection profile."""
+
+    values = profiles.set_index("player_id")["blocks_per_100"]
+    return np.asarray(
+        [float(values.loc[list(lineup)].max()) for lineup in lineups], dtype=float
+    )
+
+
 def _production_nonadditive_side_feature(
     column: str,
 ) -> SideFeature:
@@ -105,6 +116,16 @@ FEATURE_CANDIDATES: dict[str, FeatureCandidate] = {
             "per 100 possessions within a five-man unit."
         ),
         side_feature=_median_three_pm_per_100,
+    ),
+    "rim_protection_ceiling": FeatureCandidate(
+        name="rim_protection_ceiling",
+        label="Rim-protection ceiling (max BLK / 100)",
+        description=(
+            "The maximum prior-season, shrinkage-adjusted block rate per 100 possessions "
+            "among the five players in a unit. Low values represent lineups lacking a "
+            "credible rim-protection presence."
+        ),
+        side_feature=_max_blocks_per_100,
     ),
     "usage_concentration": FeatureCandidate(
         name="usage_concentration",

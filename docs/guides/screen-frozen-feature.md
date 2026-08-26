@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-24"
+last_updated: "2026-08-25"
 ---
 
 # Screen a Frozen Feature
@@ -92,6 +92,30 @@ The residual deciles have no monotonic or stable conditional pattern, so median
 lineup 3PM / 100 does **not** advance to a recursive model experiment.
 
 ![Frozen residual decile screen for median lineup 3PM per 100](../assets/images/frozen-feature-screens/median_three_pm_per_100-residual-screen.svg)
+
+## Candidate Result: Rim-Protection Ceiling
+
+The rim-protection candidate is the maximum prior-season,
+shrinkage-adjusted `BLK / 100` profile among a unit's five players. It tests a
+strictly non-additive hypothesis: a lineup without even one credible rim
+protector may underperform what the sum of individual player ratings predicts.
+Low values therefore represent a lineup that lacks rim protection.
+
+The candidate does not clear the frozen screen. Its possession-weighted
+residual correlations are effectively zero and change sign across seasons:
+
+| Target season | Weighted residual correlation |
+| --- | ---: |
+| 2023-24 | -0.0120 |
+| 2024-25 | +0.0039 |
+| 2025-26 | +0.0099 |
+| Pooled | +0.0009 |
+
+The deciles are non-monotonic, with no stable low-ceiling penalty after the
+frozen NAIL-RAPM v1.2.1.2 prediction. Maximum shrunken `BLK / 100` therefore
+does **not** advance to a recursive model experiment.
+
+![Frozen residual decile screen for rim-protection ceiling](../assets/images/frozen-feature-screens/rim_protection_ceiling-residual-screen.svg)
 
 ## Production Controls
 
