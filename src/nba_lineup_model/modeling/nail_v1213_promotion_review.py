@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -24,6 +23,9 @@ from nba_lineup_model.modeling.contextual_profiles import (
 )
 from nba_lineup_model.modeling.forward_contextual_rapm import DEFAULT_ARTIFACTS_DIR
 from nba_lineup_model.modeling.forward_nail_v1212_residualized_lambda import MODEL_NAME
+from nba_lineup_model.modeling.forward_portable_matchup_contextual_rapm import (
+    _load_recursive_model_mapping,
+)
 from nba_lineup_model.modeling.nail_v121_pruned_nonadditive_weight_audit import (
     RETAINED_FEATURES,
 )
@@ -78,7 +80,7 @@ def _completed_top_25(source: Path, panel: pd.DataFrame) -> pd.DataFrame:
     season_ratings = raw.loc[raw["season"].eq(target)].copy()
     if season_ratings.empty:
         raise ValueError(f"Candidate artifact has no completed ratings for {target}")
-    models = joblib.load(source / "season_context_models.joblib")
+    models = _load_recursive_model_mapping(source, "season_context_models.joblib")
     model = models.get(target)
     if model is None:
         raise ValueError(f"Candidate artifact has no context model for {target}")
@@ -160,7 +162,7 @@ def _control_history(source: Path) -> pd.DataFrame:
     return output.sort_values("season_start_year", kind="stable").reset_index(drop=True)
 
 
-def _render_control_history(history: pd.DataFrame, path: Path) -> None:
+def _render_control_history(history: pd.DataFrame, path: Path, *, title_prefix: str) -> None:
     figure, axes = plt.subplots(2, 1, figsize=(12, 6.8), sharex=True, layout="constrained")
     series = (
         ("context_home_intercept", "Home-court advantage", "#2f6ea8"),
@@ -182,7 +184,7 @@ def _render_control_history(history: pd.DataFrame, path: Path) -> None:
         axis.tick_params(axis="both", labelsize=8)
     axes[-1].set_xlabel("Completed source season start year", fontsize=9)
     figure.suptitle(
-        "NAIL-RAPM v1.2.1.3 external-control coefficients by completed source season",
+        f"{title_prefix} external-control coefficients by completed source season",
         x=0.01,
         ha="left",
         fontsize=15,
@@ -210,6 +212,8 @@ def build_nail_v1213_promotion_review(
     control_chart_path: Path | str = DEFAULT_CONTROL_CHART_PATH,
     additive_chart_path: Path | str = DEFAULT_ADDITIVE_CHART_PATH,
     nonadditive_chart_path: Path | str = DEFAULT_NONADDITIVE_CHART_PATH,
+    expected_model_name: str | None = MODEL_NAME,
+    chart_title_prefix: str = "NAIL-RAPM v1.2.1.3",
 ) -> NailV1213PromotionReview:
     """Write inspectable rankings and all fitted HCA, B2B, and context histories."""
 
@@ -219,12 +223,15 @@ def build_nail_v1213_promotion_review(
         else _latest_run(Path(artifacts_dir) / MODEL_NAME / DEFAULT_ARTIFACT_SEASON)
     )
     metadata = json.loads((source / "metadata.json").read_text())
-    if metadata.get("model") != MODEL_NAME:
-        raise ValueError("Promotion review requires a v1.2.1.3 residualized-lambda artifact")
+    source_model = str(metadata.get("model"))
+    if expected_model_name is not None and source_model != expected_model_name:
+        raise ValueError(
+            f"Promotion review expected {expected_model_name!r}, found {source_model!r}"
+        )
     panel = pd.read_parquet(panel_path)
     top_25 = _completed_top_25(source, panel)
     controls = _control_history(source)
-    models = joblib.load(source / "season_context_models.joblib")
+    models = _load_recursive_model_mapping(source, "season_context_models.joblib")
     additive = standardized_additive_weights(
         models,
         feature_set=CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
@@ -242,12 +249,12 @@ def build_nail_v1213_promotion_review(
     nonadditive_chart = Path(nonadditive_chart_path)
     for path in (control_chart, additive_chart, nonadditive_chart):
         path.parent.mkdir(parents=True, exist_ok=True)
-    _render_control_history(controls, control_chart)
+    _render_control_history(controls, control_chart, title_prefix=chart_title_prefix)
     render_additive_weight_trajectories(
         additive,
         summarize_additive_weights(additive),
         additive_chart,
-        title="NAIL-RAPM v1.2.1.3 additive profile weights by completed source season",
+        title=f"{chart_title_prefix} additive profile weights by completed source season",
         features=LINEAR_NAIL_V1211_BASKETBALL_ADDITIVE_FEATURES,
         accent_features=frozenset(),
         legend="Blue: player-attributable additive profile term",
@@ -256,7 +263,7 @@ def build_nail_v1213_promotion_review(
         nonadditive,
         summarize_additive_weights(nonadditive),
         nonadditive_chart,
-        title="NAIL-RAPM v1.2.1.3 retained non-additive weights by completed source season",
+        title=f"{chart_title_prefix} retained non-additive weights by completed source season",
         features=RETAINED_FEATURES,
         accent_features=frozenset(RETAINED_FEATURES),
         legend="Orange: retained non-additive lineup term",
@@ -274,7 +281,7 @@ def build_nail_v1213_promotion_review(
             {
                 "run_id": run_id,
                 "source_run_dir": str(source),
-                "source_model": MODEL_NAME,
+                "source_model": source_model,
                 "rating_definition": (
                     "Completed NAIL rating = fitted player RAPM plus the centered, "
                     "exactly compilable additive profile adjustment."
@@ -312,6 +319,8 @@ def main() -> None:
     parser.add_argument("--control-chart-path", default=str(DEFAULT_CONTROL_CHART_PATH))
     parser.add_argument("--additive-chart-path", default=str(DEFAULT_ADDITIVE_CHART_PATH))
     parser.add_argument("--nonadditive-chart-path", default=str(DEFAULT_NONADDITIVE_CHART_PATH))
+    parser.add_argument("--expected-model-name", default=MODEL_NAME)
+    parser.add_argument("--chart-title-prefix", default="NAIL-RAPM v1.2.1.3")
     args = parser.parse_args()
     run = build_nail_v1213_promotion_review(
         source_run_dir=args.source_run_dir,
@@ -319,6 +328,8 @@ def main() -> None:
         control_chart_path=args.control_chart_path,
         additive_chart_path=args.additive_chart_path,
         nonadditive_chart_path=args.nonadditive_chart_path,
+        expected_model_name=args.expected_model_name,
+        chart_title_prefix=args.chart_title_prefix,
     )
     print(
         f"NAIL v1.2.1.3 promotion review: run={run.run_dir}; "

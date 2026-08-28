@@ -120,6 +120,286 @@ class ForwardPortableMatchupContextualRapmRun:
     run_id: str
 
 
+@dataclass
+class _RecursiveResumeState:
+    """Persisted recursive state required to continue later seasons exactly."""
+
+    through_season: str
+    results: list[ForwardLaggedRapmSeason]
+    priors_by_season: list[pd.DataFrame]
+    exposure_history: list[pd.DataFrame]
+    replacement_tokens: list[dict[str, object]]
+    prior_metadata: list[dict[str, object]]
+    gap_returner_states: list[pd.DataFrame]
+    kalman_player_states: list[pd.DataFrame]
+    aging_models: dict[str, object]
+    aging_curve_grids: list[pd.DataFrame]
+    box_score_residual_models: dict[str, object]
+    box_score_residual_selections: list[pd.DataFrame]
+    contextual_models: dict[str, MatchupContextualModel]
+    schedule_models: dict[str, BackToBackScheduleModel]
+    contextual_metadata: list[dict[str, object]]
+    rebound_calibration_metadata: list[dict[str, object]]
+    usage_allocation_metadata: list[dict[str, object]]
+    schedule_metadata: list[dict[str, object]]
+    training_metadata: list[dict[str, object]]
+
+
+def _load_recursive_resume_state(
+    run_dir: Path,
+    *,
+    model_name: str,
+    panel: pd.DataFrame,
+) -> _RecursiveResumeState:
+    """Recover the immutable state needed to extend a completed recursive run."""
+
+    metadata = json.loads((run_dir / "metadata.json").read_text())
+    if metadata.get("model") != model_name:
+        raise ValueError(
+            f"Resume artifact model {metadata.get('model')!r} does not match {model_name!r}"
+        )
+    coefficients = pd.read_parquet(run_dir / "historical_player_coefficients.parquet")
+    priors = pd.read_parquet(run_dir / "season_player_priors.parquet")
+    ratings = pd.read_parquet(run_dir / "player_season_ratings.parquet")
+    cv_results = pd.read_parquet(run_dir / "season_player_cv_results.parquet")
+    seasons = tuple(sorted(coefficients["season"].astype(str).unique()))
+    if not seasons:
+        raise ValueError("Resume artifact has no completed player seasons")
+    expected = tuple(season for season in HISTORICAL_SEASONS if season <= seasons[-1])
+    if seasons != expected:
+        raise ValueError("Resume artifact seasons are not a contiguous historical prefix")
+
+    results: list[ForwardLaggedRapmSeason] = []
+    priors_by_season: list[pd.DataFrame] = []
+    exposure_history: list[pd.DataFrame] = []
+    for season in seasons:
+        season_coefficients = coefficients.loc[coefficients["season"].eq(season)].copy()
+        season_priors = priors.loc[priors["season"].eq(season)].copy()
+        if "prior_rapm" in season_priors:
+            season_priors = season_priors.rename(columns={"prior_rapm": PRIOR_MEAN_COLUMN})
+        results.append(
+            ForwardLaggedRapmSeason(
+                season=season,
+                selected_lambda=float(season_coefficients["selected_lambda"].iloc[0]),
+                cv_results=cv_results.loc[cv_results["season"].eq(season)]
+                .drop(columns="season")
+                .reset_index(drop=True),
+                player_estimates=season_coefficients.reset_index(drop=True),
+                player_priors=season_priors.drop(
+                    columns="context_offset_source_season", errors="ignore"
+                ).reset_index(drop=True),
+            )
+        )
+        priors_by_season.append(
+            priors.loc[priors["season"].eq(season)].copy().reset_index(drop=True)
+        )
+        exposure_columns = [
+            column
+            for column in (
+                "player_id",
+                "on_court_possessions",
+                "team_opportunity_possessions",
+                "exposure_share",
+            )
+            if column in ratings
+        ]
+        exposure_history.append(
+            panel.loc[panel["season"].eq(season)].merge(
+                ratings.loc[ratings["season"].eq(season), exposure_columns],
+                on="player_id",
+                how="inner",
+                validate="one_to_one",
+            ).reset_index(drop=True)
+        )
+
+    prior_metadata = pd.read_parquet(run_dir / "season_player_prior_metadata.parquet")
+    for column in prior_metadata.select_dtypes(include="object"):
+        prior_metadata[column] = prior_metadata[column].map(
+            lambda value: value.tolist() if isinstance(value, np.ndarray) else value
+        )
+    if prior_metadata.empty:
+        raise ValueError("Resume artifact lacks player-prior metadata")
+    return _RecursiveResumeState(
+        through_season=seasons[-1],
+        results=results,
+        priors_by_season=priors_by_season,
+        exposure_history=exposure_history,
+        replacement_tokens=_recover_replacement_tokens(prior_metadata, seasons),
+        prior_metadata=prior_metadata.to_dict("records"),
+        gap_returner_states=_nonempty_frame_list(run_dir / "gap_returner_projected_states.parquet"),
+        kalman_player_states=_nonempty_frame_list(run_dir / "kalman_player_states.parquet"),
+        aging_models=_load_recursive_model_mapping(
+            run_dir,
+            "season_aging_models.joblib",
+        ),
+        aging_curve_grids=_nonempty_frame_list(run_dir / "aging_curve_grid.parquet"),
+        box_score_residual_models=_load_recursive_model_mapping(
+            run_dir,
+            "season_box_score_residual_models.joblib",
+        ),
+        box_score_residual_selections=_nonempty_frame_list(
+            run_dir / "season_box_score_residual_selection.parquet"
+        ),
+        contextual_models=_load_recursive_model_mapping(
+            run_dir,
+            "season_context_models.joblib",
+        ),
+        schedule_models=_load_recursive_model_mapping(
+            run_dir,
+            "season_schedule_models.joblib",
+        ),
+        contextual_metadata=_frame_records(run_dir / "season_context_metadata.parquet"),
+        rebound_calibration_metadata=_frame_records(
+            run_dir / "season_rebound_calibration_metadata.parquet"
+        ),
+        usage_allocation_metadata=_frame_records(
+            run_dir / "season_usage_allocation_metadata.parquet"
+        ),
+        schedule_metadata=_frame_records(run_dir / "season_schedule_control_metadata.parquet"),
+        training_metadata=_training_records(run_dir / "season_model_metadata.parquet"),
+    )
+
+
+def _load_joblib_or_empty(path: Path) -> dict[str, object]:
+    return joblib.load(path) if path.is_file() else {}
+
+
+def _load_recursive_model_mapping(
+    run_dir: Path,
+    filename: str,
+    *,
+    _visited: set[Path] | None = None,
+) -> dict[str, object]:
+    """Load a model mapping, overlaying a resumed-run delta on its base."""
+
+    resolved = run_dir.resolve()
+    visited = set() if _visited is None else _visited
+    if resolved in visited:
+        raise ValueError(f"Recursive artifact base cycle detected at {resolved}")
+    visited.add(resolved)
+    metadata_path = resolved / "metadata.json"
+    metadata = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
+    models: dict[str, object] = {}
+    base_value = metadata.get("resume_base_run_dir")
+    if base_value:
+        base_dir = Path(str(base_value))
+        if not base_dir.is_absolute():
+            base_dir = (resolved / base_dir).resolve()
+        models.update(
+            _load_recursive_model_mapping(
+                base_dir,
+                filename,
+                _visited=visited,
+            )
+        )
+    standard_path = resolved / filename
+    delta_path = resolved / filename.replace(".joblib", "_delta.joblib")
+    if standard_path.is_file():
+        models.update(joblib.load(standard_path))
+    if delta_path.is_file():
+        models.update(joblib.load(delta_path))
+    return models
+
+
+def _nonempty_frame_list(path: Path) -> list[pd.DataFrame]:
+    if not path.is_file():
+        return []
+    frame = pd.read_parquet(path)
+    return [frame] if not frame.empty else []
+
+
+def _frame_records(path: Path) -> list[dict[str, object]]:
+    return pd.read_parquet(path).to_dict("records") if path.is_file() else []
+
+
+def _training_records(path: Path) -> list[dict[str, object]]:
+    frame = pd.read_parquet(path)
+    columns = [column for column in frame if column.startswith("training_") or column == "season"]
+    return frame.loc[:, columns].to_dict("records")
+
+
+def _recover_replacement_tokens(
+    prior_metadata: pd.DataFrame,
+    seasons: tuple[str, ...],
+) -> list[dict[str, object]]:
+    """Recover token means from the stored cumulative cold-start metadata."""
+
+    rows = []
+    for row in prior_metadata.loc[:, ["season", "cold_start"]].itertuples(index=False):
+        cold_start = row.cold_start
+        if isinstance(cold_start, dict) and cold_start.get("cold_start_enabled"):
+            rows.append((str(row.season), float(cold_start["replacement_rapm"])))
+    if not rows:
+        return []
+    first_season, first_mean = rows[0]
+    first_count = seasons.index(first_season)
+    if first_count <= 0:
+        raise ValueError("Invalid cold-start metadata in resume artifact")
+    values = [first_mean] * first_count
+    for (season, current_mean), (next_season, next_mean) in zip(rows, rows[1:], strict=False):
+        count = seasons.index(season)
+        if seasons.index(next_season) != count + 1:
+            raise ValueError("Cold-start metadata is not season-contiguous")
+        values.append((count + 1) * next_mean - count * current_mean)
+    return [
+        {"season": season, "replacement_token_rapm": value}
+        for season, value in zip(seasons[: len(values)], values, strict=True)
+    ]
+
+
+def _append_resume_terminal_replacement_token(
+    *,
+    season: str,
+    results: list[ForwardLaggedRapmSeason],
+    replacement_tokens: list[dict[str, object]],
+    panel: pd.DataFrame,
+    contextual_models: dict[str, MatchupContextualModel],
+    schedule_models: dict[str, BackToBackScheduleModel],
+    use_context: bool,
+    schedule_features: pd.DataFrame | None,
+    resolved_profile_builder: Callable[..., pd.DataFrame],
+    profile_transformer: Callable[[pd.DataFrame, str], pd.DataFrame] | None,
+    analytical_dir: Path,
+    curated_dir: Path,
+) -> None:
+    """Recover the final token absent from legacy artifacts before resuming."""
+
+    if len(replacement_tokens) >= len(results):
+        return
+    if len(replacement_tokens) != len(results) - 1:
+        raise ValueError("Resume replacement-token history has an unexpected length")
+    raw_stints = read_rapm_stints(season, analytical_dir=analytical_dir)
+    if schedule_features is not None:
+        raw_stints = attach_back_to_back_feature(raw_stints, schedule_features)
+    adjusted_stints = raw_stints.copy()
+    previous_model = contextual_models.get(_previous_season(season))
+    if use_context and previous_model is not None:
+        participants = set().union(
+            *raw_stints["home_player_ids"], *raw_stints["away_player_ids"]
+        )
+        profiles = resolved_profile_builder(
+            panel,
+            target_season=season,
+            target_player_ids=participants,
+            analytical_dir=str(analytical_dir),
+            curated_dir=str(curated_dir),
+            exposure_cohort=None,
+        )
+        if profile_transformer is not None:
+            profiles = profile_transformer(profiles, season)
+        offset = _context_offset(raw_stints, previous_model, profiles)
+        previous_schedule = schedule_models.get(_previous_season(season))
+        if previous_schedule is not None and schedule_features is not None:
+            offset = offset + previous_schedule.predict_games(raw_stints, schedule_features)
+        adjusted_stints["target_home_net_rating"] = (
+            raw_stints["target_home_net_rating"].to_numpy(dtype=float) - offset
+        )
+    exposure = player_exposure_shares(raw_stints)
+    replacement_tokens.append(
+        _fit_replacement_token(season, adjusted_stints, exposure, results[-1], panel)
+    )
+
+
 def train_forward_portable_matchup_contextual_rapm(
     *,
     through_season: str = DEFAULT_TARGET_SEASON,
@@ -147,6 +427,7 @@ def train_forward_portable_matchup_contextual_rapm(
     profile_builder: Callable[..., pd.DataFrame] | None = None,
     profile_contract_metadata: dict[str, object] | None = None,
     profile_transformer: Callable[[pd.DataFrame, str], pd.DataFrame] | None = None,
+    resume_from: Path | str | None = None,
     use_player_state_precision: bool = False,
     player_state_precision_config: PlayerStatePrecisionConfig | None = None,
     player_season_panel_path: Path | str = DEFAULT_PANEL_PATH,
@@ -250,10 +531,60 @@ def train_forward_portable_matchup_contextual_rapm(
     state_precision_history: list[pd.DataFrame] = []
     target_priors: pd.DataFrame | None = None
     target_profiles: pd.DataFrame | None = None
+    resume_base_through_season: str | None = None
     prior_builder = player_prior_builder or _exposure_gated_player_priors
     resolved_profile_builder = profile_builder or build_contextual_player_profiles
 
-    for season_index, season in enumerate(seasons, start=1):
+    if resume_from is not None:
+        if include_historical_playoffs or compiled_additive_prior or context_reattribution_weight:
+            raise ValueError(
+                "Resume currently supports the standard forward context contract only"
+            )
+        state = _load_recursive_resume_state(
+            Path(resume_from),
+            model_name=model_name,
+            panel=panel,
+        )
+        resume_base_through_season = state.through_season
+        results = state.results
+        priors_by_season = state.priors_by_season
+        exposure_history = state.exposure_history
+        replacement_tokens = state.replacement_tokens
+        prior_metadata = state.prior_metadata
+        gap_returner_states = state.gap_returner_states
+        kalman_player_states = state.kalman_player_states
+        aging_models = state.aging_models
+        aging_curve_grids = state.aging_curve_grids
+        box_score_residual_models = state.box_score_residual_models
+        box_score_residual_selections = state.box_score_residual_selections
+        contextual_models = state.contextual_models
+        schedule_models = state.schedule_models
+        contextual_metadata = state.contextual_metadata
+        rebound_calibration_metadata = state.rebound_calibration_metadata
+        usage_allocation_metadata = state.usage_allocation_metadata
+        schedule_metadata = state.schedule_metadata
+        training_metadata = state.training_metadata
+        _append_resume_terminal_replacement_token(
+            season=state.through_season,
+            results=results,
+            replacement_tokens=replacement_tokens,
+            panel=panel,
+            contextual_models=contextual_models,
+            schedule_models=schedule_models,
+            use_context=use_context,
+            schedule_features=schedule_features,
+            resolved_profile_builder=resolved_profile_builder,
+            profile_transformer=profile_transformer,
+            analytical_dir=Path(analytical_dir),
+            curated_dir=Path(curated_dir),
+        )
+
+    fitted_seasons = {result.season for result in results}
+    fit_seasons = tuple(season for season in seasons if season not in fitted_seasons)
+    if not fit_seasons:
+        raise ValueError(f"Resume state already reaches requested target {target}")
+
+    for season_index, season in enumerate(fit_seasons, start=len(results) + 1):
         print(
             f"Starting seasonal context state for {season} "
             f"({season_index}/{len(seasons)})",
@@ -685,6 +1016,8 @@ def train_forward_portable_matchup_contextual_rapm(
         player_lambda_mode=player_lambda_mode,
         residualized_lambda_grid=residualized_lambda_grid,
         profile_contract_metadata=profile_contract_metadata,
+        resume_base_run_dir=Path(resume_from).resolve() if resume_from is not None else None,
+        resume_base_through_season=resume_base_through_season,
         artifacts_dir=artifact_root,
     )
 
@@ -1193,6 +1526,8 @@ def _write_run(
     player_lambda_mode: str,
     residualized_lambda_grid: tuple[float, ...] | None,
     profile_contract_metadata: dict[str, object] | None,
+    resume_base_run_dir: Path | None,
+    resume_base_through_season: str | None,
     artifacts_dir: Path,
 ) -> ForwardPortableMatchupContextualRapmRun:
     now = datetime.now(UTC)
@@ -1280,17 +1615,54 @@ def _write_run(
             tables["season_context_reattributions.parquet"] = pd.concat(
                 reattribution_rows, ignore_index=True
             )
+        print(f"Writing {len(tables):,} parquet tables to {temporary}", flush=True)
         for filename, frame in tables.items():
+            print(f"  Writing {filename}", flush=True)
             frame.to_parquet(temporary / filename, index=False)
-        joblib.dump(contextual_models, temporary / "season_context_models.joblib")
-        if schedule_models:
-            joblib.dump(schedule_models, temporary / "season_schedule_models.joblib")
-        if aging_models:
-            joblib.dump(aging_models, temporary / "season_aging_models.joblib")
-        if box_score_residual_models:
+        model_suffix = "_delta.joblib" if resume_base_run_dir is not None else ".joblib"
+
+        def persisted_models(models: dict[str, object]) -> dict[str, object]:
+            if resume_base_through_season is None:
+                return models
+            return {
+                season: model
+                for season, model in models.items()
+                if str(season) > resume_base_through_season
+            }
+
+        context_to_write = persisted_models(contextual_models)
+        print(
+            f"Writing {len(context_to_write):,} contextual model states"
+            + (" as a resume delta" if resume_base_run_dir is not None else ""),
+            flush=True,
+        )
+        joblib.dump(
+            context_to_write,
+            temporary / f"season_context_models{model_suffix}",
+        )
+        schedule_to_write = persisted_models(schedule_models)
+        if schedule_to_write:
+            print(f"Writing {len(schedule_to_write):,} schedule model states", flush=True)
             joblib.dump(
-                box_score_residual_models,
-                temporary / "season_box_score_residual_models.joblib",
+                schedule_to_write,
+                temporary / f"season_schedule_models{model_suffix}",
+            )
+        aging_to_write = persisted_models(aging_models)
+        if aging_to_write:
+            print(f"Writing {len(aging_to_write):,} aging model states", flush=True)
+            joblib.dump(
+                aging_to_write,
+                temporary / f"season_aging_models{model_suffix}",
+            )
+        box_score_to_write = persisted_models(box_score_residual_models)
+        if box_score_to_write:
+            print(
+                f"Writing {len(box_score_to_write):,} box-score residual model states",
+                flush=True,
+            )
+            joblib.dump(
+                box_score_to_write,
+                temporary / f"season_box_score_residual_models{model_suffix}",
             )
         metadata = {
             "schema_version": 1,
@@ -1308,6 +1680,10 @@ def _write_run(
             "context_reattribution_weight": context_reattribution_weight,
             "compiled_additive_prior": compiled_additive_prior,
             "profile_padding_contract": profile_contract_metadata,
+            "resume_base_run_dir": (
+                str(resume_base_run_dir) if resume_base_run_dir is not None else None
+            ),
+            "resume_base_through_season": resume_base_through_season,
             "contextual_offset_contract": (
                 "The prior-season linear additive profile term is added to player priors; "
                 "only the remaining lineup-shape context is carried forward"
@@ -1330,6 +1706,7 @@ def _write_run(
             ),
             "source_state": evaluation["source_state"],
         }
+        print("Writing artifact metadata and manifest", flush=True)
         (temporary / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         records = [
             {"filename": path.name, "byte_count": path.stat().st_size, "sha256": _sha256_file(path)}
@@ -1339,6 +1716,7 @@ def _write_run(
         (temporary / "manifest.json").write_text(
             json.dumps({**metadata, "artifacts": records}, indent=2) + "\n"
         )
+        print(f"Publishing immutable run {run_id}", flush=True)
         temporary.replace(output)
         (root / "latest.json").write_text(json.dumps({"run_id": run_id}, indent=2) + "\n")
         return ForwardPortableMatchupContextualRapmRun(output, run_id)
@@ -1518,11 +1896,16 @@ def _serialize_nested_metadata(frame: pd.DataFrame) -> pd.DataFrame:
         return frame.copy()
     output = frame.copy()
     for column in output:
-        if output[column].map(lambda value: isinstance(value, (dict, list, tuple))).any():
+        if output[column].map(
+            lambda value: isinstance(value, (dict, list, tuple, np.ndarray))
+        ).any():
             output[column] = output[column].map(
                 lambda value: (
-                    json.dumps(value, sort_keys=True)
-                    if isinstance(value, (dict, list, tuple))
+                    json.dumps(
+                        value.tolist() if isinstance(value, np.ndarray) else value,
+                        sort_keys=True,
+                    )
+                    if isinstance(value, (dict, list, tuple, np.ndarray))
                     else value
                 )
             )

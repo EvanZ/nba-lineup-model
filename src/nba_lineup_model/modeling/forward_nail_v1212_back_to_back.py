@@ -33,9 +33,11 @@ from nba_lineup_model.modeling.gap_returner_prior import (
     build_centered_value_conditioned_aging_gap_returner_priors,
 )
 from nba_lineup_model.modeling.matchup_contextual import (
+    MatchupContextualModel,
     fit_linear_ridge_matchup_contextual_model,
     model_metadata,
 )
+from typing import Callable
 
 MODEL_NAME = "forward_nail_rapm_v1212_back_to_back"
 RUN_PREFIX = "forward-nail-rapm-v1212-back-to-back"
@@ -44,12 +46,16 @@ RUN_PREFIX = "forward-nail-rapm-v1212-back-to-back"
 def train_nail_v1212_back_to_back(
     *,
     through_season: str = DEFAULT_TARGET_SEASON,
+    evaluate_target: bool = True,
     context_alpha: float = DEFAULT_CONTEXT_ALPHA,
     schedule_alpha: float | None = None,
     player_lambda_mode: Literal["reference_schedule", "residualized_cv"] = "reference_schedule",
     residualized_lambda_grid: tuple[float, ...] | None = None,
+    context_fit: Callable[..., MatchupContextualModel] = fit_linear_ridge_matchup_contextual_model,
+    context_fit_kwargs: dict[str, object] | None = None,
     model_name: str = MODEL_NAME,
     run_prefix: str = RUN_PREFIX,
+    resume_from: Path | str | None = None,
     player_season_panel_path: Path | str = DEFAULT_PANEL_PATH,
     analytical_dir: Path | str = DEFAULT_ANALYTICAL_DIR,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
@@ -59,6 +65,7 @@ def train_nail_v1212_back_to_back(
 
     return train_forward_portable_matchup_contextual_rapm(
         through_season=through_season,
+        evaluate_target=evaluate_target,
         context_alpha=context_alpha,
         context_curvature_alpha=0.0,
         context_temporal_alpha=0.0,
@@ -74,8 +81,9 @@ def train_nail_v1212_back_to_back(
             f"starts, with {GAP_RETURNER_METHOD}; standard USG% and a lagged "
             "home-minus-away back-to-back schedule adjustment"
         ),
-        context_fit=fit_linear_ridge_matchup_contextual_model,
+        context_fit=context_fit,
         context_metadata=model_metadata,
+        context_fit_kwargs=context_fit_kwargs,
         context_feature_set=CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
         profile_builder=partial(
             build_contextual_player_profiles,
@@ -109,6 +117,7 @@ def train_nail_v1212_back_to_back(
                 ],
             },
         },
+        resume_from=resume_from,
         player_season_panel_path=player_season_panel_path,
         analytical_dir=analytical_dir,
         curated_dir=curated_dir,

@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-27"
+last_updated: "2026-08-28"
 ---
 
 # NAIL Model Contract
@@ -75,7 +75,7 @@ those results establish and what they do not.
 | Non-additive bundle | `top_two_assists`, `usage_concentration` | Historically selected | Require residual screens, stability, and a frozen ablation for changes. |
 | Context family | Linear Ridge on antisymmetric unit differences | Historically selected | New nonlinear families must be separate candidates. |
 | Context alpha | Common `10,000` alpha after feature standardization | **Fixed, unvalidated** | Test a pre-registered common-alpha grid after lambda provenance is resolved. |
-| Context block penalties | Additive and non-additive terms share alpha | **Fixed, unvalidated** | Test one additive-vs-non-additive penalty split only after the baseline is locked. |
+| Context block penalties | Additive and non-additive terms share alpha `10,000` | Historically selected | A pre-frozen grid selected non-additive ratio `r=16`, but its corrected three-season frozen replay lost on regular full-game, team NetRtg, and Pythagorean-win RMSE; retain the shared penalty. See the [block-penalty study](nail-context-block-penalty.md). |
 | Residualization protocol | Prior context -> player RAPM -> B2B -> current context, one pass | **Fixed, unvalidated** | Compare with a controlled alternating/joint-fit formulation. |
 | Additive player credit | Post-fit attribution of lineup-level additive features | Structural attribution limit | Keep reconstruction checks; do not label it a causal player estimate. |
 | Portable h/q explanation | Possession-weighted completed-season reference field | Structural attribution limit | Persist/reference the source field with every interpretation. |

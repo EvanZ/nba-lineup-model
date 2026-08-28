@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Final
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
+from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import SplineTransformer, StandardScaler
 
@@ -44,6 +45,7 @@ class MatchupContextualModel:
     regularization_contract: str = field(default="weighted_sum_loss", kw_only=True)
     configured_regularization: float | None = field(default=None, kw_only=True)
     effective_ridge_alpha: float | None = field(default=None, kw_only=True)
+    block_penalties: dict[str, float | None] | None = field(default=None, kw_only=True)
     training_weight_sum: float | None = field(default=None, kw_only=True)
     additive_state_precision: float | None = field(default=None, kw_only=True)
     additive_state_source_season: str | None = field(default=None, kw_only=True)
@@ -290,6 +292,126 @@ def fit_linear_ridge_matchup_contextual_model(
         configured_regularization=float(alpha),
         effective_ridge_alpha=float(alpha),
         training_weight_sum=float(augmented_weight.sum()),
+    )
+
+
+def fit_block_penalized_linear_ridge_matchup_contextual_model(
+    home_features: pd.DataFrame,
+    away_features: pd.DataFrame,
+    target: np.ndarray,
+    sample_weight: np.ndarray,
+    *,
+    alpha: float,
+    additive_alpha: float,
+    nonadditive_alpha: float | None,
+    additive_features: tuple[str, ...],
+    nonadditive_features: tuple[str, ...],
+    curvature_alpha: float = 0.0,
+    temporal_alpha: float = 0.0,
+    previous_model: MatchupContextualModel | None = None,
+    feature_set: str = CONTEXT_FEATURE_SET_V1,
+) -> MatchupContextualModel:
+    """Fit linear Ridge with separate additive and non-additive penalties.
+
+    The design is standardized first, exactly as in the shared-alpha model.  We
+    then solve the diagonal-penalty problem by rescaling each standardized
+    column before fitting a unit-alpha Ridge and transforming the resulting
+    coefficients back into the original standardized coordinates.  This keeps
+    the stored inference pipeline unchanged while yielding the objective
+
+    ``weighted SSE + additive_alpha * ||beta_add||^2 +
+    nonadditive_alpha * ||beta_nonadd||^2``. Passing ``None`` for
+    ``nonadditive_alpha`` removes that block structurally.
+    """
+
+    if alpha <= 0 or additive_alpha <= 0 or (
+        nonadditive_alpha is not None and nonadditive_alpha <= 0
+    ):
+        raise ValueError("Block-penalized linear contextual alphas must be positive")
+    if curvature_alpha or temporal_alpha:
+        raise ValueError("Block-penalized linear Ridge does not use spline penalties")
+    home = _validated_side_features(home_features, feature_set)
+    away = _validated_side_features(away_features, feature_set)
+    target_values = np.asarray(target, dtype=float)
+    weights = np.asarray(sample_weight, dtype=float)
+    if len(home) != len(away) or len(home) != len(target_values) or len(home) != len(weights):
+        raise ValueError("Contextual training inputs must have equal lengths")
+    if (
+        not np.isfinite(target_values).all()
+        or not np.isfinite(weights).all()
+        or (weights <= 0).any()
+    ):
+        raise ValueError("Contextual targets and weights must be finite, with positive weights")
+
+    side_columns = side_context_feature_columns(feature_set)
+    declared = set(additive_features) | set(nonadditive_features)
+    if declared != set(side_columns) or set(additive_features) & set(nonadditive_features):
+        raise ValueError("Additive and non-additive features must partition the side contract")
+
+    relative = _relative_features(home, away, feature_set)
+    augmented_features = pd.concat([relative, -relative], ignore_index=True)
+    augmented_target = np.concatenate([target_values, -target_values])
+    augmented_weight = np.concatenate([weights, weights])
+    scale = StandardScaler()
+    design = scale.fit_transform(augmented_features)
+
+    columns = contextual_feature_columns(feature_set)
+    additive_indices = [
+        index
+        for index, column in enumerate(columns)
+        if column.removeprefix("home_minus_away_") in set(additive_features)
+    ]
+    if nonadditive_alpha is None:
+        selector = ColumnTransformer(
+            [("additive", "passthrough", additive_indices)],
+            remainder="drop",
+            verbose_feature_names_out=False,
+        )
+        selected_design = selector.fit_transform(design)
+        ridge = Ridge(alpha=additive_alpha, fit_intercept=False).fit(
+            selected_design,
+            augmented_target,
+            sample_weight=augmented_weight,
+        )
+        pipeline = Pipeline([("scale", scale), ("select", selector), ("ridge", ridge)])
+        regularization_contract = "weighted_sum_loss_additive_only_ridge"
+        effective_ridge_alpha = float(additive_alpha)
+    else:
+        penalties = np.asarray(
+            [
+                additive_alpha if index in additive_indices else nonadditive_alpha
+                for index in range(len(columns))
+            ],
+            dtype=float,
+        )
+        rescaling = 1.0 / np.sqrt(penalties)
+        ridge = Ridge(alpha=1.0, fit_intercept=False).fit(
+            design * rescaling,
+            augmented_target,
+            sample_weight=augmented_weight,
+        )
+        ridge.coef_ = np.asarray(ridge.coef_, dtype=float) * rescaling
+        pipeline = Pipeline([("scale", scale), ("ridge", ridge)])
+        regularization_contract = "weighted_sum_loss_block_ridge"
+        effective_ridge_alpha = 1.0
+    reference_features, reference_weights = _reference_distribution(
+        home, away, weights, feature_set
+    )
+    return MatchupContextualModel(
+        pipeline,
+        reference_features,
+        reference_weights,
+        feature_set=feature_set,
+        regularization_contract=regularization_contract,
+        configured_regularization=float(alpha),
+        effective_ridge_alpha=effective_ridge_alpha,
+        training_weight_sum=float(augmented_weight.sum()),
+        block_penalties={
+            "additive": float(additive_alpha),
+            "nonadditive": (
+                float(nonadditive_alpha) if nonadditive_alpha is not None else None
+            ),
+        },
     )
 
 
@@ -896,6 +1018,7 @@ def model_metadata(model: MatchupContextualModel) -> dict[str, object]:
             model, "configured_regularization", None
         ),
         "context_effective_ridge_alpha": getattr(model, "effective_ridge_alpha", None),
+        "context_block_penalties": getattr(model, "block_penalties", None),
         "context_training_weight_sum": getattr(model, "training_weight_sum", None),
         "context_additive_state_precision": getattr(model, "additive_state_precision", None),
         "context_additive_state_source_season": getattr(

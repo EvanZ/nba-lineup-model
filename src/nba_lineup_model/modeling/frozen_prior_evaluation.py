@@ -30,12 +30,11 @@ from nba_lineup_model.modeling.draft_prior import validate_draft_prior_study
 from nba_lineup_model.modeling.exposure_gated_cold_start import (
     validate_exposure_gated_cold_start_prior,
 )
-from nba_lineup_model.modeling.neural_data import (
-    neural_possessions_frame,
-    read_neural_possessions,
-)
 from nba_lineup_model.modeling.prior_rapm import PRIOR_MEAN_COLUMN
 from nba_lineup_model.modeling.schema import CODE_VERSION_PATTERN, ArtifactRecord
+from nba_lineup_model.modeling.single_lineup_possessions import (
+    single_lineup_possessions_frame,
+)
 from nba_lineup_model.modeling.stints import read_rapm_stints
 from nba_lineup_model.season.compact import (
     read_curated_partition_manifest,
@@ -224,7 +223,14 @@ def run_frozen_lagged_evaluation(
     if source_state_overrides:
         source_state.update(source_state_overrides)
 
-    regular_possessions = read_neural_possessions(target_season, analytical_dir=analytical_dir)
+    regular_possessions, target_regular_manifest = _read_regular_possessions(
+        target_season,
+        analytical_dir=analytical_dir,
+        curated_dir=curated_dir,
+    )
+    source_state["target_regular_possessions_manifest_sha256"] = _sha256_file(
+        target_regular_manifest
+    )
     playoff_possessions, _ = _read_playoff_possessions(target_season, curated_dir)
     regular_predictions = score_frozen_possessions(
         regular_possessions,
@@ -1005,7 +1011,7 @@ def _read_playoff_possessions(
     manifest = read_curated_partition_manifest(partition, curated_dir)
     validate_curated_partition(manifest, curated_dir)
     partition_dir = CuratedDatasetLayout(Path(curated_dir)).partition_dir(partition)
-    return neural_possessions_frame(pd.read_parquet(partition_dir)), partition_dir
+    return single_lineup_possessions_frame(pd.read_parquet(partition_dir)), partition_dir
 
 
 def _read_regular_possessions(
@@ -1014,13 +1020,6 @@ def _read_regular_possessions(
     analytical_dir: Path | str,
     curated_dir: Path | str,
 ) -> tuple[pd.DataFrame, Path]:
-    analytical_partition = Path(analytical_dir) / "neural_possessions" / season / "regular"
-    analytical_manifest = analytical_partition / "_manifest.json"
-    if analytical_manifest.is_file():
-        return (
-            read_neural_possessions(season, analytical_dir=analytical_dir),
-            analytical_manifest,
-        )
     partition = CuratedPartition(
         table="possession_segments", season=season, season_type="regular"
     )
@@ -1028,7 +1027,7 @@ def _read_regular_possessions(
     validate_curated_partition(manifest, curated_dir)
     partition_dir = CuratedDatasetLayout(Path(curated_dir)).partition_dir(partition)
     return (
-        neural_possessions_frame(pd.read_parquet(partition_dir)),
+        single_lineup_possessions_frame(pd.read_parquet(partition_dir)),
         partition_dir / "_manifest.json",
     )
 
@@ -1500,8 +1499,8 @@ def _write_run(
             source_possessions_manifest_sha256=str(
                 evaluation.source_state["source_possessions_manifest_sha256"]
             ),
-            regular_possessions_manifest_sha256=_sha256_file(
-                analytical_dir / "neural_possessions" / season / "regular" / "_manifest.json"
+            regular_possessions_manifest_sha256=str(
+                evaluation.source_state["target_regular_possessions_manifest_sha256"]
             ),
             regular_rapm_stints_manifest_sha256=_sha256_file(
                 analytical_dir / "rapm_stints" / season / "regular" / "_manifest.json"

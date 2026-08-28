@@ -48,8 +48,6 @@ def test_replay_uses_target_prior_and_immediately_prior_context(monkeypatch, tmp
         "_read_regular_possessions",
         lambda *args, **kwargs: (pd.DataFrame({"target_offense_margin": [0.0]}), tmp_path),
     )
-    monkeypatch.setattr(backtest, "read_neural_possessions", lambda *args, **kwargs: pd.DataFrame())
-
     def score_possessions(*args: object, **kwargs: object) -> pd.DataFrame:
         observed.update(kwargs)
         return pd.DataFrame({"cohort": ["regular_season"]})
@@ -107,10 +105,6 @@ def test_replay_uses_target_prior_and_immediately_prior_context(monkeypatch, tmp
         )[["player_id", "prior_rapm_mean"]]
     )
 
-    def fail_neural_read(*args: object, **kwargs: object) -> pd.DataFrame:
-        raise AssertionError("Possession mart should not be read")
-
-    monkeypatch.setattr(backtest, "read_neural_possessions", fail_neural_read)
     game_only = backtest._replay_regular_target_season(
         target,
         state=state,

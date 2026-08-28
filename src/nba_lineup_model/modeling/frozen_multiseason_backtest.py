@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-import joblib
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr, spearmanr
@@ -31,6 +30,9 @@ from nba_lineup_model.modeling.forward_contextual_rapm import (
     DEFAULT_PANEL_PATH,
     _previous_season,
 )
+from nba_lineup_model.modeling.forward_portable_matchup_contextual_rapm import (
+    _load_recursive_model_mapping,
+)
 from nba_lineup_model.modeling.frozen_game_outcomes import score_full_game_outcomes
 from nba_lineup_model.modeling.frozen_prior_evaluation import (
     PythagoreanWinModel,
@@ -45,7 +47,6 @@ from nba_lineup_model.modeling.frozen_prior_evaluation import (
     score_possession_cohort,
 )
 from nba_lineup_model.modeling.matchup_contextual import MatchupContextualModel
-from nba_lineup_model.modeling.neural_data import read_neural_possessions
 from nba_lineup_model.modeling.progress import format_progress_bar
 from nba_lineup_model.modeling.replacement_level import prepare_player_exposure_cohort
 from nba_lineup_model.modeling.schedule_controls import (
@@ -340,9 +341,11 @@ def _load_state(
         raise ValueError(f"{candidate.label} artifact does not reach {target_seasons[-1]}")
     priors = pd.read_parquet(run_dir / "season_player_priors.parquet")
     coefficients = pd.read_parquet(run_dir / "historical_player_coefficients.parquet")
-    models = joblib.load(run_dir / "season_context_models.joblib")
-    schedule_path = run_dir / "season_schedule_models.joblib"
-    schedule_models = joblib.load(schedule_path) if schedule_path.is_file() else {}
+    models = _load_recursive_model_mapping(run_dir, "season_context_models.joblib")
+    schedule_models = _load_recursive_model_mapping(
+        run_dir,
+        "season_schedule_models.joblib",
+    )
     required_priors = {"season", "player_id", "prior_rapm"}
     required_coefficients = {"season", "player_id", "rapm"}
     if required_priors - set(priors) or required_coefficients - set(coefficients):
@@ -443,8 +446,13 @@ def _replay_regular_target_season(
     cohort_metrics: list[pd.DataFrame] = []
     playoff_available = score_possessions and _playoff_partition_exists(target, curated_dir)
     if score_possessions:
+        regular_possessions, _ = _read_regular_possessions(
+            target,
+            analytical_dir=analytical_dir,
+            curated_dir=curated_dir,
+        )
         regular_predictions = _score_possessions(
-            read_neural_possessions(target, analytical_dir=analytical_dir),
+            regular_possessions,
             cohort="regular_season",
             profiles=profiles,
             context_predictor=context_predictor,

@@ -38,7 +38,6 @@ from nba_lineup_model.modeling.frozen_prior_evaluation import (
     score_frozen_possessions,
     score_possession_cohort,
 )
-from nba_lineup_model.modeling.neural_data import read_neural_possessions
 from nba_lineup_model.modeling.replacement_level import prepare_player_exposure_cohort
 from nba_lineup_model.modeling.stints import modeling_code_fingerprint, read_rapm_stints
 from nba_lineup_model.season.schema import validate_season
@@ -345,7 +344,11 @@ def _evaluate_target(
         curated_dir=curated_dir,
     )
     source_mean = float(source_possessions["target_offense_margin"].mean())
-    regular = read_neural_possessions(target, analytical_dir=analytical_dir)
+    regular, _ = _read_regular_possessions(
+        target,
+        analytical_dir=analytical_dir,
+        curated_dir=curated_dir,
+    )
     playoffs, _ = _read_playoff_possessions(target, curated_dir)
     predictor = context_predictor or _pipeline_context_predictor(model)
     regular_predictions = _score_possessions(
