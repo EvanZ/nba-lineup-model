@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updated": "2026-08-24",
+  "updated": "2026-08-27",
   "default_metric": "rolling_regular_game_margin_rmse",
   "metrics": [
     {
@@ -907,10 +907,10 @@
     },
     {
       "id": "nail-rapm-v1212-back-to-back",
-      "name": "NAIL-RAPM v1.2.1.2 Back-to-Back Control (Production)",
+      "name": "NAIL-RAPM v1.2.1.2 Back-to-Back Control (Prior Production)",
       "short_name": "NAIL-RAPM v1.2.1.2",
       "parent": "nail-rapm-v1211-standard-usage",
-      "change": "+ one known-before-tipoff schedule covariate: home back-to-back minus away back-to-back, fit as a forward weighted-Ridge control separate from player and lineup features. Best regular full-game RMSE and median regular-season rank; promoted for the website while retaining its weaker team and playoff metrics for comparison.",
+      "change": "+ one known-before-tipoff schedule covariate: home back-to-back minus away back-to-back, fit as a forward weighted-Ridge control separate from player and lineup features. Superseded by v1.2.1.3, which preserves this control while selecting player lambda directly on each source residualized target.",
       "docs": "./nail-rapm-v1212-back-to-back/",
       "metrics": {
         "frozen_regular_possession_rmse": 1.197946,
@@ -921,6 +921,42 @@
         "frozen_regular_pythagorean_wins_rmse": 7.0551,
         "frozen_playoff_possession_rmse": 1.192710,
         "frozen_playoff_game_margin_rmse": 16.6032
+      }
+    },
+    {
+      "id": "nail-rapm-v1213-residualized-lambda",
+      "name": "NAIL-RAPM v1.2.1.3 Residualized-Target Lambda CV (Production)",
+      "short_name": "NAIL-RAPM v1.2.1.3",
+      "parent": "nail-rapm-v1212-back-to-back",
+      "change": "~ keep the complete v1.2.1.2 contract fixed, but select each season's player Ridge penalty with three-fold CV on the context- and B2B-residualized target. No fitted lambda schedule or state is imported from another model artifact. Promoted after winning the agreed frozen comparison and ranking/coefficient review.",
+      "docs": "./nail-rapm-v1213-residualized-lambda/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197946,
+        "frozen_regular_game_margin_rmse": 13.9939,
+        "frozen_regular_full_game_margin_rmse": 14.2166,
+        "frozen_regular_game_winner_accuracy": 0.682996,
+        "frozen_regular_team_net_rating_rmse": 3.2351,
+        "frozen_regular_pythagorean_wins_rmse": 6.9423,
+        "frozen_playoff_possession_rmse": 1.192717,
+        "frozen_playoff_game_margin_rmse": 16.5784
+      }
+    },
+    {
+      "id": "split-nail-rapm-b2b",
+      "name": "Split NAIL-RAPM Constrained O/D Decomposition (Not Promoted)",
+      "short_name": "Split NAIL-RAPM",
+      "parent": "nail-rapm-v1212-back-to-back",
+      "change": "~ refit player, additive-profile, non-additive lineup, home-court, and back-to-back terms in paired total/specialization coordinates. The constrained O/D split improves eligible game-margin RMSE, but is weaker on possession error, full-game margins, and winner accuracy, so it is not promoted.",
+      "docs": "./split-nail-rapm/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.198026,
+        "frozen_regular_game_margin_rmse": 13.9679,
+        "frozen_regular_full_game_margin_rmse": 14.2668,
+        "frozen_regular_game_winner_accuracy": 0.665622,
+        "frozen_regular_team_net_rating_rmse": 3.3020,
+        "frozen_regular_pythagorean_wins_rmse": 6.9130,
+        "frozen_playoff_possession_rmse": 1.194415,
+        "frozen_playoff_game_margin_rmse": 16.5301
       }
     },
     {

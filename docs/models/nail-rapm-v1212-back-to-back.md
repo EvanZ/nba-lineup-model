@@ -6,6 +6,10 @@ This controlled candidate starts from the standard-USG% NAIL v1.2.1.1 profile
 contract and adds a single schedule adjustment. It does not alter the player
 prior, additive profile, or the two retained non-additive lineup features.
 
+The [Production NAIL Model Contract](nail-model-contract.md) is the complete
+assumption register for this release. It distinguishes components with direct
+historical evidence from inherited or still-unvalidated numerical choices.
+
 For each game \(g\), the schedule feature is
 
 \[

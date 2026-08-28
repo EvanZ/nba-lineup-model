@@ -8,6 +8,7 @@ from pathlib import Path
 from statistics import median
 
 PAGE = Path("docs/models/three-season-frozen-backtest.md")
+WITHDRAWN_MODEL_PAGES = frozenset({"split-nail-v01.md"})
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,30 @@ PLAYOFFS = TableSpec(
 CANDIDATES = (
     {
         "model": (
+            "[NAIL-RAPM v1.2.1.3 residualized-target lambda CV]"
+            "(nail-rapm-v1213-residualized-lambda.md) **(Production)**"
+        ),
+        "regular": {
+            "possession_rmse": 1.197946,
+            "possession_mae": 1.141306,
+            "possession_skill": 0.001278,
+            "eligible_game_margin_rmse": 13.993924,
+            "eligible_game_skill": 0.185574,
+            "full_game_margin_rmse": 14.216588,
+            "game_winner_accuracy": 0.682996,
+            "team_net_rating_rmse": 3.235071,
+            "pythagorean_win_rmse": 6.942255,
+        },
+        "playoffs": {
+            "possession_rmse": 1.192717,
+            "possession_mae": 1.137624,
+            "possession_skill": 0.000633,
+            "eligible_game_margin_rmse": 16.578379,
+            "eligible_game_skill": 0.079150,
+        },
+    },
+    {
+        "model": (
             "[NAIL-RAPM v1.2.1.1 standard USG% (not promoted)]"
             "(nail-rapm-v1211-standard-usage.md)"
         ),
@@ -96,7 +121,7 @@ CANDIDATES = (
     {
         "model": (
             "[NAIL-RAPM v1.2.1.2 back-to-back schedule control]"
-            "(nail-rapm-v1212-back-to-back.md) **(Production)**"
+            "(nail-rapm-v1212-back-to-back.md) **(Prior production)**"
         ),
         "regular": {
             "possession_rmse": 1.197946,
@@ -282,10 +307,36 @@ CANDIDATES = (
             "eligible_game_skill": 0.085725,
         },
     },
+    {
+        "model": (
+            "[Split NAIL-RAPM constrained O/D decomposition (not promoted)]"
+            "(split-nail-rapm.md)"
+        ),
+        "regular": {
+            "possession_rmse": 1.1980262005,
+            "possession_mae": 1.1425676215,
+            "possession_skill": 0.0011443522,
+            "eligible_game_margin_rmse": 13.9679178313,
+            "eligible_game_skill": 0.1885979166,
+            "full_game_margin_rmse": 14.2668185627,
+            "game_winner_accuracy": 0.6656223298,
+            "team_net_rating_rmse": 3.3020010393,
+            "pythagorean_win_rmse": 6.9130142139,
+        },
+        "playoffs": {
+            "possession_rmse": 1.1944149102,
+            "possession_mae": 1.1407910038,
+            "possession_skill": -0.0022138484,
+            "eligible_game_margin_rmse": 16.5300957958,
+            "eligible_game_skill": 0.0845059599,
+        },
+    },
 )
 
 
-def _number(cell: str) -> float:
+def _number(cell: str) -> float | None:
+    if cell.strip() == "--":
+        return None
     value = re.sub(r"\*\*|\s*\(\d+\)", "", cell).replace("%", "").strip()
     return float(value)
 
@@ -320,14 +371,19 @@ def _read_rows(lines: list[str], start: int, end: int, spec: TableSpec) -> list[
         row: dict[str, object] = {"model": cells[0]}
         for offset, metric in enumerate(spec.metrics, start=2):
             raw = _number(cells[offset])
-            row[metric] = raw / 100 if spec.formats[offset - 2].startswith("percent") else raw
+            row[metric] = (
+                None
+                if raw is None
+                else raw / 100 if spec.formats[offset - 2].startswith("percent") else raw
+            )
         rows.append(row)
     return rows
 
 
 def _rank(rows: list[dict[str, object]], metric: str, direction: str) -> dict[str, int]:
-    values = sorted({float(row[metric]) for row in rows}, reverse=direction == "higher")
-    return {str(row["model"]): values.index(float(row[metric])) + 1 for row in rows}
+    eligible = [row for row in rows if row.get(metric) is not None]
+    values = sorted({float(row[metric]) for row in eligible}, reverse=direction == "higher")
+    return {str(row["model"]): values.index(float(row[metric])) + 1 for row in eligible}
 
 
 def _render(
@@ -342,6 +398,7 @@ def _render(
         for row in rows
         if str(row["model"]) not in candidate_models
         and _model_page(str(row["model"])) not in candidate_pages
+        and _model_page(str(row["model"])) not in WITHDRAWN_MODEL_PAGES
     ]
     rows.extend(candidate_metrics)
     ranks = {
@@ -349,8 +406,12 @@ def _render(
         for metric, direction in zip(spec.metrics, spec.directions, strict=True)
     }
     for row in rows:
-        row_ranks = [ranks[metric][str(row["model"])] for metric in spec.metrics]
-        row["median_rank"] = int(median(row_ranks))
+        row_ranks = [
+            ranks[metric][str(row["model"])]
+            for metric in spec.metrics
+            if str(row["model"]) in ranks[metric]
+        ]
+        row["median_rank"] = int(median(row_ranks)) if len(row_ranks) == len(spec.metrics) else None
         row["mean_rank"] = sum(row_ranks) / len(row_ranks)
     full_metric = (
         "full_game_margin_rmse"
@@ -359,20 +420,24 @@ def _render(
     )
     rows.sort(
         key=lambda row: (
-            row["median_rank"],
+            row["median_rank"] is None,
+            row["median_rank"] if row["median_rank"] is not None else float("inf"),
             row["mean_rank"],
-            row[full_metric],
+            row.get(full_metric, float("inf")),
             str(row["model"]),
         )
     )
 
     rendered = [lines[start], lines[start + 1]]
     for row in rows:
-        median_rank = str(row["median_rank"])
+        median_rank = "--" if row["median_rank"] is None else str(row["median_rank"])
         if row["median_rank"] == 1:
             median_rank = f"**{median_rank}**"
         cells = [str(row["model"]), median_rank]
         for metric, kind in zip(spec.metrics, spec.formats, strict=True):
+            if row.get(metric) is None:
+                cells.append("--")
+                continue
             value = _format(float(row[metric]), kind)
             if ranks[metric][str(row["model"])] == 1:
                 value = f"**{value} ({ranks[metric][str(row['model'])]})**"
@@ -400,9 +465,13 @@ def main() -> None:
     _render(
         lines,
         PLAYOFFS,
-        tuple({"model": candidate["model"], **candidate["playoffs"]} for candidate in CANDIDATES),
+        tuple(
+            {"model": candidate["model"], **candidate["playoffs"]}
+            for candidate in CANDIDATES
+            if "playoffs" in candidate
+        ),
     )
-    lines[1] = 'last_updated: "2026-08-24"'
+    lines[1] = 'last_updated: "2026-08-27"'
     PAGE.write_text("\n".join(lines) + "\n")
 
 

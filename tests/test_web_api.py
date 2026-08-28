@@ -23,6 +23,7 @@ from nba_lineup_model.modeling.matchup_contextual import (
 from nba_lineup_model.web_api.app import create_app
 from nba_lineup_model.web_api.inference import (
     LineupEvaluator,
+    MeanRevertedScheduleControls,
     SeasonLineupState,
     _historical_ranking_catalog,
     _player_latest_teams_by_season,
@@ -138,6 +139,11 @@ def _evaluator(*, bounded: bool = False, compiled_linear: bool = False) -> Lineu
         players=players,
         context_model=model,
         response_cache={} if compiled_linear else _warm_response_cache(model),
+        schedule_controls=MeanRevertedScheduleControls(
+            home_court=0.0,
+            back_to_back=0.0,
+            source_season_count=1,
+        ),
     )
 
 

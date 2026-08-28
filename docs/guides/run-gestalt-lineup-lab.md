@@ -34,10 +34,22 @@ uv run nba-gestalt-api --port 8001
 ```
 
 The API listens at `http://127.0.0.1:8001`. It loads the latest published
-`forward_centered_value_conditioned_aging_bounded_hierarchical_portable_matchup_contextual_rapm/2025-26`
-artifact on its first request. It retains that completed portable-model state
+`forward_nail_rapm_v1212_residualized_lambda/2025-26`
+artifact on its first request. It retains that completed NAIL-RAPM v1.2.1.3 state
 in memory for the lifetime of the process. It does not read raw possession
 data or retrain a model for each browser session.
+
+## Restart Both Services
+
+To stop listeners on the local API and frontend ports, then start both services
+in the background with readiness checks:
+
+```bash
+./scripts/restart_gestalt_local.sh
+```
+
+The script writes logs to `artifacts/logs/gestalt-api-local.log` and
+`artifacts/logs/gestalt-web-local.log`.
 
 ## Materialize observed lineup rankings
 

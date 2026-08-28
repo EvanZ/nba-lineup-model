@@ -22,7 +22,7 @@ From the repository root:
 ./scripts/publish_gestalt_release.sh
 ```
 
-The default release is the promoted NAIL-RAPM v1.2.1.2 artifact. Every numerical
+The default release is the promoted NAIL-RAPM v1.2.1.3 artifact. Every numerical
 cache is namespaced by the immutable model run ID. Materialize all of them before a
 release so rankings, biographies, historical Lab queries, observed lineups, profile
 decompositions, and preseason forecasts all use the same fitted model:

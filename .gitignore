@@ -24,6 +24,8 @@ data/external/*
 
 artifacts/models/*
 !artifacts/models/.gitkeep
+artifacts/audits/*
+!artifacts/audits/.gitkeep
 artifacts/rotation/*
 !artifacts/rotation/.gitkeep
 artifacts/reports/*

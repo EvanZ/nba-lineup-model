@@ -49,9 +49,9 @@ DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path(
     "artifacts/models/forward_draft_history_cold_start"
 )
 # Keep the artifact identifier distinct from the public release name.
-MODEL_ARTIFACT = "forward_nail_rapm_v1212_back_to_back"
-MODEL_NAME = "forward_nail_rapm_v1212_back_to_back"
-MODEL_DISPLAY_NAME = "NAIL-RAPM v1.2.1.2"
+MODEL_ARTIFACT = "forward_nail_rapm_v1212_residualized_lambda"
+MODEL_NAME = "forward_nail_rapm_v1212_residualized_lambda"
+MODEL_DISPLAY_NAME = "NAIL-RAPM v1.2.1.3"
 DISPLAY_SEASON = "2025-26"
 PRESEASON_PREVIEW_SEASON = "2026-27"
 RESPONSE_CURVE_POINTS = 33

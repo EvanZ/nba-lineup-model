@@ -31,8 +31,8 @@ type AgingContributionKey = "prior" | "seasonUpdate" | "additiveProfile";
 
 const SIDE_LABELS: Record<Side, string> = { unit: "Your unit", opponent: "Opponent" };
 const MATERIAL_COMPONENT_CONTRIBUTION = 0.05;
-const MODEL_LABEL = "NAIL-RAPM v1.2.1.2";
-const V121_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/models/nail-rapm-v1212-back-to-back/";
+const MODEL_LABEL = "NAIL-RAPM v1.2.1.3";
+const V1213_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/models/nail-rapm-v1213-residualized-lambda/";
 const FEATURE_DESCRIPTIONS: Record<string, string> = {
   home_minus_away_three_pa_per_100: "Sum of the five players' prior-season three-point attempts per 100 possessions.",
   home_minus_away_three_pm_per_100: "Sum of the five players' prior-season made three-pointers per 100 possessions.",
@@ -1295,8 +1295,8 @@ function AboutPage() {
               <strong>Eight player-attributable coefficients</strong>
             </figcaption>
             <img
-              src="/model/nail-v1212-additive-profile-weight-trajectories.svg"
-              alt="Blue coefficient trajectories for the eight additive NAIL-RAPM v1.2.1.2 player-profile features."
+              src="/model/nail-v1213-additive-profile-weight-trajectories.svg"
+              alt="Blue coefficient trajectories for the eight additive NAIL-RAPM v1.2.1.3 player-profile features."
             />
           </figure>
           <figure className="coefficient-chart-panel">
@@ -1305,14 +1305,14 @@ function AboutPage() {
               <strong>Two retained unit-level coefficients</strong>
             </figcaption>
             <img
-              src="/model/nail-v1212-retained-nonadditive-weight-trajectories.svg"
-              alt="Orange coefficient trajectories for the retained NAIL-RAPM v1.2.1.2 non-additive lineup features."
+              src="/model/nail-v1213-nonadditive-weight-trajectories.svg"
+              alt="Orange coefficient trajectories for the retained NAIL-RAPM v1.2.1.3 non-additive lineup features."
             />
           </figure>
         </div>
         <p className="coefficient-audit-link">
-          <a href={V121_DOCUMENTATION_URL} target="_blank" rel="noreferrer">
-            Read the full v1.2.1.2 feature contract, frozen results, and bootstrap audit <ArrowUpRight size={14} />
+          <a href={V1213_DOCUMENTATION_URL} target="_blank" rel="noreferrer">
+            Read the full v1.2.1.3 feature contract, frozen results, and bootstrap audit <ArrowUpRight size={14} />
           </a>
         </p>
       </section>

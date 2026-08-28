@@ -6,6 +6,7 @@ import argparse
 import sys
 from functools import partial
 from pathlib import Path
+from typing import Literal
 
 from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
@@ -45,6 +46,10 @@ def train_nail_v1212_back_to_back(
     through_season: str = DEFAULT_TARGET_SEASON,
     context_alpha: float = DEFAULT_CONTEXT_ALPHA,
     schedule_alpha: float | None = None,
+    player_lambda_mode: Literal["reference_schedule", "residualized_cv"] = "reference_schedule",
+    residualized_lambda_grid: tuple[float, ...] | None = None,
+    model_name: str = MODEL_NAME,
+    run_prefix: str = RUN_PREFIX,
     player_season_panel_path: Path | str = DEFAULT_PANEL_PATH,
     analytical_dir: Path | str = DEFAULT_ANALYTICAL_DIR,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
@@ -59,8 +64,10 @@ def train_nail_v1212_back_to_back(
         context_temporal_alpha=0.0,
         include_back_to_back_control=True,
         schedule_alpha=schedule_alpha,
-        model_name=MODEL_NAME,
-        run_prefix=RUN_PREFIX,
+        model_name=model_name,
+        run_prefix=run_prefix,
+        player_lambda_mode=player_lambda_mode,
+        residualized_lambda_grid=residualized_lambda_grid,
         player_prior_builder=build_centered_value_conditioned_aging_gap_returner_priors,
         player_prior_description=(
             "NAIL-RAPM v1.2.1.2 value-conditioned aging and exposure-gated cold "

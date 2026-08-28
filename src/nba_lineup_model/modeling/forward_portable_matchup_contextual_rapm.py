@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import joblib
@@ -131,6 +132,8 @@ def train_forward_portable_matchup_contextual_rapm(
     use_context: bool = True,
     include_back_to_back_control: bool = False,
     schedule_alpha: float | None = None,
+    player_lambda_mode: Literal["reference_schedule", "residualized_cv"] = "reference_schedule",
+    residualized_lambda_grid: tuple[float, ...] | None = None,
     game_catalog_path: Path | str = Path("data/catalog/games.parquet"),
     evaluate_target: bool = True,
     model_name: str = MODEL_NAME,
@@ -173,6 +176,10 @@ def train_forward_portable_matchup_contextual_rapm(
         raise ValueError("Context reattribution requires context_enabled")
     if schedule_alpha is not None and schedule_alpha <= 0:
         raise ValueError("Schedule-control alpha must be positive")
+    if player_lambda_mode not in {"reference_schedule", "residualized_cv"}:
+        raise ValueError(f"Unknown player lambda selection mode: {player_lambda_mode}")
+    if player_lambda_mode == "residualized_cv" and not residualized_lambda_grid:
+        raise ValueError("Residualized player lambda selection requires an explicit lambda grid")
     if compiled_additive_prior:
         if not use_context:
             raise ValueError("Compiled additive prior transfer requires context_enabled")
@@ -192,16 +199,18 @@ def train_forward_portable_matchup_contextual_rapm(
         else None
     )
     artifact_root = Path(artifacts_dir)
-    reference_root = _latest_reference_run(
-        artifact_root / "forward_exposure_gated_rapm",
-        target,
-    )
-    reference_coefficients = pd.read_parquet(
-        reference_root / "historical_player_coefficients.parquet"
-    )
-    lambda_schedule = reference_coefficients.groupby("season", as_index=True)[
-        "selected_lambda"
-    ].agg(lambda values: float(values.iloc[0]))
+    lambda_schedule: pd.Series | None = None
+    if player_lambda_mode == "reference_schedule":
+        reference_root = _latest_reference_run(
+            artifact_root / "forward_exposure_gated_rapm",
+            target,
+        )
+        reference_coefficients = pd.read_parquet(
+            reference_root / "historical_player_coefficients.parquet"
+        )
+        lambda_schedule = reference_coefficients.groupby("season", as_index=True)[
+            "selected_lambda"
+        ].agg(lambda values: float(values.iloc[0]))
     seasons = tuple(season for season in HISTORICAL_SEASONS if season <= target)
     if target not in seasons:
         seasons = (*seasons, target)
@@ -391,9 +400,15 @@ def train_forward_portable_matchup_contextual_rapm(
             _previous_season(season) if previous_model is not None else pd.NA
         )
         priors_by_season.append(prior_rows)
-        season_lambda = float(lambda_schedule.loc[season])
-        if not np.isfinite(season_lambda) or season_lambda < 0:
-            raise ValueError(f"Published RAPM lambda is invalid for {season}")
+        if player_lambda_mode == "reference_schedule":
+            if lambda_schedule is None:
+                raise RuntimeError("Reference lambda schedule was not loaded")
+            season_lambda = float(lambda_schedule.loc[season])
+            if not np.isfinite(season_lambda) or season_lambda < 0:
+                raise ValueError(f"Published RAPM lambda is invalid for {season}")
+            season_lambda_grid = (season_lambda,)
+        else:
+            season_lambda_grid = residualized_lambda_grid
         relative_precision: np.ndarray | None = None
         prior_variance: np.ndarray | None = None
         if player_state_precision_config is not None:
@@ -413,7 +428,7 @@ def train_forward_portable_matchup_contextual_rapm(
             season,
             adjusted_stints,
             priors,
-            lambda_grid=(season_lambda,),
+            lambda_grid=season_lambda_grid,
             use_prior_precision=use_player_state_precision,
             relative_precision=relative_precision,
         )
@@ -667,6 +682,8 @@ def train_forward_portable_matchup_contextual_rapm(
         schedule_models=schedule_models,
         schedule_enabled=include_back_to_back_control,
         schedule_alpha=resolved_schedule_alpha if include_back_to_back_control else None,
+        player_lambda_mode=player_lambda_mode,
+        residualized_lambda_grid=residualized_lambda_grid,
         profile_contract_metadata=profile_contract_metadata,
         artifacts_dir=artifact_root,
     )
@@ -1173,6 +1190,8 @@ def _write_run(
     schedule_models: dict[str, BackToBackScheduleModel],
     schedule_enabled: bool,
     schedule_alpha: float | None,
+    player_lambda_mode: str,
+    residualized_lambda_grid: tuple[float, ...] | None,
     profile_contract_metadata: dict[str, object] | None,
     artifacts_dir: Path,
 ) -> ForwardPortableMatchupContextualRapmRun:
@@ -1202,11 +1221,17 @@ def _write_run(
             context_curvature_alpha=context_curvature_alpha,
             context_temporal_alpha=context_temporal_alpha,
             training_metadata=training_metadata,
+            player_lambda_mode=player_lambda_mode,
+        )
+        season_player_cv_results = pd.concat(
+            [result.cv_results.assign(season=result.season) for result in results],
+            ignore_index=True,
         )
         tables: dict[str, pd.DataFrame] = {
             "historical_player_coefficients.parquet": historical_coefficients,
             "player_season_ratings.parquet": player_season_ratings,
             "season_model_metadata.parquet": season_model_metadata,
+            "season_player_cv_results.parquet": season_player_cv_results,
             "season_player_priors.parquet": priors,
             "season_context_metadata.parquet": contextual_metadata,
             "season_schedule_control_metadata.parquet": schedule_metadata,
@@ -1275,6 +1300,8 @@ def _write_run(
             "context_alpha": context_alpha,
             "context_curvature_alpha": context_curvature_alpha,
             "context_temporal_alpha": context_temporal_alpha,
+            "player_lambda_selection_mode": player_lambda_mode,
+            "residualized_lambda_grid": list(residualized_lambda_grid or ()),
             "context_enabled": context_enabled,
             "back_to_back_schedule_control_enabled": schedule_enabled,
             "back_to_back_schedule_control_alpha": schedule_alpha,
@@ -1387,6 +1414,7 @@ def _season_model_metadata(
     context_curvature_alpha: float,
     context_temporal_alpha: float,
     training_metadata: pd.DataFrame,
+    player_lambda_mode: str,
 ) -> pd.DataFrame:
     """Write one inspectable row for every recursive seasonal fit."""
 
@@ -1418,6 +1446,7 @@ def _season_model_metadata(
     output["configured_context_alpha"] = context_alpha
     output["configured_context_curvature_alpha"] = context_curvature_alpha
     output["configured_context_temporal_alpha"] = context_temporal_alpha
+    output["player_lambda_selection_mode"] = player_lambda_mode
     return output.sort_values("season", kind="stable").reset_index(drop=True)
 
 

@@ -10,10 +10,10 @@ from nba_lineup_model.web_api.inference import (
 )
 
 
-def test_b2b_release_uses_the_standard_usage_artifact_contract() -> None:
+def test_promoted_release_uses_the_standard_usage_artifact_contract() -> None:
     mapping = _linear_x3_additive_feature_map(CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE)
 
-    assert MODEL_ARTIFACT == "forward_nail_rapm_v1212_back_to_back"
+    assert MODEL_ARTIFACT == "forward_nail_rapm_v1212_residualized_lambda"
     assert MODEL_NAME == MODEL_ARTIFACT
     assert mapping["usage_pct"] == "usage_pct"
     assert "usage_per_100" not in mapping
