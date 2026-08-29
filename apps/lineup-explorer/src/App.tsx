@@ -33,6 +33,7 @@ const SIDE_LABELS: Record<Side, string> = { unit: "Your unit", opponent: "Oppone
 const MATERIAL_COMPONENT_CONTRIBUTION = 0.05;
 const MODEL_LABEL = "NAIL-RAPM v1.2.1.3";
 const V1213_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/models/nail-rapm-v1213-residualized-lambda/";
+const CONSTRAINED_SPLIT_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/models/constrained-split-nail/";
 const FEATURE_DESCRIPTIONS: Record<string, string> = {
   home_minus_away_three_pa_per_100: "Sum of the five players' prior-season three-point attempts per 100 possessions.",
   home_minus_away_three_pm_per_100: "Sum of the five players' prior-season made three-pointers per 100 possessions.",
@@ -62,6 +63,15 @@ const wholeNumber = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 })
 
 function formatRating(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
+}
+
+function formatOptionalRating(value: number | null | undefined) {
+  return value === null || value === undefined ? "-" : formatRating(value);
+}
+
+function optionalRatingClass(value: number | null | undefined) {
+  if (value === null || value === undefined) return "numeric rating-cell";
+  return value < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell";
 }
 
 function formatChartRating(value: number) {
@@ -209,6 +219,11 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
         <div className="profile-hero-rating">
           <span>{ratingSeasonLabel}</span>
           <Rating value={player.rapm} />
+          {player.offense_rating !== null && player.offense_rating !== undefined && player.defense_rating !== null && player.defense_rating !== undefined && (
+            <span className="profile-od-ratings" aria-label="Descriptive offense and defense allocation">
+              O <Rating value={player.offense_rating} /> · D <Rating value={player.defense_rating} />
+            </span>
+          )}
         </div>
       </section>
 
@@ -272,14 +287,14 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
           <h2 id="rating-history-title">{MODEL_LABEL} history.</h2>
         </div>
         <PlayerAgingChart player={player} />
-        <p className="player-rating-path-note">Non-Additive Lineup Edge is the possession-weighted residual non-additive edge of a player’s regular-season units. It is shared unit exposure, not individual causal credit.</p>
+        <p className="player-rating-path-note">Offense and defense are a constrained descriptive allocation: they sum exactly to {MODEL_LABEL} but do not replace the scalar prediction rating. Non-Additive Lineup Edge is the possession-weighted residual non-additive edge of a player’s regular-season units, not individual causal credit.</p>
         <div className="player-history-table-wrap">
           <table className="player-history-table">
-            <thead><tr><th>Season</th><th>Team split</th><th>Age</th><th>GP</th><th>GS</th><th>Possessions</th><th className="nail-history-column">{MODEL_LABEL}</th><th>NAIL rank</th><th>Prior</th><th>Season update</th><th>Additive profile</th><th>Non-Additive Lineup Edge</th></tr></thead>
+            <thead><tr><th>Season</th><th>Team split</th><th>Age</th><th>GP</th><th>GS</th><th>Possessions</th><th className="nail-history-column">{MODEL_LABEL}</th><th>Offense</th><th>Defense</th><th>NAIL rank</th><th>Prior</th><th>Season update</th><th>Additive profile</th><th>Non-Additive Lineup Edge</th></tr></thead>
             <tbody>{[...historyRows].reverse().map((row) => row.kind === "dnp" ? (
               <tr className="player-history-dnp" key={row.season}>
                 <td>{row.season}</td><td><span className="dnp-label">DNP</span></td><td>{row.age === null ? "-" : number.format(row.age)}</td>
-                <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
+                <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
               </tr>
             ) : (
               <tr key={row.point.season}>
@@ -287,6 +302,8 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
                 <td className="quantity-cell">{wholeNumber.format(row.point.games)}</td><td className="quantity-cell">{wholeNumber.format(row.point.games_started)}</td>
                 <td className="quantity-cell">{wholeNumber.format(row.point.possessions)}</td>
                 <td className="nail-history-cell"><Rating value={row.point.rating} /></td>
+                <td>{row.point.offense_rating === null || row.point.offense_rating === undefined ? "-" : <Rating value={row.point.offense_rating} />}</td>
+                <td>{row.point.defense_rating === null || row.point.defense_rating === undefined ? "-" : <Rating value={row.point.defense_rating} />}</td>
                 <td className="nail-rank-cell">#{wholeNumber.format(row.point.nail_rank)}</td>
                 <td>{row.point.prior_rating === null ? "-" : <Rating value={row.point.prior_rating} />}</td>
                 <td>{row.point.season_update === null ? "-" : <Rating value={row.point.season_update} />}</td>
@@ -1338,6 +1355,94 @@ function AboutPage() {
         </div>
       </section>
 
+      <section className="about-section split-attribution" aria-labelledby="split-attribution-title">
+        <div className="about-section-heading">
+          <p className="section-kicker">Offense and defense attribution</p>
+          <h2 id="split-attribution-title">Constrained Split NAIL allocates a fixed total.</h2>
+          <p>
+            The scalar {MODEL_LABEL} rating remains the published prediction rating. Constrained Split NAIL
+            estimates an offense-versus-defense specialization around that fixed total, so the split is useful
+            for description without creating a second, competing net-margin model.
+          </p>
+        </div>
+
+        <div className="split-attribution-grid">
+          <section className="split-attribution-panel">
+            <p className="section-kicker">01 · Locked total</p>
+            <h3>Estimate the difference, not a new rating.</h3>
+            <div className="model-formula">
+              <BlockMath math={String.raw`s_i = O_i - D_i, \qquad O_i = \frac{R_i^{\mathrm{NAIL}} + s_i}{2}, \qquad D_i = \frac{R_i^{\mathrm{NAIL}} - s_i}{2}`} />
+            </div>
+            <p>
+              Each player&apos;s scalar NAIL rating <i>R</i> is fixed. The split learns only <i>s</i>, the
+              offensive-minus-defensive specialization. This enforces <i>O + D = R</i> to machine precision
+              for every player and leaves the scalar forecast unchanged.
+            </p>
+          </section>
+
+          <section className="split-attribution-panel">
+            <p className="section-kicker">02 · Two scoring targets</p>
+            <h3>Use scoring and prevention separately.</h3>
+            <div className="model-formula">
+              <BlockMath math={String.raw`y_H = 100\frac{\mathrm{points}_H}{\mathrm{possessions}}, \qquad y_A = 100\frac{\mathrm{points}_A}{\mathrm{possessions}}`} />
+            </div>
+            <p>
+              Every possession-weighted stint becomes a home scoring observation and an away scoring
+              observation. The constrained fit learns specialization from both sides while retaining the
+              production total for players, additive profile terms, non-additive lineup terms, home court,
+              and back-to-back effects.
+            </p>
+          </section>
+
+          <section className="split-attribution-panel">
+            <p className="section-kicker">03 · Forward selection</p>
+            <h3>Regularize specialization before publishing it.</h3>
+            <p>
+              A 10 by 10 forward grid jointly selects player and context specialization precision using
+              possession-weighted held-out scoring-side RMSE across 2019-20 through 2022-23. The selected
+              interior point is <b>r<sub>player</sub> = 0.5</b> and <b>r<sub>context</sub> = 32</b>: player
+              differences can move, while the O/D allocation of contextual terms remains tightly controlled.
+            </p>
+          </section>
+        </div>
+
+        <figure className="split-precision-figure">
+          <figcaption>
+            <span className="section-kicker">Joint precision selection</span>
+            <strong>The O/D split was selected on a held-out scoring task.</strong>
+            <p>
+              Each cell is a tested pair of Ridge precision values. The contours summarize those discrete
+              results on log-scaled axes; the red marker is the selected interior specification. This choice
+              determines attribution only, because the scalar NAIL total is locked.
+            </p>
+          </figcaption>
+          <img
+            src="/model/constrained-split-nail-precision-selection-surface.svg"
+            alt="Contour plot of held-out scoring-side RMSE for 100 jointly tested player and context specialization precision pairs. The selected interior pair has player precision 0.5 and context precision 32."
+          />
+        </figure>
+
+        <div className="split-attribution-surface">
+          <p>
+            <b>Player pages and Rankings:</b> Offense plus Defense equals the scalar NAIL rating.
+          </p>
+          <p>
+            <b>Observed Lineups:</b> Off plus Def equals the full Edge, including retained non-additive context
+            against the opponents actually faced.
+          </p>
+          <p>
+            <b>Matchup Lab:</b> offense-versus-defense and defense-versus-offense reconstruct the player edge;
+            non-additive lineup context remains separately visible.
+          </p>
+        </div>
+
+        <p className="coefficient-audit-link">
+          <a href={CONSTRAINED_SPLIT_DOCUMENTATION_URL} target="_blank" rel="noreferrer">
+            Read the full Constrained Split NAIL contract and artifact audit <ArrowUpRight size={14} />
+          </a>
+        </p>
+      </section>
+
       <section className="about-footer-note">
         <p className="section-kicker">Current publication</p>
         <p>
@@ -1351,7 +1456,7 @@ function AboutPage() {
   );
 }
 
-type RankingColumn = "rank" | "player_name" | "team" | "position" | "draft_number" | "rapm" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games";
+type RankingColumn = "rank" | "player_name" | "team" | "position" | "draft_number" | "rapm" | "offense_rating" | "defense_rating" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games";
 
 function RankingsPage() {
   const isCompact = useMediaQuery("(max-width: 720px)");
@@ -1450,6 +1555,8 @@ function RankingsPage() {
     { key: "position", label: "Pos" },
     { key: "draft_number", label: "Pick", numeric: true },
     { key: "rapm", label: MODEL_LABEL, numeric: true },
+    { key: "offense_rating", label: "Offense", numeric: true },
+    { key: "defense_rating", label: "Defense", numeric: true },
     { key: "prior_rating", label: "Prior", numeric: true },
     { key: "season_update", label: "Season update", numeric: true },
     { key: "additive_profile_adjustment", label: "Additive profile", numeric: true },
@@ -1564,6 +1671,8 @@ function RankingsPage() {
                 <td>{player.position}</td>
                 <td className="numeric quantity-cell">{formatDraftPick(player)}</td>
                 <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
+                <td className={player.offense_rating === null || player.offense_rating === undefined ? "numeric" : player.offense_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.offense_rating === null || player.offense_rating === undefined ? "-" : formatRating(player.offense_rating)}</td>
+                <td className={player.defense_rating === null || player.defense_rating === undefined ? "numeric" : player.defense_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.defense_rating === null || player.defense_rating === undefined ? "-" : formatRating(player.defense_rating)}</td>
                 <td className={player.prior_rating === null ? "numeric" : player.prior_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.prior_rating === null ? "-" : formatRating(player.prior_rating)}</td>
                 <td className={player.season_update === null ? "numeric" : player.season_update < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.season_update === null ? "-" : formatRating(player.season_update)}</td>
                 <td className={player.additive_profile_adjustment === null ? "numeric" : player.additive_profile_adjustment < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.additive_profile_adjustment === null ? "-" : formatRating(player.additive_profile_adjustment)}</td>
@@ -1591,6 +1700,8 @@ function RankingsPage() {
               </span>
             </div>
             <dl className="mobile-metric-grid mobile-player-metrics">
+              <div><dt>Offense</dt><dd>{player.offense_rating === null || player.offense_rating === undefined ? "-" : <Rating value={player.offense_rating} />}</dd></div>
+              <div><dt>Defense</dt><dd>{player.defense_rating === null || player.defense_rating === undefined ? "-" : <Rating value={player.defense_rating} />}</dd></div>
               <div><dt>Prior</dt><dd>{player.prior_rating === null ? "-" : <Rating value={player.prior_rating} />}</dd></div>
               <div><dt>Season update</dt><dd>{player.season_update === null ? "-" : <Rating value={player.season_update} />}</dd></div>
               <div><dt>Additive profile</dt><dd>{player.additive_profile_adjustment === null ? "-" : <Rating value={player.additive_profile_adjustment} />}</dd></div>
@@ -1620,6 +1731,8 @@ type LineupRankingColumn =
   | "possessions"
   | "games"
   | "player_edge"
+  | "offensive_edge"
+  | "defensive_edge"
   | "context_edge"
   | "gestalt_score"
   | "actual_net_rating";
@@ -1711,6 +1824,8 @@ function LineupRankingsPage({
     { key: "rank", label: "Rank", tooltip: "Ranked by Context, then possessions. Sorting another column changes the display order, not this rank.", numeric: true },
     { key: "team", label: "Team", tooltip: "Team that used this five-man unit." },
     { key: "gestalt_score", label: "Edge", tooltip: "Expected edge per 100 possessions against the opponents this unit actually faced: NAIL plus Context.", numeric: true },
+    { key: "offensive_edge", label: "Off", tooltip: "Offensive allocation of Edge: this unit's offense minus the possession-weighted defense of the opponents it actually faced, including the corresponding non-additive lineup context. Off plus Def equals Edge.", numeric: true },
+    { key: "defensive_edge", label: "Def", tooltip: "Defensive allocation of Edge: this unit's defense minus the possession-weighted offense of the opponents it actually faced, including the corresponding non-additive lineup context. Off plus Def equals Edge.", numeric: true },
     { key: "player_edge", label: "NAIL", tooltip: "Difference in the summed NAIL-RAPM ratings of this unit and its actual opponents, per 100 possessions.", numeric: true },
     { key: "context_edge", label: "Context", tooltip: "Residual non-additive lineup effect beyond the five players' NAIL ratings, against actual opponents, per 100 possessions.", numeric: true },
     { key: "actual_net_rating", label: "Net Rating", tooltip: "Observed points scored minus points allowed per 100 possessions while this unit played.", numeric: true },
@@ -1851,6 +1966,8 @@ function LineupRankingsPage({
                   </span>
                 </th>
                 <td className={lineup.gestalt_score < 0 ? "negative numeric rating-cell edge-rating" : "positive numeric rating-cell edge-rating"}>{formatRating(lineup.gestalt_score)}</td>
+                <td className={optionalRatingClass(lineup.offensive_edge)}>{formatOptionalRating(lineup.offensive_edge)}</td>
+                <td className={optionalRatingClass(lineup.defensive_edge)}>{formatOptionalRating(lineup.defensive_edge)}</td>
                 <td className={lineup.player_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.player_edge)}</td>
                 <td className={lineup.context_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.context_edge)}</td>
                 <td className={lineup.actual_net_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.actual_net_rating)}</td>
@@ -1874,6 +1991,8 @@ function LineupRankingsPage({
               {lineup.player_names.map((name, index) => <a key={lineup.player_ids[index]} className="player-name-link" href={playerProfileHref(lineup.player_ids[index])}>{name}</a>)}
             </div>
             <dl className="mobile-metric-grid mobile-lineup-metrics">
+              <div><dt>Off</dt><dd>{formatOptionalRating(lineup.offensive_edge)}</dd></div>
+              <div><dt>Def</dt><dd>{formatOptionalRating(lineup.defensive_edge)}</dd></div>
               <div><dt>NAIL</dt><dd><Rating value={lineup.player_edge} /></dd></div>
               <div><dt>Context</dt><dd><Rating value={lineup.context_edge} /></dd></div>
               <div><dt>Net rating</dt><dd><Rating value={lineup.actual_net_rating} /></dd></div>
@@ -2220,6 +2339,38 @@ function Results({ result }: {
             <td><Rating value={result.opponent.additive_rating} /></td>
             <td><Rating value={result.additive_margin} /></td>
           </tr>
+          {result.od_split_available && result.offensive_player_edge !== null && result.offensive_player_edge !== undefined && result.defensive_player_edge !== null && result.defensive_player_edge !== undefined && (
+            <>
+              <tr className="ledger-descriptive">
+                <th scope="row">
+                  Offense vs. defense
+                  <button
+                    className="feature-info"
+                    type="button"
+                    aria-label="Explain offense versus defense"
+                    data-tooltip="Descriptive Constrained Split NAIL allocation. This unit's offense rating is compared with the opponent's defense rating. Together with defense versus offense, it exactly reconstructs the scalar NAIL player edge and does not alter GESTALT."
+                  ><Info size={13} aria-hidden="true" /></button>
+                </th>
+                <td><Rating value={result.unit.offense_rating!} /></td>
+                <td><Rating value={result.opponent.defense_rating!} /></td>
+                <td><Rating value={result.offensive_player_edge} /></td>
+              </tr>
+              <tr className="ledger-descriptive">
+                <th scope="row">
+                  Defense vs. offense
+                  <button
+                    className="feature-info"
+                    type="button"
+                    aria-label="Explain defense versus offense"
+                    data-tooltip="Descriptive Constrained Split NAIL allocation. This unit's defense rating is compared with the opponent's offense rating. Together with offense versus defense, it exactly reconstructs the scalar NAIL player edge and does not alter GESTALT."
+                  ><Info size={13} aria-hidden="true" /></button>
+                </th>
+                <td><Rating value={result.unit.defense_rating!} /></td>
+                <td><Rating value={result.opponent.offense_rating!} /></td>
+                <td><Rating value={result.defensive_player_edge} /></td>
+              </tr>
+            </>
+          )}
           {compiledLinear ? (
             <tr>
               <th scope="row">Non-additive lineup edge</th>

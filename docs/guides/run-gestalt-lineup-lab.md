@@ -39,6 +39,22 @@ artifact on its first request. It retains that completed NAIL-RAPM v1.2.1.3 stat
 in memory for the lifetime of the process. It does not read raw possession
 data or retrain a model for each browser session.
 
+## Materialize descriptive O/D ratings
+
+The Rankings page, player biographies, and Matchup Lab can additionally show
+the descriptive Constrained Split NAIL offense/defense allocation for every
+completed player-season. It is a sidecar to the active scalar NAIL release:
+the API rejects it unless its production run ID matches and every player obeys
+`offense + defense = NAIL`.
+
+```bash
+uv run nba-build-constrained-split-cache
+```
+
+This does not retrain NAIL or change the GESTALT score. The 2026-27 preseason
+preview intentionally remains scalar-only until a matching completed O/D state
+is available.
+
 ## Restart Both Services
 
 To stop listeners on the local API and frontend ports, then start both services

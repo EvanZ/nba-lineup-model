@@ -37,17 +37,14 @@ if TYPE_CHECKING:
 DEFAULT_ARTIFACTS_DIR = Path("artifacts/models")
 DEFAULT_RESPONSE_CACHE_DIR = Path("artifacts/web/response_curve_cache")
 DEFAULT_LINEUP_RANKINGS_CACHE_DIR = Path("artifacts/web/lineup_rankings")
+DEFAULT_CONSTRAINED_SPLIT_RATINGS_CACHE_DIR = Path("artifacts/web/constrained_split_ratings")
 DEFAULT_PLAYER_TEAM_SPLITS_CACHE_DIR = Path("artifacts/web/player_team_splits")
 DEFAULT_EXPOSURE_COHORT_CACHE_DIR = Path("artifacts/web/exposure_cohorts")
 DEFAULT_HISTORICAL_PROFILE_CACHE_DIR = Path("artifacts/web/historical_profiles")
-DEFAULT_HISTORICAL_REALIZED_PROFILE_CACHE_DIR = Path(
-    "artifacts/web/historical_realized_profiles"
-)
+DEFAULT_HISTORICAL_REALIZED_PROFILE_CACHE_DIR = Path("artifacts/web/historical_realized_profiles")
 DEFAULT_PRESEASON_RANKINGS_CACHE_DIR = Path("artifacts/web/preseason_rankings")
 DEFAULT_TEAM_ROSTERS_DIR = Path("data/curated/team_rosters")
-DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path(
-    "artifacts/models/forward_draft_history_cold_start"
-)
+DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path("artifacts/models/forward_draft_history_cold_start")
 # Keep the artifact identifier distinct from the public release name.
 MODEL_ARTIFACT = "forward_nail_rapm_v1212_residualized_lambda"
 MODEL_NAME = "forward_nail_rapm_v1212_residualized_lambda"
@@ -122,9 +119,7 @@ def _previous_season(season: str) -> str:
 def projected_win_pct(net_rating: float) -> float:
     """Convert a neutral-court NetRtg estimate into the published win-rate scale."""
 
-    return float(
-        np.clip(WIN_PCT_INTERCEPT + WIN_PCT_PER_NET_RATING * net_rating, 0.0, 1.0)
-    )
+    return float(np.clip(WIN_PCT_INTERCEPT + WIN_PCT_PER_NET_RATING * net_rating, 0.0, 1.0))
 
 
 def _mean_reverted_schedule_controls(
@@ -218,6 +213,7 @@ def _apply_schedule_scenario(
         }
     )
     return updated
+
 
 _FEATURE_LABELS = {
     "home_minus_away_three_pa_per_100": "Three-point attempt volume",
@@ -328,16 +324,12 @@ class LineupEvaluator:
     use_last_observed_profile: bool = False
     lineup_rankings_root: Path | None = None
     player_rating_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
-    player_league_leader_histories: dict[int, list[dict[str, Any]]] = field(
-        default_factory=dict
-    )
-    player_team_splits: dict[tuple[str, int], list[dict[str, Any]]] = field(
-        default_factory=dict
-    )
-    player_latest_teams: dict[tuple[str, int], dict[str, Any]] = field(
-        default_factory=dict
-    )
+    player_league_leader_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    player_team_splits: dict[tuple[str, int], list[dict[str, Any]]] = field(default_factory=dict)
+    player_latest_teams: dict[tuple[str, int], dict[str, Any]] = field(default_factory=dict)
     historical_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
+    constrained_split_ratings: pd.DataFrame = field(default_factory=pd.DataFrame)
+    constrained_split_context_allocations: pd.DataFrame = field(default_factory=pd.DataFrame)
     preseason_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
     observed_lineups: pd.DataFrame = field(default_factory=pd.DataFrame)
     historical_coefficients: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -413,6 +405,14 @@ class LineupEvaluator:
             if published_ratings_path.is_file()
             else raw_seasonal_ratings
         )
+        constrained_split_ratings = _load_constrained_split_ratings_cache(
+            MODEL_ARTIFACT,
+            run_id,
+        )
+        constrained_split_context_allocations = _load_constrained_split_context_allocations_cache(
+            MODEL_ARTIFACT,
+            run_id,
+        )
         rookie_seasons = _rookie_seasons(seasonal_ratings)
         team_splits_cache_path = player_team_splits_path(MODEL_ARTIFACT, run_id)
         team_splits_frame = (
@@ -421,14 +421,10 @@ class LineupEvaluator:
             else pd.DataFrame()
         )
         player_team_splits = (
-            _player_team_splits_by_season(team_splits_frame)
-            if not team_splits_frame.empty
-            else {}
+            _player_team_splits_by_season(team_splits_frame) if not team_splits_frame.empty else {}
         )
         player_latest_teams = (
-            _player_latest_teams_by_season(team_splits_frame)
-            if not team_splits_frame.empty
-            else {}
+            _player_latest_teams_by_season(team_splits_frame) if not team_splits_frame.empty else {}
         )
         context_exposure_path = player_context_exposure_path(MODEL_ARTIFACT, run_id)
         context_exposure = (
@@ -443,9 +439,11 @@ class LineupEvaluator:
             rookie_seasons=rookie_seasons,
             player_latest_teams=player_latest_teams,
         )
-        preseason_path = preseason_rankings_path(
-            MODEL_ARTIFACT, run_id, PRESEASON_PREVIEW_SEASON
+        historical_rankings = _attach_constrained_split_ratings(
+            historical_rankings,
+            constrained_split_ratings,
         )
+        preseason_path = preseason_rankings_path(MODEL_ARTIFACT, run_id, PRESEASON_PREVIEW_SEASON)
         preseason_rankings = (
             pd.read_parquet(preseason_path)
             if preseason_path.is_file()
@@ -466,6 +464,10 @@ class LineupEvaluator:
             player_team_splits=player_team_splits,
             player_latest_teams=player_latest_teams,
         )
+        _attach_constrained_split_rating_history(
+            player_rating_histories,
+            constrained_split_ratings,
+        )
         player_league_leader_histories = _player_league_leader_histories(
             seasonal_ratings,
             player_rating_histories,
@@ -479,17 +481,13 @@ class LineupEvaluator:
             pd.read_parquet(cohort_path)
             if cohort_path.is_file()
             else prepare_player_exposure_cohort(
-                player_season_panel.loc[
-                    player_season_panel["season"].astype(str).le(season)
-                ],
+                player_season_panel.loc[player_season_panel["season"].astype(str).le(season)],
                 through_season=season,
             )
         )
         profile_cache_path = historical_profiles_path(MODEL_ARTIFACT, run_id)
         historical_profiles = (
-            pd.read_parquet(profile_cache_path)
-            if profile_cache_path.is_file()
-            else pd.DataFrame()
+            pd.read_parquet(profile_cache_path) if profile_cache_path.is_file() else pd.DataFrame()
         )
         realized_profile_cache_path = historical_realized_profiles_path(MODEL_ARTIFACT, run_id)
         historical_realized_profiles = (
@@ -498,9 +496,7 @@ class LineupEvaluator:
             else pd.DataFrame()
         )
         realized_profiles = historical_realized_profiles.loc[
-            historical_realized_profiles.get("season", pd.Series(dtype=str))
-            .astype(str)
-            .eq(season)
+            historical_realized_profiles.get("season", pd.Series(dtype=str)).astype(str).eq(season)
         ].copy()
         if not realized_profiles.empty:
             realized_profiles = realized_profiles.drop(columns="season")
@@ -553,24 +549,28 @@ class LineupEvaluator:
             context_exposure=context_exposure,
             season=season,
         )
+        players = _attach_constrained_split_ratings(
+            players.assign(season=season),
+            constrained_split_ratings,
+        ).drop(columns="season")
         _replace_current_season_display_ratings(
             historical_rankings,
             player_rating_histories,
             season=season,
             players=players,
         )
-        players["rating_history"] = players["player_id"].map(player_rating_histories).map(
-            lambda history: history or []
+        players["rating_history"] = (
+            players["player_id"].map(player_rating_histories).map(lambda history: history or [])
         )
-        players["league_leader_history"] = players["player_id"].map(
-            player_league_leader_histories
-        ).map(lambda history: history or [])
+        players["league_leader_history"] = (
+            players["player_id"]
+            .map(player_league_leader_histories)
+            .map(lambda history: history or [])
+        )
         players["rookie_season"] = players["player_id"].map(rookie_seasons)
         _assign_draft_class_year(players)
         players["age"] = players["player_id"].map(
-            lambda player_id: (
-                player_rating_histories.get(int(player_id), [{}])[-1].get("age")
-            )
+            lambda player_id: player_rating_histories.get(int(player_id), [{}])[-1].get("age")
         )
         rankings_path = lineup_rankings_path(MODEL_ARTIFACT, run_id, season)
         observed_lineups = (
@@ -594,6 +594,8 @@ class LineupEvaluator:
             player_team_splits=player_team_splits,
             player_latest_teams=player_latest_teams,
             historical_rankings=historical_rankings,
+            constrained_split_ratings=constrained_split_ratings,
+            constrained_split_context_allocations=constrained_split_context_allocations,
             preseason_rankings=preseason_rankings,
             observed_lineups=observed_lineups,
             historical_coefficients=historical_coefficients,
@@ -665,9 +667,7 @@ class LineupEvaluator:
         """Return a career profile for a player present in any completed fit."""
 
         preseason_row = (
-            self.preseason_rankings.loc[
-                self.preseason_rankings["player_id"].eq(player_id)
-            ]
+            self.preseason_rankings.loc[self.preseason_rankings["player_id"].eq(player_id)]
             if "player_id" in self.preseason_rankings
             else pd.DataFrame()
         )
@@ -696,6 +696,8 @@ class LineupEvaluator:
                     if column == "rookie_season" and preview[column] is None:
                         continue
                     player[column] = preview[column]
+                player["offense_rating"] = None
+                player["defense_rating"] = None
                 player["rating_season"] = PRESEASON_PREVIEW_SEASON
             player.setdefault("draft_class_year", None)
             player.setdefault("rating_season", self.season)
@@ -706,9 +708,7 @@ class LineupEvaluator:
 
         history = self.player_rating_histories.get(player_id, [])
         historical_rows = (
-            self.historical_rankings.loc[
-                self.historical_rankings["player_id"].eq(player_id)
-            ]
+            self.historical_rankings.loc[self.historical_rankings["player_id"].eq(player_id)]
             if "player_id" in self.historical_rankings
             else pd.DataFrame()
         )
@@ -731,6 +731,8 @@ class LineupEvaluator:
                 "steals_per_100": None,
                 "blocks_per_100": None,
                 "offensive_rebound_pct": None,
+                "offense_rating": None,
+                "defense_rating": None,
                 "rating_history": [],
                 "league_leader_history": [],
             }
@@ -762,6 +764,8 @@ class LineupEvaluator:
             "steals_per_100": None,
             "blocks_per_100": None,
             "offensive_rebound_pct": None,
+            "offense_rating": _optional_float(latest.get("offense_rating")),
+            "defense_rating": _optional_float(latest.get("defense_rating")),
             "rookie_season": history[0]["season"] if history else None,
             "rating_history": history,
             "league_leader_history": self.player_league_leader_histories.get(player_id, []),
@@ -810,6 +814,8 @@ class LineupEvaluator:
             "season_update",
             "additive_profile_adjustment",
             "observed_context_exposure",
+            "offense_rating",
+            "defense_rating",
             "draft_class_year",
         ):
             if column not in rows:
@@ -861,9 +867,7 @@ class LineupEvaluator:
         ranked.insert(0, "rank", np.arange(1, len(ranked) + 1, dtype=int))
         for column in ("player_ids", "player_names"):
             ranked[column] = ranked[column].map(
-                lambda values: values.tolist()
-                if isinstance(values, np.ndarray)
-                else list(values)
+                lambda values: values.tolist() if isinstance(values, np.ndarray) else list(values)
             )
         return _records(ranked)
 
@@ -1073,9 +1077,7 @@ class LineupEvaluator:
                 opponent_features=opponent_features,
                 features=features,
             )
-        components = context_model.decompose_side_pairs(
-            unit_features, opponent_features
-        ).iloc[0]
+        components = context_model.decompose_side_pairs(unit_features, opponent_features).iloc[0]
         contextual_adjustment = float(components["total_context_net_rating"])
         portable_composition_margin = float(
             components["home_portable_context_net_rating"]
@@ -1085,9 +1087,9 @@ class LineupEvaluator:
         unit_composition_rating = float(components["home_portable_context_net_rating"])
         opponent_composition_rating = float(components["away_portable_context_net_rating"])
         total_contributions = _antisymmetric_feature_contributions(context_model, features)[0]
-        unit_composition_contributions = _side_feature_contributions(
-            context_model, unit_features
-        )[0]
+        unit_composition_contributions = _side_feature_contributions(context_model, unit_features)[
+            0
+        ]
         opponent_composition_contributions = _side_feature_contributions(
             context_model, opponent_features
         )[0]
@@ -1122,32 +1124,42 @@ class LineupEvaluator:
                 raise LineupEvaluationError(
                     "A response curve kind is required for a selected feature"
                 )
-        composition_response_curves = _composition_response_curves(
-            context_model,
-            self._response_cache(environment_season),
-            unit_features,
-            opponent_features,
-            unit_composition_contributions,
-            opponent_composition_contributions,
-            feature_ids=composition_feature_ids,
-        ) if include_response_curves else []
-        matchup_response_curves = _matchup_response_curves(
-            context_model,
-            self._response_cache(environment_season),
-            unit_features,
-            opponent_features,
-            opponent_composition_contributions,
-            feature_ids=matchup_feature_ids,
-        ) if include_response_curves else []
+        composition_response_curves = (
+            _composition_response_curves(
+                context_model,
+                self._response_cache(environment_season),
+                unit_features,
+                opponent_features,
+                unit_composition_contributions,
+                opponent_composition_contributions,
+                feature_ids=composition_feature_ids,
+            )
+            if include_response_curves
+            else []
+        )
+        matchup_response_curves = (
+            _matchup_response_curves(
+                context_model,
+                self._response_cache(environment_season),
+                unit_features,
+                opponent_features,
+                opponent_composition_contributions,
+                feature_ids=matchup_feature_ids,
+            )
+            if include_response_curves
+            else []
+        )
         predicted_net_rating = additive_margin + contextual_adjustment
+        unit_side = self._side(unit_player_ids, unit_coefficient_map, unit_state.players)
+        opponent_side = self._side(
+            opponent_player_ids, opponent_coefficient_map, opponent_state.players
+        )
         response = {
             "season": environment_season,
             "run_id": self.run_id,
             "retrospective": True,
-            "unit": self._side(unit_player_ids, unit_coefficient_map, unit_state.players),
-            "opponent": self._side(
-                opponent_player_ids, opponent_coefficient_map, opponent_state.players
-            ),
+            "unit": unit_side,
+            "opponent": opponent_side,
             "additive_margin": additive_margin,
             "contextual_adjustment": contextual_adjustment,
             "unit_composition_rating": unit_composition_rating,
@@ -1160,6 +1172,7 @@ class LineupEvaluator:
             "composition_feature_contributions": composition_feature_rows,
             "matchup_feature_contributions": matchup_feature_rows,
         }
+        response.update(_descriptive_od_matchup_terms(unit_side, opponent_side))
         if include_response_curves:
             response["composition_response_curves"] = composition_response_curves
             response["matchup_response_curves"] = matchup_response_curves
@@ -1205,15 +1218,11 @@ class LineupEvaluator:
         additive_context = float(
             sum(
                 contribution
-                for feature_id, contribution in zip(
-                    feature_ids, total_contributions, strict=True
-                )
+                for feature_id, contribution in zip(feature_ids, total_contributions, strict=True)
                 if feature_id in additive_ids
             )
         )
-        total_context = float(
-            context_model.predict_side_pairs(unit_features, opponent_features)[0]
-        )
+        total_context = float(context_model.predict_side_pairs(unit_features, opponent_features)[0])
         shape_context = total_context - additive_context
         unit_composition_rating, opponent_composition_rating = (
             _compiled_linear_x3_nonadditive_side_scores(
@@ -1227,9 +1236,7 @@ class LineupEvaluator:
             shape_context,
             atol=1e-8,
         ):
-            raise LineupEvaluationError(
-                "NAIL-RAPM non-additive side scores failed reconstruction"
-            )
+            raise LineupEvaluationError("NAIL-RAPM non-additive side scores failed reconstruction")
         shape_rows = _feature_rows(
             features,
             total_contributions,
@@ -1246,20 +1253,18 @@ class LineupEvaluator:
             ),
         )
         additive_unit = float(sum(unit_map[player_id] for player_id in unit_player_ids))
-        additive_opponent = float(
-            sum(opponent_map[player_id] for player_id in opponent_player_ids)
-        )
+        additive_opponent = float(sum(opponent_map[player_id] for player_id in opponent_player_ids))
         additive_margin = additive_unit - additive_opponent
         predicted_net_rating = additive_margin + shape_context
-        return {
+        unit_side = self._side(unit_player_ids, unit_map, unit_state.players)
+        opponent_side = self._side(opponent_player_ids, opponent_map, opponent_state.players)
+        response = {
             "season": environment_season,
             "run_id": self.run_id,
             "retrospective": True,
             "model_form": "compiled_linear_x3",
-            "unit": self._side(unit_player_ids, unit_map, unit_state.players),
-            "opponent": self._side(
-                opponent_player_ids, opponent_map, opponent_state.players
-            ),
+            "unit": unit_side,
+            "opponent": opponent_side,
             "additive_margin": additive_margin,
             "contextual_adjustment": shape_context,
             "unit_composition_rating": unit_composition_rating,
@@ -1274,6 +1279,8 @@ class LineupEvaluator:
             "composition_response_curves": [],
             "matchup_response_curves": [],
         }
+        response.update(_descriptive_od_matchup_terms(unit_side, opponent_side))
+        return response
 
     def _side(
         self,
@@ -1285,7 +1292,22 @@ class LineupEvaluator:
         players = _records(rows)
         for player in players:
             player["rapm"] = coefficient_map[int(player["player_id"])]
-        return {"additive_rating": sum(player["rapm"] for player in players), "players": players}
+        offense_values = [player.get("offense_rating") for player in players]
+        defense_values = [player.get("defense_rating") for player in players]
+        return {
+            "additive_rating": sum(player["rapm"] for player in players),
+            "offense_rating": (
+                float(sum(float(value) for value in offense_values))
+                if all(value is not None for value in offense_values)
+                else None
+            ),
+            "defense_rating": (
+                float(sum(float(value) for value in defense_values))
+                if all(value is not None for value in defense_values)
+                else None
+            ),
+            "players": players,
+        }
 
     def _season_state(self, season: str) -> SeasonLineupState:
         """Build and cache a selected historical player pool on first use."""
@@ -1378,9 +1400,11 @@ class LineupEvaluator:
         players["age"] = players["player_id"].map(
             dict(zip(season_ratings["player_id"], season_ratings["age"], strict=True))
         )
-        players["rookie_season"] = players["player_id"].map(
-            _rookie_seasons(self.seasonal_ratings)
-        )
+        players = _attach_constrained_split_ratings(
+            players.assign(season=season),
+            self.constrained_split_ratings,
+        ).drop(columns="season")
+        players["rookie_season"] = players["player_id"].map(_rookie_seasons(self.seasonal_ratings))
         _assign_draft_class_year(players)
         players["rating_history"] = players["player_id"].map(
             lambda player_id: [
@@ -1413,16 +1437,44 @@ class LineupEvaluator:
         cache = self.response_caches.get(season)
         if cache is None:
             path = response_cache_path(MODEL_ARTIFACT, self.run_id, season)
-            cache = joblib.load(path) if path.is_file() else _warm_response_cache(
-                self._context_model(season)
+            cache = (
+                joblib.load(path)
+                if path.is_file()
+                else _warm_response_cache(self._context_model(season))
             )
             self.response_caches[season] = cache
         return cache
 
 
-def _mean_evaluation(
-    first: dict[str, Any], second: dict[str, Any]
-) -> dict[str, Any]:
+def _descriptive_od_matchup_terms(
+    unit: dict[str, Any], opponent: dict[str, Any]
+) -> dict[str, float | bool | None]:
+    """Return a reconciliation-checked descriptive O/D presentation of player edge."""
+
+    unit_offense = unit.get("offense_rating")
+    unit_defense = unit.get("defense_rating")
+    opponent_offense = opponent.get("offense_rating")
+    opponent_defense = opponent.get("defense_rating")
+    values = (unit_offense, unit_defense, opponent_offense, opponent_defense)
+    if any(value is None or not np.isfinite(float(value)) for value in values):
+        return {
+            "od_split_available": False,
+            "offensive_player_edge": None,
+            "defensive_player_edge": None,
+        }
+    offensive_edge = float(unit_offense) - float(opponent_defense)
+    defensive_edge = float(unit_defense) - float(opponent_offense)
+    scalar_edge = float(unit["additive_rating"]) - float(opponent["additive_rating"])
+    if not np.isclose(offensive_edge + defensive_edge, scalar_edge, atol=1e-8):
+        raise LineupEvaluationError("Constrained Split NAIL failed player-edge reconstruction")
+    return {
+        "od_split_available": True,
+        "offensive_player_edge": offensive_edge,
+        "defensive_player_edge": defensive_edge,
+    }
+
+
+def _mean_evaluation(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
     """Average two directional historical-environment evaluations for neutral mode."""
 
     result = first.copy()
@@ -1438,6 +1490,7 @@ def _mean_evaluation(
         result[key] = (float(first[key]) + float(second[key])) / 2.0
     result["unit"] = _mean_side(first["unit"], second["unit"])
     result["opponent"] = _mean_side(first["opponent"], second["opponent"])
+    result.update(_descriptive_od_matchup_terms(result["unit"], result["opponent"]))
     for key in (
         "feature_contributions",
         "composition_feature_contributions",
@@ -1456,12 +1509,28 @@ def _mean_side(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
     result["additive_rating"] = (
         float(first["additive_rating"]) + float(second["additive_rating"])
     ) / 2.0
+    for key in ("offense_rating", "defense_rating"):
+        first_value = first.get(key)
+        second_value = second.get(key)
+        result[key] = (
+            (float(first_value) + float(second_value)) / 2.0
+            if first_value is not None and second_value is not None
+            else None
+        )
     second_players = {int(player["player_id"]): player for player in second["players"]}
     players = []
     for player in first["players"]:
         combined = player.copy()
         partner = second_players[int(player["player_id"])]
         combined["rapm"] = (float(player["rapm"]) + float(partner["rapm"])) / 2.0
+        for key in ("offense_rating", "defense_rating"):
+            first_value = player.get(key)
+            second_value = partner.get(key)
+            combined[key] = (
+                (float(first_value) + float(second_value)) / 2.0
+                if first_value is not None and second_value is not None
+                else None
+            )
         players.append(combined)
     result["players"] = players
     return result
@@ -1531,10 +1600,9 @@ def _player_catalog(
     available_panel_columns = [column for column in panel_columns if column in panel]
     season_panel = panel.loc[panel["season"].eq(season), available_panel_columns].copy()
     if season_panel["player_id"].duplicated().any():
-        season_panel = (
-            season_panel.sort_values("rapm_possessions", ascending=False)
-            .drop_duplicates("player_id", keep="first")
-        )
+        season_panel = season_panel.sort_values(
+            "rapm_possessions", ascending=False
+        ).drop_duplicates("player_id", keep="first")
     profile_columns = [
         "player_id",
         "player_name",
@@ -1554,21 +1622,19 @@ def _player_catalog(
     catalog = catalog.merge(
         season_panel.drop(columns=["player_name"], errors="ignore"), on="player_id", how="left"
     )
-    catalog["team"] = catalog.get(
-        "primary_team_tricode", pd.Series(index=catalog.index)
-    ).fillna("-")
+    catalog["team"] = catalog.get("primary_team_tricode", pd.Series(index=catalog.index)).fillna(
+        "-"
+    )
     latest_teams = player_latest_teams or {}
     if latest_teams:
         catalog["team"] = [
             latest_teams.get((season, int(player_id)), {}).get("team", team)
             for player_id, team in zip(catalog["player_id"], catalog["team"], strict=True)
         ]
-    catalog["position"] = catalog.get(
-        "listed_position", pd.Series(index=catalog.index)
-    ).fillna("-")
-    catalog["possessions"] = catalog.get(
-        "rapm_possessions", pd.Series(index=catalog.index)
-    ).fillna(0.0)
+    catalog["position"] = catalog.get("listed_position", pd.Series(index=catalog.index)).fillna("-")
+    catalog["possessions"] = catalog.get("rapm_possessions", pd.Series(index=catalog.index)).fillna(
+        0.0
+    )
     catalog["games"] = catalog.get("games", pd.Series(index=catalog.index)).fillna(0).astype(int)
     _normalize_draft_metadata(catalog)
     catalog = catalog.sort_values(["player_name", "player_id"], kind="stable").reset_index(
@@ -1622,6 +1688,79 @@ def _attach_observed_context_exposure(
     return players.merge(exposure, on="player_id", how="left", validate="one_to_one")
 
 
+def _attach_constrained_split_ratings(
+    players: pd.DataFrame,
+    ratings: pd.DataFrame,
+) -> pd.DataFrame:
+    """Join the validated companion O/D allocation without changing scalar NAIL."""
+
+    output = players.copy()
+    for column in ("offense_rating", "defense_rating"):
+        if column in output:
+            output = output.drop(columns=column)
+    if ratings.empty:
+        output["offense_rating"] = np.nan
+        output["defense_rating"] = np.nan
+        return output
+    if "season" not in output:
+        raise LineupEvaluationError("Constrained Split NAIL join requires a season column")
+    sidecar = ratings.loc[
+        :, ["season", "player_id", "total_nail", "offense_rating", "defense_rating"]
+    ]
+    output = output.merge(
+        sidecar,
+        on=["season", "player_id"],
+        how="left",
+        validate="one_to_one",
+    )
+    matched = output["total_nail"].notna()
+    if matched.any() and not np.allclose(
+        output.loc[matched, "rapm"].astype(float),
+        output.loc[matched, "total_nail"].astype(float),
+        atol=1e-8,
+    ):
+        raise LineupEvaluationError(
+            "Constrained Split NAIL does not match the published scalar NAIL ratings"
+        )
+    return output.drop(columns="total_nail")
+
+
+def _attach_constrained_split_rating_history(
+    histories: dict[int, list[dict[str, Any]]],
+    ratings: pd.DataFrame,
+) -> None:
+    """Attach O/D values to existing player-history records in place."""
+
+    lookup = (
+        {
+            (str(row.season), int(row.player_id)): (
+                float(row.offense_rating),
+                float(row.defense_rating),
+                float(row.total_nail),
+            )
+            for row in ratings.itertuples(index=False)
+        }
+        if not ratings.empty
+        else {}
+    )
+    for player_id, history in histories.items():
+        for point in history:
+            values = lookup.get((str(point["season"]), int(player_id)))
+            if values is None:
+                point["offense_rating"] = None
+                point["defense_rating"] = None
+                continue
+            offense, defense, total = values
+            if not np.isclose(offense + defense, total, atol=1e-8) or not np.isclose(
+                total, float(point["rating"]), atol=1e-8
+            ):
+                raise LineupEvaluationError(
+                    "Constrained Split NAIL does not reconcile in player history"
+                )
+            point["offense_rating"] = offense
+            point["defense_rating"] = defense
+
+
 def _replace_current_season_display_ratings(
     rankings: pd.DataFrame,
     histories: dict[int, list[dict[str, Any]]],
@@ -1635,8 +1774,8 @@ def _replace_current_season_display_ratings(
         zip(players["player_id"].astype(int), players["rapm"].astype(float), strict=True)
     )
     current = rankings["season"].eq(season)
-    rankings.loc[current, "rapm"] = rankings.loc[current, "player_id"].map(ratings).fillna(
-        rankings.loc[current, "rapm"]
+    rankings.loc[current, "rapm"] = (
+        rankings.loc[current, "player_id"].map(ratings).fillna(rankings.loc[current, "rapm"])
     )
     for player_id, history in histories.items():
         for point in history:
@@ -1675,11 +1814,7 @@ def build_published_player_ratings(
             target_season=season,
             target_player_ids=player_ids,
             exposure_cohort=exposure_cohort,
-            **(
-                {"padding_contract": padding_contract}
-                if padding_contract is not None
-                else {}
-            ),
+            **({"padding_contract": padding_contract} if padding_contract is not None else {}),
             use_last_observed_profile=use_last_observed_profile,
         )
         base = season_ratings.loc[:, ["player_id", "rapm"]].copy()
@@ -1688,10 +1823,9 @@ def build_published_player_ratings(
             panel["season"].astype(str).eq(season), ["player_id", "rapm_possessions"]
         ].copy()
         if season_panel["player_id"].duplicated().any():
-            season_panel = (
-                season_panel.sort_values("rapm_possessions", ascending=False, kind="stable")
-                .drop_duplicates("player_id", keep="first")
-            )
+            season_panel = season_panel.sort_values(
+                "rapm_possessions", ascending=False, kind="stable"
+            ).drop_duplicates("player_id", keep="first")
         display_center = _player_rating_center(
             uncentered,
             season_panel.rename(columns={"rapm_possessions": "possessions"}),
@@ -1704,9 +1838,9 @@ def build_published_player_ratings(
         )
         output = season_ratings.copy()
         compiled_by_player = compiled.set_index("player_id")["rapm"]
-        output["additive_profile_adjustment"] = (
-            output["player_id"].map(compiled_by_player).astype(float) - output["rapm"].astype(float)
-        )
+        output["additive_profile_adjustment"] = output["player_id"].map(compiled_by_player).astype(
+            float
+        ) - output["rapm"].astype(float)
         output["rapm"] = output["player_id"].map(compiled_by_player).astype(float)
         compiled_seasons.append(_fold_imputed_profile_into_prior(output, profiles))
     if not compiled_seasons:
@@ -1714,22 +1848,17 @@ def build_published_player_ratings(
     return pd.concat(compiled_seasons, ignore_index=True)
 
 
-def _fold_imputed_profile_into_prior(
-    ratings: pd.DataFrame, profiles: pd.DataFrame
-) -> pd.DataFrame:
+def _fold_imputed_profile_into_prior(ratings: pd.DataFrame, profiles: pd.DataFrame) -> pd.DataFrame:
     """Present imputed cold-start profiles as part of the player prior."""
 
     output = ratings.copy()
     imputed_ids = set(
-        profiles.loc[
-            profiles["profile_imputed"].astype(bool), "player_id"
-        ].astype(int)
+        profiles.loc[profiles["profile_imputed"].astype(bool), "player_id"].astype(int)
     )
     mask = output["player_id"].astype(int).isin(imputed_ids)
-    output.loc[mask, "prior_rapm"] = (
-        output.loc[mask, "prior_rapm"].astype(float)
-        + output.loc[mask, "additive_profile_adjustment"].astype(float)
-    )
+    output.loc[mask, "prior_rapm"] = output.loc[mask, "prior_rapm"].astype(float) + output.loc[
+        mask, "additive_profile_adjustment"
+    ].astype(float)
     output.loc[mask, "additive_profile_adjustment"] = np.nan
     return output
 
@@ -1784,9 +1913,7 @@ def _historical_ranking_catalog(
         "additive_profile_adjustment": "additive_profile_adjustment",
     }
     for public_column, source_column in component_columns.items():
-        catalog[public_column] = (
-            ratings[source_column] if source_column in ratings else np.nan
-        )
+        catalog[public_column] = ratings[source_column] if source_column in ratings else np.nan
     catalog = catalog.merge(
         metadata,
         on=["season", "player_id"],
@@ -1819,9 +1946,9 @@ def _historical_ranking_catalog(
     catalog["possessions"] = catalog.get(
         "rapm_possessions", pd.Series(index=catalog.index, dtype="float64")
     ).fillna(0.0)
-    catalog["games"] = catalog.get(
-        "games", pd.Series(index=catalog.index, dtype="float64")
-    ).fillna(0).astype(int)
+    catalog["games"] = (
+        catalog.get("games", pd.Series(index=catalog.index, dtype="float64")).fillna(0).astype(int)
+    )
     _normalize_draft_metadata(catalog)
     catalog["rookie_season"] = catalog["player_id"].map(rookie_seasons or {})
     _assign_draft_class_year(catalog)
@@ -1902,9 +2029,7 @@ def _preseason_ranking_catalog(
         "player_id", keep="first"
     )
 
-    completed = completed_rankings.loc[
-        completed_rankings["season"].eq(completed_season)
-    ].copy()
+    completed = completed_rankings.loc[completed_rankings["season"].eq(completed_season)].copy()
     completed = completed.sort_values("rapm", ascending=False, kind="stable").drop_duplicates(
         "player_id", keep="first"
     )
@@ -1920,9 +2045,7 @@ def _preseason_ranking_catalog(
                 "Forward draft cold-start ranking is missing required columns: "
                 + ", ".join(sorted(missing))
             )
-        draft_rankings["player_id"] = pd.to_numeric(
-            draft_rankings["player_id"], errors="coerce"
-        )
+        draft_rankings["player_id"] = pd.to_numeric(draft_rankings["player_id"], errors="coerce")
         draft_rankings = draft_rankings.loc[draft_rankings["player_id"].notna()].copy()
         draft_rankings["player_id"] = draft_rankings["player_id"].astype(int)
         draft_rankings = draft_rankings.drop_duplicates("player_id", keep="first")
@@ -1948,22 +2071,30 @@ def _preseason_ranking_catalog(
         draft_year = (
             _optional_int(returning["draft_year"])
             if returning is not None
-            else int(preview_season[:4]) if drafted is not None else None
+            else int(preview_season[:4])
+            if drafted is not None
+            else None
         )
         draft_round = (
             _optional_int(returning["draft_round"])
             if returning is not None
-            else _optional_int(drafted.get("draft_round")) if drafted is not None else None
+            else _optional_int(drafted.get("draft_round"))
+            if drafted is not None
+            else None
         )
         draft_number = (
             _optional_int(returning["draft_number"])
             if returning is not None
-            else _optional_int(drafted.get("draft_number")) if drafted is not None else None
+            else _optional_int(drafted.get("draft_number"))
+            if drafted is not None
+            else None
         )
         rookie_season = (
             str(returning["rookie_season"])
             if returning is not None and pd.notna(returning.get("rookie_season"))
-            else preview_season if is_new else None
+            else preview_season
+            if is_new
+            else None
         )
         if returning is not None:
             rating = float(returning["rapm"])
@@ -1975,11 +2106,7 @@ def _preseason_ranking_catalog(
             rating = replacement_rating
             source = "replacement_cold_start_prior"
         draft_class_year = (
-            draft_year
-            if draft_year is not None
-            else int(preview_season[:4])
-            if is_new
-            else None
+            draft_year if draft_year is not None else int(preview_season[:4]) if is_new else None
         )
         records.append(
             {
@@ -2028,9 +2155,8 @@ def _player_rating_histories(
             "Player-season rating artifact is missing required columns: "
             + ", ".join(sorted(missing))
         )
-    seasonal_bounds = (
-        ratings.groupby("season", as_index=False)["rapm"]
-        .agg(season_min_rating="min", season_max_rating="max")
+    seasonal_bounds = ratings.groupby("season", as_index=False)["rapm"].agg(
+        season_min_rating="min", season_max_rating="max"
     )
     seasonal_leaders = (
         ratings.loc[:, ["season", "player_id", "player_name", "rapm"]]
@@ -2102,28 +2228,34 @@ def _player_rating_histories(
     for column in ("prior_rapm", "rapm_adjustment_from_prior", "additive_profile_adjustment"):
         if column not in enriched:
             enriched[column] = np.nan
-    ordered = enriched.loc[
-        :,
-        [
-            "season",
-            "player_id",
+    ordered = (
+        enriched.loc[
+            :,
+            [
+                "season",
+                "player_id",
                 "rapm",
                 "nail_rank",
                 "prior_rapm",
                 "rapm_adjustment_from_prior",
                 "additive_profile_adjustment",
                 "age",
-        ],
-    ].merge(
-        seasonal_bounds.merge(seasonal_leaders, on="season", how="inner", validate="one_to_one"),
-        on="season",
-        how="left",
-        validate="many_to_one",
-    ).merge(
-        teams,
-        on=["season", "player_id"],
-        how="left",
-        validate="one_to_one",
+            ],
+        ]
+        .merge(
+            seasonal_bounds.merge(
+                seasonal_leaders, on="season", how="inner", validate="one_to_one"
+            ),
+            on="season",
+            how="left",
+            validate="many_to_one",
+        )
+        .merge(
+            teams,
+            on=["season", "player_id"],
+            how="left",
+            validate="one_to_one",
+        )
     )
     if context_exposure is not None and not context_exposure.empty:
         ordered = ordered.merge(
@@ -2134,9 +2266,7 @@ def _player_rating_histories(
         )
     else:
         ordered["observed_context_exposure"] = np.nan
-    ordered = ordered.sort_values(
-        ["player_id", "season"], kind="stable"
-    )
+    ordered = ordered.sort_values(["player_id", "season"], kind="stable")
     team_splits = player_team_splits or {}
     latest_teams = player_latest_teams or {}
     return {
@@ -2162,21 +2292,15 @@ def _player_rating_histories(
                     else float(row.observed_context_exposure)
                 ),
                 "age": None if pd.isna(row.age) else float(row.age),
-                "team_id": latest_teams.get(
-                    (str(row.season), int(row.player_id)), {}
-                ).get(
+                "team_id": latest_teams.get((str(row.season), int(row.player_id)), {}).get(
                     "team_id",
                     None if pd.isna(row.primary_team_id) else int(row.primary_team_id),
                 ),
-                "team": latest_teams.get(
-                    (str(row.season), int(row.player_id)), {}
-                ).get(
+                "team": latest_teams.get((str(row.season), int(row.player_id)), {}).get(
                     "team",
                     "-" if pd.isna(row.primary_team_tricode) else str(row.primary_team_tricode),
                 ),
-                "team_splits": team_splits.get(
-                    (str(row.season), int(row.player_id)), []
-                ),
+                "team_splits": team_splits.get((str(row.season), int(row.player_id)), []),
                 "possessions": (
                     0.0 if pd.isna(row.rapm_possessions) else float(row.rapm_possessions)
                 ),
@@ -2256,10 +2380,7 @@ def _player_active_through_years(panel_path: Path) -> dict[int, int]:
     if missing:
         return {}
     values = panel.loc[:, ["player_id", "to_year"]].dropna()
-    return {
-        int(row.player_id): int(row.to_year) - 1
-        for row in values.itertuples(index=False)
-    }
+    return {int(row.player_id): int(row.to_year) - 1 for row in values.itertuples(index=False)}
 
 
 def build_player_team_splits(
@@ -2279,9 +2400,7 @@ def build_player_team_splits(
     frames: list[pd.DataFrame] = []
     for season in sorted(ratings["season"].astype(str).unique()):
         player_ids = set(
-            ratings.loc[ratings["season"].astype(str).eq(season), "player_id"]
-            .astype(int)
-            .tolist()
+            ratings.loc[ratings["season"].astype(str).eq(season), "player_id"].astype(int).tolist()
         )
         stints = read_rapm_stints(season, analytical_dir=analytical_dir)
         for side in ("home", "away"):
@@ -2369,8 +2488,7 @@ def _player_team_splits_by_season(
     missing = required - set(splits.columns)
     if missing:
         raise LineupEvaluationError(
-            "Player-team split artifact is missing required columns: "
-            + ", ".join(sorted(missing))
+            "Player-team split artifact is missing required columns: " + ", ".join(sorted(missing))
         )
     ordered = splits.sort_values(
         ["season", "player_id", "possessions", "team_id"],
@@ -2406,31 +2524,24 @@ def _player_latest_teams_by_season(
     missing = required - set(splits.columns)
     if missing:
         raise LineupEvaluationError(
-            "Player-team split artifact is missing required columns: "
-            + ", ".join(sorted(missing))
+            "Player-team split artifact is missing required columns: " + ", ".join(sorted(missing))
         )
     if "is_latest_team" in splits:
         latest = splits.loc[splits["is_latest_team"].astype(bool)].copy()
     elif "last_game_time_utc" in splits:
-        latest = (
-            splits.sort_values(
-                ["season", "player_id", "last_game_time_utc", "possessions", "team_id"],
-                ascending=[True, True, False, False, True],
-                kind="stable",
-            )
-            .drop_duplicates(["season", "player_id"], keep="first")
-        )
+        latest = splits.sort_values(
+            ["season", "player_id", "last_game_time_utc", "possessions", "team_id"],
+            ascending=[True, True, False, False, True],
+            kind="stable",
+        ).drop_duplicates(["season", "player_id"], keep="first")
     else:
         # Older caches only preserve exposure order. Treat their primary team as
         # the fallback until the cache is rematerialized from dated stints.
-        latest = (
-            splits.sort_values(
-                ["season", "player_id", "possessions", "team_id"],
-                ascending=[True, True, False, True],
-                kind="stable",
-            )
-            .drop_duplicates(["season", "player_id"], keep="first")
-        )
+        latest = splits.sort_values(
+            ["season", "player_id", "possessions", "team_id"],
+            ascending=[True, True, False, True],
+            kind="stable",
+        ).drop_duplicates(["season", "player_id"], keep="first")
     if latest.duplicated(["season", "player_id"]).any():
         raise LineupEvaluationError("Player-team splits identify multiple latest teams")
     return {
@@ -2477,16 +2588,12 @@ def _antisymmetric_feature_contributions(
 def _is_compiled_linear_x3(context_model: MatchupContextualModel) -> bool:
     """Return whether this is the exact additive-compilable NAIL-RAPM contract."""
 
-    return (
-        context_model.feature_set
-        in {
-            CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
-            CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
-            CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
-            CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
-        }
-        and tuple(context_model.pipeline.named_steps) == ("scale", "ridge")
-    )
+    return context_model.feature_set in {
+        CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
+        CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
+        CONTEXT_FEATURE_SET_X3_V1_ORB_CLAIM_REPLACEMENT,
+        CONTEXT_FEATURE_SET_X3_WITHOUT_UNCERTAINTY,
+    } and tuple(context_model.pipeline.named_steps) == ("scale", "ridge")
 
 
 def _compiled_linear_x3_nonadditive_side_scores(
@@ -2504,9 +2611,7 @@ def _compiled_linear_x3_nonadditive_side_scores(
     }
     nonadditive_columns = [
         side_column
-        for feature_id, side_column in zip(
-            relative_columns, side_columns, strict=True
-        )
+        for feature_id, side_column in zip(relative_columns, side_columns, strict=True)
         if feature_id not in additive_ids
     ]
     if not nonadditive_columns:
@@ -2551,9 +2656,7 @@ def _compiled_linear_x3_coefficients(
         )
     scale = context_model.pipeline.named_steps["scale"]
     ridge = context_model.pipeline.named_steps["ridge"]
-    raw_coefficients = np.asarray(ridge.coef_, dtype=float) / np.asarray(
-        scale.scale_, dtype=float
-    )
+    raw_coefficients = np.asarray(ridge.coef_, dtype=float) / np.asarray(scale.scale_, dtype=float)
     side_columns = side_context_feature_columns(context_model.feature_set)
     raw_by_feature = dict(zip(side_columns, raw_coefficients, strict=True))
     adjustment = np.zeros(len(profiles), dtype=float)
@@ -2566,9 +2669,7 @@ def _compiled_linear_x3_coefficients(
         }
     )
     output = coefficients.merge(adjustments, on="player_id", how="left", validate="one_to_one")
-    output["rapm"] = (
-        output["rapm"] + output["compiled_profile_adjustment"].fillna(0.0) - center
-    )
+    output["rapm"] = output["rapm"] + output["compiled_profile_adjustment"].fillna(0.0) - center
     return output.drop(columns="compiled_profile_adjustment")
 
 
@@ -2606,24 +2707,26 @@ def compiled_linear_x3_additive_profile_breakdown(
             "NAIL-RAPM lacks profile columns: " + ", ".join(sorted(missing))
         )
     if {"player_id", "possessions"} - set(reference_weights.columns):
-        raise LineupEvaluationError(
-            "Additive-profile reference requires player possession weights"
-        )
+        raise LineupEvaluationError("Additive-profile reference requires player possession weights")
 
     scale = context_model.pipeline.named_steps["scale"]
     ridge = context_model.pipeline.named_steps["ridge"]
-    raw_coefficients = np.asarray(ridge.coef_, dtype=float) / np.asarray(
-        scale.scale_, dtype=float
-    )
+    raw_coefficients = np.asarray(ridge.coef_, dtype=float) / np.asarray(scale.scale_, dtype=float)
     side_columns = side_context_feature_columns(context_model.feature_set)
     raw_by_feature = dict(zip(side_columns, raw_coefficients, strict=True))
     values = profiles.loc[:, ["player_id", *additive_feature_map.values()]].copy()
-    weights = values.loc[:, ["player_id"]].merge(
-        reference_weights.loc[:, ["player_id", "possessions"]],
-        on="player_id",
-        how="left",
-        validate="one_to_one",
-    )["possessions"].fillna(0.0).clip(lower=0.0).to_numpy(dtype=float)
+    weights = (
+        values.loc[:, ["player_id"]]
+        .merge(
+            reference_weights.loc[:, ["player_id", "possessions"]],
+            on="player_id",
+            how="left",
+            validate="one_to_one",
+        )["possessions"]
+        .fillna(0.0)
+        .clip(lower=0.0)
+        .to_numpy(dtype=float)
+    )
 
     output: list[pd.DataFrame] = []
     for feature, profile_column in additive_feature_map.items():
@@ -2672,9 +2775,7 @@ def _feature_contributions(context_model: object, features: pd.DataFrame) -> np.
         scale = context_model.named_steps["scale"]
         ridge = context_model.named_steps["ridge"]
     except AttributeError as error:
-        raise TypeError(
-            "Context attribution requires the published Ridge pipeline"
-        ) from error
+        raise TypeError("Context attribution requires the published Ridge pipeline") from error
     columns = list(features.columns)
     if "spline" not in context_model.named_steps:
         scaled = scale.transform(features.loc[:, columns])
@@ -2818,9 +2919,7 @@ def _compiled_linear_feature_details(
                     "opponent_top_players": _profile_leaders(
                         opponent_player_ids, opponent_state, "usage_per_100"
                     ),
-                    "unit_total": _profile_total(
-                        unit_player_ids, unit_state, "usage_per_100"
-                    ),
+                    "unit_total": _profile_total(unit_player_ids, unit_state, "usage_per_100"),
                     "opponent_total": _profile_total(
                         opponent_player_ids, opponent_state, "usage_per_100"
                     ),
@@ -2862,9 +2961,7 @@ def _profile_leaders(
     return sorted(leaders, key=lambda row: float(row["value"]), reverse=True)[:2]
 
 
-def _profile_total(
-    player_ids: list[int], state: SeasonLineupState, profile_column: str
-) -> float:
+def _profile_total(player_ids: list[int], state: SeasonLineupState, profile_column: str) -> float:
     """Return the five-player total for one profile coordinate."""
 
     profile_rows = state.profiles.set_index("player_id")
@@ -2937,9 +3034,9 @@ def _composition_response_curves(
                 ),
                 "opponent_value": opponent_value,
                 "opponent_contribution": float(
-                    _cached_portable_component(
-                        response_cache, index, np.asarray([opponent_value])
-                    )[0]
+                    _cached_portable_component(response_cache, index, np.asarray([opponent_value]))[
+                        0
+                    ]
                 ),
                 "unit_clamped": bool(unit_value != raw_unit_value),
                 "opponent_clamped": bool(opponent_value != raw_opponent_value),
@@ -2977,15 +3074,15 @@ def _matchup_response_curves(
         portable_opponent_contribution = _cached_portable_component(
             response_cache, index, np.asarray([opponent_value])
         )[0]
-        total_values = isolated_feature_component(
-            context_model, index, values - opponent_value
-        )
+        total_values = isolated_feature_component(context_model, index, values - opponent_value)
         matchup_values = total_values - portable_values + portable_opponent_contribution
-        current_value = isolated_feature_component(
-            context_model, index, np.asarray([unit_value - opponent_value])
-        )[0] - _cached_portable_component(
-            response_cache, index, np.asarray([unit_value])
-        )[0] + portable_opponent_contribution
+        current_value = (
+            isolated_feature_component(
+                context_model, index, np.asarray([unit_value - opponent_value])
+            )[0]
+            - _cached_portable_component(response_cache, index, np.asarray([unit_value]))[0]
+            + portable_opponent_contribution
+        )
         curves.append(
             {
                 "id": column,
@@ -3032,9 +3129,7 @@ def _warm_response_cache(
     return cache
 
 
-def response_cache_path(
-    model_artifact: str, run_id: str, season: str | None = None
-) -> Path:
+def response_cache_path(model_artifact: str, run_id: str, season: str | None = None) -> Path:
     """Return the immutable response cache location for one completed model season."""
 
     suffix = f"-{season}" if season is not None else ""
@@ -3059,6 +3154,104 @@ def lineup_rankings_path(model_artifact: str, run_id: str, season: str) -> Path:
     return DEFAULT_LINEUP_RANKINGS_CACHE_DIR / model_artifact / run_id / f"{season}.parquet"
 
 
+def constrained_split_ratings_root(model_artifact: str, run_id: str) -> Path:
+    """Return the sidecar root for an O/D allocation tied to one NAIL release."""
+
+    return DEFAULT_CONSTRAINED_SPLIT_RATINGS_CACHE_DIR / model_artifact / run_id
+
+
+def _load_constrained_split_ratings_cache(
+    model_artifact: str,
+    run_id: str,
+) -> pd.DataFrame:
+    """Load only a companion cache that exactly identifies the active NAIL run."""
+
+    root = constrained_split_ratings_root(model_artifact, run_id)
+    latest_path = root / "latest.json"
+    if not latest_path.is_file():
+        return pd.DataFrame()
+    constrained_run_id = str(json.loads(latest_path.read_text())["run_id"])
+    run_root = root / constrained_run_id
+    metadata_path = run_root / "metadata.json"
+    ratings_path = run_root / "player_ratings.parquet"
+    if not metadata_path.is_file() or not ratings_path.is_file():
+        raise LineupEvaluationError("Constrained Split NAIL companion cache is incomplete")
+    metadata = json.loads(metadata_path.read_text())
+    if (
+        metadata.get("production_model_artifact") != model_artifact
+        or metadata.get("production_run_id") != run_id
+    ):
+        raise LineupEvaluationError(
+            "Constrained Split NAIL companion cache targets a different NAIL release"
+        )
+    ratings = pd.read_parquet(ratings_path)
+    required = {
+        "season",
+        "player_id",
+        "total_nail",
+        "offense_rating",
+        "defense_rating",
+        "od_sum_error",
+    }
+    missing = sorted(required - set(ratings.columns))
+    if missing or ratings.duplicated(["season", "player_id"]).any():
+        raise LineupEvaluationError(
+            "Constrained Split NAIL companion cache has invalid player-season rows"
+        )
+    max_error = float(ratings["od_sum_error"].abs().max()) if not ratings.empty else 0.0
+    if max_error > 1e-9 or not np.isclose(
+        max_error, float(metadata.get("max_od_sum_error", np.nan)), atol=1e-12
+    ):
+        raise LineupEvaluationError("Constrained Split NAIL companion cache failed reconciliation")
+    return ratings.loc[:, sorted(required)].copy()
+
+
+def _load_constrained_split_context_allocations_cache(
+    model_artifact: str,
+    run_id: str,
+) -> pd.DataFrame:
+    """Load O/D non-additive context allocations paired to one NAIL release."""
+
+    root = constrained_split_ratings_root(model_artifact, run_id)
+    latest_path = root / "latest.json"
+    if not latest_path.is_file():
+        return pd.DataFrame()
+    constrained_run_id = str(json.loads(latest_path.read_text())["run_id"])
+    run_root = root / constrained_run_id
+    metadata_path = run_root / "metadata.json"
+    allocations_path = run_root / "context_feature_allocations.parquet"
+    if not metadata_path.is_file() or not allocations_path.is_file():
+        return pd.DataFrame()
+    metadata = json.loads(metadata_path.read_text())
+    if (
+        metadata.get("production_model_artifact") != model_artifact
+        or metadata.get("production_run_id") != run_id
+    ):
+        raise LineupEvaluationError(
+            "Constrained Split NAIL context allocations target a different NAIL release"
+        )
+    allocations = pd.read_parquet(allocations_path)
+    required = {
+        "season",
+        "feature",
+        "feature_layer",
+        "total_coefficient",
+        "offense_coefficient",
+        "defense_coefficient",
+        "od_sum_error",
+    }
+    missing = sorted(required - set(allocations.columns))
+    if missing or allocations.duplicated(["season", "feature"]).any():
+        raise LineupEvaluationError(
+            "Constrained Split NAIL context allocations have invalid season-feature rows"
+        )
+    if float(allocations["od_sum_error"].abs().max()) > 1e-9:
+        raise LineupEvaluationError(
+            "Constrained Split NAIL context allocations failed reconciliation"
+        )
+    return allocations.loc[:, sorted(required)].copy()
+
+
 def exposure_cohort_path(model_artifact: str, run_id: str) -> Path:
     """Return the compact historical exposure cache needed by the public API."""
 
@@ -3074,9 +3267,7 @@ def historical_profiles_path(model_artifact: str, run_id: str) -> Path:
 def historical_realized_profiles_path(model_artifact: str, run_id: str) -> Path:
     """Return the realized profile cache used by retrospective Lab evaluations."""
 
-    return (
-        DEFAULT_HISTORICAL_REALIZED_PROFILE_CACHE_DIR / model_artifact / f"{run_id}.parquet"
-    )
+    return DEFAULT_HISTORICAL_REALIZED_PROFILE_CACHE_DIR / model_artifact / f"{run_id}.parquet"
 
 
 def published_player_ratings_path(model_artifact: str, run_id: str) -> Path:
@@ -3088,12 +3279,7 @@ def published_player_ratings_path(model_artifact: str, run_id: str) -> Path:
 def preseason_rankings_path(model_artifact: str, run_id: str, season: str) -> Path:
     """Return the immutable cached preseason ranking catalog for one model run."""
 
-    return (
-        DEFAULT_PRESEASON_RANKINGS_CACHE_DIR
-        / model_artifact
-        / run_id
-        / f"{season}.parquet"
-    )
+    return DEFAULT_PRESEASON_RANKINGS_CACHE_DIR / model_artifact / run_id / f"{season}.parquet"
 
 
 def team_roster_path(season: str) -> Path:
@@ -3120,6 +3306,8 @@ def build_observed_lineup_rankings(
     players: pd.DataFrame,
     coefficients: pd.DataFrame,
     context_model: MatchupContextualModel,
+    constrained_split_ratings: pd.DataFrame | None = None,
+    constrained_split_context_allocations: pd.DataFrame | None = None,
     analytical_dir: Path | str = Path("data/analytical"),
 ) -> pd.DataFrame:
     """Materialize regular-season five-man ratings against actual opponents.
@@ -3156,6 +3344,71 @@ def build_observed_lineup_rankings(
     home_lineups = [_lineup_key(lineup) for lineup in stints["home_player_ids"]]
     away_lineups = [_lineup_key(lineup) for lineup in stints["away_player_ids"]]
     all_lineups = list(dict.fromkeys([*home_lineups, *away_lineups]))
+    offensive_rating_map: dict[int, float] | None = None
+    defensive_rating_map: dict[int, float] | None = None
+    has_split_context = (
+        constrained_split_context_allocations is not None
+        and not constrained_split_context_allocations.empty
+    )
+    if constrained_split_ratings is not None and not constrained_split_ratings.empty:
+        required_split_columns = {
+            "season",
+            "player_id",
+            "total_nail",
+            "offense_rating",
+            "defense_rating",
+        }
+        missing_split_columns = required_split_columns - set(constrained_split_ratings)
+        if missing_split_columns:
+            raise LineupEvaluationError(
+                "Constrained Split NAIL ratings are missing required columns: "
+                + ", ".join(sorted(missing_split_columns))
+            )
+        season_split_ratings = constrained_split_ratings.loc[
+            constrained_split_ratings["season"].astype(str).eq(season),
+            ["player_id", "total_nail", "offense_rating", "defense_rating"],
+        ].copy()
+        if season_split_ratings["player_id"].duplicated().any():
+            raise LineupEvaluationError(
+                f"Constrained Split NAIL ratings contain duplicate players for {season}"
+            )
+        split_totals = dict(
+            zip(
+                season_split_ratings["player_id"].astype(int),
+                season_split_ratings["total_nail"].astype(float),
+                strict=True,
+            )
+        )
+        offensive_rating_map = dict(
+            zip(
+                season_split_ratings["player_id"].astype(int),
+                season_split_ratings["offense_rating"].astype(float),
+                strict=True,
+            )
+        )
+        defensive_rating_map = dict(
+            zip(
+                season_split_ratings["player_id"].astype(int),
+                season_split_ratings["defense_rating"].astype(float),
+                strict=True,
+            )
+        )
+        observed_player_ids = set().union(*all_lineups)
+        missing_split_players = sorted(observed_player_ids - set(split_totals))
+        if missing_split_players:
+            raise LineupEvaluationError(
+                f"Constrained Split NAIL ratings are missing observed {season} players: "
+                + ", ".join(map(str, missing_split_players))
+            )
+        scalar_errors = [
+            split_totals[player_id] - coefficient_map[player_id]
+            for player_id in observed_player_ids
+        ]
+        if not np.allclose(scalar_errors, 0.0, atol=1e-9):
+            raise LineupEvaluationError(
+                "Constrained Split NAIL ratings do not reconcile to the published scalar NAIL "
+                f"ratings for {season}"
+            )
     feature_kwargs = {
         "feature_set": context_model.feature_set,
         "rebound_model": getattr(context_model, "rebound_model", None),
@@ -3192,6 +3445,43 @@ def build_observed_lineup_rankings(
         away_scores = np.asarray([side_score_map[lineup] for lineup in away_lineups], dtype=float)
         total_context = home_scores - away_scores
         matchup_bonus = np.zeros(len(stints), dtype=float)
+        if offensive_rating_map is not None and has_split_context:
+            offense_context_coefficients, defense_context_coefficients = (
+                _season_constrained_split_context_coefficients(
+                    constrained_split_context_allocations,
+                    season=season,
+                    features=nonadditive_columns,
+                )
+            )
+            if not np.allclose(
+                offense_context_coefficients + defense_context_coefficients,
+                raw_coefficients.loc[nonadditive_columns],
+                atol=1e-9,
+            ):
+                raise LineupEvaluationError(
+                    "Constrained Split NAIL context allocations do not reconcile to scalar context"
+                )
+            home_offensive_context = home_raw.loc[:, nonadditive_columns].to_numpy(
+                dtype=float
+            ) @ offense_context_coefficients.to_numpy(dtype=float)
+            home_defensive_context = home_raw.loc[:, nonadditive_columns].to_numpy(
+                dtype=float
+            ) @ defense_context_coefficients.to_numpy(dtype=float)
+            away_offensive_context = away_raw.loc[:, nonadditive_columns].to_numpy(
+                dtype=float
+            ) @ offense_context_coefficients.to_numpy(dtype=float)
+            away_defensive_context = away_raw.loc[:, nonadditive_columns].to_numpy(
+                dtype=float
+            ) @ defense_context_coefficients.to_numpy(dtype=float)
+        elif offensive_rating_map is not None:
+            raise LineupEvaluationError(
+                "Constrained Split NAIL context allocations are required for observed O/D edges"
+            )
+        else:
+            home_offensive_context = None
+            home_defensive_context = None
+            away_offensive_context = None
+            away_defensive_context = None
     else:
         side_features, _, _ = _model_feature_inputs(
             context_model, raw_side_features, raw_side_features
@@ -3202,11 +3492,47 @@ def build_observed_lineup_rankings(
         home_scores = np.asarray([side_score_map[lineup] for lineup in home_lineups], dtype=float)
         away_scores = np.asarray([side_score_map[lineup] for lineup in away_lineups], dtype=float)
         matchup_bonus = total_context - home_scores + away_scores
+        home_offensive_context = None
+        home_defensive_context = None
+        away_offensive_context = None
+        away_defensive_context = None
     home_player_ratings = np.asarray(
         [_lineup_rating(lineup, coefficient_map) for lineup in home_lineups], dtype=float
     )
     away_player_ratings = np.asarray(
         [_lineup_rating(lineup, coefficient_map) for lineup in away_lineups], dtype=float
+    )
+    home_offensive_player_ratings = (
+        np.asarray(
+            [_lineup_rating(lineup, offensive_rating_map) for lineup in home_lineups],
+            dtype=float,
+        )
+        if offensive_rating_map is not None
+        else None
+    )
+    away_offensive_player_ratings = (
+        np.asarray(
+            [_lineup_rating(lineup, offensive_rating_map) for lineup in away_lineups],
+            dtype=float,
+        )
+        if offensive_rating_map is not None
+        else None
+    )
+    home_defensive_player_ratings = (
+        np.asarray(
+            [_lineup_rating(lineup, defensive_rating_map) for lineup in home_lineups],
+            dtype=float,
+        )
+        if defensive_rating_map is not None
+        else None
+    )
+    away_defensive_player_ratings = (
+        np.asarray(
+            [_lineup_rating(lineup, defensive_rating_map) for lineup in away_lineups],
+            dtype=float,
+        )
+        if defensive_rating_map is not None
+        else None
     )
     possessions = stints["possessions"].to_numpy(dtype=float)
     actual_home = stints["target_home_net_rating"].to_numpy(dtype=float)
@@ -3219,6 +3545,28 @@ def build_observed_lineup_rankings(
         possessions=possessions,
         player_rating=home_player_ratings,
         opponent_player_rating=away_player_ratings,
+        offensive_edge=(
+            home_offensive_player_ratings
+            - away_defensive_player_ratings
+            + home_offensive_context
+            - away_defensive_context
+            if home_offensive_player_ratings is not None
+            and away_defensive_player_ratings is not None
+            and home_offensive_context is not None
+            and away_defensive_context is not None
+            else None
+        ),
+        defensive_edge=(
+            home_defensive_player_ratings
+            - away_offensive_player_ratings
+            + home_defensive_context
+            - away_offensive_context
+            if home_defensive_player_ratings is not None
+            and away_offensive_player_ratings is not None
+            and home_defensive_context is not None
+            and away_offensive_context is not None
+            else None
+        ),
         composition_rating=home_scores,
         opponent_composition_rating=away_scores,
         matchup_bonus=matchup_bonus,
@@ -3232,6 +3580,28 @@ def build_observed_lineup_rankings(
         possessions=possessions,
         player_rating=away_player_ratings,
         opponent_player_rating=home_player_ratings,
+        offensive_edge=(
+            away_offensive_player_ratings
+            - home_defensive_player_ratings
+            + away_offensive_context
+            - home_defensive_context
+            if away_offensive_player_ratings is not None
+            and home_defensive_player_ratings is not None
+            and away_offensive_context is not None
+            and home_defensive_context is not None
+            else None
+        ),
+        defensive_edge=(
+            away_defensive_player_ratings
+            - home_offensive_player_ratings
+            + away_defensive_context
+            - home_offensive_context
+            if away_defensive_player_ratings is not None
+            and home_offensive_player_ratings is not None
+            and away_defensive_context is not None
+            and home_offensive_context is not None
+            else None
+        ),
         composition_rating=away_scores,
         opponent_composition_rating=home_scores,
         matchup_bonus=-matchup_bonus,
@@ -3252,6 +3622,8 @@ def _observed_lineup_side_rows(
     possessions: np.ndarray,
     player_rating: np.ndarray,
     opponent_player_rating: np.ndarray,
+    offensive_edge: np.ndarray | None,
+    defensive_edge: np.ndarray | None,
     composition_rating: np.ndarray,
     opponent_composition_rating: np.ndarray,
     matchup_bonus: np.ndarray,
@@ -3262,30 +3634,42 @@ def _observed_lineup_side_rows(
     composition_edge = composition_rating - opponent_composition_rating
     player_edge = player_rating - opponent_player_rating
     context_edge = composition_edge + matchup_bonus
-    return pd.DataFrame(
-        {
-            "team_id": team_ids.astype(int),
-            "team": teams,
-            "lineup_key": ["|".join(str(player_id) for player_id in lineup) for lineup in lineups],
-            "game_id": game_ids,
-            "possessions": possessions,
-            "player_rating": player_rating,
-            "player_edge": player_edge,
-            "composition_rating": composition_rating,
-            "composition_edge": composition_edge,
-            "matchup_bonus": matchup_bonus,
-            "context_edge": context_edge,
-            "gestalt_score": player_edge + context_edge,
-            "actual_net_rating": actual_net_rating,
-        }
-    )
+    if (offensive_edge is None) != (defensive_edge is None):
+        raise LineupEvaluationError("Observed lineup O/D edges must be supplied together")
+    if offensive_edge is not None and defensive_edge is not None:
+        if not np.allclose(
+            offensive_edge + defensive_edge,
+            player_edge + context_edge,
+            atol=1e-9,
+        ):
+            raise LineupEvaluationError(
+                "Observed lineup O/D edges do not reconstruct the scalar Edge"
+            )
+    output = {
+        "team_id": team_ids.astype(int),
+        "team": teams,
+        "lineup_key": ["|".join(str(player_id) for player_id in lineup) for lineup in lineups],
+        "game_id": game_ids,
+        "possessions": possessions,
+        "player_rating": player_rating,
+        "player_edge": player_edge,
+        "composition_rating": composition_rating,
+        "composition_edge": composition_edge,
+        "matchup_bonus": matchup_bonus,
+        "context_edge": context_edge,
+        "gestalt_score": player_edge + context_edge,
+        "actual_net_rating": actual_net_rating,
+    }
+    if offensive_edge is not None and defensive_edge is not None:
+        output["offensive_edge"] = offensive_edge
+        output["defensive_edge"] = defensive_edge
+    return pd.DataFrame(output)
 
 
-def _aggregate_observed_lineups(
-    rows: pd.DataFrame, names: dict[int, str]) -> pd.DataFrame:
+def _aggregate_observed_lineups(rows: pd.DataFrame, names: dict[int, str]) -> pd.DataFrame:
     """Possession-weight aggregate stint-level ratings into an observed five-man table."""
 
-    metrics = (
+    metrics = [
         "player_rating",
         "player_edge",
         "composition_rating",
@@ -3294,6 +3678,11 @@ def _aggregate_observed_lineups(
         "context_edge",
         "gestalt_score",
         "actual_net_rating",
+    ]
+    metrics.extend(
+        column
+        for column in ("offensive_edge", "defensive_edge")
+        if column in rows
     )
     weighted = rows.copy()
     for metric in metrics:
@@ -3310,6 +3699,15 @@ def _aggregate_observed_lineups(
     )
     for metric in metrics:
         aggregated[metric] /= aggregated["possessions"]
+    if {"offensive_edge", "defensive_edge"}.issubset(aggregated.columns):
+        if not np.allclose(
+            aggregated["offensive_edge"] + aggregated["defensive_edge"],
+            aggregated["gestalt_score"],
+            atol=1e-9,
+        ):
+            raise LineupEvaluationError(
+                "Aggregated observed lineup O/D edges do not reconstruct scalar Edge"
+            )
     aggregated["player_ids"] = aggregated["lineup_key"].map(
         lambda key: [int(player_id) for player_id in key.split("|")]
     )
@@ -3322,6 +3720,49 @@ def _aggregate_observed_lineups(
         ascending=[False, False, True, True],
         kind="stable",
     ).reset_index(drop=True)
+
+
+def _season_constrained_split_context_coefficients(
+    allocations: pd.DataFrame,
+    *,
+    season: str,
+    features: list[str],
+) -> tuple[pd.Series, pd.Series]:
+    """Return O/D non-additive coefficients in the active scalar feature order."""
+
+    required = {
+        "season",
+        "feature",
+        "feature_layer",
+        "offense_coefficient",
+        "defense_coefficient",
+    }
+    missing = required - set(allocations)
+    if missing:
+        raise LineupEvaluationError(
+            "Constrained Split NAIL context allocations are missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+    season_allocations = allocations.loc[
+        allocations["season"].astype(str).eq(season)
+        & allocations["feature_layer"].astype(str).eq("nonadditive_lineup"),
+        ["feature", "offense_coefficient", "defense_coefficient"],
+    ].copy()
+    if season_allocations["feature"].duplicated().any():
+        raise LineupEvaluationError(
+            f"Constrained Split NAIL context allocations contain duplicate {season} features"
+        )
+    season_allocations = season_allocations.set_index("feature")
+    missing_features = [feature for feature in features if feature not in season_allocations.index]
+    if missing_features:
+        raise LineupEvaluationError(
+            "Constrained Split NAIL context allocations are missing scalar non-additive features: "
+            + ", ".join(missing_features)
+        )
+    return (
+        season_allocations.loc[features, "offense_coefficient"].astype(float),
+        season_allocations.loc[features, "defense_coefficient"].astype(float),
+    )
 
 
 def _lineup_key(lineup: list[int] | tuple[int, ...] | np.ndarray) -> tuple[int, ...]:
@@ -3372,9 +3813,9 @@ def _sampled_side_scores(
             np.tile(sample.to_numpy(dtype=float), (len(chunk), 1)),
             columns=side_columns,
         )
-        output[start : start + len(chunk)] = context_model.predict_side_pairs(home, away).reshape(
-            len(chunk), count
-        ).mean(axis=1)
+        output[start : start + len(chunk)] = (
+            context_model.predict_side_pairs(home, away).reshape(len(chunk), count).mean(axis=1)
+        )
     return output
 
 
@@ -3408,11 +3849,7 @@ def warm_player_context_exposure(
             target_season=season,
             target_player_ids=participants,
             exposure_cohort=exposure_cohort,
-            **(
-                {"padding_contract": padding_contract}
-                if padding_contract is not None
-                else {}
-            ),
+            **({"padding_contract": padding_contract} if padding_contract is not None else {}),
             use_last_observed_profile=use_last_observed_profile,
         )
         additive_ids = {
@@ -3464,18 +3901,10 @@ def warm_player_context_exposure(
         exposure = pd.DataFrame(
             {
                 "player_id": [
-                    int(player_id)
-                    for lineup in stints["home_player_ids"]
-                    for player_id in lineup
+                    int(player_id) for lineup in stints["home_player_ids"] for player_id in lineup
                 ]
-                + [
-                    int(player_id)
-                    for lineup in stints["away_player_ids"]
-                    for player_id in lineup
-                ],
-                "possessions": np.repeat(
-                    stints["possessions"].to_numpy(dtype=float), 5
-                ).tolist()
+                + [int(player_id) for lineup in stints["away_player_ids"] for player_id in lineup],
+                "possessions": np.repeat(stints["possessions"].to_numpy(dtype=float), 5).tolist()
                 * 2,
                 "weighted_context": np.repeat(offsets * stints["possessions"], 5).tolist()
                 + np.repeat(-offsets * stints["possessions"], 5).tolist(),

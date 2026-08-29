@@ -21,6 +21,7 @@ EXPOSURE_COHORT_CACHE="artifacts/web/exposure_cohorts/${MODEL_ARTIFACT}/${RUN_ID
 HISTORICAL_PROFILE_CACHE="artifacts/web/historical_profiles/${MODEL_ARTIFACT}/${RUN_ID}.parquet"
 HISTORICAL_REALIZED_PROFILE_CACHE="artifacts/web/historical_realized_profiles/${MODEL_ARTIFACT}/${RUN_ID}.parquet"
 PRESEASON_CACHE="artifacts/web/preseason_rankings/${MODEL_ARTIFACT}/${RUN_ID}"
+CONSTRAINED_SPLIT_CACHE="artifacts/web/constrained_split_ratings/${MODEL_ARTIFACT}/${RUN_ID}"
 RELEASE_MANIFEST="artifacts/web/releases/${MODEL_ARTIFACT}/${RUN_ID}/bundle_manifest.json"
 PANEL="data/analytical/player_season_panel"
 
@@ -37,6 +38,7 @@ required_paths=(
   "$HISTORICAL_PROFILE_CACHE"
   "$HISTORICAL_REALIZED_PROFILE_CACHE"
   "$PRESEASON_CACHE"
+  "$CONSTRAINED_SPLIT_CACHE"
   "$RELEASE_MANIFEST"
   "$PANEL"
 )
@@ -58,6 +60,7 @@ mkdir -p "$(dirname "$STAGING_DIR/$EXPOSURE_COHORT_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$HISTORICAL_PROFILE_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$HISTORICAL_REALIZED_PROFILE_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$PRESEASON_CACHE")"
+mkdir -p "$(dirname "$STAGING_DIR/$CONSTRAINED_SPLIT_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$RELEASE_MANIFEST")"
 
 rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' src/ "$STAGING_DIR/src/"
@@ -72,6 +75,7 @@ rsync -a "$EXPOSURE_COHORT_CACHE" "$STAGING_DIR/$EXPOSURE_COHORT_CACHE"
 rsync -a "$HISTORICAL_PROFILE_CACHE" "$STAGING_DIR/$HISTORICAL_PROFILE_CACHE"
 rsync -a "$HISTORICAL_REALIZED_PROFILE_CACHE" "$STAGING_DIR/$HISTORICAL_REALIZED_PROFILE_CACHE"
 rsync -a "$PRESEASON_CACHE/" "$STAGING_DIR/$PRESEASON_CACHE/"
+rsync -a "$CONSTRAINED_SPLIT_CACHE/" "$STAGING_DIR/$CONSTRAINED_SPLIT_CACHE/"
 rsync -a "$RELEASE_MANIFEST" "$STAGING_DIR/$RELEASE_MANIFEST"
 rsync -a "$PANEL/" "$STAGING_DIR/$PANEL/"
 
@@ -85,6 +89,7 @@ cat > "$STAGING_DIR/release.json" <<EOF
   "run_id": "${RUN_ID}",
   "context_alpha": 10000,
   "profile_padding_contract": "medvedovsky_2020_stat_specific",
+  "constrained_split_cache": "${CONSTRAINED_SPLIT_CACHE}",
   "bundle_manifest": "${RELEASE_MANIFEST}"
 }
 EOF

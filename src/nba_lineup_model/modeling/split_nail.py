@@ -23,6 +23,7 @@ from nba_lineup_model.models.baselines import PriorPrecisionRidgeLineupModel
 
 SPLIT_NAIL_ADDITIVE_FEATURES = LINEAR_NAIL_V1211_BASKETBALL_ADDITIVE_FEATURES
 SPLIT_NAIL_NONADDITIVE_FEATURES = ("top_two_assists", "usage_concentration")
+DEFAULT_SPECIALIZATION_RELATIVE_PRECISION = 4.0
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,35 @@ class ConstrainedSplitNailModel:
     @property
     def coef_(self) -> np.ndarray:
         return np.asarray(self.transform @ self.model.coef_, dtype=float).reshape(-1)
+
+    @property
+    def intercept_(self) -> float:
+        return self.model.intercept_
+
+
+@dataclass(frozen=True)
+class FixedTotalSplitNailModel:
+    """O/D allocation around coefficients whose total coordinate is locked.
+
+    The scalar production model supplies the paired ``mean`` coordinate
+    (offense plus defense) for every player, feature, and schedule control.
+    This model fits only the paired specialization coordinate (offense minus
+    defense).  It is therefore an attribution model: reconstructing a net
+    margin from both scoring sides returns the locked scalar prediction.
+    """
+
+    model: PriorPrecisionRidgeLineupModel
+    transform: sparse.csr_matrix
+    fixed_mean: np.ndarray
+
+    @property
+    def coef_(self) -> np.ndarray:
+        pair_count = len(self.fixed_mean)
+        mean_design = self.transform[:, :pair_count]
+        specialization_design = self.transform[:, pair_count:]
+        coefficients = mean_design @ self.fixed_mean
+        coefficients = coefficients + specialization_design @ self.model.coef_
+        return np.asarray(coefficients, dtype=float).reshape(-1)
 
     @property
     def intercept_(self) -> float:
@@ -379,6 +409,7 @@ def fit_split_nail_season(
     regularization: float,
     feature_relative_precision: float = 1.0,
     schedule_relative_precision: float | None = None,
+    player_specialization_relative_precision: float = DEFAULT_SPECIALIZATION_RELATIVE_PRECISION,
 ) -> SplitNailSeasonFit:
     """Fit one constrained O/D Split NAIL season around a forward scalar state."""
 
@@ -391,6 +422,8 @@ def fit_split_nail_season(
     )
     if resolved_schedule_precision <= 0:
         raise ValueError("Split NAIL schedule relative precision must be positive")
+    if player_specialization_relative_precision <= 0:
+        raise ValueError("Split NAIL player specialization relative precision must be positive")
     raw_prior = split_nail_prior_vector(design, scalar_priors, carried_side_differences)
     pairs = _raw_coefficient_pairs(design)
     transform = _paired_mean_specialization_transform(design.coefficient_count, pairs)
@@ -399,6 +432,7 @@ def fit_split_nail_season(
         design,
         feature_relative_precision=feature_relative_precision,
         schedule_relative_precision=resolved_schedule_precision,
+        player_specialization_relative_precision=player_specialization_relative_precision,
     )
     fitted = PriorPrecisionRidgeLineupModel(regularization).fit(
         design.features @ transform,
@@ -478,6 +512,64 @@ def fit_split_nail_season(
     )
 
 
+def fit_fixed_total_split_nail(
+    design: SplitNailDesign,
+    fixed_mean: np.ndarray,
+    *,
+    specialization_prior: np.ndarray | None = None,
+    regularization: float,
+    player_specialization_relative_precision: float = 1.0,
+    context_specialization_relative_precision: float = 1.0,
+) -> FixedTotalSplitNailModel:
+    """Fit only O/D allocation around a locked scalar NAIL state.
+
+    ``fixed_mean`` follows the paired-coordinate order returned by
+    :func:`_raw_coefficient_pairs`: players, every profile/context feature,
+    back-to-back when present, then home court.  Its values are production
+    totals, not half-ratings.  For example, a locked player value ``R`` is
+    represented by raw coefficients ``R / 2`` on both offense and defense
+    before a learned specialization is applied.
+    """
+
+    pair_count = design.coefficient_count // 2
+    means = np.asarray(fixed_mean, dtype=float)
+    if means.shape != (pair_count,) or not np.isfinite(means).all():
+        raise ValueError("Fixed total coordinates must be finite and match O/D pairs")
+    if player_specialization_relative_precision <= 0:
+        raise ValueError("Player specialization precision must be positive")
+    if context_specialization_relative_precision <= 0:
+        raise ValueError("Context specialization precision must be positive")
+
+    transform = _paired_mean_specialization_transform(
+        design.coefficient_count, _raw_coefficient_pairs(design)
+    )
+    mean_design = design.features @ transform[:, :pair_count]
+    specialization_design = design.features @ transform[:, pair_count:]
+    prior = (
+        np.zeros(pair_count, dtype=float)
+        if specialization_prior is None
+        else np.asarray(specialization_prior, dtype=float)
+    )
+    if prior.shape != (pair_count,) or not np.isfinite(prior).all():
+        raise ValueError("Specialization prior must be finite and match O/D pairs")
+    precision = np.full(
+        pair_count, context_specialization_relative_precision, dtype=float
+    )
+    precision[: design.player_count] = player_specialization_relative_precision
+    fitted = PriorPrecisionRidgeLineupModel(regularization).fit(
+        specialization_design,
+        design.target - np.asarray(mean_design @ means, dtype=float).reshape(-1),
+        design.weights,
+        prior,
+        precision,
+    )
+    return FixedTotalSplitNailModel(
+        model=fitted,
+        transform=transform,
+        fixed_mean=means,
+    )
+
+
 def _raw_coefficient_pairs(design: SplitNailDesign) -> list[tuple[int, int]]:
     """Return raw offense/defense column pairs in their physical order."""
 
@@ -531,25 +623,31 @@ def _constrained_precision(
     *,
     feature_relative_precision: float,
     schedule_relative_precision: float,
+    player_specialization_relative_precision: float = DEFAULT_SPECIALIZATION_RELATIVE_PRECISION,
 ) -> np.ndarray:
     """Set stronger shrinkage on every O/D specialization coordinate."""
 
     pair_count = design.coefficient_count // 2
     mean = np.ones(pair_count, dtype=float)
-    specialization = np.full(pair_count, 4.0, dtype=float)
+    specialization = np.full(pair_count, DEFAULT_SPECIALIZATION_RELATIVE_PRECISION, dtype=float)
+    specialization[: design.player_count] = player_specialization_relative_precision
     feature_count = len((*design.additive_features, *design.nonadditive_features))
     feature_start = design.player_count
     mean[feature_start : feature_start + feature_count] = feature_relative_precision
-    specialization[feature_start : feature_start + feature_count] = 4.0 * feature_relative_precision
+    specialization[feature_start : feature_start + feature_count] = (
+        DEFAULT_SPECIALIZATION_RELATIVE_PRECISION * feature_relative_precision
+    )
     cursor = feature_start + feature_count
     if design.includes_back_to_back:
         mean[cursor] = schedule_relative_precision
-        specialization[cursor] = 4.0 * schedule_relative_precision
+        specialization[cursor] = (
+            DEFAULT_SPECIALIZATION_RELATIVE_PRECISION * schedule_relative_precision
+        )
         cursor += 1
     # The final pair is home-offense/home-defense. Its difference is a
     # low-information scoring-environment specialization, so shrink it harder.
     mean[cursor] = 1.0
-    specialization[cursor] = 4.0
+    specialization[cursor] = DEFAULT_SPECIALIZATION_RELATIVE_PRECISION
     return np.concatenate([mean, specialization])
 
 

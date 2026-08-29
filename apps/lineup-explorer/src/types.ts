@@ -10,6 +10,8 @@ export type Player = {
   draft_class_year: number | null;
   age: number | null;
   rapm: number;
+  offense_rating?: number | null;
+  defense_rating?: number | null;
   prior_rating?: number | null;
   season_update?: number | null;
   additive_profile_adjustment?: number | null;
@@ -38,6 +40,8 @@ export type Player = {
   rating_history: Array<{
     season: string;
     rating: number;
+    offense_rating?: number | null;
+    defense_rating?: number | null;
     nail_rank: number;
     prior_rating: number | null;
     season_update: number | null;
@@ -88,6 +92,8 @@ export type RankedLineup = {
   games: number;
   player_rating: number;
   player_edge: number;
+  offensive_edge: number | null;
+  defensive_edge: number | null;
   composition_rating: number;
   composition_edge: number;
   matchup_bonus: number;
@@ -139,9 +145,22 @@ export type Matchup = {
   opponent_season: string;
   environment: "unit" | "neutral" | "opponent";
   environment_seasons: string[];
-  unit: { additive_rating: number; players: Player[] };
-  opponent: { additive_rating: number; players: Player[] };
+  unit: {
+    additive_rating: number;
+    offense_rating?: number | null;
+    defense_rating?: number | null;
+    players: Player[];
+  };
+  opponent: {
+    additive_rating: number;
+    offense_rating?: number | null;
+    defense_rating?: number | null;
+    players: Player[];
+  };
   additive_margin: number;
+  od_split_available?: boolean;
+  offensive_player_edge?: number | null;
+  defensive_player_edge?: number | null;
   contextual_adjustment: number;
   unit_composition_rating: number;
   opponent_composition_rating: number;

@@ -33,13 +33,13 @@ from nba_lineup_model.modeling.forward_contextual_rapm import (
     DEFAULT_TARGET_SEASON,
     _previous_season,
 )
-from nba_lineup_model.modeling.forward_nail_v1212_back_to_back import _Tee
 from nba_lineup_model.modeling.forward_exposure_gated_rapm import (
     _cold_start_priors,
     _combine_priors,
     _fit_replacement_token,
     _returning_priors,
 )
+from nba_lineup_model.modeling.forward_nail_v1212_back_to_back import _Tee
 from nba_lineup_model.modeling.gap_returner_prior import (
     build_centered_value_conditioned_aging_gap_returner_priors,
 )
@@ -47,29 +47,30 @@ from nba_lineup_model.modeling.prior_rapm import (
     DEFAULT_LAMBDA_GRID,
     ForwardLaggedRapmSeason,
 )
+from nba_lineup_model.modeling.progress import format_progress_bar
 from nba_lineup_model.modeling.replacement_level import (
     player_exposure_shares,
     prepare_player_exposure_cohort,
 )
-from nba_lineup_model.modeling.progress import format_progress_bar
 from nba_lineup_model.modeling.schedule_controls import build_back_to_back_game_features
+from nba_lineup_model.modeling.schema import ChronologicalSplitConfig
 from nba_lineup_model.modeling.split_nail import (
+    DEFAULT_SPECIALIZATION_RELATIVE_PRECISION,
     SPLIT_NAIL_ADDITIVE_FEATURES,
     SPLIT_NAIL_NONADDITIVE_FEATURES,
     SplitNailDesign,
     SplitNailSeasonFit,
-    build_split_nail_design,
-    build_split_nail_design_from_side_features,
-    fit_split_nail_season,
-    split_nail_prior_vector,
     _constrained_precision,
     _paired_mean_specialization_transform,
     _paired_raw_to_parameters,
     _raw_coefficient_pairs,
+    build_split_nail_design,
+    build_split_nail_design_from_side_features,
+    fit_split_nail_season,
+    split_nail_prior_vector,
 )
 from nba_lineup_model.modeling.stints import modeling_code_fingerprint, read_rapm_stints
 from nba_lineup_model.modeling.train import chronological_game_splits
-from nba_lineup_model.modeling.schema import ChronologicalSplitConfig
 from nba_lineup_model.models.baselines import PriorPrecisionRidgeLineupModel
 from nba_lineup_model.season.schema import validate_season
 
@@ -108,6 +109,7 @@ def train_forward_split_nail(
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
     artifacts_dir: Path | str = DEFAULT_ARTIFACTS_DIR,
     feature_relative_precision: float = DEFAULT_FEATURE_RELATIVE_PRECISION,
+    player_specialization_relative_precision: float = DEFAULT_SPECIALIZATION_RELATIVE_PRECISION,
     game_catalog_path: Path | str = DEFAULT_GAME_CATALOG_PATH,
 ) -> ForwardSplitNailRun:
     """Fit a standalone constrained O/D state and frozen evaluation.
@@ -120,6 +122,8 @@ def train_forward_split_nail(
     target = validate_season(through_season)
     if feature_relative_precision <= 0:
         raise ValueError("Feature relative precision must be positive")
+    if player_specialization_relative_precision <= 0:
+        raise ValueError("Player specialization relative precision must be positive")
     panel = pd.read_parquet(player_season_panel_path)
     schedule_features = build_back_to_back_game_features(pd.read_parquet(game_catalog_path))
     seasons = _seasons_through(target)
@@ -173,6 +177,8 @@ def train_forward_split_nail(
             stints=stints,
             scalar_priors=scalar_priors,
             previous_specialization=side_differences,
+            feature_relative_precision=feature_relative_precision,
+            player_specialization_relative_precision=player_specialization_relative_precision,
         )
         fit = fit_split_nail_season(
             design,
@@ -180,6 +186,7 @@ def train_forward_split_nail(
             carried_side_differences=side_differences,
             regularization=regularization,
             feature_relative_precision=feature_relative_precision,
+            player_specialization_relative_precision=player_specialization_relative_precision,
         )
         season_fits[season] = fit
         completed = _as_combined_result(season, fit, priors, regularization)
@@ -209,6 +216,9 @@ def train_forward_split_nail(
                 "player_count": design.player_count,
                 "scoring_row_count": len(design.target),
                 "selected_player_lambda": regularization,
+                "player_specialization_relative_precision": player_specialization_relative_precision,
+                "specialization_regularization": regularization
+                * player_specialization_relative_precision,
                 "feature_relative_precision": feature_relative_precision,
                 "feature_regularization": regularization * feature_relative_precision,
                 "schedule_relative_precision": feature_relative_precision,
@@ -277,6 +287,7 @@ def train_forward_split_nail(
         profiles=profiles_by_season,
         frozen=frozen,
         feature_relative_precision=feature_relative_precision,
+        player_specialization_relative_precision=player_specialization_relative_precision,
         artifacts_dir=Path(artifacts_dir),
     )
 
@@ -307,6 +318,8 @@ def _select_standalone_lambda(
     stints: pd.DataFrame,
     scalar_priors: dict[int, float],
     previous_specialization: dict[int, float],
+    feature_relative_precision: float,
+    player_specialization_relative_precision: float,
 ) -> float:
     """Select the player-state lambda on Split NAIL's own chronological folds."""
 
@@ -318,8 +331,9 @@ def _select_standalone_lambda(
     prior = _paired_raw_to_parameters(raw_prior, _raw_coefficient_pairs(design))
     precision = _constrained_precision(
         design,
-        feature_relative_precision=DEFAULT_FEATURE_RELATIVE_PRECISION,
-        schedule_relative_precision=DEFAULT_FEATURE_RELATIVE_PRECISION,
+        feature_relative_precision=feature_relative_precision,
+        schedule_relative_precision=feature_relative_precision,
+        player_specialization_relative_precision=player_specialization_relative_precision,
     )
     split_plan = chronological_game_splits(stints, config=ChronologicalSplitConfig())
     scores: list[tuple[float, float, float]] = []
@@ -718,6 +732,7 @@ def _write_run(
     profiles: dict[str, pd.DataFrame],
     frozen: dict[str, pd.DataFrame],
     feature_relative_precision: float,
+    player_specialization_relative_precision: float,
     artifacts_dir: Path,
 ) -> ForwardSplitNailRun:
     now = datetime.now(UTC)
@@ -751,6 +766,7 @@ def _write_run(
             "source_scalar_model": "none_standalone_split_nail",
             "source_scalar_run_dir": None,
             "feature_relative_precision": feature_relative_precision,
+            "player_specialization_relative_precision": player_specialization_relative_precision,
             "state_contract": (
                 "standalone forward combined prior plus prior Split NAIL O-minus-D "
                 "base specialization"
@@ -805,6 +821,11 @@ def main() -> None:
         type=float,
         default=DEFAULT_FEATURE_RELATIVE_PRECISION,
     )
+    parser.add_argument(
+        "--player-specialization-relative-precision",
+        type=float,
+        default=DEFAULT_SPECIALIZATION_RELATIVE_PRECISION,
+    )
     parser.add_argument("--log-path")
     args = parser.parse_args()
     if args.log_path:
@@ -817,6 +838,9 @@ def main() -> None:
                 run = train_forward_split_nail(
                     through_season=args.through_season,
                     feature_relative_precision=args.feature_relative_precision,
+                    player_specialization_relative_precision=(
+                        args.player_specialization_relative_precision
+                    ),
                 )
                 print(f"Split NAIL-RAPM: run={run.run_dir}")
             finally:
@@ -825,6 +849,7 @@ def main() -> None:
     run = train_forward_split_nail(
         through_season=args.through_season,
         feature_relative_precision=args.feature_relative_precision,
+        player_specialization_relative_precision=args.player_specialization_relative_precision,
     )
     print(f"Split NAIL-RAPM: run={run.run_dir}")
 

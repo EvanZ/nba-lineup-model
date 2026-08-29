@@ -25,7 +25,9 @@ from nba_lineup_model.web_api.inference import (
     LineupEvaluator,
     MeanRevertedScheduleControls,
     SeasonLineupState,
+    _aggregate_observed_lineups,
     _historical_ranking_catalog,
+    _observed_lineup_side_rows,
     _player_latest_teams_by_season,
     _player_league_leader_histories,
     _player_rating_histories,
@@ -264,6 +266,34 @@ def test_search_and_matchup_endpoints() -> None:
     )
 
 
+def test_descriptive_od_edges_reconstruct_the_scalar_player_edge() -> None:
+    evaluator = _evaluator(compiled_linear=True)
+    players = evaluator.players.copy()
+    players["offense_rating"] = players["rapm"] * 0.6
+    players["defense_rating"] = players["rapm"] * 0.4
+    client = TestClient(create_app(replace(evaluator, players=players, season_states={})))
+
+    response = client.post(
+        "/api/matchups",
+        json={
+            "unit_player_ids": [1, 2, 3, 4, 5],
+            "opponent_player_ids": [6, 7, 8, 9, 10],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["od_split_available"] is True
+    assert np.isclose(
+        payload["offensive_player_edge"] + payload["defensive_player_edge"],
+        payload["additive_margin"],
+    )
+    assert np.isclose(
+        payload["unit"]["offense_rating"] + payload["unit"]["defense_rating"],
+        payload["unit"]["additive_rating"],
+    )
+
+
 def test_compiled_linear_matchup_returns_nonadditive_side_scores() -> None:
     client = TestClient(create_app(_evaluator(compiled_linear=True)))
 
@@ -448,6 +478,8 @@ def test_lineup_rankings_endpoint_filters_by_possessions_and_players() -> None:
                 "games": [24, 12],
                 "player_rating": [1.5, 2.0],
                 "player_edge": [0.3, 0.1],
+                "offensive_edge": [0.8, 0.15],
+                "defensive_edge": [0.2, 0.15],
                 "composition_rating": [0.4, 0.2],
                 "composition_edge": [0.5, -0.1],
                 "matchup_bonus": [0.2, 0.3],
@@ -468,6 +500,38 @@ def test_lineup_rankings_endpoint_filters_by_possessions_and_players() -> None:
     assert payload["lineups"][0]["rank"] == 1
     assert payload["lineups"][0]["player_rating"] == 1.5
     assert payload["lineups"][0]["context_edge"] == 0.7
+    assert payload["lineups"][0]["offensive_edge"] == 0.8
+    assert payload["lineups"][0]["defensive_edge"] == 0.2
+
+
+def test_observed_lineup_od_edges_reconstruct_scalar_edge_after_aggregation() -> None:
+    rows = _observed_lineup_side_rows(
+        team_ids=np.asarray([1, 1]),
+        teams=np.asarray(["TST", "TST"]),
+        lineups=[(1, 2, 3, 4, 5), (1, 2, 3, 4, 5)],
+        game_ids=np.asarray(["game-a", "game-b"]),
+        possessions=np.asarray([100.0, 50.0]),
+        player_rating=np.asarray([3.0, 3.0]),
+        opponent_player_rating=np.asarray([0.0, 0.0]),
+        offensive_edge=np.asarray([2.0, 1.0]),
+        defensive_edge=np.asarray([1.5, 2.5]),
+        composition_rating=np.asarray([0.5, 0.5]),
+        opponent_composition_rating=np.asarray([0.0, 0.0]),
+        matchup_bonus=np.asarray([0.0, 0.0]),
+        actual_net_rating=np.asarray([2.0, -2.0]),
+    )
+
+    aggregated = _aggregate_observed_lineups(
+        rows,
+        {player_id: f"Player {player_id}" for player_id in range(1, 6)},
+    )
+
+    assert np.isclose(aggregated.loc[0, "offensive_edge"], 5.0 / 3.0)
+    assert np.isclose(aggregated.loc[0, "defensive_edge"], 11.0 / 6.0)
+    assert np.isclose(
+        aggregated.loc[0, "offensive_edge"] + aggregated.loc[0, "defensive_edge"],
+        aggregated.loc[0, "gestalt_score"],
+    )
 
 
 def test_player_rating_histories_include_seasonal_team_tricode(tmp_path) -> None:
@@ -733,6 +797,8 @@ def test_historical_ranking_catalog_exposes_each_completed_fit_season(tmp_path) 
             "is_undrafted": False,
             "draft_class_year": 2013,
             "rapm": 1.0,
+            "offense_rating": None,
+            "defense_rating": None,
             "prior_rating": 0.5,
             "season_update": 0.5,
             "additive_profile_adjustment": 0.0,

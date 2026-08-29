@@ -40,14 +40,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build NBA GESTALT observed lineup rankings")
     parser.add_argument("--season", default=DISPLAY_SEASON)
     parser.add_argument("--all-seasons", action="store_true")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild an existing season cache when its materialization schema changes.",
+    )
     args = parser.parse_args()
     if args.all_seasons:
-        _build_all_seasons()
+        _build_all_seasons(force=args.force)
     else:
-        _build_one_season(args.season)
+        _build_one_season(args.season, force=args.force)
 
 
-def _build_one_season(season: str) -> None:
+def _build_one_season(season: str, *, force: bool = False) -> None:
     """Materialize one selected completed-fit season."""
 
     evaluator = LineupEvaluator.from_latest_artifact(season=DISPLAY_SEASON)
@@ -56,10 +61,17 @@ def _build_one_season(season: str) -> None:
         padding_contract=evaluator.profile_padding_contract,
     )
     _write_published_player_ratings(run_id=evaluator.run_id, **state)
-    _write_season(season, run_id=evaluator.run_id, **state)
+    _write_season(
+        season,
+        run_id=evaluator.run_id,
+        constrained_split_ratings=evaluator.constrained_split_ratings,
+        constrained_split_context_allocations=evaluator.constrained_split_context_allocations,
+        force=force,
+        **state,
+    )
 
 
-def _build_all_seasons() -> None:
+def _build_all_seasons(*, force: bool = False) -> None:
     """Materialize every season with a completed contextual model."""
 
     evaluator = LineupEvaluator.from_latest_artifact(season=DISPLAY_SEASON)
@@ -74,7 +86,14 @@ def _build_all_seasons() -> None:
             f"Building observed lineup rankings for {season} ({index}/{len(seasons)})",
             flush=True,
         )
-        _write_season(season, run_id=evaluator.run_id, **state)
+        _write_season(
+            season,
+            run_id=evaluator.run_id,
+            constrained_split_ratings=evaluator.constrained_split_ratings,
+            constrained_split_context_allocations=evaluator.constrained_split_context_allocations,
+            force=force,
+            **state,
+        )
 
 
 def _artifact_state(
@@ -137,14 +156,25 @@ def _write_season(
     models: dict[str, MatchupContextualModel],
     padding_contract: ProfilePaddingContract,
     use_last_observed_profile: bool,
+    constrained_split_ratings: pd.DataFrame,
+    constrained_split_context_allocations: pd.DataFrame,
+    force: bool = False,
     **_: object,
 ) -> None:
     """Build one completed-fit observed-lineup table from shared artifact state."""
 
     output = lineup_rankings_path(MODEL_ARTIFACT, run_id, season)
-    if output.is_file():
+    if output.is_file() and not force:
         print(f"Using existing {season}: {output}", flush=True)
         return
+    if constrained_split_ratings.empty:
+        raise ValueError(
+            "Constrained Split NAIL ratings are required for published lineup rankings"
+        )
+    if constrained_split_context_allocations.empty:
+        raise ValueError(
+            "Constrained Split NAIL context allocations are required for published lineup rankings"
+        )
     context_model = models.get(season)
     if context_model is None:
         raise ValueError(f"No completed context model is available for {season}")
@@ -197,6 +227,8 @@ def _write_season(
         players=players,
         coefficients=season_coefficients,
         context_model=context_model,
+        constrained_split_ratings=constrained_split_ratings,
+        constrained_split_context_allocations=constrained_split_context_allocations,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     rankings.to_parquet(output, index=False)

@@ -24,6 +24,7 @@ data/external/*
 
 artifacts/models/*
 !artifacts/models/.gitkeep
+artifacts/cache/
 artifacts/audits/*
 !artifacts/audits/.gitkeep
 artifacts/rotation/*
@@ -33,6 +34,7 @@ artifacts/reports/*
 artifacts/mlflow/*
 !artifacts/mlflow/.gitkeep
 artifacts/web/preseason_rankings/
+artifacts/web/constrained_split_ratings/
 artifacts/web/releases/
 artifacts/assisted_shot_taxonomy_parts/
 artifacts/logs/*.log

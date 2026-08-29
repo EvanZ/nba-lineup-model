@@ -81,7 +81,7 @@ The eight additive features are `three_pa_per_100`, `three_pm_per_100`,
 | Choice | Current setting | Status | Required next validation |
 | --- | --- | --- | --- |
 | Player lambda | Chronological within-season selection over the standard grid | Selected conditionally | Reselect inside every season whenever O/D penalties change. |
-| Player O/D penalty | (\operatorname{precision}(s)=4\operatorname{precision}(m)) | **Fixed, unvalidated** | Primary next experiment: pre-register a small specialization-ratio grid. |
+| Player O/D penalty | (\operatorname{precision}(s)=4\operatorname{precision}(m)) | **Sensitivity-tested, not selected** | An exploratory \(r\in\{1,2,4,8\}\) frozen replay had mixed winners; pre-register development selection before changing the control. |
 | Feature precision | Feature (m) precision (=1.5\times) player (m); feature (s=6\times) player (m) | **Fixed, unvalidated** | Jointly test a small feature-precision grid with the specialization ratio. |
 | Feature block sharing | Additive and non-additive terms share one multiplier | **Fixed, unvalidated** | After global selection, test one additive-vs-non-additive block split. |
 | B2B | Calendar-day flag, known before tipoff; O/D terms use the feature penalty | Inherited plus **unvalidated O/D split** | Test a scalar B2B term before retaining a side split. |

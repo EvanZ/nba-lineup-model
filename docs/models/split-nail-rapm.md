@@ -265,3 +265,25 @@ cohorts, but it loses on the primary possession metrics, full-game accuracy,
 and winner accuracy. It therefore does not clear promotion and is retained in
 the [Three-Season Frozen Leaderboard](three-season-frozen-backtest.md) as a
 comparable non-promoted candidate.
+
+## Player O/D Specialization Sensitivity
+
+The player-side split is parameterized as \(M_i=O_i+D_i\) and
+\(S_i=O_i-D_i\). The player specialization multiplier \(r\) sets the relative
+Ridge precision on \(S\): \(\lambda_S=r\lambda_M\). Profile, B2B, and home-court
+specialization penalties remained fixed at their existing four-times setting.
+Each candidate reselected the player lambda independently within every source
+season, then replayed the identical three frozen regular and playoff seasons.
+
+| Player \(r\) | Regular RMSE | Regular MAE | Eligible-game RMSE | Full-game RMSE | Winner accuracy | Playoff RMSE |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | **1.197990** | **1.142334** | 13.975749 | 14.273091 | **67.02%** | 1.194424 |
+| 2 | 1.198011 | 1.142476 | 13.974785 | 14.274299 | 67.05% | 1.194433 |
+| 4 (control) | 1.198026 | 1.142568 | **13.967918** | **14.266819** | 66.56% | 1.194415 |
+| 8 | 1.198056 | 1.142666 | 13.968324 | 14.267025 | 66.56% | **1.194393** |
+
+The public DARKO export suggested a rough prior center near \(r\approx2.5\),
+but its rounded DPM fields are not a selection dataset. This was therefore an
+exploratory frozen sensitivity analysis, not a promotion study: no multiplier
+was selected on a pre-frozen development window. Retain \(r=4\) until a
+pre-registered development selection and untouched frozen confirmation agree.

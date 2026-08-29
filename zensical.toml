@@ -222,6 +222,7 @@ nav = [
     {"NAIL Model Contract" = "models/nail-model-contract.md"},
     {"Split NAIL-RAPM" = "models/split-nail-rapm.md"},
     {"Split NAIL Model Contract" = "models/split-nail-model-contract.md"},
+    {"Constrained Split NAIL" = "models/constrained-split-nail.md"},
     {"Audit: Post-Hoc Kalman Player State (Invalid)" = "models/nail-rapm-v1213-kalman-player-state.md"},
     {"State-Precision NAIL Foundation" = "models/state-precision-nail.md"},
     {"State-Precision NAIL: No Forgetting" = "models/state-precision-no-forgetting.md"},
