@@ -209,9 +209,18 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .rankings-season select, .rankings-minimum-possessions input, .rankings-team select, .rankings-draft-class select { height: 38px; border: 1px solid #a6aaa4; border-radius: 0; padding: 0 28px 0 10px; background: #fffefa; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
 .rankings-minimum-possessions input { width: 92px; padding-right: 8px; }
 .rankings-season select:focus, .rankings-minimum-possessions input:focus, .rankings-team select:focus, .rankings-draft-class select:focus { outline: 2px solid #bde5d0; outline-offset: 2px; }
-.rankings-search { width: min(300px, 100%); height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #a6aaa4; background: #fffefa; color: #68716a; }
-.rankings-search:focus-within { outline: 2px solid #bde5d0; outline-offset: 2px; }
-.rankings-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #17201c; font-size: 13px; }
+.rankings-player-picker { position: relative; width: min(340px, 100%); min-height: 38px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px 7px; padding: 5px 9px; border: 1px solid #a6aaa4; background: #fffefa; color: #68716a; }
+.rankings-player-picker:focus-within { outline: 2px solid #bde5d0; outline-offset: 2px; }
+.rankings-player-picker input { min-width: 104px; flex: 1 1 104px; height: 25px; padding: 0; border: 0; outline: 0; background: transparent; color: #17201c; font-size: 13px; }
+.rankings-player-pill { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 3px 4px 3px 7px; border: 1px solid #8bbca5; border-radius: 3px; background: #edf2e9; color: #245a47; font-size: 11px; font-weight: 800; line-height: 1.1; }
+.rankings-player-pill button { display: grid; width: 17px; height: 17px; flex: 0 0 17px; place-items: center; padding: 0; border: 0; border-radius: 2px; background: transparent; color: #245a47; }
+.rankings-player-pill button:hover { background: #cfe5d6; color: #17201c; }
+.rankings-player-suggestions { position: absolute; z-index: 10; top: calc(100% + 5px); right: 0; left: 0; max-height: 236px; overflow-y: auto; border: 1px solid #17201c; border-radius: 3px; background: #fffefa; box-shadow: 3px 3px 0 #17201c; }
+.rankings-player-suggestions button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 9px 10px; border: 0; border-bottom: 1px solid #e2dfd7; background: transparent; color: #17201c; text-align: left; }
+.rankings-player-suggestions button:last-child { border-bottom: 0; }
+.rankings-player-suggestions button:hover { background: #edf2e9; }
+.rankings-player-suggestions strong { min-width: 0; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.rankings-player-suggestions span { color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .rankings-table-wrap { overflow-x: auto; }
 .mobile-card-list, .mobile-sort-controls { display: none; }
 .rankings-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
@@ -468,7 +477,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 @media (max-width: 720px) {
   .rankings-table-toolbar { align-items: stretch; flex-direction: column; }
   .rankings-table-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .rankings-search, .mobile-sort-controls { grid-column: 1 / -1; width: 100%; }
+  .rankings-player-picker, .mobile-sort-controls { grid-column: 1 / -1; width: 100%; }
   .rankings-table-wrap { display: none; }
   .mobile-sort-controls { display: flex; align-items: end; gap: 8px; }
   .mobile-sort-controls label { display: grid; flex: 1; gap: 4px; color: #68716a; }
@@ -537,7 +546,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .rankings-table-toolbar { align-items: stretch; flex-direction: column; }
   .rankings-table-controls { grid-template-columns: 1fr; }
   .rankings-season, .rankings-minimum-possessions, .rankings-team, .rankings-draft-class { justify-content: space-between; }
-  .rankings-search { width: 100%; }
+  .rankings-player-picker { width: 100%; }
   .model-identity { grid-template-columns: 1fr; gap: 12px; }
   .model-identity > p:last-child { grid-column: auto; }
   .about-equation h2, .about-section-heading h2 { font-size: 27px; }

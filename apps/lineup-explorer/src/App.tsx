@@ -1464,6 +1464,7 @@ function RankingsPage() {
   const [selectedSeason, setSelectedSeason] = useState("2025-26");
   const [availableSeasons, setAvailableSeasons] = useState<string[]>([]);
   const [query, setQuery] = useState("");
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([]);
   const [minimumPossessions, setMinimumPossessions] = useState(500);
   const [teamFilter, setTeamFilter] = useState("all");
   const [draftClassFilter, setDraftClassFilter] = useState("all");
@@ -1498,6 +1499,8 @@ function RankingsPage() {
     setTeamFilter("all");
     setDraftClassFilter("all");
     setMinimumPossessions(selectedSeason === "2026-27" ? 0 : 500);
+    setQuery("");
+    setSelectedPlayerIds([]);
   }, [selectedSeason]);
 
   const isPreseasonPreview = selectedSeason === "2026-27";
@@ -1506,12 +1509,32 @@ function RankingsPage() {
     players.flatMap((player) => player.draft_class_year === null ? [] : [player.draft_class_year]),
   )].sort((left, right) => right - left), [players]);
   const teams = useMemo(() => [...new Set(players.map((player) => player.team))].sort(), [players]);
+  const selectedPlayers = useMemo(() => selectedPlayerIds
+    .map((playerId) => players.find((player) => player.player_id === playerId))
+    .filter((player): player is RankedPlayer => player !== undefined), [players, selectedPlayerIds]);
+  const playerSuggestions = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    if (!normalized) return [];
+    const selectedIds = new Set(selectedPlayerIds);
+    return players
+      .filter((player) => !selectedIds.has(player.player_id))
+      .filter((player) => player.player_name.toLocaleLowerCase().includes(normalized))
+      .sort((left, right) => {
+        const leftStartsWithQuery = left.player_name.toLocaleLowerCase().startsWith(normalized);
+        const rightStartsWithQuery = right.player_name.toLocaleLowerCase().startsWith(normalized);
+        if (leftStartsWithQuery !== rightStartsWithQuery) return leftStartsWithQuery ? -1 : 1;
+        return left.player_name.localeCompare(right.player_name);
+      })
+      .slice(0, 8);
+  }, [players, query, selectedPlayerIds]);
 
   const visiblePlayers = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    const rows = (normalized
-      ? players.filter((player) => player.player_name.toLocaleLowerCase().includes(normalized))
-      : players)
+    const selectedIds = new Set(selectedPlayerIds);
+    const rows = players
+      .filter((player) => selectedIds.size > 0
+        ? selectedIds.has(player.player_id)
+        : !normalized || player.player_name.toLocaleLowerCase().includes(normalized))
       .filter((player) => player.possessions >= minimumPossessions)
       .filter((player) => teamFilter === "all" || player.team === teamFilter)
       .filter((player) => {
@@ -1537,7 +1560,16 @@ function RankingsPage() {
       }
       return direction * String(leftValue).localeCompare(String(rightValue)) || left.rank - right.rank;
     });
-  }, [draftClassFilter, minimumPossessions, players, query, sortColumn, sortDirection, teamFilter]);
+  }, [draftClassFilter, minimumPossessions, players, query, selectedPlayerIds, sortColumn, sortDirection, teamFilter]);
+
+  function addPlayerFilter(player: RankedPlayer) {
+    setSelectedPlayerIds((current) => current.includes(player.player_id) ? current : [...current, player.player_id]);
+    setQuery("");
+  }
+
+  function removePlayerFilter(playerId: number) {
+    setSelectedPlayerIds((current) => current.filter((selectedId) => selectedId !== playerId));
+  }
 
   function changeSort(column: RankingColumn) {
     if (column === sortColumn) {
@@ -1621,10 +1653,54 @@ function RankingsPage() {
                 <option value="undrafted">Undrafted</option>
               </select>
             </label>
-            <label className="rankings-search">
+            <div className="rankings-player-picker" aria-label="Compare player rankings">
               <Search size={17} aria-hidden="true" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search player" />
-            </label>
+              {selectedPlayers.map((player) => (
+                <span className="rankings-player-pill" key={player.player_id}>
+                  {player.player_name}
+                  <button
+                    type="button"
+                    onClick={() => removePlayerFilter(player.player_id)}
+                    aria-label={`Remove ${player.player_name} from comparison`}
+                    title={`Remove ${player.player_name}`}
+                  >
+                    <X size={13} aria-hidden="true" />
+                  </button>
+                </span>
+              ))}
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && playerSuggestions[0]) {
+                    event.preventDefault();
+                    addPlayerFilter(playerSuggestions[0]);
+                  }
+                  if (event.key === "Escape") setQuery("");
+                }}
+                placeholder={selectedPlayers.length ? "Add player" : "Search players"}
+                aria-label="Search and compare players"
+                aria-autocomplete="list"
+                aria-controls="ranking-player-suggestions"
+                aria-expanded={playerSuggestions.length > 0}
+              />
+              {playerSuggestions.length > 0 && (
+                <div className="rankings-player-suggestions" id="ranking-player-suggestions" role="listbox">
+                  {playerSuggestions.map((player) => (
+                    <button
+                      type="button"
+                      role="option"
+                      key={player.player_id}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => addPlayerFilter(player)}
+                    >
+                      <strong>{player.player_name}</strong>
+                      <span>{player.team} · {player.position}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="mobile-sort-controls" aria-label="Player ranking sort controls">
               <label>
                 <span>Sort by</span>
