@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updated": "2026-08-27",
+  "updated": "2026-08-29",
   "default_metric": "rolling_regular_game_margin_rmse",
   "metrics": [
     {
@@ -939,6 +939,42 @@
         "frozen_regular_pythagorean_wins_rmse": 6.9423,
         "frozen_playoff_possession_rmse": 1.192717,
         "frozen_playoff_game_margin_rmse": 16.5784
+      }
+    },
+    {
+      "id": "nail-prior-teammate-continuity",
+      "name": "NAIL Prior Teammate Continuity Candidate (Not Promoted)",
+      "short_name": "Prior teammate continuity",
+      "parent": "nail-rapm-v1213-residualized-lambda",
+      "change": "+ mean log prior-season shared possessions over a unit's ten player pairs. The coefficient is strongly positive across history, but the frozen replay finds no material incremental lift.",
+      "docs": "./nail-teammate-continuity/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197955,
+        "frozen_regular_game_margin_rmse": 14.0010,
+        "frozen_regular_full_game_margin_rmse": 14.2146,
+        "frozen_regular_game_winner_accuracy": 0.684990,
+        "frozen_regular_team_net_rating_rmse": 3.2833,
+        "frozen_regular_pythagorean_wins_rmse": 6.9648,
+        "frozen_playoff_possession_rmse": 1.192663,
+        "frozen_playoff_game_margin_rmse": 16.4597
+      }
+    },
+    {
+      "id": "nail-teammate-continuity-replacement",
+      "name": "NAIL Teammate-Continuity Replacement Candidate (Not Promoted)",
+      "short_name": "Continuity replaces assists",
+      "parent": "nail-rapm-v1213-residualized-lambda",
+      "change": "~ replace top-two assists with mean log prior-season shared possessions over all ten teammate pairs. Predictive results remain effectively tied, but team NetRtg error worsens and the relationship term is not portable to hypothetical units.",
+      "docs": "./nail-teammate-continuity-replacement/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197948,
+        "frozen_regular_game_margin_rmse": 13.9919,
+        "frozen_regular_full_game_margin_rmse": 14.2119,
+        "frozen_regular_game_winner_accuracy": 0.684136,
+        "frozen_regular_team_net_rating_rmse": 3.2853,
+        "frozen_regular_pythagorean_wins_rmse": 6.9815,
+        "frozen_playoff_possession_rmse": 1.192647,
+        "frozen_playoff_game_margin_rmse": 16.4640
       }
     },
     {

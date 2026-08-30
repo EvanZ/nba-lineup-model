@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-24"
+last_updated: "2026-08-30"
 ---
 
 # Ratings Models
@@ -22,7 +22,7 @@ without a result under the selected contract remain visible in the unranked
 lane to preserve the full methodological lineage. The older frozen-2025-26 and
 in-season selectors remain available for their respective historical snapshots.
 
-<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260824-nail-b2b-schedule-control">
+<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260830-continuity-replacement">
   <div class="model-tree__loading" role="status">Loading model evolution…</div>
 </div>
 
@@ -200,10 +200,23 @@ the frozen predictive result effectively unchanged; it is not promoted because
 the standard convention does not materially alter the lineup interpretation.
 
 [NAIL-RAPM v1.2.1.2](nail-rapm-v1212-back-to-back.md) adds a known-before-tipoff
-back-to-back control. It has the best median regular-season rank and pooled
-full-game RMSE on the three-season frozen leaderboard, so it is the current
-website production model. Its weaker team and playoff metrics remain explicit
-in the leaderboard rather than being hidden by the promotion decision.
+back-to-back control. It is retained as the prior production release.
+
+[NAIL-RAPM v1.2.1.3](nail-rapm-v1213-residualized-lambda.md) keeps the complete
+v1.2.1.2 contract but selects the player penalty on each source season's
+context- and schedule-residualized target. It is the current production model.
+
+[Prior Teammate Continuity](nail-teammate-continuity.md) adds a strictly lagged
+relationship feature: the mean log prior-season shared possessions over a
+unit's ten player pairs. Its coefficient is strongly and consistently positive,
+but the full recursive frozen replay finds no material incremental lift, so the
+candidate is not promoted.
+
+[Teammate-Continuity Replacement](nail-teammate-continuity-replacement.md)
+removes `top_two_assists` and retains continuity beside usage concentration.
+The more stable relationship feature can replace shared playmaking without a
+material full-game loss, but possession MAE and team NetRtg error worsen and
+the feature is not portable to hypothetical lineups, so it is not promoted.
 
 [NAIL-RAPM v1.2.2](nail-rapm-v122-defensive-rebound-profile.md) tests
 defensive rebound percentage as a ninth additive profile coordinate. Its

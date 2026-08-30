@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -39,11 +39,15 @@ from nba_lineup_model.modeling.forward_contextual_rapm import (
     _previous_season,
 )
 from nba_lineup_model.modeling.forward_exposure_gated_rapm import _latest_run
-from nba_lineup_model.modeling.forward_nail_v1212_back_to_back import MODEL_NAME
+from nba_lineup_model.modeling.forward_nail_v1212_residualized_lambda import MODEL_NAME
 from nba_lineup_model.modeling.frozen_prior_evaluation import _recover_home_intercept
 from nba_lineup_model.modeling.replacement_level import prepare_player_exposure_cohort
 from nba_lineup_model.modeling.schedule_controls import build_back_to_back_game_features
 from nba_lineup_model.modeling.stints import read_rapm_stints
+from nba_lineup_model.modeling.teammate_continuity import (
+    build_teammate_pair_exposure,
+    teammate_continuity_side_feature,
+)
 
 DEFAULT_SEASONS = ("2023-24", "2024-25", "2025-26")
 DEFAULT_MODEL_ARTIFACT_SEASON = "2025-26"
@@ -51,6 +55,15 @@ DEFAULT_OUTPUT_ROOT = Path("artifacts/models/analysis/frozen_feature_screen")
 DEFAULT_CHART_ROOT = Path("docs/assets/images/frozen-feature-screens")
 
 SideFeature = Callable[[Sequence[Sequence[int]], pd.DataFrame], np.ndarray]
+
+ROLE_REDUNDANCY_PROFILE_COLUMNS = (
+    "usage_per_100",
+    "assists_per_100",
+    "three_pa_per_100",
+    "unassisted_rim_makes_per_100",
+    "offensive_rebounds_per_100",
+    "free_throw_attempts_per_100",
+)
 
 
 @dataclass(frozen=True)
@@ -60,8 +73,10 @@ class FeatureCandidate:
     name: str
     label: str
     description: str
-    side_feature: SideFeature
+    side_feature: SideFeature | None = None
     production_context_column: str | None = None
+    uses_prior_pair_exposure: bool = False
+    source_profile_scale_columns: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -75,26 +90,146 @@ def _median_three_pm_per_100(
     lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
 ) -> np.ndarray:
     values = profiles.set_index("player_id")["three_pm_per_100"]
-    return np.asarray(
-        [float(values.loc[list(lineup)].median()) for lineup in lineups], dtype=float
-    )
+    return np.asarray([float(values.loc[list(lineup)].median()) for lineup in lineups], dtype=float)
 
 
-def _max_blocks_per_100(
-    lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
-) -> np.ndarray:
+def _max_blocks_per_100(lineups: Sequence[Sequence[int]], profiles: pd.DataFrame) -> np.ndarray:
     """Return each unit's strongest strictly lagged rim-protection profile."""
 
     values = profiles.set_index("player_id")["blocks_per_100"]
+    return np.asarray([float(values.loc[list(lineup)].max()) for lineup in lineups], dtype=float)
+
+
+def _creation_spacing_alignment(
+    lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
+) -> np.ndarray:
+    """Weight each player's shooting by their share of unit usage events.
+
+    The coordinate is non-additive because every player's weight depends on
+    the other four players' usage rates. Both inputs are strictly prior-season,
+    shrinkage-adjusted per-100 profile values.
+    """
+
+    values = profiles.set_index("player_id")
+    output: list[float] = []
+    for lineup in lineups:
+        unit = values.loc[list(lineup)]
+        usage = unit["usage_per_100"].to_numpy(dtype=float)
+        shooting = unit["three_pm_per_100"].to_numpy(dtype=float)
+        total_usage = float(usage.sum())
+        output.append(float(np.dot(usage, shooting) / total_usage) if total_usage > 0 else 0.0)
+    return np.asarray(output, dtype=float)
+
+
+def _secondary_creator_floor(
+    lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
+) -> np.ndarray:
+    """Return each unit's second-highest shrunken assist profile."""
+
+    values = profiles.set_index("player_id")["assists_per_100"]
     return np.asarray(
-        [float(values.loc[list(lineup)].max()) for lineup in lineups], dtype=float
+        [
+            float(np.partition(values.loc[list(lineup)].to_numpy(dtype=float), -2)[-2])
+            for lineup in lineups
+        ],
+        dtype=float,
     )
+
+
+def _rim_pressure_by_spacing_floor(
+    lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
+) -> np.ndarray:
+    """Combine unit rim pressure with the average of its two weakest spacers."""
+
+    values = profiles.set_index("player_id")
+    output: list[float] = []
+    for lineup in lineups:
+        unit = values.loc[list(lineup)]
+        rim_pressure = float(unit["unassisted_rim_makes_per_100"].sum())
+        shooting = unit["three_pm_per_100"].to_numpy(dtype=float)
+        spacing_floor = float(np.partition(shooting, 1)[:2].mean())
+        output.append(rim_pressure * spacing_floor)
+    return np.asarray(output, dtype=float)
+
+
+def _defensive_anchor_by_perimeter_pressure(
+    lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
+) -> np.ndarray:
+    """Combine each unit's best rim protector with its other perimeter disruptors."""
+
+    values = profiles.set_index("player_id")
+    output: list[float] = []
+    for lineup in lineups:
+        unit = values.loc[list(lineup)]
+        blocks = unit["blocks_per_100"].to_numpy(dtype=float)
+        steals = unit["steals_per_100"].to_numpy(dtype=float)
+        anchor_index = int(np.argmax(blocks))
+        output.append(float(blocks[anchor_index] * (steals.sum() - steals[anchor_index])))
+    return np.asarray(output, dtype=float)
+
+
+def _offensive_role_redundancy(
+    lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
+) -> np.ndarray:
+    """Return mean pairwise cosine similarity among normalized role vectors."""
+
+    values = profiles.set_index("player_id")
+    output: list[float] = []
+    for lineup in lineups:
+        vectors = values.loc[list(lineup), list(ROLE_REDUNDANCY_PROFILE_COLUMNS)].to_numpy(
+            dtype=float
+        )
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        normalized = np.divide(vectors, norms, out=np.zeros_like(vectors), where=norms > 0.0)
+        similarity = normalized @ normalized.T
+        output.append(float(similarity[np.triu_indices(len(lineup), k=1)].mean()))
+    return np.asarray(output, dtype=float)
+
+
+def _weighted_quantile(values: np.ndarray, weights: np.ndarray, quantile: float) -> float:
+    """Return a finite weighted quantile for positive weights."""
+
+    order = np.argsort(values, kind="stable")
+    ordered_values = values[order]
+    ordered_weights = weights[order]
+    return float(
+        np.interp(quantile, np.cumsum(ordered_weights) / ordered_weights.sum(), ordered_values)
+    )
+
+
+def _source_profile_scales(
+    source_profiles: pd.DataFrame,
+    source_panel: pd.DataFrame,
+    columns: Sequence[str],
+) -> dict[str, float]:
+    """Compute source-season possession-weighted 90th-percentile profile scales."""
+
+    weights = source_panel.loc[:, ["player_id", "rapm_possessions"]].copy()
+    merged = source_profiles.merge(weights, on="player_id", how="inner", validate="one_to_one")
+    if merged.empty or not merged["rapm_possessions"].gt(0).all():
+        raise ValueError("Role-profile scaling requires positive source-season exposure")
+    exposure = merged["rapm_possessions"].to_numpy(dtype=float)
+    return {
+        column: _weighted_quantile(merged[column].to_numpy(dtype=float), exposure, 0.90)
+        for column in columns
+    }
+
+
+def _apply_profile_scales(profiles: pd.DataFrame, scales: Mapping[str, float]) -> pd.DataFrame:
+    """Return a copy of profiles with selected coordinates source-season scaled."""
+
+    output = profiles.copy()
+    for column, scale in scales.items():
+        if not np.isfinite(scale) or scale <= 0.0:
+            raise ValueError(f"Role-profile scale for {column} must be positive and finite")
+        output[column] = output[column].to_numpy(dtype=float) / scale
+    return output
 
 
 def _production_nonadditive_side_feature(
     column: str,
 ) -> SideFeature:
-    """Return one retained v1.2.1.2 unit feature without redefining it."""
+    """Return one retained production unit feature without redefining it."""
 
     def evaluate(lineups: Sequence[Sequence[int]], profiles: pd.DataFrame) -> np.ndarray:
         values = lineup_side_context_features(
@@ -127,6 +262,54 @@ FEATURE_CANDIDATES: dict[str, FeatureCandidate] = {
         ),
         side_feature=_max_blocks_per_100,
     ),
+    "creation_spacing_alignment": FeatureCandidate(
+        name="creation_spacing_alignment",
+        label="Creation-spacing alignment",
+        description=(
+            "Usage-event-share-weighted prior-season, shrinkage-adjusted three-point "
+            "makes per 100. High values mean the unit's likely creators are also its "
+            "more credible three-point shooters."
+        ),
+        side_feature=_creation_spacing_alignment,
+    ),
+    "secondary_creator_floor": FeatureCandidate(
+        name="secondary_creator_floor",
+        label="Secondary-creator floor",
+        description=(
+            "The second-highest prior-season, shrinkage-adjusted assist rate per 100 "
+            "within a five-man unit. High values indicate a credible second creator."
+        ),
+        side_feature=_secondary_creator_floor,
+    ),
+    "rim_pressure_by_spacing_floor": FeatureCandidate(
+        name="rim_pressure_by_spacing_floor",
+        label="Rim pressure by spacing floor",
+        description=(
+            "The unit's summed prior-season, shrinkage-adjusted unassisted rim makes "
+            "per 100 multiplied by the mean 3PM per 100 of its two weakest spacers."
+        ),
+        side_feature=_rim_pressure_by_spacing_floor,
+    ),
+    "defensive_anchor_by_perimeter_pressure": FeatureCandidate(
+        name="defensive_anchor_by_perimeter_pressure",
+        label="Defensive anchor by perimeter pressure",
+        description=(
+            "The highest prior-season, shrinkage-adjusted block rate per 100 in a unit "
+            "multiplied by the summed steal rates per 100 of the other four players."
+        ),
+        side_feature=_defensive_anchor_by_perimeter_pressure,
+    ),
+    "offensive_role_redundancy": FeatureCandidate(
+        name="offensive_role_redundancy",
+        label="Offensive role redundancy",
+        description=(
+            "Mean pairwise cosine similarity of five source-season-scaled, normalized "
+            "offensive role vectors: usage, assists, 3PA, unassisted rim makes, offensive "
+            "rebounds, and free-throw attempts per 100."
+        ),
+        side_feature=_offensive_role_redundancy,
+        source_profile_scale_columns=ROLE_REDUNDANCY_PROFILE_COLUMNS,
+    ),
     "usage_concentration": FeatureCandidate(
         name="usage_concentration",
         label="Usage concentration",
@@ -146,6 +329,16 @@ FEATURE_CANDIDATES: dict[str, FeatureCandidate] = {
         ),
         side_feature=_production_nonadditive_side_feature("top_two_assists"),
         production_context_column="top_two_assists",
+    ),
+    "prior_teammate_continuity": FeatureCandidate(
+        name="prior_teammate_continuity",
+        label="Prior-season teammate continuity",
+        description=(
+            "The mean log(1 + shared possessions) over a unit's ten teammate pairs, "
+            "using only same-unit exposure from the immediately preceding regular season. "
+            "Pairs without prior shared possessions contribute zero."
+        ),
+        uses_prior_pair_exposure=True,
     ),
 }
 
@@ -279,7 +472,7 @@ def build_frozen_feature_screen(
     model_root = _latest_run(artifacts / MODEL_NAME / model_artifact_season)
     metadata = json.loads((model_root / "metadata.json").read_text())
     if metadata.get("model") != MODEL_NAME:
-        raise ValueError("Feature screen requires the promoted NAIL-RAPM v1.2.1.2 artifact")
+        raise ValueError("Feature screen requires the promoted NAIL-RAPM v1.2.1.3 artifact")
     priors = pd.read_parquet(model_root / "season_player_priors.parquet")
     coefficients = pd.read_parquet(model_root / "historical_player_coefficients.parquet")
     context_models = joblib.load(model_root / "season_context_models.joblib")
@@ -293,6 +486,7 @@ def build_frozen_feature_screen(
 
     screens: list[pd.DataFrame] = []
     summaries: list[pd.DataFrame] = []
+    pair_exposure_frames: list[pd.DataFrame] = []
     for target in target_seasons:
         print(f"Screening {candidate.name}: {target}", flush=True)
         source = _previous_season(target)
@@ -306,9 +500,30 @@ def build_frozen_feature_screen(
             curated_dir=str(curated_dir),
             exposure_cohort=exposure_cohort,
         )
-        target_priors = priors.loc[
-            priors["season"].eq(target), ["player_id", "prior_rapm"]
-        ].rename(columns={"prior_rapm": "prior_rapm_mean"})
+        candidate_profiles = profiles
+        if candidate.source_profile_scale_columns:
+            source_panel = panel.loc[
+                panel["season"].astype(str).eq(source), ["player_id", "rapm_possessions"]
+            ].copy()
+            source_profiles = profile_builder(
+                panel,
+                target_season=target,
+                target_player_ids=source_panel["player_id"].astype(int).tolist(),
+                analytical_dir=str(analytical),
+                curated_dir=str(curated_dir),
+                exposure_cohort=exposure_cohort,
+            )
+            candidate_profiles = _apply_profile_scales(
+                profiles,
+                _source_profile_scales(
+                    source_profiles,
+                    source_panel,
+                    candidate.source_profile_scale_columns,
+                ),
+            )
+        target_priors = priors.loc[priors["season"].eq(target), ["player_id", "prior_rapm"]].rename(
+            columns={"prior_rapm": "prior_rapm_mean"}
+        )
         source_coefficients = coefficients.loc[
             coefficients["season"].eq(source), ["player_id", "rapm"]
         ]
@@ -318,9 +533,8 @@ def build_frozen_feature_screen(
         schedule_model = schedule_models.get(source)
         if context_model is None or schedule_model is None:
             raise ValueError(f"Promoted model lacks context or schedule state for {source}")
-        source_intercept = _recover_home_intercept(
-            read_rapm_stints(source, analytical_dir=analytical), source_coefficients
-        )
+        source_stints = read_rapm_stints(source, analytical_dir=analytical)
+        source_intercept = _recover_home_intercept(source_stints, source_coefficients)
         prior_map = dict(
             zip(
                 target_priors["player_id"].astype(int),
@@ -349,9 +563,26 @@ def build_frozen_feature_screen(
             context_edge = context_model.predict_side_pairs(ablated_home, ablated_away)
             baseline_contract = "leave_one_production_context_term_out"
         schedule_edge = schedule_model.predict_games(stints, schedule_features)
-        if candidate.production_context_column is None:
-            home_feature = candidate.side_feature(stints["home_player_ids"].tolist(), profiles)
-            away_feature = candidate.side_feature(stints["away_player_ids"].tolist(), profiles)
+        if candidate.uses_prior_pair_exposure:
+            pair_exposure = build_teammate_pair_exposure(source_stints)
+            pair_exposure.insert(0, "target_season", target)
+            pair_exposure.insert(0, "source_season", source)
+            pair_exposure_frames.append(pair_exposure)
+            home_feature = teammate_continuity_side_feature(
+                stints["home_player_ids"].tolist(), pair_exposure
+            )
+            away_feature = teammate_continuity_side_feature(
+                stints["away_player_ids"].tolist(), pair_exposure
+            )
+        elif candidate.production_context_column is None:
+            if candidate.side_feature is None:
+                raise ValueError(f"Candidate {candidate.name} lacks a side feature")
+            home_feature = candidate.side_feature(
+                stints["home_player_ids"].tolist(), candidate_profiles
+            )
+            away_feature = candidate.side_feature(
+                stints["away_player_ids"].tolist(), candidate_profiles
+            )
         else:
             home_feature = home_context[candidate.production_context_column].to_numpy(dtype=float)
             away_feature = away_context[candidate.production_context_column].to_numpy(dtype=float)
@@ -403,8 +634,7 @@ def build_frozen_feature_screen(
         )
         screens.append(screen)
         print(
-            f"Completed {target}: {len(screen):,} stints, "
-            f"{int(weights.sum()):,} possessions",
+            f"Completed {target}: {len(screen):,} stints, {int(weights.sum()):,} possessions",
             flush=True,
         )
 
@@ -469,6 +699,10 @@ def build_frozen_feature_screen(
     run_dir.mkdir(parents=True, exist_ok=False)
     screen_frame.to_parquet(run_dir / "stint_residuals.parquet", index=False)
     bin_frame.to_parquet(run_dir / "residual_bins.parquet", index=False)
+    if pair_exposure_frames:
+        pd.concat(pair_exposure_frames, ignore_index=True).to_parquet(
+            run_dir / "prior_pair_exposures.parquet", index=False
+        )
     (run_dir / "metadata.json").write_text(
         json.dumps(
             {
@@ -481,8 +715,9 @@ def build_frozen_feature_screen(
                 "model_artifact_season": model_artifact_season,
                 "target_seasons": list(target_seasons),
                 "information_boundary": (
-                    "prior-season padded player profiles and the immediately prior completed "
-                    "NAIL state only; target-season outcomes are evaluation-only"
+                    "prior-season padded player profiles, prior-season teammate pair exposure, "
+                    "and the immediately prior completed NAIL state only; target-season "
+                    "outcomes are evaluation-only"
                 ),
                 "baseline_contract": (
                     "The full promoted prediction for novel candidates; a leave-one-term-out "
@@ -539,7 +774,7 @@ def _render_residual_screen(
         axis.set_title(f"{season}\nr = {summary['weighted_correlation']:+.3f}", weight="bold")
         axis.set_xlabel("Home-minus-away feature edge")
         axis.grid(axis="y", color="#d9d4ca", linewidth=0.8)
-    axes[0].set_ylabel("Mean frozen residual net rating\n(observed minus v1.2.1.2 prediction)")
+    axes[0].set_ylabel("Mean frozen residual net rating\n(observed minus promoted NAIL prediction)")
     figure.suptitle(
         f"Frozen residual screen: {candidate.label}",
         fontsize=15,

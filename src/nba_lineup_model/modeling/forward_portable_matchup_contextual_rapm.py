@@ -22,6 +22,8 @@ from nba_lineup_model.modeling.context_reattributed_rapm import (
     fit_context_projection,
 )
 from nba_lineup_model.modeling.contextual_features import (
+    CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
+    CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
     CONTEXT_FEATURE_SET_V1,
     CONTEXT_FEATURE_SET_V21_REBOUND_CAPACITY,
     CONTEXT_FEATURE_SET_V22_USAGE_ALLOCATION,
@@ -90,6 +92,7 @@ from nba_lineup_model.modeling.stints import (
     modeling_code_fingerprint,
     read_rapm_stints,
 )
+from nba_lineup_model.modeling.teammate_continuity import build_teammate_pair_exposure
 from nba_lineup_model.modeling.usage_allocation import (
     UsageAllocationModel,
     fit_usage_allocation_model,
@@ -204,12 +207,14 @@ def _load_recursive_resume_state(
             if column in ratings
         ]
         exposure_history.append(
-            panel.loc[panel["season"].eq(season)].merge(
+            panel.loc[panel["season"].eq(season)]
+            .merge(
                 ratings.loc[ratings["season"].eq(season), exposure_columns],
                 on="player_id",
                 how="inner",
                 validate="one_to_one",
-            ).reset_index(drop=True)
+            )
+            .reset_index(drop=True)
         )
 
     prior_metadata = pd.read_parquet(run_dir / "season_player_prior_metadata.parquet")
@@ -374,9 +379,7 @@ def _append_resume_terminal_replacement_token(
     adjusted_stints = raw_stints.copy()
     previous_model = contextual_models.get(_previous_season(season))
     if use_context and previous_model is not None:
-        participants = set().union(
-            *raw_stints["home_player_ids"], *raw_stints["away_player_ids"]
-        )
+        participants = set().union(*raw_stints["home_player_ids"], *raw_stints["away_player_ids"])
         profiles = resolved_profile_builder(
             panel,
             target_season=season,
@@ -427,6 +430,7 @@ def train_forward_portable_matchup_contextual_rapm(
     profile_builder: Callable[..., pd.DataFrame] | None = None,
     profile_contract_metadata: dict[str, object] | None = None,
     profile_transformer: Callable[[pd.DataFrame, str], pd.DataFrame] | None = None,
+    use_prior_teammate_continuity: bool = False,
     resume_from: Path | str | None = None,
     use_player_state_precision: bool = False,
     player_state_precision_config: PlayerStatePrecisionConfig | None = None,
@@ -461,6 +465,22 @@ def train_forward_portable_matchup_contextual_rapm(
         raise ValueError(f"Unknown player lambda selection mode: {player_lambda_mode}")
     if player_lambda_mode == "residualized_cv" and not residualized_lambda_grid:
         raise ValueError("Residualized player lambda selection requires an explicit lambda grid")
+    teammate_continuity_feature_sets = {
+        CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
+        CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
+    }
+    if (
+        use_prior_teammate_continuity
+        and context_feature_set not in teammate_continuity_feature_sets
+    ):
+        raise ValueError("Prior teammate continuity requires its registered context feature set")
+    if (
+        context_feature_set in teammate_continuity_feature_sets
+        and not use_prior_teammate_continuity
+    ):
+        raise ValueError("The teammate-continuity feature set requires pair exposure")
+    if use_prior_teammate_continuity and resume_from is not None:
+        raise ValueError("Prior teammate continuity does not support partial recursive resumes")
     if compiled_additive_prior:
         if not use_context:
             raise ValueError("Compiled additive prior transfer requires context_enabled")
@@ -531,15 +551,30 @@ def train_forward_portable_matchup_contextual_rapm(
     state_precision_history: list[pd.DataFrame] = []
     target_priors: pd.DataFrame | None = None
     target_profiles: pd.DataFrame | None = None
+    prior_teammate_pair_exposure_frames: list[pd.DataFrame] = []
+    prior_teammate_pair_exposure_cache: dict[str, pd.DataFrame] = {}
     resume_base_through_season: str | None = None
     prior_builder = player_prior_builder or _exposure_gated_player_priors
     resolved_profile_builder = profile_builder or build_contextual_player_profiles
 
+    def teammate_pair_exposure_for_target(season: str) -> pd.DataFrame | None:
+        if not use_prior_teammate_continuity:
+            return None
+        source_season = _previous_season(season)
+        cached = prior_teammate_pair_exposure_cache.get(source_season)
+        if cached is None:
+            source_stints = read_rapm_stints(source_season, analytical_dir=analytical_dir)
+            cached = build_teammate_pair_exposure(source_stints)
+            prior_teammate_pair_exposure_cache[source_season] = cached
+            persisted = cached.copy()
+            persisted.insert(0, "target_season", season)
+            persisted.insert(0, "source_season", source_season)
+            prior_teammate_pair_exposure_frames.append(persisted)
+        return cached
+
     if resume_from is not None:
         if include_historical_playoffs or compiled_additive_prior or context_reattribution_weight:
-            raise ValueError(
-                "Resume currently supports the standard forward context contract only"
-            )
+            raise ValueError("Resume currently supports the standard forward context contract only")
         state = _load_recursive_resume_state(
             Path(resume_from),
             model_name=model_name,
@@ -586,8 +621,7 @@ def train_forward_portable_matchup_contextual_rapm(
 
     for season_index, season in enumerate(fit_seasons, start=len(results) + 1):
         print(
-            f"Starting seasonal context state for {season} "
-            f"({season_index}/{len(seasons)})",
+            f"Starting seasonal context state for {season} ({season_index}/{len(seasons)})",
             flush=True,
         )
         raw_stints = read_rapm_stints(season, analytical_dir=analytical_dir)
@@ -628,6 +662,9 @@ def train_forward_portable_matchup_contextual_rapm(
         previous_model = contextual_models.get(_previous_season(season))
         previous_schedule_model = schedule_models.get(_previous_season(season))
         previous_reattribution = context_reattributions.get(_previous_season(season))
+        teammate_pair_exposure = (
+            teammate_pair_exposure_for_target(season) if season != seasons[0] else None
+        )
         priors, prior_row = prior_builder(
             season=season,
             panel=panel,
@@ -669,19 +706,29 @@ def train_forward_portable_matchup_contextual_rapm(
             )
         if use_context and previous_model is not None and profiles is not None:
             offset = (
-                _compiled_additive_residual_context_offset(
-                    raw_stints, previous_model, profiles
-                )
+                _compiled_additive_residual_context_offset(raw_stints, previous_model, profiles)
                 if compiled_additive_prior
                 else _context_offset(
                     raw_stints,
                     previous_model,
                     profiles,
+                    teammate_pair_exposure=teammate_pair_exposure,
                     reattribution=previous_reattribution,
                     reattribution_weight=context_reattribution_weight,
                 )
                 if context_reattribution_weight
-                else _context_offset(raw_stints, previous_model, profiles)
+                else _context_offset(
+                    raw_stints,
+                    previous_model,
+                    profiles,
+                    teammate_pair_exposure=teammate_pair_exposure,
+                )
+                if use_prior_teammate_continuity
+                else _context_offset(
+                    raw_stints,
+                    previous_model,
+                    profiles,
+                )
             )
         else:
             offset = np.zeros(len(raw_stints), dtype=float)
@@ -699,8 +746,11 @@ def train_forward_portable_matchup_contextual_rapm(
         prior_row = dict(prior_row)
         prior_row["player_state_precision_enabled"] = use_player_state_precision
         prior_row["player_state_precision_mode"] = (
-            "posterior_variance" if player_state_precision_config is not None
-            else "uniform_parity" if use_player_state_precision else "disabled"
+            "posterior_variance"
+            if player_state_precision_config is not None
+            else "uniform_parity"
+            if use_player_state_precision
+            else "disabled"
         )
         prior_row.update(reattribution_prior_metadata)
         prior_row.update(compiled_prior_metadata)
@@ -857,11 +907,17 @@ def train_forward_portable_matchup_contextual_rapm(
                 rebound_model=rebound_model,
                 usage_model=usage_model,
                 schedule_adjustment=schedule_adjustment,
+                teammate_pair_exposure=teammate_pair_exposure,
             )
             contextual_models[season] = model
             contextual_metadata.append(row)
             if context_reattribution_weight:
-                full_context = _context_offset(raw_stints, model, profiles)
+                full_context = _context_offset(
+                    raw_stints,
+                    model,
+                    profiles,
+                    teammate_pair_exposure=teammate_pair_exposure,
+                )
                 projection = fit_context_projection(raw_stints, full_context, season_lambda)
                 context_reattributions[season] = projection
                 context_reattribution_metadata.append(
@@ -894,6 +950,7 @@ def train_forward_portable_matchup_contextual_rapm(
         [result.player_estimates for result in results], ignore_index=True
     )
     state_priors = pd.concat(priors_by_season, ignore_index=True)
+    target_teammate_pair_exposure = teammate_pair_exposure_for_target(target)
     evaluation = (
         _evaluate_target(
             target,
@@ -911,6 +968,11 @@ def train_forward_portable_matchup_contextual_rapm(
                     context_reattribution_weight,
                 )
                 if forecast_model is not None and context_reattribution_weight
+                else _context_predictor_with_teammate_continuity(
+                    forecast_model,
+                    target_teammate_pair_exposure,
+                )
+                if forecast_model is not None and use_prior_teammate_continuity
                 else forecast_model.predict_lineups
                 if forecast_model is not None and not compiled_additive_prior
                 else _context_predictor_with_compiled_additive_prior(forecast_model)
@@ -931,8 +993,7 @@ def train_forward_portable_matchup_contextual_rapm(
         "player_prior_method": player_prior_description,
         "context_enabled": use_context,
         "context_contract": (
-            "C_shape_(t-1)(home, away) = C_full_(t-1)(home, away) - "
-            "beta_(t-1)'(z(home) - z(away))"
+            "C_shape_(t-1)(home, away) = C_full_(t-1)(home, away) - beta_(t-1)'(z(home) - z(away))"
             if compiled_additive_prior
             else "C_(t-1)(home, away) = h(home) - h(away) + q(home, away)"
             if not context_reattribution_weight
@@ -947,6 +1008,10 @@ def train_forward_portable_matchup_contextual_rapm(
         if use_context
         else [],
         "profile_padding_contract": profile_contract_metadata,
+        "prior_teammate_continuity_enabled": use_prior_teammate_continuity,
+        "prior_teammate_continuity_source_season": (
+            source if use_prior_teammate_continuity else None
+        ),
     }
     return _write_run(
         target=target,
@@ -1016,6 +1081,12 @@ def train_forward_portable_matchup_contextual_rapm(
         player_lambda_mode=player_lambda_mode,
         residualized_lambda_grid=residualized_lambda_grid,
         profile_contract_metadata=profile_contract_metadata,
+        prior_teammate_pair_exposures=(
+            pd.concat(prior_teammate_pair_exposure_frames, ignore_index=True)
+            if prior_teammate_pair_exposure_frames
+            else pd.DataFrame()
+        ),
+        prior_teammate_continuity_enabled=use_prior_teammate_continuity,
         resume_base_run_dir=Path(resume_from).resolve() if resume_from is not None else None,
         resume_base_through_season=resume_base_through_season,
         artifacts_dir=artifact_root,
@@ -1027,6 +1098,7 @@ def _context_offset(
     model: MatchupContextualModel,
     profiles: pd.DataFrame,
     *,
+    teammate_pair_exposure: pd.DataFrame | None = None,
     reattribution: ContextProjection | None = None,
     reattribution_weight: float = 0.0,
 ) -> np.ndarray:
@@ -1034,11 +1106,32 @@ def _context_offset(
         stints["home_player_ids"].tolist(),
         stints["away_player_ids"].tolist(),
         profiles,
+        teammate_pair_exposure=teammate_pair_exposure,
     )
     if reattribution is None or not reattribution_weight:
         return full_context
     projected = _project_reattributed_player_context(stints, reattribution)
     return full_context - reattribution_weight * projected
+
+
+def _context_predictor_with_teammate_continuity(
+    model: MatchupContextualModel,
+    pair_exposure: pd.DataFrame | None,
+) -> Callable[[object, object, object], np.ndarray]:
+    """Bind one target season's prior pair exposure to a frozen context state."""
+
+    if pair_exposure is None:
+        raise ValueError("Teammate-continuity prediction requires prior pair exposure")
+
+    def predict(home_lineups: object, away_lineups: object, profiles: object) -> np.ndarray:
+        return model.predict_lineups(
+            home_lineups,  # type: ignore[arg-type]
+            away_lineups,  # type: ignore[arg-type]
+            profiles,  # type: ignore[arg-type]
+            teammate_pair_exposure=pair_exposure,
+        )
+
+    return predict
 
 
 def _schedule_predictor(
@@ -1137,7 +1230,9 @@ def _context_predictor_with_compiled_additive_prior(
     def predict(home_lineups: object, away_lineups: object, profiles: object) -> np.ndarray:
         stints = pd.DataFrame({"home_player_ids": home_lineups, "away_player_ids": away_lineups})
         return _compiled_additive_residual_context_offset(
-            stints, model, profiles  # type: ignore[arg-type]
+            stints,
+            model,
+            profiles,  # type: ignore[arg-type]
         )
 
     return predict
@@ -1407,6 +1502,7 @@ def _fit_matchup_contextual_season(
     rebound_model: ReboundOpportunityModel | None = None,
     usage_model: UsageAllocationModel | None = None,
     schedule_adjustment: np.ndarray | None = None,
+    teammate_pair_exposure: pd.DataFrame | None = None,
 ) -> tuple[MatchupContextualModel, dict[str, object]]:
     coefficients = fitted.player_estimates.loc[:, ["player_id", "rapm"]]
     values = dict(zip(coefficients["player_id"].astype(int), coefficients["rapm"], strict=True))
@@ -1418,6 +1514,7 @@ def _fit_matchup_contextual_season(
         feature_set=context_feature_set,
         rebound_model=rebound_model,
         usage_model=usage_model,
+        teammate_pair_exposure=teammate_pair_exposure,
     )
     away = lineup_side_context_features(
         stints["away_player_ids"].tolist(),
@@ -1425,6 +1522,7 @@ def _fit_matchup_contextual_season(
         feature_set=context_feature_set,
         rebound_model=rebound_model,
         usage_model=usage_model,
+        teammate_pair_exposure=teammate_pair_exposure,
     )
     target = stints["target_home_net_rating"].to_numpy(dtype=float) - effects - intercept
     if schedule_adjustment is not None:
@@ -1526,6 +1624,8 @@ def _write_run(
     player_lambda_mode: str,
     residualized_lambda_grid: tuple[float, ...] | None,
     profile_contract_metadata: dict[str, object] | None,
+    prior_teammate_pair_exposures: pd.DataFrame,
+    prior_teammate_continuity_enabled: bool,
     resume_base_run_dir: Path | None,
     resume_base_through_season: str | None,
     artifacts_dir: Path,
@@ -1597,6 +1697,8 @@ def _write_run(
                 run_id=run_id,
                 model=model_name,
             )
+        if not prior_teammate_pair_exposures.empty:
+            tables["season_prior_teammate_pair_exposures.parquet"] = prior_teammate_pair_exposures
         if not box_score_residual_selection.empty:
             tables["season_box_score_residual_selection.parquet"] = box_score_residual_selection
         if context_reattributions:
@@ -1680,6 +1782,7 @@ def _write_run(
             "context_reattribution_weight": context_reattribution_weight,
             "compiled_additive_prior": compiled_additive_prior,
             "profile_padding_contract": profile_contract_metadata,
+            "prior_teammate_continuity_enabled": prior_teammate_continuity_enabled,
             "resume_base_run_dir": (
                 str(resume_base_run_dir) if resume_base_run_dir is not None else None
             ),
@@ -1688,8 +1791,7 @@ def _write_run(
                 "The prior-season linear additive profile term is added to player priors; "
                 "only the remaining lineup-shape context is carried forward"
                 if compiled_additive_prior
-                else
-                "C_(t-1)(home, away) less its transferred player projection is subtracted "
+                else "C_(t-1)(home, away) less its transferred player projection is subtracted "
                 "before season t RAPM"
                 if context_enabled
                 else "C_(t-1)(home, away) is identically zero in the controlled ablation"
@@ -1702,7 +1804,12 @@ def _write_run(
             ),
             "created_at": now.isoformat(),
             "code_version": modeling_code_fingerprint(
-                (Path(__file__), Path(__file__).with_name("matchup_contextual.py"))
+                (
+                    Path(__file__),
+                    Path(__file__).with_name("matchup_contextual.py"),
+                    Path(__file__).with_name("contextual_features.py"),
+                    Path(__file__).with_name("teammate_continuity.py"),
+                )
             ),
             "source_state": evaluation["source_state"],
         }
@@ -1866,9 +1973,7 @@ def _record_player_state_precision(
 
     if prior_variance is None or "posterior_variance" not in estimates:
         raise ValueError("State-precision fit must return prior and posterior variance")
-    state = estimates.loc[
-        :, ["player_id", "relative_prior_precision", "posterior_variance"]
-    ].copy()
+    state = estimates.loc[:, ["player_id", "relative_prior_precision", "posterior_variance"]].copy()
     state.insert(0, "season", season)
     state.insert(2, "prior_variance", prior_variance)
     history.append(state)
@@ -1896,9 +2001,11 @@ def _serialize_nested_metadata(frame: pd.DataFrame) -> pd.DataFrame:
         return frame.copy()
     output = frame.copy()
     for column in output:
-        if output[column].map(
-            lambda value: isinstance(value, (dict, list, tuple, np.ndarray))
-        ).any():
+        if (
+            output[column]
+            .map(lambda value: isinstance(value, (dict, list, tuple, np.ndarray)))
+            .any()
+        ):
             output[column] = output[column].map(
                 lambda value: (
                     json.dumps(

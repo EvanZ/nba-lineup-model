@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Literal
@@ -37,7 +38,6 @@ from nba_lineup_model.modeling.matchup_contextual import (
     fit_linear_ridge_matchup_contextual_model,
     model_metadata,
 )
-from typing import Callable
 
 MODEL_NAME = "forward_nail_rapm_v1212_back_to_back"
 RUN_PREFIX = "forward-nail-rapm-v1212-back-to-back"
@@ -53,6 +53,9 @@ def train_nail_v1212_back_to_back(
     residualized_lambda_grid: tuple[float, ...] | None = None,
     context_fit: Callable[..., MatchupContextualModel] = fit_linear_ridge_matchup_contextual_model,
     context_fit_kwargs: dict[str, object] | None = None,
+    context_feature_set: str = CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
+    use_prior_teammate_continuity: bool = False,
+    profile_contract_metadata_updates: dict[str, object] | None = None,
     model_name: str = MODEL_NAME,
     run_prefix: str = RUN_PREFIX,
     resume_from: Path | str | None = None,
@@ -84,7 +87,7 @@ def train_nail_v1212_back_to_back(
         context_fit=context_fit,
         context_metadata=model_metadata,
         context_fit_kwargs=context_fit_kwargs,
-        context_feature_set=CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
+        context_feature_set=context_feature_set,
         profile_builder=partial(
             build_contextual_player_profiles,
             padding_contract=MEDVEDOVSKY_2020_PROFILE_PADDING,
@@ -116,7 +119,9 @@ def train_nail_v1212_back_to_back(
                     "shooter_passing_interaction",
                 ],
             },
+            **(profile_contract_metadata_updates or {}),
         },
+        use_prior_teammate_continuity=use_prior_teammate_continuity,
         resume_from=resume_from,
         player_season_panel_path=player_season_panel_path,
         analytical_dir=analytical_dir,

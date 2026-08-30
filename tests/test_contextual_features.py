@@ -10,6 +10,8 @@ from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
     CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE,
     CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE,
+    CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
+    CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
     CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
     CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE,
     CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE,
@@ -180,6 +182,89 @@ def test_nail_v121_contract_retains_only_two_resolved_nonadditive_terms() -> Non
         "top_two_assists",
         "usage_concentration",
     )
+
+
+def test_teammate_continuity_extends_standard_usage_contract_by_one_feature() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "usage_pct": float(player_id + 20),
+                "offensive_rebound_pct": 0.1,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id in range(1, 11)
+        ]
+    )
+    pair_exposure = pd.DataFrame(
+        {
+            "player_id_1": [1],
+            "player_id_2": [2],
+            "shared_possessions": [99.0],
+        }
+    )
+
+    features = lineup_side_context_features(
+        [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
+        teammate_pair_exposure=pair_exposure,
+    )
+
+    assert tuple(features.columns)[-3:] == (
+        "top_two_assists",
+        "usage_concentration",
+        "prior_teammate_continuity",
+    )
+    assert np.isclose(features.loc[0, "prior_teammate_continuity"], np.log(100.0) / 10.0)
+    assert features.loc[1, "prior_teammate_continuity"] == 0.0
+
+
+def test_teammate_continuity_replacement_removes_top_two_assists() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "usage_pct": float(player_id + 20),
+                "offensive_rebound_pct": 0.1,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id in range(1, 6)
+        ]
+    )
+    pair_exposure = pd.DataFrame(
+        {
+            "player_id_1": [1],
+            "player_id_2": [2],
+            "shared_possessions": [99.0],
+        }
+    )
+
+    features = lineup_side_context_features(
+        [[1, 2, 3, 4, 5]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
+        teammate_pair_exposure=pair_exposure,
+    )
+
+    assert tuple(features.columns) == (
+        "three_pa_per_100",
+        "three_pm_per_100",
+        "assists_per_100",
+        "turnovers_per_100",
+        "usage_pct",
+        "steals_per_100",
+        "blocks_per_100",
+        "offensive_rebound_claim_total",
+        "usage_concentration",
+        "prior_teammate_continuity",
+    )
+    assert "top_two_assists" not in features
+    assert np.isclose(features.loc[0, "prior_teammate_continuity"], np.log(100.0) / 10.0)
 
 
 def test_critical_spacing_activates_for_two_low_threat_players() -> None:
@@ -732,9 +817,7 @@ def test_linear_x3_quadratic_side_features_square_completed_unit_totals() -> Non
         feature_set=CONTEXT_FEATURE_SET_LINEAR_X3_ADDITIVE_QUADRATIC_SIDE,
     )
 
-    assert features.loc[0, "three_pm_per_100_squared"] == (
-        features.loc[0, "three_pm_per_100"] ** 2
-    )
+    assert features.loc[0, "three_pm_per_100_squared"] == (features.loc[0, "three_pm_per_100"] ** 2)
     assert features.loc[0, "offensive_rebound_claim_total"] == 15.0
     assert features.loc[0, "offensive_rebound_claim_total_squared"] == 225.0
     assert features.loc[0, "imputed_count"] == 1.0

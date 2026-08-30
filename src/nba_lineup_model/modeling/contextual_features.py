@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from nba_lineup_model.modeling.contextual_profiles import PROFILE_RATE_COLUMNS
+from nba_lineup_model.modeling.teammate_continuity import teammate_continuity_side_feature
 
 if TYPE_CHECKING:
     from nba_lineup_model.modeling.rebound_opportunity import ReboundOpportunityModel
@@ -39,11 +40,11 @@ CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE = (
     "nail_critical_spacing_quartile_standard_usage"
 )
 CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE = "nail_v12_1_1_standard_usage"
+CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY = "nail_prior_teammate_continuity"
+CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT = "nail_teammate_continuity_replacement"
 CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE = "nail_v12_2_defensive_rebound_profile"
 CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE = "nail_v12_3_free_throw_profile"
-CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT = (
-    "nail_v12_4_free_throw_replacement"
-)
+CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT = "nail_v12_4_free_throw_replacement"
 CONTEXT_FEATURE_SET_NAIL_V13 = "nail_v13_additive_profile"
 CONTEXT_FEATURE_SET_NAIL_V131_PRUNED_ADDITIVE = "nail_v13_1_pruned_additive_profile"
 CONTEXT_FEATURE_SET_NAIL_ADDITIVE_ONLY = "nail_additive_only"
@@ -118,9 +119,7 @@ LINEAR_NAIL_V123_BASKETBALL_ADDITIVE_FEATURES = (
     "free_throw_attempts_per_100",
 )
 LINEAR_NAIL_V124_BASKETBALL_ADDITIVE_FEATURES = tuple(
-    feature
-    for feature in LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES
-    if feature != "usage_per_100"
+    feature for feature in LINEAR_X3_BASKETBALL_ADDITIVE_FEATURES if feature != "usage_per_100"
 ) + ("free_throw_attempts_per_100",)
 LINEAR_NAIL_V131_PRUNED_BASKETBALL_ADDITIVE_FEATURES = tuple(
     feature
@@ -159,6 +158,8 @@ def available_context_feature_sets() -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
         CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
         CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
+        CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
+        CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
         CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE,
         CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE,
         CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT,
@@ -182,6 +183,7 @@ def lineup_context_features(
     feature_set: str = CONTEXT_FEATURE_SET_V1,
     rebound_model: ReboundOpportunityModel | None = None,
     usage_model: UsageAllocationModel | None = None,
+    teammate_pair_exposure: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Encode fixed five-player home and away lineup compositions.
 
@@ -209,6 +211,7 @@ def lineup_context_features(
         feature_set=feature_set,
         rebound_model=rebound_model,
         usage_model=usage_model,
+        teammate_pair_exposure=teammate_pair_exposure,
     )
     away = lineup_side_context_features(
         away_lineups,
@@ -216,6 +219,7 @@ def lineup_context_features(
         feature_set=feature_set,
         rebound_model=rebound_model,
         usage_model=usage_model,
+        teammate_pair_exposure=teammate_pair_exposure,
     )
     return pd.DataFrame(
         {
@@ -244,6 +248,7 @@ def lineup_side_context_features(
     feature_set: str = CONTEXT_FEATURE_SET_V1,
     rebound_model: ReboundOpportunityModel | None = None,
     usage_model: UsageAllocationModel | None = None,
+    teammate_pair_exposure: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Encode five-player units under one versioned contextual feature contract."""
 
@@ -284,17 +289,37 @@ def lineup_side_context_features(
     )
     rebound_rates = _rebound_rates(lineup_values, rebound_model)
     usage_features = _usage_features(lineup_values, usage_model)
+    row_feature_set = (
+        CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE
+        if feature_set
+        in {
+            CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
+            CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
+        }
+        else feature_set
+    )
     rows = [
         _side_feature_row(
             lineup,
-            feature_set,
+            row_feature_set,
             rebound_rate=rate,
             usage_feature=usage,
             critical_spacing_threshold=critical_spacing_threshold,
         )
         for lineup, rate, usage in zip(lineup_values, rebound_rates, usage_features, strict=True)
     ]
-    return pd.DataFrame(rows, columns=side_context_feature_columns(feature_set))
+    output = pd.DataFrame(rows, columns=side_context_feature_columns(row_feature_set))
+    if feature_set in {
+        CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
+        CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
+    }:
+        if teammate_pair_exposure is None:
+            raise ValueError("Prior teammate continuity requires prior-season pair exposure")
+        output["prior_teammate_continuity"] = teammate_continuity_side_feature(
+            lineups,
+            teammate_pair_exposure,
+        )
+    return output.loc[:, side_context_feature_columns(feature_set)]
 
 
 def side_context_feature_columns(
@@ -476,6 +501,17 @@ def side_context_feature_columns(
             "top_two_assists",
             "usage_concentration",
         )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY:
+        return (
+            *side_context_feature_columns(CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE),
+            "prior_teammate_continuity",
+        )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT:
+        return (
+            *LINEAR_NAIL_V1211_BASKETBALL_ADDITIVE_FEATURES,
+            "usage_concentration",
+            "prior_teammate_continuity",
+        )
     if feature_set == CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE:
         return (
             *LINEAR_NAIL_V122_BASKETBALL_ADDITIVE_FEATURES,
@@ -507,9 +543,8 @@ def side_context_feature_columns(
             *side_context_feature_columns(CONTEXT_FEATURE_SET_LINEAR_NONADDITIVE),
         )
     if feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
-        excluded = (
-            V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
-            | frozenset({"steals_per_100"})
+        excluded = V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING] | frozenset(
+            {"steals_per_100"}
         )
         return (
             *(
@@ -520,9 +555,8 @@ def side_context_feature_columns(
             "offensive_rebound_claim_total",
         )
     if feature_set == CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION:
-        excluded = (
-            V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
-            | frozenset({"assists_per_100", "top_two_assists"})
+        excluded = V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING] | frozenset(
+            {"assists_per_100", "top_two_assists"}
         )
         return (
             *(
@@ -613,6 +647,8 @@ def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct")
     if feature_set in {
         CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
+        CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
+        CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
         CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE,
     }:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct", STANDARD_USAGE_COLUMN)
@@ -782,9 +818,7 @@ def _side_feature_row(
         }
     elif feature_set == CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE:
         base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE)
-        base["free_throw_attempts_per_100"] = float(
-            lineup["free_throw_attempts_per_100"].sum()
-        )
+        base["free_throw_attempts_per_100"] = float(lineup["free_throw_attempts_per_100"].sum())
         result = {
             column: base[column]
             for column in side_context_feature_columns(
@@ -794,9 +828,7 @@ def _side_feature_row(
     elif feature_set == CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT:
         base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE)
         base.pop("usage_per_100")
-        base["free_throw_attempts_per_100"] = float(
-            lineup["free_throw_attempts_per_100"].sum()
-        )
+        base["free_throw_attempts_per_100"] = float(lineup["free_throw_attempts_per_100"].sum())
         result = {
             column: base[column]
             for column in side_context_feature_columns(
@@ -825,18 +857,16 @@ def _side_feature_row(
             )
         }
     elif feature_set == CONTEXT_FEATURE_SET_X4_ORB_CLAIM_BLOCKS_ONLY:
-        excluded = (
-            V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
-            | frozenset({"steals_per_100"})
+        excluded = V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING] | frozenset(
+            {"steals_per_100"}
         )
         result = {column: float(lineup[column].sum()) for column in PROFILE_RATE_COLUMNS}
         result.update(_summary_v1(lineup))
         result = {column: value for column, value in result.items() if column not in excluded}
         result["offensive_rebound_claim_total"] = float(lineup["offensive_rebound_pct"].sum())
     elif feature_set == CONTEXT_FEATURE_SET_X5_ORB_CLAIM_INTERACTION_CREATION:
-        excluded = (
-            V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING]
-            | frozenset({"assists_per_100", "top_two_assists"})
+        excluded = V1_KNOCKOUT_EXCLUSIONS[CONTEXT_FEATURE_SET_V1_WITHOUT_REBOUNDING] | frozenset(
+            {"assists_per_100", "top_two_assists"}
         )
         result = {column: float(lineup[column].sum()) for column in PROFILE_RATE_COLUMNS}
         result.update(_summary_v1(lineup))

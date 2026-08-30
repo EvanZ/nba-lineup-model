@@ -45,6 +45,7 @@ FEATURE_LABELS = {
     "top_two_assists": "Top-two assists / 100",
     "usage_concentration": "Usage concentration",
     "critical_spacing": "Critical spacing",
+    "prior_teammate_continuity": "Prior teammate continuity",
     "shooting_usage_interaction": "Shooting-by-usage",
     "shooter_passing_interaction": "Shooter-by-passing",
 }

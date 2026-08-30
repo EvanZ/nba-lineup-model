@@ -96,6 +96,59 @@ CANDIDATES = (
     },
     {
         "model": (
+            "[NAIL prior teammate-continuity candidate (not promoted)]"
+            "(nail-teammate-continuity.md)"
+        ),
+        # The immutable candidate replay uses the recovered 625,615-possession
+        # support. Normalize its paired delta to the legacy leaderboard's
+        # production row for the possession and eligible-game coordinates.
+        "regular": {
+            "possession_rmse": 1.1979549278,
+            "possession_mae": 1.1413922945,
+            "possession_skill": 0.0012631958,
+            "eligible_game_margin_rmse": 14.0009576999,
+            "eligible_game_skill": 0.1847548794,
+            "full_game_margin_rmse": 14.214574,
+            "game_winner_accuracy": 0.684990,
+            "team_net_rating_rmse": 3.283263,
+            "pythagorean_win_rmse": 6.964772,
+        },
+        "playoffs": {
+            "possession_rmse": 1.192663,
+            "possession_mae": 1.137726,
+            "possession_skill": 0.000741,
+            "eligible_game_margin_rmse": 16.459694,
+            "eligible_game_skill": 0.092313,
+        },
+    },
+    {
+        "model": (
+            "[NAIL teammate-continuity replacement candidate (not promoted)]"
+            "(nail-teammate-continuity-replacement.md)"
+        ),
+        # Normalize paired possession and eligible-game deltas to the legacy
+        # leaderboard production row; full-game and team metrics are direct.
+        "regular": {
+            "possession_rmse": 1.1979476919,
+            "possession_mae": 1.1413880027,
+            "possession_skill": 0.0012751794,
+            "eligible_game_margin_rmse": 13.9918739324,
+            "eligible_game_skill": 0.1858120580,
+            "full_game_margin_rmse": 14.211906,
+            "game_winner_accuracy": 0.684136,
+            "team_net_rating_rmse": 3.285270,
+            "pythagorean_win_rmse": 6.981509,
+        },
+        "playoffs": {
+            "possession_rmse": 1.1926465415,
+            "possession_mae": 1.1376831009,
+            "possession_skill": 0.0007510686,
+            "eligible_game_margin_rmse": 16.4639680972,
+            "eligible_game_skill": 0.0918156457,
+        },
+    },
+    {
+        "model": (
             "[NAIL-RAPM v1.2.1.1 standard USG% (not promoted)]"
             "(nail-rapm-v1211-standard-usage.md)"
         ),
@@ -471,7 +524,7 @@ def main() -> None:
             if "playoffs" in candidate
         ),
     )
-    lines[1] = 'last_updated: "2026-08-27"'
+    lines[1] = 'last_updated: "2026-08-29"'
     PAGE.write_text("\n".join(lines) + "\n")
 
 

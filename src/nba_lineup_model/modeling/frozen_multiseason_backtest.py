@@ -31,6 +31,7 @@ from nba_lineup_model.modeling.forward_contextual_rapm import (
     _previous_season,
 )
 from nba_lineup_model.modeling.forward_portable_matchup_contextual_rapm import (
+    _context_predictor_with_teammate_continuity,
     _load_recursive_model_mapping,
 )
 from nba_lineup_model.modeling.frozen_game_outcomes import score_full_game_outcomes
@@ -55,6 +56,7 @@ from nba_lineup_model.modeling.schedule_controls import (
 )
 from nba_lineup_model.modeling.shot_portfolio import add_shot_portfolio_profiles
 from nba_lineup_model.modeling.stints import read_rapm_stints
+from nba_lineup_model.modeling.teammate_continuity import build_teammate_pair_exposure
 from nba_lineup_model.season.schema import validate_season
 
 DEFAULT_SEASONS = ("2023-24", "2024-25", "2025-26")
@@ -73,6 +75,7 @@ class BacktestModel:
     uses_context: bool = True
     uses_schedule_control: bool = False
     run_target_season: str | None = None
+    uses_prior_teammate_continuity: bool = False
 
 
 BACKTEST_MODELS = (
@@ -188,6 +191,11 @@ def run_frozen_multiseason_backtest(
         source = _previous_season(target)
         target_stints = read_rapm_stints(target, analytical_dir=analytical_root)
         source_stints = read_rapm_stints(source, analytical_dir=analytical_root)
+        teammate_pair_exposure = (
+            build_teammate_pair_exposure(source_stints)
+            if any(candidate.uses_prior_teammate_continuity for candidate in models)
+            else None
+        )
         source_possessions, _ = _read_regular_possessions(
             source,
             analytical_dir=analytical_root,
@@ -229,6 +237,7 @@ def run_frozen_multiseason_backtest(
                     context_model.feature_set,
                     id(getattr(context_model, "rebound_model", None)),
                     id(getattr(context_model, "usage_model", None)),
+                    candidate.uses_prior_teammate_continuity,
                 )
                 if context_feature_key not in context_feature_cache:
                     home_features = lineup_side_context_features(
@@ -237,6 +246,11 @@ def run_frozen_multiseason_backtest(
                         feature_set=context_model.feature_set,
                         rebound_model=getattr(context_model, "rebound_model", None),
                         usage_model=getattr(context_model, "usage_model", None),
+                        teammate_pair_exposure=(
+                            teammate_pair_exposure
+                            if candidate.uses_prior_teammate_continuity
+                            else None
+                        ),
                     )
                     away_features = lineup_side_context_features(
                         target_stints["away_player_ids"].tolist(),
@@ -244,6 +258,11 @@ def run_frozen_multiseason_backtest(
                         feature_set=context_model.feature_set,
                         rebound_model=getattr(context_model, "rebound_model", None),
                         usage_model=getattr(context_model, "usage_model", None),
+                        teammate_pair_exposure=(
+                            teammate_pair_exposure
+                            if candidate.uses_prior_teammate_continuity
+                            else None
+                        ),
                     )
                     context_feature_cache[context_feature_key] = (
                         home_features,
@@ -273,6 +292,11 @@ def run_frozen_multiseason_backtest(
                 context_correction=context_correction,
                 schedule_model=schedule_model,
                 schedule_features=schedule_features,
+                teammate_pair_exposure=(
+                    teammate_pair_exposure
+                    if candidate.uses_prior_teammate_continuity
+                    else None
+                ),
             )
             evaluations.append({"candidate": candidate, "target": target, **evaluation})
         print(
@@ -390,6 +414,7 @@ def _replay_regular_target_season(
     context_correction: np.ndarray | None = None,
     schedule_model: BackToBackScheduleModel | None = None,
     schedule_features: pd.DataFrame | None = None,
+    teammate_pair_exposure: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame | dict[str, object]]:
     """Replay regular season and, when available, playoffs from one frozen state."""
 
@@ -408,7 +433,13 @@ def _replay_regular_target_season(
             stints=target_stints,
         )
     model = state.context_models.get(source)
-    context_predictor = model.predict_lineups if model is not None else _zero_context_predictor
+    context_predictor = (
+        _context_predictor_with_teammate_continuity(model, teammate_pair_exposure)
+        if model is not None and state.candidate.uses_prior_teammate_continuity
+        else model.predict_lineups
+        if model is not None
+        else _zero_context_predictor
+    )
     schedule_predictor = (
         _schedule_predictor(schedule_model, schedule_features)
         if schedule_model is not None and schedule_features is not None

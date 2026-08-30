@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-27"
+last_updated: "2026-08-29"
 ---
 
 # NAIL-RAPM v1.2.1.3 Residualized-Target Lambda CV
@@ -124,4 +124,6 @@ uv run python -m nba_lineup_model.modeling.nail_v1213_promotion_review
 
 See the [training guide](../guides/train-nail-v1212-residualized-lambda.md) and
 [NAIL model contract](nail-model-contract.md) for the complete provenance and
-remaining validation priorities.
+remaining validation priorities. Proposed lineup-context additions and their
+resolved tests are tracked in the
+[Non-Additive Context Feature Registry](nonadditive-feature-registry.md).

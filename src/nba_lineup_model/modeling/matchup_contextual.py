@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Final
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Ridge
 from sklearn.compose import ColumnTransformer
+from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import SplineTransformer, StandardScaler
 
@@ -67,6 +67,8 @@ class MatchupContextualModel:
         home_lineups: list[list[int]] | list[tuple[int, ...]],
         away_lineups: list[list[int]] | list[tuple[int, ...]],
         profiles: pd.DataFrame,
+        *,
+        teammate_pair_exposure: pd.DataFrame | None = None,
     ) -> np.ndarray:
         """Return total context for home minus away units."""
 
@@ -76,6 +78,7 @@ class MatchupContextualModel:
             feature_set=self.feature_set,
             rebound_model=getattr(self, "rebound_model", None),
             usage_model=getattr(self, "usage_model", None),
+            teammate_pair_exposure=teammate_pair_exposure,
         )
         away = lineup_side_context_features(
             away_lineups,
@@ -83,6 +86,7 @@ class MatchupContextualModel:
             feature_set=self.feature_set,
             rebound_model=getattr(self, "rebound_model", None),
             usage_model=getattr(self, "usage_model", None),
+            teammate_pair_exposure=teammate_pair_exposure,
         )
         return self.predict_side_pairs(home, away)
 
