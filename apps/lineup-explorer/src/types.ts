@@ -102,6 +102,39 @@ export type RankedLineup = {
   actual_net_rating: number;
 };
 
+export type RosterMove = {
+  player_id: number;
+  player_name: string;
+  source_team: string;
+  target_team: string;
+  move_type: "trade" | "signing" | "waiver" | "other";
+  how_acquired: string | null;
+  prior_season_minutes: number;
+};
+
+export type ExternalRosterArrival = {
+  player_id: number;
+  player_name: string;
+  target_team: string;
+  move_type: RosterMove["move_type"];
+  how_acquired: string | null;
+  school: string | null;
+  country: string | null;
+  is_rookie: boolean;
+};
+
+export type RosterMovesPayload = {
+  current_season: string;
+  prior_season: string;
+  source_definition: string;
+  teams: string[];
+  moves: RosterMove[];
+  external_arrivals: ExternalRosterArrival[];
+  current_roster_count: number;
+  returning_mover_count: number;
+  new_or_unmatched_current_player_count: number;
+};
+
 export type ContextFeatureDetail = {
   kind: "generic" | "usage_concentration" | "top_two_assists";
   unit_value: number;

@@ -9,7 +9,11 @@
     "lint": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@svg-maps/usa": "^2.0.0",
     "@vitejs/plugin-react": "latest",
+    "@xyflow/react": "^12.11.5",
+    "d3-geo": "^3.1.1",
+    "gifenc": "^1.0.3",
     "katex": "^0.18.4",
     "lucide-react": "latest",
     "react": "latest",
@@ -19,6 +23,7 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@types/d3-geo": "^3.1.1",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@types/react-katex": "^3.0.4"

@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import time
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
 
-from nba_lineup_model.players.source import PlayerStatsCache, PlayerStatsClient
+from nba_lineup_model.players.source import (
+    PlayerStatsCache,
+    PlayerStatsCacheMetadata,
+    PlayerStatsClient,
+    PlayerStatsEndpoint,
+)
 from nba_lineup_model.season.schema import validate_season
 
 # NBA franchise identifiers are stable. Keeping the active league set explicit
@@ -73,6 +79,15 @@ def collect_team_rosters(
         raise ValueError("Request delay cannot be negative")
     owns_client = client is None
     active_client = client or PlayerStatsClient(cache=PlayerStatsCache(raw_dir))
+    archived_snapshot = (
+        archive_team_roster_snapshot(
+            active_client.cache,
+            season=season,
+            team_ids=team_ids,
+        )
+        if refresh
+        else None
+    )
     responses = []
     try:
         for index, team_id in enumerate(team_ids):
@@ -116,12 +131,50 @@ def collect_team_rosters(
                 "source_fetched_at": [
                     response.fetched_at.astimezone(UTC).isoformat() for response in responses
                 ],
+                "previous_snapshot": (
+                    str(archived_snapshot) if archived_snapshot is not None else None
+                ),
             },
             indent=2,
         )
         + "\n"
     )
     return output
+
+
+def archive_team_roster_snapshot(
+    cache: PlayerStatsCache,
+    *,
+    season: str,
+    team_ids: tuple[int, ...],
+    archived_at: datetime | None = None,
+) -> Path | None:
+    """Preserve the current active-roster responses before a forced refresh.
+
+    The canonical cache path remains the latest source response for normal
+    ingestion. Refreshes copy its exact bytes and sidecar metadata into one
+    immutable, timestamped snapshot so roster movement remains auditable.
+    """
+
+    season = validate_season(season)
+    timestamp = (archived_at or datetime.now(UTC)).astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    snapshot_dir = (
+        cache.root / PlayerStatsEndpoint.TEAM_ROSTER.value / season / "snapshots" / timestamp
+    )
+    copied = 0
+    for team_id in team_ids:
+        source = cache.path_for(PlayerStatsEndpoint.TEAM_ROSTER, season, None, team_id)
+        metadata = cache.metadata_path_for(PlayerStatsEndpoint.TEAM_ROSTER, season, None, team_id)
+        if not source.exists() and not metadata.exists():
+            continue
+        if not source.exists() or not metadata.exists():
+            raise ValueError(f"Team roster cache is incomplete for team {team_id}")
+        PlayerStatsCacheMetadata.model_validate_json(metadata.read_text())
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, snapshot_dir / source.name)
+        shutil.copy2(metadata, snapshot_dir / metadata.name)
+        copied += 1
+    return snapshot_dir if copied else None
 
 
 def team_roster_frame(

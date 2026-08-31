@@ -24,6 +24,9 @@ PRESEASON_CACHE="artifacts/web/preseason_rankings/${MODEL_ARTIFACT}/${RUN_ID}"
 CONSTRAINED_SPLIT_CACHE="artifacts/web/constrained_split_ratings/${MODEL_ARTIFACT}/${RUN_ID}"
 RELEASE_MANIFEST="artifacts/web/releases/${MODEL_ARTIFACT}/${RUN_ID}/bundle_manifest.json"
 PANEL="data/analytical/player_season_panel"
+CURRENT_ROSTERS="data/curated/team_rosters/2026-27"
+PRIOR_ROSTER_SNAPSHOT="data/curated/team_rosters/2025-26/final_regular_season_snapshot.parquet"
+PLAYER_CATALOG="data/catalog/players.parquet"
 
 cd "$ROOT_DIR"
 uv run nba-validate-gestalt-release --season "$DISPLAY_SEASON" --run-id "$RUN_ID"
@@ -41,6 +44,9 @@ required_paths=(
   "$CONSTRAINED_SPLIT_CACHE"
   "$RELEASE_MANIFEST"
   "$PANEL"
+  "$CURRENT_ROSTERS"
+  "$PRIOR_ROSTER_SNAPSHOT"
+  "$PLAYER_CATALOG"
 )
 
 for path in "${required_paths[@]}"; do
@@ -62,6 +68,9 @@ mkdir -p "$(dirname "$STAGING_DIR/$HISTORICAL_REALIZED_PROFILE_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$PRESEASON_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$CONSTRAINED_SPLIT_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$RELEASE_MANIFEST")"
+mkdir -p "$STAGING_DIR/$CURRENT_ROSTERS"
+mkdir -p "$(dirname "$STAGING_DIR/$PRIOR_ROSTER_SNAPSHOT")"
+mkdir -p "$(dirname "$STAGING_DIR/$PLAYER_CATALOG")"
 
 rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' src/ "$STAGING_DIR/src/"
 rsync -a README.md pyproject.toml uv.lock "$STAGING_DIR/"
@@ -78,6 +87,9 @@ rsync -a "$PRESEASON_CACHE/" "$STAGING_DIR/$PRESEASON_CACHE/"
 rsync -a "$CONSTRAINED_SPLIT_CACHE/" "$STAGING_DIR/$CONSTRAINED_SPLIT_CACHE/"
 rsync -a "$RELEASE_MANIFEST" "$STAGING_DIR/$RELEASE_MANIFEST"
 rsync -a "$PANEL/" "$STAGING_DIR/$PANEL/"
+rsync -a "$CURRENT_ROSTERS/" "$STAGING_DIR/$CURRENT_ROSTERS/"
+rsync -a "$PRIOR_ROSTER_SNAPSHOT" "$STAGING_DIR/$PRIOR_ROSTER_SNAPSHOT"
+rsync -a "$PLAYER_CATALOG" "$STAGING_DIR/$PLAYER_CATALOG"
 
 cat > "$STAGING_DIR/release.json" <<EOF
 {

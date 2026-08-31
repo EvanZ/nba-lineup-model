@@ -6,7 +6,11 @@ from pathlib import Path
 import httpx
 
 from nba_lineup_model.players.rosters import collect_team_rosters, team_roster_frame
-from nba_lineup_model.players.source import PlayerStatsCache, PlayerStatsClient
+from nba_lineup_model.players.source import (
+    PlayerStatsCache,
+    PlayerStatsClient,
+    PlayerStatsEndpoint,
+)
 
 
 def test_team_roster_frame_preserves_player_identifiers_and_measurements() -> None:
@@ -50,6 +54,54 @@ def test_team_roster_collection_caches_by_team_and_writes_combined_table(tmp_pat
     assert output.is_file()
     cached = client.fetch_team_roster("2026-27", 1610612738)
     assert cache.path_for(cached.endpoint, "2026-27", None, 1610612738).is_file()
+
+
+def test_refresh_archives_previous_roster_snapshot(tmp_path: Path) -> None:
+    requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        payload = _payload()
+        payload["resultSets"][0]["rowSet"][0][3] = f"Player {requests}"
+        return httpx.Response(200, content=json.dumps(payload).encode(), request=request)
+
+    cache = PlayerStatsCache(tmp_path / "raw")
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = PlayerStatsClient(cache=cache, http_client=http_client)
+    try:
+        collect_team_rosters(
+            "2026-27",
+            raw_dir=tmp_path / "raw",
+            curated_dir=tmp_path / "curated",
+            team_ids=(1610612738,),
+            request_delay_seconds=0,
+            client=client,
+        )
+        output = collect_team_rosters(
+            "2026-27",
+            raw_dir=tmp_path / "raw",
+            curated_dir=tmp_path / "curated",
+            team_ids=(1610612738,),
+            request_delay_seconds=0,
+            refresh=True,
+            client=client,
+        )
+    finally:
+        client.close()
+        http_client.close()
+
+    snapshot_files = list(
+        (tmp_path / "raw" / "commonteamroster" / "2026-27" / "snapshots").glob("*/1610612738.json")
+    )
+    assert len(snapshot_files) == 1
+    assert b"Player 1" in snapshot_files[0].read_bytes()
+    assert (
+        b"Player 2"
+        in cache.path_for(PlayerStatsEndpoint.TEAM_ROSTER, "2026-27", None, 1610612738).read_bytes()
+    )
+    manifest = json.loads((output.parent / "_manifest.json").read_text())
+    assert manifest["previous_snapshot"] == str(snapshot_files[0].parent)
 
 
 def _payload() -> dict[str, object]:

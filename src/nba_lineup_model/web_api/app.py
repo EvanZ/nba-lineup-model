@@ -18,6 +18,7 @@ from nba_lineup_model.web_api.inference import (
     LineupEvaluationError,
     LineupEvaluator,
 )
+from nba_lineup_model.web_api.roster_movements import build_roster_movement_payload
 
 
 class MatchupRequest(BaseModel):
@@ -183,6 +184,15 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             }
         except LineupEvaluationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/api/roster-moves")
+    def roster_moves() -> dict[str, object]:
+        """Return current returning-player movement edges for the local graph."""
+
+        try:
+            return build_roster_movement_payload()
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
 
     @app.get("/api/default-opponent")
     def default_opponent(

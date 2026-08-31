@@ -55,13 +55,13 @@ stop_listener "$WEB_PORT"
 echo "Starting NBA GESTALT API on port ${API_PORT}"
 (
   cd "$ROOT_DIR"
-  nohup uv run nba-gestalt-api --port "$API_PORT" >"$API_LOG" 2>&1 &
+  nohup uv run nba-gestalt-api --port "$API_PORT" </dev/null >"$API_LOG" 2>&1 &
 )
 
 echo "Starting NBA GESTALT frontend on port ${WEB_PORT}"
 (
   cd "$ROOT_DIR/apps/lineup-explorer"
-  nohup npm run dev >"$WEB_LOG" 2>&1 &
+  nohup npm run dev </dev/null >"$WEB_LOG" 2>&1 &
 )
 
 wait_for_url "http://127.0.0.1:${API_PORT}/api/health" "API"

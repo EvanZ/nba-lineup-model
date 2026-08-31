@@ -14,6 +14,11 @@ service on port `8010`.
 The API never reads S3 on a request path. A release is synced to local EC2 disk before
 the service is restarted.
 
+The release bundle also includes the current roster file, the prior-season final
+roster snapshot, and the player catalog required by `/api/roster-moves`. This
+keeps the interactive roster-moves map independent of the EC2 source checkout's
+data directory.
+
 ## Publish a runtime release
 
 From the repository root:
