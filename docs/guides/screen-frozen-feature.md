@@ -249,6 +249,60 @@ check.
 Artifact:
 `artifacts/models/analysis/frozen_feature_screen/offensive_role_redundancy/frozen-feature-screen-offensive_role_redundancy-20260830T204638Z-222eb12b`.
 
+## Candidate Result: Lead-Secondary Usage Gap
+
+For each unit, this candidate subtracts the second-highest frozen, shrunken
+conventional `USG%` profile from the highest. It was pre-registered as a
+secondary-ball-handler hypothesis: a larger gap was expected to leave a
+negative residual after accounting for player ratings and the incumbent
+non-additive context terms.
+
+The observed relationship is stable but has the opposite sign:
+
+| Target season | Stints | Possessions | Weighted residual correlation | Lowest-to-highest decile spread | Decile Spearman |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2023-24 | 34,022 | 112,801 | +0.0130 | +5.46 | +0.48 |
+| 2024-25 | 34,859 | 113,100 | +0.0084 | +3.50 | +0.37 |
+| 2025-26 | 39,918 | 122,886 | +0.0085 | +3.69 | +0.42 |
+| Pooled | 108,799 | 348,786 | +0.0099 | +4.49 | +0.77 |
+
+This clears the stability threshold for a recursive candidate fit, but it does
+**not** support the original lack-of-secondary-handler interpretation. In the
+conditional residual left by NAIL, a larger gap appears to describe a clearer
+lead-handler allocation that the incumbent model underpredicts. The full fit
+will determine whether the stable screen survives joint estimation with the
+existing context terms.
+
+### Superstars Are Not the Entire Explanation
+
+The strongest alternative explanation is that this coordinate is merely a
+proxy for a unit with one elite player. To test that, the stored frozen
+residuals were regressed on two predictors measured from the same frozen state:
+the lead-secondary usage-gap edge and the home-minus-away maximum player-prior
+edge. Each predictor is standardized within target season and the regression is
+weighted by stint possessions. This is an audit only: it neither updates player
+ratings nor refits a context model.
+
+| Target season | Usage-gap weight, unadjusted | Usage-gap weight, conditional | Max-prior-edge weight | Predictor correlation |
+| --- | ---: | ---: | ---: | ---: |
+| 2023-24 | +1.33 | +1.27 | +0.43 | +0.12 |
+| 2024-25 | +0.87 | +0.80 | +0.44 | +0.16 |
+| 2025-26 | +0.91 | +0.70 | +0.66 | +0.31 |
+| Pooled | +1.03 | +0.94 | +0.50 | +0.20 |
+
+The candidate loses some magnitude but remains positive in every season after
+conditioning. It is therefore correlated with superstar imbalance without
+being reducible to it. The appropriate label is **lead-handler allocation**,
+not lack of a secondary ball handler.
+
+![Frozen residual decile screen for lead-secondary usage gap](../assets/images/frozen-feature-screens/lead_secondary_usage_gap-residual-screen.svg)
+
+Artifact:
+`artifacts/models/analysis/frozen_feature_screen/lead_secondary_usage_gap/frozen-feature-screen-lead_secondary_usage_gap-20260830T210743Z-2be1ccce`.
+
+Conditional audit artifact:
+`artifacts/models/analysis/lead_secondary_usage_gap_conditioning/lead-secondary-usage-gap-conditioning-20260830T211716Z-6ba81f6c`.
+
 ## Production Controls
 
 The two retained production non-additive terms validate the screen's

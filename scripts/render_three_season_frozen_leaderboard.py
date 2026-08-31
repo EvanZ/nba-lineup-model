@@ -72,6 +72,34 @@ PLAYOFFS = TableSpec(
 CANDIDATES = (
     {
         "model": (
+            "[NAIL lead-handler allocation candidate]"
+            "(nail-lead-secondary-usage-gap.md)"
+        ),
+        # This candidate was replayed on the recovered 625,615-possession
+        # support. Normalize its paired possession and eligible-game deltas to
+        # the legacy production row so it can be ranked beside prior models.
+        # Full-game and team outcomes are evaluated directly on identical games.
+        "regular": {
+            "possession_rmse": 1.197938,
+            "possession_mae": 1.141282,
+            "possession_skill": 0.001292,
+            "eligible_game_margin_rmse": 13.985903,
+            "eligible_game_skill": 0.186505,
+            "full_game_margin_rmse": 14.204075,
+            "game_winner_accuracy": 0.678724,
+            "team_net_rating_rmse": 3.228415,
+            "pythagorean_win_rmse": 6.925058,
+        },
+        "playoffs": {
+            "possession_rmse": 1.192730,
+            "possession_mae": 1.137627,
+            "possession_skill": 0.000611,
+            "eligible_game_margin_rmse": 16.499025,
+            "eligible_game_skill": 0.087944,
+        },
+    },
+    {
+        "model": (
             "[NAIL-RAPM v1.2.1.3 residualized-target lambda CV]"
             "(nail-rapm-v1213-residualized-lambda.md) **(Production)**"
         ),

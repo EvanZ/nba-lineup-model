@@ -42,6 +42,7 @@ CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE = (
 CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE = "nail_v12_1_1_standard_usage"
 CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY = "nail_prior_teammate_continuity"
 CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT = "nail_teammate_continuity_replacement"
+CONTEXT_FEATURE_SET_NAIL_LEAD_SECONDARY_USAGE_GAP = "nail_lead_secondary_usage_gap"
 CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE = "nail_v12_2_defensive_rebound_profile"
 CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE = "nail_v12_3_free_throw_profile"
 CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT = "nail_v12_4_free_throw_replacement"
@@ -160,6 +161,7 @@ def available_context_feature_sets() -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
         CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
         CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
+        CONTEXT_FEATURE_SET_NAIL_LEAD_SECONDARY_USAGE_GAP,
         CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE,
         CONTEXT_FEATURE_SET_NAIL_V123_FREE_THROW_PROFILE,
         CONTEXT_FEATURE_SET_NAIL_V124_FREE_THROW_REPLACEMENT,
@@ -512,6 +514,11 @@ def side_context_feature_columns(
             "usage_concentration",
             "prior_teammate_continuity",
         )
+    if feature_set == CONTEXT_FEATURE_SET_NAIL_LEAD_SECONDARY_USAGE_GAP:
+        return (
+            *side_context_feature_columns(CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE),
+            "lead_secondary_usage_gap",
+        )
     if feature_set == CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE:
         return (
             *LINEAR_NAIL_V122_BASKETBALL_ADDITIVE_FEATURES,
@@ -649,6 +656,7 @@ def _required_profile_columns(feature_set: str) -> tuple[str, ...]:
         CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
         CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
         CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
+        CONTEXT_FEATURE_SET_NAIL_LEAD_SECONDARY_USAGE_GAP,
         CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE,
     }:
         return (*PROFILE_RATE_COLUMNS, "offensive_rebound_pct", STANDARD_USAGE_COLUMN)
@@ -806,6 +814,13 @@ def _side_feature_row(
         result = {
             (STANDARD_USAGE_COLUMN if column == USAGE_COLUMN else column): value
             for column, value in base.items()
+        }
+    elif feature_set == CONTEXT_FEATURE_SET_NAIL_LEAD_SECONDARY_USAGE_GAP:
+        base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE)
+        standard_usage = np.sort(lineup[STANDARD_USAGE_COLUMN].to_numpy(dtype=float))
+        result = {
+            **base,
+            "lead_secondary_usage_gap": float(standard_usage[-1] - standard_usage[-2]),
         }
     elif feature_set == CONTEXT_FEATURE_SET_NAIL_V122_DEFENSIVE_REBOUND_PROFILE:
         base = _side_feature_row(lineup, CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE)

@@ -10,6 +10,7 @@ from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING,
     CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUARTILE_STANDARD_USAGE,
     CONTEXT_FEATURE_SET_NAIL_CRITICAL_SPACING_QUINTILE,
+    CONTEXT_FEATURE_SET_NAIL_LEAD_SECONDARY_USAGE_GAP,
     CONTEXT_FEATURE_SET_NAIL_PRIOR_TEAMMATE_CONTINUITY,
     CONTEXT_FEATURE_SET_NAIL_TEAMMATE_CONTINUITY_REPLACEMENT,
     CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
@@ -220,6 +221,35 @@ def test_teammate_continuity_extends_standard_usage_contract_by_one_feature() ->
     )
     assert np.isclose(features.loc[0, "prior_teammate_continuity"], np.log(100.0) / 10.0)
     assert features.loc[1, "prior_teammate_continuity"] == 0.0
+
+
+def test_lead_secondary_usage_gap_extends_standard_usage_contract_by_one_feature() -> None:
+    profiles = pd.DataFrame(
+        [
+            {
+                "player_id": player_id,
+                **_rates(player_id),
+                "usage_pct": usage,
+                "offensive_rebound_pct": 0.1,
+                "profile_imputed": 0,
+                "profile_replacement_weight": 0.0,
+            }
+            for player_id, usage in enumerate([18.0, 26.0, 31.0, 22.0, 20.0], start=1)
+        ]
+    )
+
+    features = lineup_side_context_features(
+        [[1, 2, 3, 4, 5]],
+        profiles,
+        feature_set=CONTEXT_FEATURE_SET_NAIL_LEAD_SECONDARY_USAGE_GAP,
+    )
+
+    assert tuple(features.columns)[-3:] == (
+        "top_two_assists",
+        "usage_concentration",
+        "lead_secondary_usage_gap",
+    )
+    assert features.loc[0, "lead_secondary_usage_gap"] == 5.0
 
 
 def test_teammate_continuity_replacement_removes_top_two_assists() -> None:

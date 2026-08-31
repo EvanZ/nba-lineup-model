@@ -229,6 +229,58 @@ three-season stability gate and does **not** advance to a recursive fit. See
 Screen artifact:
 `artifacts/models/analysis/frozen_feature_screen/offensive_role_redundancy/frozen-feature-screen-offensive_role_redundancy-20260830T204638Z-222eb12b`.
 
+### Lead-Secondary Usage Gap
+
+- [x] **Profile coordinate and direction locked before outcomes are inspected**
+- [x] **Frozen residual screen: advances with opposite-than-expected sign**
+- [x] **Superstar-proxy conditioning audit: survives**
+- [x] **Recursive candidate fit**
+- [x] **Coefficient and bootstrap decision: eligible, unpromoted**
+
+For a unit (U), sort its frozen, shrinkage-adjusted conventional usage
+profiles so that (u_{(1)}(U)\geq u_{(2)}(U)\geq\cdots\geq u_{(5)}(U)). Define
+
+\[
+\phi_{\text{handler gap}}(U)=u_{(1)}(U)-u_{(2)}(U).
+\]
+
+This is a direct secondary-ball-handler hypothesis: a large gap means one
+player carries substantially more usage than the unit's next option. The
+home-minus-away feature edge enters the screen. The pre-registered expected
+direction was negative after player ratings and retained non-additive terms are
+accounted for. It is related to, but not algebraically equivalent to, the
+retained usage-concentration term: `30%` and `28%` top-two usage is concentrated
+but balanced, while `35%` and `20%` has a much larger handler gap.
+
+The frozen screen produced a stable **positive** relationship instead:
+correlations were `+0.0130`, `+0.0084`, and `+0.0085` from 2023-24 through
+2025-26 (`+0.0099` pooled), with positive decile slopes in all three seasons.
+The coordinate advances to a recursive fit unchanged, but not as evidence for
+the original "lack of a secondary ball handler" story. Conditional on the
+incumbent player and context model, it instead appears to identify a residual
+advantage from a clearer lead-handler allocation. See
+[Screen a Frozen Feature](../guides/screen-frozen-feature.md#candidate-result-lead-secondary-usage-gap).
+
+A possession-weighted conditional audit also controls for the home-minus-away
+maximum frozen player prior. The standardized usage-gap coefficient remains
+positive in every target season: `+1.27`, `+0.80`, and `+0.70` net-rating
+points per standard deviation (`+0.94` pooled), versus unadjusted values of
+`+1.33`, `+0.87`, and `+0.91`. Its correlation with the superstar-proxy edge is
+only `+0.12`, `+0.16`, and `+0.31`. The feature is related to elite talent but
+is not reducible to it.
+
+Screen artifact:
+`artifacts/models/analysis/frozen_feature_screen/lead_secondary_usage_gap/frozen-feature-screen-lead_secondary_usage_gap-20260830T210743Z-2be1ccce`.
+
+Conditional audit artifact:
+`artifacts/models/analysis/lead_secondary_usage_gap_conditioning/lead-secondary-usage-gap-conditioning-20260830T211716Z-6ba81f6c`.
+
+The direct three-season replay is marginally better on pooled possession, game
+margin, team net-rating, and Pythagorean-win RMSE, but worse on winner accuracy
+and not directionally consistent season by season. Its paired-bootstrap
+no-material-harm gate passes. See the complete [lead-secondary usage-gap
+candidate record](nail-lead-secondary-usage-gap.md).
+
 ## Secondary Candidates
 
 ### Foul-Pressure Diversity

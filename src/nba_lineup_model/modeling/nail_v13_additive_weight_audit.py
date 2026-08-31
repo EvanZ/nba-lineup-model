@@ -44,6 +44,7 @@ FEATURE_LABELS = {
     "credible_shooter_count": "Credible shooter count",
     "top_two_assists": "Top-two assists / 100",
     "usage_concentration": "Usage concentration",
+    "lead_secondary_usage_gap": "Lead-secondary usage gap",
     "critical_spacing": "Critical spacing",
     "prior_teammate_continuity": "Prior teammate continuity",
     "shooting_usage_interaction": "Shooting-by-usage",
@@ -190,11 +191,15 @@ def summarize_additive_weights(weights: pd.DataFrame) -> pd.DataFrame:
                 "maximum_weight": float(np.max(values)),
             }
         )
-    return pd.DataFrame(rows).sort_values(
-        ["dominant_directional_mass_share", "mean_absolute_standardized_weight"],
-        ascending=[False, False],
-        kind="stable",
-    ).reset_index(drop=True)
+    return (
+        pd.DataFrame(rows)
+        .sort_values(
+            ["dominant_directional_mass_share", "mean_absolute_standardized_weight"],
+            ascending=[False, False],
+            kind="stable",
+        )
+        .reset_index(drop=True)
+    )
 
 
 def render_additive_weight_trajectories(

@@ -186,6 +186,24 @@ def _offensive_role_redundancy(
     return np.asarray(output, dtype=float)
 
 
+def _lead_secondary_usage_gap(
+    lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
+) -> np.ndarray:
+    """Return the difference between a unit's highest and second-highest USG%."""
+
+    values = profiles.set_index("player_id")["usage_pct"]
+    return np.asarray(
+        [
+            float(
+                np.partition(values.loc[list(lineup)].to_numpy(dtype=float), -2)[-1]
+                - np.partition(values.loc[list(lineup)].to_numpy(dtype=float), -2)[-2]
+            )
+            for lineup in lineups
+        ],
+        dtype=float,
+    )
+
+
 def _weighted_quantile(values: np.ndarray, weights: np.ndarray, quantile: float) -> float:
     """Return a finite weighted quantile for positive weights."""
 
@@ -309,6 +327,15 @@ FEATURE_CANDIDATES: dict[str, FeatureCandidate] = {
         ),
         side_feature=_offensive_role_redundancy,
         source_profile_scale_columns=ROLE_REDUNDANCY_PROFILE_COLUMNS,
+    ),
+    "lead_secondary_usage_gap": FeatureCandidate(
+        name="lead_secondary_usage_gap",
+        label="Lead-secondary usage gap",
+        description=(
+            "The difference between the highest and second-highest prior-season, "
+            "shrinkage-adjusted conventional USG% profiles in a five-man unit."
+        ),
+        side_feature=_lead_secondary_usage_gap,
     ),
     "usage_concentration": FeatureCandidate(
         name="usage_concentration",

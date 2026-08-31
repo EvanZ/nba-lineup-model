@@ -7,6 +7,7 @@ from nba_lineup_model.modeling.frozen_feature_screen import (
     FEATURE_CANDIDATES,
     _creation_spacing_alignment,
     _defensive_anchor_by_perimeter_pressure,
+    _lead_secondary_usage_gap,
     _offensive_role_redundancy,
     _rim_pressure_by_spacing_floor,
     _secondary_creator_floor,
@@ -27,6 +28,7 @@ def test_production_nonadditive_candidates_are_registered() -> None:
         "rim_protection_ceiling",
         "creation_spacing_alignment",
         "defensive_anchor_by_perimeter_pressure",
+        "lead_secondary_usage_gap",
         "offensive_role_redundancy",
         "prior_teammate_continuity",
         "rim_pressure_by_spacing_floor",
@@ -112,6 +114,19 @@ def test_offensive_role_redundancy_uses_mean_pairwise_cosine_similarity() -> Non
     values = _offensive_role_redundancy([[1, 2, 3, 4, 5]], profiles)
 
     assert values.tolist() == [0.2]
+
+
+def test_lead_secondary_usage_gap_uses_the_highest_two_usage_profiles() -> None:
+    profiles = pd.DataFrame(
+        {
+            "player_id": [1, 2, 3, 4, 5],
+            "usage_pct": [17.0, 31.0, 22.0, 28.0, 14.0],
+        }
+    )
+
+    values = _lead_secondary_usage_gap([[1, 2, 3, 4, 5]], profiles)
+
+    assert values.tolist() == [3.0]
 
 
 def test_source_profile_scales_use_possession_weighted_ninetieth_percentiles() -> None:
