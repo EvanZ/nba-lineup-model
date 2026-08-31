@@ -78,8 +78,9 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .roster-moves-canvas .react-flow__controls { border: 1px solid #a6aaa4; border-radius: 0; box-shadow: none; }
 .roster-moves-canvas .react-flow__controls-button { border-bottom-color: #d9d6ce; background: #fffefa; color: #245a47; }
 .roster-moves-canvas .react-flow__edge-path { cursor: pointer; }
-.roster-edge-traveler { fill: #17201c; font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; font-size: 17px; paint-order: stroke; stroke: #fffefa; stroke-width: 3px; stroke-linejoin: round; }
-.roster-edge-traveler.team-selected { font-size: 13px; opacity: 0.9; }
+.roster-edge-traveler { fill: #fffefa; filter: drop-shadow(0 1.5px 1px rgb(23 32 28 / 0.3)); paint-order: stroke; stroke: #17201c; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5px; }
+.roster-edge-traveler.team-selected { opacity: 0.9; }
+.roster-edge-traveler.team-selected path { transform: scale(0.82); transform-box: fill-box; transform-origin: center; }
 .roster-edge-traveler-label { fill: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800; paint-order: stroke; stroke: #fffefa; stroke-width: 3px; stroke-linejoin: round; }
 .roster-edge-label { position: absolute; z-index: 3; display: block; max-width: 96px; overflow: hidden; padding: 2px 3px; border: 1px solid #d9d6ce; background: rgb(255 254 250 / 92%); color: #4f5851; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; font-weight: 800; line-height: 1.1; pointer-events: none; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .roster-edge-label.trade { border-color: #edb7aa; color: #b73520; }.roster-edge-label.signing { border-color: #a9c4df; color: #1f5a95; }.roster-edge-label.waiver { border-color: #d5b987; color: #85500d; }.roster-edge-label.other { border-color: #c8cbc5; color: #566059; }
