@@ -190,7 +190,9 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         """Return current returning-player movement edges for the local graph."""
 
         try:
-            return build_roster_movement_payload()
+            return build_roster_movement_payload(
+                preseason_rankings=get_evaluator().preseason_rankings,
+            )
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 

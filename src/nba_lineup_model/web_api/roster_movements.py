@@ -27,6 +27,7 @@ def build_roster_movement_payload(
     prior_panel_path: Path | str = DEFAULT_PRIOR_PANEL_PATH,
     prior_snapshot_path: Path | str = DEFAULT_PRIOR_SNAPSHOT_PATH,
     player_catalog_path: Path | str = DEFAULT_PLAYER_CATALOG_PATH,
+    preseason_rankings: pd.DataFrame | None = None,
     current_season: str = DEFAULT_CURRENT_SEASON,
     prior_season: str = DEFAULT_PRIOR_SEASON,
 ) -> dict[str, object]:
@@ -47,6 +48,7 @@ def build_roster_movement_payload(
     _validate_prior_panel(prior_panel)
     _validate_prior_snapshot(prior_snapshot)
     _validate_player_catalog(player_catalog)
+    projected_ratings = _projected_rating_by_player(preseason_rankings)
 
     current = current_roster.loc[
         :,
@@ -101,6 +103,7 @@ def build_roster_movement_payload(
             "move_type": str(row.move_type),
             "how_acquired": _nullable_text(row.how_acquired),
             "prior_season_minutes": float(row.prior_season_minutes),
+            "projected_rating": projected_ratings.get(str(row.player_id)),
         }
         for row in direct_moves.itertuples(index=False)
     ]
@@ -120,6 +123,7 @@ def build_roster_movement_payload(
             "school": _nullable_text(row.school) or _nullable_text(row.college),
             "country": _nullable_text(row.country),
             "is_rookie": str(row.experience).strip().upper() == "R",
+            "projected_rating": projected_ratings.get(str(row.player_id)),
         }
         for row in external_arrivals.itertuples(index=False)
     ]
@@ -156,6 +160,24 @@ def _nullable_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _projected_rating_by_player(preseason_rankings: pd.DataFrame | None) -> dict[str, float | None]:
+    """Return the published 2026-27 preseason NAIL rating keyed by player."""
+
+    if preseason_rankings is None:
+        return {}
+    required = {"player_id", "rapm"}
+    missing = sorted(required - set(preseason_rankings.columns))
+    if missing:
+        raise ValueError(f"Preseason rankings lack columns: {missing}")
+    if preseason_rankings["player_id"].astype(str).duplicated().any():
+        raise ValueError("Preseason rankings contain duplicate player IDs")
+    ratings = pd.to_numeric(preseason_rankings["rapm"], errors="coerce")
+    return {
+        str(player_id): None if pd.isna(rating) else float(rating)
+        for player_id, rating in zip(preseason_rankings["player_id"], ratings, strict=True)
+    }
 
 
 def _validate_current_roster(frame: pd.DataFrame) -> None:

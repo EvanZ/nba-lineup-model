@@ -23,7 +23,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { CircleAlert, Copy, Download, Filter, Hand, LoaderCircle, MousePointer2, X } from "lucide-react";
 
-import type { ExternalRosterArrival, RosterMove, RosterMovesPayload } from "./types";
+import type { ExternalRosterArrival, Player, RosterMove, RosterMovesPayload } from "./types";
 
 type MoveFilter = "all" | "external" | "rookies" | RosterMove["move_type"];
 type TeamNodeData = { team: string; conference: "East" | "West" };
@@ -55,6 +55,9 @@ const GIF_WIDTH = 1200;
 const GIF_HEIGHT = 663;
 const GIF_FRAME_COUNT = 48;
 const GIF_FRAME_DELAY = 100;
+const TRAVELER_HEADSHOT_MIN_SIZE = 22;
+const TRAVELER_HEADSHOT_MAX_SCALE = 3;
+const TRAVELER_HEADSHOT_RATING_AT_MAX_SCALE = 6;
 const CONTINENTAL_PROJECTION_BOUNDS = { left: 80, top: 30, width: 820, height: 450 };
 const continentalProjection = geoAlbersUsa();
 const TEAM_GEOGRAPHY: Record<string, Omit<TeamNodeData, "team"> & { latitude: number; longitude: number; offsetX?: number; offsetY?: number }> = {
@@ -250,11 +253,50 @@ async function loadTeamLogoDataUrls(teams: string[]) {
   return Object.fromEntries(results);
 }
 
+function playerHeadshotUrl(playerId: number) {
+  return `/api/headshots/${playerId}.png`;
+}
+
+function travelerHeadshotGeometry(projectedRating: number | null | undefined) {
+  const positiveRating = Math.max(0, projectedRating ?? 0);
+  const scale = Math.min(
+    TRAVELER_HEADSHOT_MAX_SCALE,
+    1 + ((TRAVELER_HEADSHOT_MAX_SCALE - 1) * positiveRating) / TRAVELER_HEADSHOT_RATING_AT_MAX_SCALE,
+  );
+  const size = TRAVELER_HEADSHOT_MIN_SIZE * scale;
+  const radius = size / 2;
+  const rightEdge = -5;
+  const centerX = rightEdge - radius;
+  return {
+    centerX,
+    labelY: radius + 12,
+    left: rightEdge - size,
+    radius,
+    size,
+    strokeWidth: Math.max(1.25, Math.min(2.2, size * 0.055)),
+  };
+}
+
+async function loadPlayerHeadshotDataUrls(moves: GraphMove[]) {
+  const playerIds = [...new Set(moves.map((move) => move.player_id))];
+  const results = await Promise.all(playerIds.map(async (playerId) => {
+    try {
+      const response = await fetch(playerHeadshotUrl(playerId));
+      if (!response.ok) return [playerId, ""] as const;
+      return [playerId, await blobAsDataUrl(await response.blob())] as const;
+    } catch {
+      return [playerId, ""] as const;
+    }
+  }));
+  return Object.fromEntries(results);
+}
+
 function makeGifFrame(
   teams: string[],
   moves: GraphMove[],
   positions: GraphPositions,
   logoDataUrls: Record<string, string>,
+  headshotDataUrls: Record<number, string>,
   title: string,
   progress: number,
 ) {
@@ -281,9 +323,13 @@ function makeGifFrame(
     const color = MOVE_COLORS[move.move_type];
     const width = move.isExternalArrival ? 1.8 : Math.min(4.6, 1.15 + Math.sqrt(move.prior_season_minutes) / 18);
     const dashArray = move.isExternalArrival ? " stroke-dasharray=\"7 5\"" : "";
+    const headshot = headshotDataUrls[move.player_id];
+    const headshotId = `headshot-${move.player_id}`;
+    const headshotGeometry = travelerHeadshotGeometry(move.projected_rating);
     return `<path d="${route.path}" fill="none" marker-end="url(#move-arrow)" opacity="0.72" stroke="${color}" stroke-width="${width}"${dashArray} />
+      ${headshot ? `<image clip-path="url(#${headshotId})" height="${headshotGeometry.size}" href="${escapeSvg(headshot)}" preserveAspectRatio="xMidYMin slice" width="${headshotGeometry.size}" x="${point.x + headshotGeometry.left}" y="${point.y - headshotGeometry.radius}" /><circle class="traveler-headshot-ring" cx="${point.x + headshotGeometry.centerX}" cy="${point.y}" r="${headshotGeometry.radius}" stroke-width="${headshotGeometry.strokeWidth}" />` : ""}
       <g class="plane" transform="translate(${point.x - 12} ${point.y - 12}) rotate(${angle} 12 12)"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" /></g>
-      <text class="traveler" x="${point.x + 14}" y="${point.y + 4}">${escapeSvg(move.player_name)}</text>`;
+      <text class="traveler" text-anchor="middle" x="${point.x + headshotGeometry.centerX}" y="${point.y + headshotGeometry.labelY}">${escapeSvg(move.player_name)}</text>`;
   }).join("");
   const teamMarkup = teams.map((team) => {
     const position = positions[team];
@@ -300,6 +346,7 @@ function makeGifFrame(
       .team rect { fill: none; stroke: none; }
       .team text { fill: #17201c; font-size: 11px; font-weight: 800; }
       .traveler { fill: #17201c; font-size: 13px; font-weight: 800; paint-order: stroke; stroke: #fffefa; stroke-linejoin: round; stroke-width: 4px; }
+      .traveler-headshot-ring { fill: none; stroke: #17201c; stroke-width: 1.25px; }
       .plane path { fill: #fffefa; stroke: #17201c; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6px; }
       .heading { fill: #17201c; font-family: Georgia, serif; font-size: 29px; }
       .subtitle { fill: #69716b; font-size: 12px; font-weight: 800; }
@@ -308,7 +355,7 @@ function makeGifFrame(
     <svg class="map" height="${MAP_HEIGHT}" viewBox="270 20 950 525" width="${MAP_WIDTH}">${statePaths}</svg>
     <text class="heading" x="36" y="52">NBA GESTALT · ${escapeSvg(title)}</text>
     <text class="subtitle" x="37" y="75">2025-26 to 2026-27 offseason movement</text>
-    <defs><marker id="move-arrow" markerHeight="7" markerWidth="7" orient="auto" refX="6" refY="3.5"><path d="M0,0 L7,3.5 L0,7 z" fill="#17201c" /></marker></defs>
+    <defs><marker id="move-arrow" markerHeight="7" markerWidth="7" orient="auto" refX="6" refY="3.5"><path d="M0,0 L7,3.5 L0,7 z" fill="#17201c" /></marker>${moves.map((move) => `<clipPath clipPathUnits="objectBoundingBox" id="headshot-${move.player_id}"><circle cx=".5" cy=".5" r=".5" /></clipPath>`).join("")}</defs>
     <g>${routeMarkup}</g>
     <g>${teamMarkup}</g>
   </svg>`;
@@ -360,13 +407,38 @@ function CurvedMoveEdge({
   const labelX = labelStartWeight * sourceX + labelControlWeight * controlX + labelTargetWeight * targetX;
   const labelY = labelStartWeight * sourceY + labelControlWeight * controlY + labelTargetWeight * targetY;
   const path = `M ${sourceX},${sourceY} Q ${controlX},${controlY} ${targetX},${targetY}`;
+  const headshotClipId = `roster-move-headshot-${id}`;
+  const headshotGeometry = travelerHeadshotGeometry(move?.projected_rating);
 
   return (
     <>
       <BaseEdge id={id} interactionWidth={18} markerEnd={markerEnd} path={path} style={style} />
       {(selected || animateTeamSelection) && (
         <>
-          <g aria-hidden="true" className={`roster-edge-traveler ${selected ? "selected" : "team-selected"}`}>
+          <defs>
+            <clipPath clipPathUnits="objectBoundingBox" id={headshotClipId}>
+              <circle cx=".5" cy=".5" r=".5" />
+            </clipPath>
+          </defs>
+          <g aria-hidden="true" className={`roster-edge-traveler-headshot ${selected ? "selected" : "team-selected"}`}>
+            <image
+              clipPath={`url(#${headshotClipId})`}
+              height={headshotGeometry.size}
+              href={playerHeadshotUrl(playerId)}
+              preserveAspectRatio="xMidYMin slice"
+              width={headshotGeometry.size}
+              x={headshotGeometry.left}
+              y={-headshotGeometry.radius}
+            />
+            <circle
+              cx={headshotGeometry.centerX}
+              cy="0"
+              r={headshotGeometry.radius}
+              strokeWidth={headshotGeometry.strokeWidth}
+            />
+            <animateMotion begin={`-${(playerId % 7) * 0.55}s`} dur={selected ? "4s" : "5s"} path={path} repeatCount="indefinite" />
+          </g>
+          <g aria-hidden="true" className={`roster-edge-traveler-plane ${selected ? "selected" : "team-selected"}`}>
             <g transform="translate(-12 -12)">
               <g transform="rotate(45 12 12)">
                 <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" />
@@ -375,7 +447,7 @@ function CurvedMoveEdge({
             <animateMotion begin={`-${(playerId % 7) * 0.55}s`} dur={selected ? "4s" : "5s"} path={path} repeatCount="indefinite" rotate="auto" />
           </g>
           {(selected || animateTeamSelection) && (
-            <text aria-hidden="true" className="roster-edge-traveler-label" x="15" y="4">{move?.player_name}
+            <text aria-hidden="true" className="roster-edge-traveler-label" textAnchor="middle" x={headshotGeometry.centerX} y={headshotGeometry.labelY}>{move?.player_name}
               <animateMotion begin={`-${(playerId % 7) * 0.55}s`} dur={selected ? "4s" : "5s"} path={path} repeatCount="indefinite" />
             </text>
           )}
@@ -558,6 +630,11 @@ function formatMinutes(minutes: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(minutes);
 }
 
+function formatRating(value: number | null | undefined) {
+  if (value === null || value === undefined) return "--";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
+}
+
 export function RosterMovesPage() {
   const initialRoute = parseMoveRoute();
   const [payload, setPayload] = useState<RosterMovesPayload | null>(null);
@@ -571,6 +648,7 @@ export function RosterMovesPage() {
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<GraphNode, Edge<MoveEdgeData>> | null>(null);
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("move");
   const [isExportingGif, setIsExportingGif] = useState(false);
+  const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -614,6 +692,9 @@ export function RosterMovesPage() {
     () => visibleMoves.find((move) => move.player_id === selectedMoveId) ?? null,
     [selectedMoveId, visibleMoves],
   );
+  const priorSeasonRating = selectedPlayer?.rating_history.find(
+    (point) => point.season === payload?.prior_season,
+  ) ?? null;
   const onNodesChange = useCallback(
     (changes: NodeChange<GraphNode>[]) => setNodes((current) => applyNodeChanges(changes, current)),
     [],
@@ -647,9 +728,20 @@ export function RosterMovesPage() {
       const encoder = GIFEncoder();
       const positions = graphPositionsFromNodes(nodes);
       const title = teamFilter === "all" ? "Roster moves" : `${teamFilter} roster moves`;
-      const logoDataUrls = await loadTeamLogoDataUrls(payload.teams);
+      const [logoDataUrls, headshotDataUrls] = await Promise.all([
+        loadTeamLogoDataUrls(payload.teams),
+        loadPlayerHeadshotDataUrls(visibleMoves),
+      ]);
       for (let frame = 0; frame < GIF_FRAME_COUNT; frame += 1) {
-        const svg = makeGifFrame(payload.teams, visibleMoves, positions, logoDataUrls, title, frame / GIF_FRAME_COUNT);
+        const svg = makeGifFrame(
+          payload.teams,
+          visibleMoves,
+          positions,
+          logoDataUrls,
+          headshotDataUrls,
+          title,
+          frame / GIF_FRAME_COUNT,
+        );
         await drawGifFrame(canvas, svg);
         const imageData = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height);
         if (!imageData) throw new Error("Could not encode the movement map.");
@@ -686,6 +778,25 @@ export function RosterMovesPage() {
   }, [selectedMoveId, visibleMoves]);
 
   useEffect(() => {
+    if (!selectedMove) {
+      setSelectedPlayer(null);
+      return;
+    }
+    const controller = new AbortController();
+    setSelectedPlayer(null);
+    void (async () => {
+      try {
+        const response = await fetch(`/api/players/${selectedMove.player_id}`, { signal: controller.signal });
+        if (!response.ok) return;
+        setSelectedPlayer((await response.json()) as Player);
+      } catch (fetchError) {
+        if ((fetchError as Error).name !== "AbortError") setSelectedPlayer(null);
+      }
+    })();
+    return () => controller.abort();
+  }, [selectedMove]);
+
+  useEffect(() => {
     if (payload && teamFilter !== "all" && !payload.teams.includes(teamFilter)) {
       setTeamFilter("all");
       setAutoplay(false);
@@ -709,6 +820,7 @@ export function RosterMovesPage() {
         <p>
           Each solid arrow follows a returning player from their {payload.source_definition} to their listed 2026-27 club.
           Dashed arrows mark players entering from outside the prior NBA roster record.
+          Animated headshots scale with the 2026-27 preseason NAIL projection: non-positive ratings use the base size, while a +6.0 rating reaches the 3x cap.
           Drag team nodes to inspect a path; filter the graph to reveal player labels, then select a path or a player below for transaction detail.
         </p>
       </section>
@@ -815,8 +927,20 @@ export function RosterMovesPage() {
                 title="Clear selected movement"
               ><X size={16} /></button>
               <p className={`roster-move-kind ${selectedMove.move_type}`}>{selectedMove.isExternalArrival ? "external arrival" : selectedMove.move_type}</p>
-              <h2>{selectedMove.player_name}</h2>
+              <a className="roster-move-player-link" href={`#player/${selectedMove.player_id}`}>
+                <h2>{selectedMove.player_name}</h2>
+              </a>
               <p className="roster-move-route"><strong>{selectedMove.isExternalArrival ? selectedMove.externalOriginLabel ?? "Outside prior roster" : selectedMove.source_team}</strong><span>to</span><strong>{selectedMove.target_team}</strong></p>
+              <dl className="roster-move-player-bio">
+                <div>
+                  <dt>{payload.prior_season} NAIL</dt>
+                  <dd className={priorSeasonRating && priorSeasonRating.rating < 0 ? "negative" : ""}>{priorSeasonRating ? formatRating(priorSeasonRating.rating) : "No prior-season fit"}</dd>
+                </div>
+                <div>
+                  <dt>{payload.current_season} projection</dt>
+                  <dd className={selectedMove.projected_rating !== null && selectedMove.projected_rating < 0 ? "negative" : ""}>{formatRating(selectedMove.projected_rating)}</dd>
+                </div>
+              </dl>
               <p>{selectedMove.how_acquired ?? "Current roster acquisition detail unavailable."}</p>
               <small>{selectedMove.isExternalArrival ? `No ${payload.prior_season} NBA roster record` : `${formatMinutes(selectedMove.prior_season_minutes)} regular-season minutes in ${payload.prior_season}`}</small>
             </>

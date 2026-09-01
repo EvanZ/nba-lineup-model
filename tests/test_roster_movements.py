@@ -47,6 +47,7 @@ def test_roster_movement_payload_uses_final_regular_season_team_snapshot(tmp_pat
         prior_panel_path=panel_path,
         prior_snapshot_path=snapshot_path,
         player_catalog_path=catalog_path,
+        preseason_rankings=pd.DataFrame({"player_id": [1, 2, 3], "rapm": [1.2, 0.0, -0.4]}),
     )
 
     assert payload["teams"] == ["BOS", "LAL", "NYK"]
@@ -63,6 +64,7 @@ def test_roster_movement_payload_uses_final_regular_season_team_snapshot(tmp_pat
             "school": "Cooper Union",
             "country": "Canada",
             "is_rookie": True,
+            "projected_rating": -0.4,
         }
     ]
     assert payload["source_definition"] == "2025-26 final observed regular-season team"

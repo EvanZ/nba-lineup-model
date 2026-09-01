@@ -110,6 +110,7 @@ export type RosterMove = {
   move_type: "trade" | "signing" | "waiver" | "other";
   how_acquired: string | null;
   prior_season_minutes: number;
+  projected_rating: number | null;
 };
 
 export type ExternalRosterArrival = {
@@ -121,6 +122,7 @@ export type ExternalRosterArrival = {
   school: string | null;
   country: string | null;
   is_rookie: boolean;
+  projected_rating: number | null;
 };
 
 export type RosterMovesPayload = {
