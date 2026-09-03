@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import numpy as np
 import pandas as pd
+import pytest
 from fastapi.testclient import TestClient
 
 import nba_lineup_model.web_api.app as web_app
@@ -895,6 +896,50 @@ def test_preseason_rankings_include_returners_and_cold_starts(tmp_path) -> None:
     assert rookie.status_code == 200
     assert rookie.json()["rating_season"] == "2026-27"
     assert rookie.json()["rating_history"] == []
+
+
+def test_preseason_projection_state_is_available_to_the_matchup_lab() -> None:
+    evaluator = _evaluator(compiled_linear=True)
+    ranking_columns = [
+        "player_id", "player_name", "team", "position", "draft_year", "draft_round",
+        "draft_number", "is_undrafted", "draft_class_year", "age", "rapm", "possessions",
+        "games", "profile_source", "rookie_season",
+    ]
+    preseason_rankings = evaluator.players.loc[:, ranking_columns].copy()
+    preseason_rankings.insert(0, "season", "2026-27")
+    preseason_profiles = evaluator.profiles.copy()
+    preseason_profiles.insert(0, "season", "2026-27")
+    evaluator = replace(
+        evaluator,
+        preseason_rankings=preseason_rankings,
+        preseason_profiles=preseason_profiles,
+    )
+    client = TestClient(create_app(evaluator))
+
+    health = client.get("/api/health")
+    assert health.status_code == 200
+    assert health.json()["lab_seasons"][0] == "2026-27"
+
+    players = client.get("/api/players", params={"q": "Jokic", "season": "2026-27"})
+    assert players.status_code == 200
+    assert players.json()["players"][0]["team"] == "TST"
+
+    response = client.post(
+        "/api/matchups",
+        json={
+            "unit_player_ids": [1, 2, 3, 4, 5],
+            "opponent_player_ids": [6, 7, 8, 9, 10],
+            "unit_season": "2026-27",
+            "opponent_season": "2026-27",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["retrospective"] is False
+    assert payload["context_source_seasons"] == ["2025-26"]
+    assert payload["unit_season"] == "2026-27"
+    assert payload["unit"]["players"][0]["rapm"] == pytest.approx(0.1)
 
 
 def test_preseason_draft_history_normalizes_string_player_ids() -> None:

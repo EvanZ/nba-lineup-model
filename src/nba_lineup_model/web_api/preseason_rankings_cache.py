@@ -33,6 +33,7 @@ from nba_lineup_model.web_api.inference import (
     compiled_linear_x3_additive_profile_breakdown,
     exposure_cohort_path,
     forward_draft_cold_start_rankings_path,
+    preseason_profiles_path,
     preseason_rankings_path,
     team_roster_path,
 )
@@ -214,6 +215,9 @@ def materialize_preseason_rankings(
     path.parent.mkdir(parents=True, exist_ok=True)
     print("Writing preseason ranking cache", flush=True)
     output.to_parquet(path, index=False)
+    profiles_path = preseason_profiles_path(MODEL_ARTIFACT, run_id, target_season)
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles.assign(season=target_season).to_parquet(profiles_path, index=False)
     metadata = {
         "target_season": target_season,
         "completed_season": completed_season,

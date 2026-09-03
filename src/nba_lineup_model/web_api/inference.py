@@ -43,6 +43,7 @@ DEFAULT_EXPOSURE_COHORT_CACHE_DIR = Path("artifacts/web/exposure_cohorts")
 DEFAULT_HISTORICAL_PROFILE_CACHE_DIR = Path("artifacts/web/historical_profiles")
 DEFAULT_HISTORICAL_REALIZED_PROFILE_CACHE_DIR = Path("artifacts/web/historical_realized_profiles")
 DEFAULT_PRESEASON_RANKINGS_CACHE_DIR = Path("artifacts/web/preseason_rankings")
+DEFAULT_PRESEASON_PROFILES_CACHE_DIR = Path("artifacts/web/preseason_profiles")
 DEFAULT_TEAM_ROSTERS_DIR = Path("data/curated/team_rosters")
 DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path("artifacts/models/forward_draft_history_cold_start")
 # Keep the artifact identifier distinct from the public release name.
@@ -331,6 +332,7 @@ class LineupEvaluator:
     constrained_split_ratings: pd.DataFrame = field(default_factory=pd.DataFrame)
     constrained_split_context_allocations: pd.DataFrame = field(default_factory=pd.DataFrame)
     preseason_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
+    preseason_profiles: pd.DataFrame = field(default_factory=pd.DataFrame)
     observed_lineups: pd.DataFrame = field(default_factory=pd.DataFrame)
     historical_coefficients: pd.DataFrame = field(default_factory=pd.DataFrame)
     seasonal_ratings: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -456,6 +458,14 @@ class LineupEvaluator:
                 completed_season=season,
                 preview_season=PRESEASON_PREVIEW_SEASON,
             )
+        )
+        preseason_profile_cache_path = preseason_profiles_path(
+            MODEL_ARTIFACT, run_id, PRESEASON_PREVIEW_SEASON
+        )
+        preseason_profiles = (
+            pd.read_parquet(preseason_profile_cache_path)
+            if preseason_profile_cache_path.is_file()
+            else pd.DataFrame()
         )
         player_rating_histories = _player_rating_histories(
             seasonal_ratings,
@@ -597,6 +607,7 @@ class LineupEvaluator:
             constrained_split_ratings=constrained_split_ratings,
             constrained_split_context_allocations=constrained_split_context_allocations,
             preseason_rankings=preseason_rankings,
+            preseason_profiles=preseason_profiles,
             observed_lineups=observed_lineups,
             historical_coefficients=historical_coefficients,
             seasonal_ratings=seasonal_ratings,
@@ -617,9 +628,12 @@ class LineupEvaluator:
         )
 
     def available_lab_seasons(self) -> list[str]:
-        """Return seasons that have completed player and contextual states."""
+        """Return completed states plus a fully materialized preseason forecast."""
 
-        return sorted(self.season_context_models, reverse=True) or [self.season]
+        seasons = set(self.season_context_models) or {self.season}
+        if self._has_preseason_lab_state():
+            seasons.add(PRESEASON_PREVIEW_SEASON)
+        return sorted(seasons, reverse=True)
 
     def search_players(
         self,
@@ -992,6 +1006,18 @@ class LineupEvaluator:
                 "opponent_season": selected_opponent_season,
                 "environment": environment,
                 "environment_seasons": environment_seasons,
+                "retrospective": (
+                    selected_unit_season != PRESEASON_PREVIEW_SEASON
+                    and selected_opponent_season != PRESEASON_PREVIEW_SEASON
+                ),
+                "context_source_seasons": list(
+                    dict.fromkeys(
+                        self.season
+                        if evaluated_season == PRESEASON_PREVIEW_SEASON
+                        else evaluated_season
+                        for evaluated_season in environment_seasons
+                    )
+                ),
             }
         )
         return _apply_schedule_scenario(
@@ -1310,7 +1336,7 @@ class LineupEvaluator:
         }
 
     def _season_state(self, season: str) -> SeasonLineupState:
-        """Build and cache a selected historical player pool on first use."""
+        """Build and cache a selected historical or frozen preseason player pool."""
 
         cached = self.season_states.get(season)
         if cached is not None:
@@ -1319,6 +1345,8 @@ class LineupEvaluator:
             state = SeasonLineupState(season, self.coefficients, self.profiles, self.players)
             self.season_states[season] = state
             return state
+        if season == PRESEASON_PREVIEW_SEASON:
+            return self._preseason_lab_state()
         if season not in self.season_context_models:
             raise LineupEvaluationError(
                 f"The completed NAIL-RAPM state is unavailable for {season}"
@@ -1419,10 +1447,77 @@ class LineupEvaluator:
         self.season_states[season] = state
         return state
 
+    def _has_preseason_lab_state(self) -> bool:
+        """Return whether the published forecast includes profiles for Lab scoring."""
+
+        if self.preseason_rankings.empty or self.preseason_profiles.empty:
+            return False
+        ranking_ids = set(self.preseason_rankings.get("player_id", pd.Series(dtype=int)).astype(int))
+        profile_ids = set(self.preseason_profiles.get("player_id", pd.Series(dtype=int)).astype(int))
+        return bool(ranking_ids) and ranking_ids == profile_ids
+
+    def _preseason_lab_state(self) -> SeasonLineupState:
+        """Build the frozen 2026-27 player pool using 2025-26 context terms."""
+
+        if not self._has_preseason_lab_state():
+            raise LineupEvaluationError(
+                "The 2026-27 forecast profiles are unavailable for the Matchup Lab"
+            )
+        season = PRESEASON_PREVIEW_SEASON
+        rankings = self.preseason_rankings.loc[
+            self.preseason_rankings["season"].astype(str).eq(season)
+        ].copy()
+        profiles = self.preseason_profiles.loc[
+            self.preseason_profiles["season"].astype(str).eq(season)
+        ].copy()
+        if rankings.empty or profiles.empty:
+            raise LineupEvaluationError(
+                "The 2026-27 forecast profiles are unavailable for the Matchup Lab"
+            )
+        profiles = profiles.drop(columns="season")
+        coefficients = rankings.loc[:, ["player_id", "rapm"]].copy()
+        profile_columns = [
+            "player_id",
+            "profile_imputed",
+            "profile_replacement_weight",
+            "three_pa_per_100",
+            "three_pm_per_100",
+            "assists_per_100",
+            "turnovers_per_100",
+            "usage_per_100",
+            "steals_per_100",
+            "blocks_per_100",
+            "offensive_rebound_pct",
+        ]
+        missing = set(profile_columns) - set(profiles.columns)
+        if missing:
+            raise LineupEvaluationError(
+                "The 2026-27 forecast profile cache is incomplete: "
+                + ", ".join(sorted(missing))
+            )
+        players = rankings.merge(
+            profiles.loc[:, profile_columns],
+            on="player_id",
+            how="inner",
+            validate="one_to_one",
+        )
+        players["rating_history"] = players["player_id"].map(
+            lambda player_id: self.player_rating_histories.get(int(player_id), [])
+        )
+        players["league_leader_history"] = players["player_id"].map(
+            lambda player_id: self.player_league_leader_histories.get(int(player_id), [])
+        )
+        players = _attach_constrained_split_ratings(
+            players.assign(season=season), self.constrained_split_ratings
+        ).drop(columns="season")
+        state = SeasonLineupState(season, coefficients, profiles, players)
+        self.season_states[season] = state
+        return state
+
     def _context_model(self, season: str) -> MatchupContextualModel:
         """Return a completed historical contextual model for one environment."""
 
-        if season == self.season:
+        if season in {self.season, PRESEASON_PREVIEW_SEASON}:
             return self.context_model
         try:
             return self.season_context_models[season]
@@ -1434,6 +1529,8 @@ class LineupEvaluator:
     def _response_cache(self, season: str) -> dict[int, tuple[np.ndarray, np.ndarray]]:
         """Warm the small per-environment response cache only once per API process."""
 
+        if season == PRESEASON_PREVIEW_SEASON:
+            season = self.season
         cache = self.response_caches.get(season)
         if cache is None:
             path = response_cache_path(MODEL_ARTIFACT, self.run_id, season)
@@ -3280,6 +3377,12 @@ def preseason_rankings_path(model_artifact: str, run_id: str, season: str) -> Pa
     """Return the immutable cached preseason ranking catalog for one model run."""
 
     return DEFAULT_PRESEASON_RANKINGS_CACHE_DIR / model_artifact / run_id / f"{season}.parquet"
+
+
+def preseason_profiles_path(model_artifact: str, run_id: str, season: str) -> Path:
+    """Return cached preseason-safe profiles used to score forecast lineups."""
+
+    return DEFAULT_PRESEASON_PROFILES_CACHE_DIR / model_artifact / run_id / f"{season}.parquet"
 
 
 def team_roster_path(season: str) -> Path:

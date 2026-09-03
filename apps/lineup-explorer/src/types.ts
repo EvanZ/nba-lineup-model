@@ -180,6 +180,7 @@ export type Matchup = {
   opponent_season: string;
   environment: "unit" | "neutral" | "opponent";
   environment_seasons: string[];
+  context_source_seasons?: string[];
   unit: {
     additive_rating: number;
     offense_rating?: number | null;

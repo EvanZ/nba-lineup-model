@@ -2385,7 +2385,9 @@ function Results({ result }: {
       <div className="result-heading">
         <span>{scenarioActive ? "Scenario-adjusted estimate" : "Neutral-court estimate"}</span>
         <small>
-          {result.environment === "neutral"
+          {!result.retrospective
+            ? `2026-27 preseason projection · frozen ${result.context_source_seasons?.join(" / ") ?? "2025-26"} context`
+            : result.environment === "neutral"
             ? `${MODEL_LABEL} · mean of ${result.unit_season} and ${result.opponent_season} eras`
             : `${MODEL_LABEL} · ${result.season} era`}
         </small>
