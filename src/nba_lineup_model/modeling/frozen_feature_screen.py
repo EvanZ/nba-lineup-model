@@ -204,6 +204,42 @@ def _lead_secondary_usage_gap(
     )
 
 
+def _low_usage_concentration(
+    lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
+) -> np.ndarray:
+    """Return the two lowest-USG% players' share of a unit's total USG%.
+
+    This is a unit allocation feature: each player's contribution depends on
+    the other four players through the shared denominator and rank ordering.
+    """
+
+    values = profiles.set_index("player_id")["usage_pct"]
+    output: list[float] = []
+    for lineup in lineups:
+        usage = values.loc[list(lineup)].to_numpy(dtype=float)
+        total_usage = float(usage.sum())
+        output.append(float(np.partition(usage, 1)[:2].sum() / total_usage) if total_usage else 0.0)
+    return np.asarray(output, dtype=float)
+
+
+def _primary_usage_shooting_alignment(
+    lineups: Sequence[Sequence[int]], profiles: pd.DataFrame
+) -> np.ndarray:
+    """Combine top-two usage share with those players' mean shrunken 3PM rate."""
+
+    values = profiles.set_index("player_id")
+    output: list[float] = []
+    for lineup in lineups:
+        unit = values.loc[list(lineup)]
+        usage = unit["usage_pct"].to_numpy(dtype=float)
+        shooting = unit["three_pm_per_100"].to_numpy(dtype=float)
+        total_usage = float(usage.sum())
+        top_two = np.argpartition(usage, -2)[-2:]
+        top_two_share = float(usage[top_two].sum() / total_usage) if total_usage else 0.0
+        output.append(top_two_share * float(shooting[top_two].mean()))
+    return np.asarray(output, dtype=float)
+
+
 def _weighted_quantile(values: np.ndarray, weights: np.ndarray, quantile: float) -> float:
     """Return a finite weighted quantile for positive weights."""
 
@@ -336,6 +372,26 @@ FEATURE_CANDIDATES: dict[str, FeatureCandidate] = {
             "shrinkage-adjusted conventional USG% profiles in a five-man unit."
         ),
         side_feature=_lead_secondary_usage_gap,
+    ),
+    "low_usage_concentration": FeatureCandidate(
+        name="low_usage_concentration",
+        label="Low usage concentration",
+        description=(
+            "The combined share of a five-man unit's two lowest prior-season, "
+            "shrinkage-adjusted conventional USG% profiles. High values indicate that "
+            "the lowest-usage roles carry a larger share of the unit's expected load."
+        ),
+        side_feature=_low_usage_concentration,
+    ),
+    "primary_usage_shooting_alignment": FeatureCandidate(
+        name="primary_usage_shooting_alignment",
+        label="Primary-usage shooting alignment",
+        description=(
+            "The top-two usage players' combined share of a five-man unit's shrunken "
+            "conventional USG%, multiplied by their mean shrunken 3PM per 100. High "
+            "values mean the unit concentrates offensive load in credible shooters."
+        ),
+        side_feature=_primary_usage_shooting_alignment,
     ),
     "usage_concentration": FeatureCandidate(
         name="usage_concentration",

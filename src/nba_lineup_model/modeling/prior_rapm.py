@@ -75,6 +75,7 @@ class ForwardLaggedRapmSeason:
     cv_results: pd.DataFrame
     player_estimates: pd.DataFrame
     player_priors: pd.DataFrame
+    selected_prior_precision_key: str | None = None
 
 
 def fit_prior_rapm_experiment(
@@ -226,6 +227,7 @@ def fit_forward_lagged_rapm_season(
     split_config: ChronologicalSplitConfig | None = None,
     use_prior_precision: bool = False,
     relative_precision: np.ndarray | None = None,
+    relative_precision_candidates: dict[str, np.ndarray] | None = None,
 ) -> ForwardLaggedRapmSeason:
     """Tune on chronological folds, then refit a completed season on all rows.
 
@@ -259,10 +261,37 @@ def fit_forward_lagged_rapm_season(
         relative_precision,
         use_prior_precision=use_prior_precision,
     )
+    candidate_precisions = _relative_precision_candidates(
+        player_ids,
+        relative_precision_candidates,
+        use_prior_precision=use_prior_precision,
+    )
+    if candidate_precisions is not None and relative_precision is not None:
+        raise ValueError(
+            "Relative precision candidates cannot be combined with a fixed precision vector"
+        )
     target = stints["target_home_net_rating"].to_numpy(dtype=float)
     weights = stints["possessions"].to_numpy(dtype=float)
     game_ids = stints["game_id"].astype(str).to_numpy()
-    if len(lambda_grid) == 1:
+    selected_precision_key: str | None = None
+    if candidate_precisions is not None:
+        cv_results = _cross_validate_precision_candidates(
+            stints,
+            matrix,
+            prior,
+            target,
+            weights,
+            game_ids,
+            split_plan,
+            lambda_grid,
+            candidate_precisions,
+        )
+        selected_lambda, selected_precision_key = _select_lambda_and_precision(
+            cv_results,
+            candidate_order=tuple(candidate_precisions),
+        )
+        precision = candidate_precisions[selected_precision_key]
+    elif len(lambda_grid) == 1:
         selected_lambda = float(lambda_grid[0])
         cv_results = pd.DataFrame(
             [{"regularization": selected_lambda, "selection_mode": "fixed"}]
@@ -310,6 +339,7 @@ def fit_forward_lagged_rapm_season(
     if use_prior_precision:
         estimates["relative_prior_precision"] = precision
         estimates["posterior_variance"] = fitted.posterior_variance_  # type: ignore[union-attr]
+        estimates["selected_prior_precision_key"] = selected_precision_key
     estimates = estimates.sort_values("player_id", kind="stable").reset_index(drop=True)
     return ForwardLaggedRapmSeason(
         season=season,
@@ -317,6 +347,7 @@ def fit_forward_lagged_rapm_season(
         cv_results=cv_results,
         player_estimates=estimates,
         player_priors=prior_frame,
+        selected_prior_precision_key=selected_precision_key,
     )
 
 
@@ -825,6 +856,30 @@ def _relative_precision_vector(
     return precision
 
 
+def _relative_precision_candidates(
+    player_ids: tuple[int, ...],
+    candidates: dict[str, np.ndarray] | None,
+    *,
+    use_prior_precision: bool,
+) -> dict[str, np.ndarray] | None:
+    """Validate an ordered set of player-specific prior-precision candidates."""
+
+    if candidates is None:
+        return None
+    if not candidates:
+        raise ValueError("Relative precision candidates must not be empty")
+    if not use_prior_precision:
+        raise ValueError("Relative precision candidates require use_prior_precision")
+    return {
+        str(key): _relative_precision_vector(
+            player_ids,
+            value,
+            use_prior_precision=True,
+        )
+        for key, value in candidates.items()
+    }
+
+
 def _cross_validate(
     stints: pd.DataFrame,
     matrix: object,
@@ -876,6 +931,50 @@ def _cross_validate(
     )
 
 
+def _cross_validate_precision_candidates(
+    stints: pd.DataFrame,
+    matrix: object,
+    prior: np.ndarray,
+    target: np.ndarray,
+    weights: np.ndarray,
+    game_ids: np.ndarray,
+    split_plan: GameSplitPlan,
+    lambda_grid: tuple[float, ...],
+    precision_candidates: dict[str, np.ndarray],
+) -> pd.DataFrame:
+    """Score every player-lambda and prior-precision candidate chronologically."""
+
+    rows: list[dict[str, float | int | str | None]] = []
+    for fold in split_plan.folds:
+        train = np.isin(game_ids, fold.train_game_ids)
+        validation = np.isin(game_ids, fold.validation_game_ids)
+        for precision_key, precision in precision_candidates.items():
+            for regularization in lambda_grid:
+                model = PriorPrecisionRidgeLineupModel(regularization).fit(
+                    matrix[train],
+                    target[train],
+                    weights[train],
+                    prior,
+                    precision,
+                )
+                row = _metric_row(
+                    stints.loc[validation],
+                    target[validation],
+                    model.predict(matrix[validation]),
+                    weights[validation],
+                    "prior_rapm",
+                    regularization,
+                    fold.fold,
+                )
+                row["prior_precision_key"] = precision_key
+                rows.append(row)
+    return (
+        pd.DataFrame(rows)
+        .sort_values(["prior_precision_key", "regularization", "fold"], kind="stable")
+        .reset_index(drop=True)
+    )
+
+
 def _select_lambda(cv_results: pd.DataFrame) -> float:
     summary = cv_results.groupby("regularization", as_index=False).agg(
         squared_error_sum=("squared_error_sum", "sum"),
@@ -887,6 +986,28 @@ def _select_lambda(cv_results: pd.DataFrame) -> float:
             "regularization"
         ]
     )
+
+
+def _select_lambda_and_precision(
+    cv_results: pd.DataFrame,
+    *,
+    candidate_order: tuple[str, ...],
+) -> tuple[float, str]:
+    """Choose the minimum pooled chronological loss, breaking exact ties by grid order."""
+
+    summary = cv_results.groupby(
+        ["prior_precision_key", "regularization"], as_index=False
+    ).agg(
+        squared_error_sum=("squared_error_sum", "sum"),
+        validation_possessions=("validation_possessions", "sum"),
+    )
+    summary["weighted_mse"] = summary["squared_error_sum"] / summary["validation_possessions"]
+    order = {key: index for index, key in enumerate(candidate_order)}
+    summary["candidate_order"] = summary["prior_precision_key"].map(order)
+    selected = summary.sort_values(
+        ["weighted_mse", "candidate_order", "regularization"], kind="stable"
+    ).iloc[0]
+    return float(selected["regularization"]), str(selected["prior_precision_key"])
 
 
 def _metric_row(

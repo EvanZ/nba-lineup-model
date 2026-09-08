@@ -422,6 +422,9 @@ def train_forward_portable_matchup_contextual_rapm(
     model_name: str = MODEL_NAME,
     run_prefix: str = RUN_PREFIX,
     player_prior_builder: Callable[..., tuple[pd.DataFrame, dict[str, object]]] | None = None,
+    player_precision_candidates_builder: Callable[
+        ..., tuple[dict[str, dict[int, float]], dict[str, object]]
+    ] | None = None,
     player_prior_description: str = "forward exposure-gated RAPM plus portable-matchup context",
     context_fit: Callable[..., MatchupContextualModel] = fit_matchup_contextual_model,
     context_metadata: Callable[[MatchupContextualModel], dict[str, object]] = model_metadata,
@@ -449,6 +452,10 @@ def train_forward_portable_matchup_contextual_rapm(
     target = validate_season(through_season)
     if player_state_precision_config is not None and not use_player_state_precision:
         raise ValueError("Player state precision config requires player state precision")
+    if player_precision_candidates_builder is not None and use_player_state_precision:
+        raise ValueError(
+            "Custom player precision candidates cannot be combined with player state precision"
+        )
     if player_state_precision_config is not None:
         player_state_precision_config.validate()
     if use_context and (
@@ -774,7 +781,6 @@ def train_forward_portable_matchup_contextual_rapm(
             box_score_residual_selections.append(
                 pd.DataFrame(box_score_residual_selection).assign(season=season)
             )
-        prior_metadata.append(prior_row)
         prior_rows = priors.rename(columns={PRIOR_MEAN_COLUMN: "prior_rapm"}).copy()
         prior_rows["season"] = season
         prior_rows["context_offset_source_season"] = (
@@ -792,6 +798,7 @@ def train_forward_portable_matchup_contextual_rapm(
             season_lambda_grid = residualized_lambda_grid
         relative_precision: np.ndarray | None = None
         prior_variance: np.ndarray | None = None
+        relative_precision_candidates: dict[str, np.ndarray] | None = None
         if player_state_precision_config is not None:
             player_ids = _stint_player_ids(adjusted_stints)
             prior_variance = _advance_player_state_variance(
@@ -805,14 +812,40 @@ def train_forward_portable_matchup_contextual_rapm(
                 prior_variance,
                 config=player_state_precision_config,
             )
+        elif player_precision_candidates_builder is not None:
+            player_ids = _stint_player_ids(adjusted_stints)
+            precision_maps, precision_metadata = player_precision_candidates_builder(
+                season=season,
+                panel=panel,
+                player_ids=player_ids,
+                player_priors=priors,
+                exposure_history=exposure_history,
+            )
+            relative_precision_candidates = {
+                key: np.asarray(
+                    [values.get(player_id, 1.0) for player_id in player_ids], dtype=float
+                )
+                for key, values in precision_maps.items()
+            }
+            prior_row.update(precision_metadata)
+            prior_row["player_state_precision_mode"] = "candidate_grid_cv"
+        fit_kwargs: dict[str, object] = {"lambda_grid": season_lambda_grid}
+        if use_player_state_precision or relative_precision_candidates is not None:
+            fit_kwargs.update(
+                {
+                    "use_prior_precision": True,
+                    "relative_precision": relative_precision,
+                    "relative_precision_candidates": relative_precision_candidates,
+                }
+            )
         fitted = fit_forward_lagged_rapm_season(
             season,
             adjusted_stints,
             priors,
-            lambda_grid=season_lambda_grid,
-            use_prior_precision=use_player_state_precision,
-            relative_precision=relative_precision,
+            **fit_kwargs,
         )
+        prior_row["selected_prior_precision_key"] = fitted.selected_prior_precision_key
+        prior_metadata.append(prior_row)
         results.append(fitted)
         if player_state_precision_config is not None:
             _record_player_state_precision(
@@ -1899,7 +1932,7 @@ def _season_model_metadata(
     context_curvature_alpha: float,
     context_temporal_alpha: float,
     training_metadata: pd.DataFrame,
-    player_lambda_mode: str,
+    player_lambda_mode: str = "reference_schedule",
 ) -> pd.DataFrame:
     """Write one inspectable row for every recursive seasonal fit."""
 

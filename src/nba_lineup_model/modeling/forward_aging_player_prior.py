@@ -12,6 +12,7 @@ from nba_lineup_model.modeling.aging import (
     DEFAULT_AGING_REGULARIZATION_GRID,
     ERA_CONDITIONED_VALUE_AGING_FEATURE_COLUMNS,
     VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
+    VALUE_CONDITIONED_TREND_AGING_FEATURE_COLUMNS,
     fit_aging_pipeline,
     materialize_aging_curve_grid,
     prepare_aging_prior_features,
@@ -80,6 +81,11 @@ def build_aging_exposure_gated_priors(
 
     try:
         transitions = _aging_transition_history(panel, completed_results, exposure_history)
+        transitions = _attach_prior_rapm_trend_features(
+            transitions,
+            completed_results=completed_results,
+            exposure_history=exposure_history,
+        )
         experiment = run_aging_experiment(
             transitions,
             regularization_grid=DEFAULT_AGING_REGULARIZATION_GRID,
@@ -100,6 +106,12 @@ def build_aging_exposure_gated_priors(
             returning=returning,
             latest_exposure=exposure_history[-1],
         )
+        target["prior_season"] = completed_results[-1].season
+        target = _attach_prior_rapm_trend_features(
+            target,
+            completed_results=completed_results,
+            exposure_history=exposure_history,
+        )
         target = prepare_aging_prior_features(target)
         predicted = model.predict(target.loc[:, feature_columns])
         age_returning = target.loc[:, ["player_id"]].copy()
@@ -116,6 +128,7 @@ def build_aging_exposure_gated_priors(
                 "aging_feature_columns": list(feature_columns),
                 "aging_value_conditioned": "age_by_prior_rapm" in feature_columns,
                 "aging_era_conditioned": "era_year_centered" in feature_columns,
+                "aging_player_trend": "prior_rapm_change" in feature_columns,
                 "_aging_model": model,
                 "_aging_curve_grid": materialize_aging_curve_grid(
                     model,
@@ -178,6 +191,37 @@ def build_centered_value_conditioned_aging_exposure_gated_priors(
         replacement_tokens=replacement_tokens,
         feature_columns=VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
         model_name="forward_value_conditioned_aging_ridge",
+    )
+    centered, center_metadata = center_player_priors(
+        priors,
+        previous_exposure=exposure_history[-1] if exposure_history else None,
+    )
+    return centered, {**metadata, **center_metadata}
+
+
+def build_centered_value_conditioned_trend_aging_exposure_gated_priors(
+    *,
+    season: str,
+    panel: pd.DataFrame,
+    completed_results: list[ForwardLaggedRapmSeason],
+    exposure_history: list[pd.DataFrame],
+    replacement_tokens: list[dict[str, object]],
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Return a centered aging prior with a strictly lagged player trend term.
+
+    The trend is the completed RAPM change from ``t-2`` to ``t-1``.  Its
+    exposure interaction lets the Ridge model suppress noisy low-sample
+    changes without a fixed momentum or possession threshold.
+    """
+
+    priors, metadata = build_aging_exposure_gated_priors(
+        season=season,
+        panel=panel,
+        completed_results=completed_results,
+        exposure_history=exposure_history,
+        replacement_tokens=replacement_tokens,
+        feature_columns=VALUE_CONDITIONED_TREND_AGING_FEATURE_COLUMNS,
+        model_name="forward_value_conditioned_trend_aging_ridge",
     )
     centered, center_metadata = center_player_priors(
         priors,
@@ -309,6 +353,57 @@ def _aging_transition_history(
         .sort_values(["target_season", "player_id"], kind="stable")
         .reset_index(drop=True)
     )
+
+
+def _attach_prior_rapm_trend_features(
+    rows: pd.DataFrame,
+    *,
+    completed_results: Sequence[ForwardLaggedRapmSeason],
+    exposure_history: Sequence[pd.DataFrame],
+) -> pd.DataFrame:
+    """Attach only the RAPM state immediately before each row's prior season."""
+
+    if "prior_season" not in rows:
+        raise ValueError("Trend features require a prior_season column")
+    if len(completed_results) != len(exposure_history):
+        raise ValueError("Completed RAPM results and exposure history must align")
+    lagged_rows: list[pd.DataFrame] = []
+    for result, exposure in zip(completed_results, exposure_history, strict=True):
+        lagged = result.player_estimates.loc[:, ["player_id", "rapm"]].merge(
+            _exposure_frame(exposure),
+            on="player_id",
+            how="inner",
+            validate="one_to_one",
+        )
+        lagged["prior_season"] = _next_season(result.season)
+        lagged_rows.append(
+            lagged.rename(
+                columns={
+                    "rapm": "prior_rapm_lag2",
+                    "on_court_possessions": "prior_rapm_lag2_possessions",
+                }
+            )
+        )
+    if not lagged_rows:
+        output = rows.copy()
+        output["prior_rapm_lag2"] = np.nan
+        output["prior_rapm_lag2_possessions"] = np.nan
+        return output
+    history = pd.concat(lagged_rows, ignore_index=True)
+    if history.duplicated(["prior_season", "player_id"]).any():
+        raise ValueError("Trend feature history contains duplicate player-season states")
+    output = rows.merge(
+        history,
+        on=["prior_season", "player_id"],
+        how="left",
+        validate="many_to_one",
+    )
+    return output
+
+
+def _next_season(season: str) -> str:
+    start_year = int(season[:4]) + 1
+    return f"{start_year}-{str(start_year + 1)[-2:]}"
 
 
 def _target_returning_features(

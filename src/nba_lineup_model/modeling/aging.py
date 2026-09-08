@@ -65,6 +65,12 @@ VALUE_CONDITIONED_AGING_FEATURE_COLUMNS = (
     *AGING_FEATURE_COLUMNS,
     "age_by_prior_rapm",
 )
+VALUE_CONDITIONED_TREND_AGING_FEATURE_COLUMNS = (
+    *VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
+    "prior_rapm_change",
+    "prior_rapm_change_x_log_min_possessions",
+    "has_prior_rapm_change",
+)
 ERA_CONDITIONED_VALUE_AGING_FEATURE_COLUMNS = (
     *VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
     "era_year_centered",
@@ -594,7 +600,34 @@ def prepare_aging_prior_features(rows: pd.DataFrame) -> pd.DataFrame:
     frame["age_by_height"] = centered_age * frame["height_inches"]
     frame["age_by_body_mass_index"] = centered_age * frame["body_mass_index"]
     frame["age_by_prior_rapm"] = centered_age * frame["prior_rapm_filled"]
+    for column in ("prior_rapm_lag2", "prior_rapm_lag2_possessions"):
+        if column not in frame:
+            frame[column] = np.nan
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    trend_available = (
+        frame["has_prior_season"]
+        & frame["prior_rapm_lag2"].notna()
+        & frame["prior_rapm_lag2_possessions"].notna()
+        & frame["prior_rapm_lag2_possessions"].gt(0)
+    )
+    frame["has_prior_rapm_change"] = trend_available.astype(float)
+    frame["prior_rapm_change"] = (
+        frame["prior_rapm_filled"] - frame["prior_rapm_lag2"]
+    ).where(trend_available, 0.0)
+    min_trend_possessions = np.minimum(
+        frame["prior_rapm_possessions"],
+        frame["prior_rapm_lag2_possessions"].fillna(0.0),
+    )
+    frame["prior_rapm_change_x_log_min_possessions"] = (
+        frame["prior_rapm_change"] * np.log1p(min_trend_possessions.clip(lower=0.0))
+    )
     for column in AGING_FEATURE_COLUMNS:
+        frame[column] = pd.to_numeric(frame[column], errors="raise").astype(float)
+    for column in (
+        "prior_rapm_change",
+        "prior_rapm_change_x_log_min_possessions",
+        "has_prior_rapm_change",
+    ):
         frame[column] = pd.to_numeric(frame[column], errors="raise").astype(float)
     return frame.sort_values(
         ["target_season", "player_id"],
@@ -656,6 +689,10 @@ def fit_aging_pipeline(
         numeric_columns.append("age_by_prior_rapm")
     if "era_year_centered" in feature_columns:
         numeric_columns.append("era_year_centered")
+    if "prior_rapm_change" in feature_columns:
+        numeric_columns.append("prior_rapm_change")
+    if "prior_rapm_change_x_log_min_possessions" in feature_columns:
+        numeric_columns.append("prior_rapm_change_x_log_min_possessions")
     era_interaction = "era_year_centered" in feature_columns
     transformers: list[tuple[str, object, list[str]]] = [
         (
@@ -697,6 +734,19 @@ def fit_aging_pipeline(
                 ["target_age", "era_year_centered"],
             )
         )
+    binary_columns = [
+        "has_prior_season",
+        "is_rookie",
+        "has_draft_age_estimate",
+        "has_draft_pick",
+        "is_undrafted",
+        "draft_record_unknown",
+        "age_by_early_entry",
+        "age_by_late_entry",
+        "age_by_undrafted",
+    ]
+    if "has_prior_rapm_change" in feature_columns:
+        binary_columns.append("has_prior_rapm_change")
     transformers.extend(
         [
             (
@@ -712,17 +762,7 @@ def fit_aging_pipeline(
             (
                 "binary",
                 "passthrough",
-                [
-                    "has_prior_season",
-                    "is_rookie",
-                    "has_draft_age_estimate",
-                    "has_draft_pick",
-                    "is_undrafted",
-                    "draft_record_unknown",
-                    "age_by_early_entry",
-                    "age_by_late_entry",
-                    "age_by_undrafted",
-                ],
+                binary_columns,
             ),
         ]
     )

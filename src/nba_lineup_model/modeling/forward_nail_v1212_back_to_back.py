@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
@@ -51,6 +51,11 @@ def train_nail_v1212_back_to_back(
     schedule_alpha: float | None = None,
     player_lambda_mode: Literal["reference_schedule", "residualized_cv"] = "reference_schedule",
     residualized_lambda_grid: tuple[float, ...] | None = None,
+    player_prior_builder: Callable[..., tuple[Any, dict[str, object]]] | None = None,
+    player_precision_candidates_builder: Callable[
+        ..., tuple[dict[str, dict[int, float]], dict[str, object]]
+    ] | None = None,
+    player_prior_description: str | None = None,
     context_fit: Callable[..., MatchupContextualModel] = fit_linear_ridge_matchup_contextual_model,
     context_fit_kwargs: dict[str, object] | None = None,
     context_feature_set: str = CONTEXT_FEATURE_SET_NAIL_V1211_STANDARD_USAGE,
@@ -66,6 +71,15 @@ def train_nail_v1212_back_to_back(
 ) -> ForwardPortableMatchupContextualRapmRun:
     """Train a standard-USG% NAIL candidate with a known B2B schedule control."""
 
+    prior_builder = (
+        player_prior_builder or build_centered_value_conditioned_aging_gap_returner_priors
+    )
+    prior_description = player_prior_description or (
+        "NAIL-RAPM v1.2.1.2 value-conditioned aging and exposure-gated cold "
+        f"starts, with {GAP_RETURNER_METHOD}; standard USG% and a lagged "
+        "home-minus-away back-to-back schedule adjustment"
+    )
+
     return train_forward_portable_matchup_contextual_rapm(
         through_season=through_season,
         evaluate_target=evaluate_target,
@@ -78,12 +92,9 @@ def train_nail_v1212_back_to_back(
         run_prefix=run_prefix,
         player_lambda_mode=player_lambda_mode,
         residualized_lambda_grid=residualized_lambda_grid,
-        player_prior_builder=build_centered_value_conditioned_aging_gap_returner_priors,
-        player_prior_description=(
-            "NAIL-RAPM v1.2.1.2 value-conditioned aging and exposure-gated cold "
-            f"starts, with {GAP_RETURNER_METHOD}; standard USG% and a lagged "
-            "home-minus-away back-to-back schedule adjustment"
-        ),
+        player_prior_builder=prior_builder,
+        player_precision_candidates_builder=player_precision_candidates_builder,
+        player_prior_description=prior_description,
         context_fit=context_fit,
         context_metadata=model_metadata,
         context_fit_kwargs=context_fit_kwargs,

@@ -124,6 +124,35 @@ CANDIDATES = (
     },
     {
         "model": (
+            "[NAIL-RAPM v1.2.1.4 player-trend aging]"
+            "(nail-rapm-v1214-player-trend-aging.md) "
+            "**(Promotion eligible; not deployed)**"
+        ),
+        # This candidate was replayed on the recovered 625,615-possession
+        # support. Normalize its paired possession and eligible-game deltas to
+        # the legacy production row so it can be ranked beside prior models.
+        # Full-game and team outcomes are evaluated directly on identical games.
+        "regular": {
+            "possession_rmse": 1.197944,
+            "possession_mae": 1.141291,
+            "possession_skill": 0.001262,
+            "eligible_game_margin_rmse": 13.988494,
+            "eligible_game_skill": 0.181370,
+            "full_game_margin_rmse": 14.207980,
+            "game_winner_accuracy": 0.685560,
+            "team_net_rating_rmse": 3.220595,
+            "pythagorean_win_rmse": 6.885142,
+        },
+        "playoffs": {
+            "possession_rmse": 1.192716,
+            "possession_mae": 1.137608,
+            "possession_skill": 0.000639,
+            "eligible_game_margin_rmse": 16.570387,
+            "eligible_game_skill": 0.079251,
+        },
+    },
+    {
+        "model": (
             "[NAIL prior teammate-continuity candidate (not promoted)]"
             "(nail-teammate-continuity.md)"
         ),

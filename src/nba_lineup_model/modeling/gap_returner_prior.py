@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-import numpy as np
 import pandas as pd
 
 from nba_lineup_model.modeling.aging import (
     VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
+    VALUE_CONDITIONED_TREND_AGING_FEATURE_COLUMNS,
     prepare_aging_prior_features,
 )
 from nba_lineup_model.modeling.forward_aging_player_prior import (
@@ -18,7 +18,6 @@ from nba_lineup_model.modeling.forward_aging_player_prior import (
 )
 from nba_lineup_model.modeling.forward_exposure_gated_rapm import _combine_priors
 from nba_lineup_model.modeling.prior_rapm import PRIOR_MEAN_COLUMN, ForwardLaggedRapmSeason
-
 
 GAP_RETURNER_METHOD = "last_observed_annual_aging_bridge"
 
@@ -39,7 +38,7 @@ def build_centered_value_conditioned_aging_gap_returner_priors(
     the target season. No unobserved season receives a RAPM update.
     """
 
-    raw_priors, metadata = build_aging_exposure_gated_priors(
+    return _build_centered_value_conditioned_aging_gap_returner_priors(
         season=season,
         panel=panel,
         completed_results=completed_results,
@@ -47,6 +46,50 @@ def build_centered_value_conditioned_aging_gap_returner_priors(
         replacement_tokens=replacement_tokens,
         feature_columns=VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
         model_name="forward_value_conditioned_aging_gap_returner_ridge",
+    )
+
+
+def build_centered_value_conditioned_trend_aging_gap_returner_priors(
+    *,
+    season: str,
+    panel: pd.DataFrame,
+    completed_results: list[ForwardLaggedRapmSeason],
+    exposure_history: list[pd.DataFrame],
+    replacement_tokens: list[dict[str, object]],
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Apply the player-trend aging model while retaining the gap bridge."""
+
+    return _build_centered_value_conditioned_aging_gap_returner_priors(
+        season=season,
+        panel=panel,
+        completed_results=completed_results,
+        exposure_history=exposure_history,
+        replacement_tokens=replacement_tokens,
+        feature_columns=VALUE_CONDITIONED_TREND_AGING_FEATURE_COLUMNS,
+        model_name="forward_value_conditioned_trend_aging_gap_returner_ridge",
+    )
+
+
+def _build_centered_value_conditioned_aging_gap_returner_priors(
+    *,
+    season: str,
+    panel: pd.DataFrame,
+    completed_results: list[ForwardLaggedRapmSeason],
+    exposure_history: list[pd.DataFrame],
+    replacement_tokens: list[dict[str, object]],
+    feature_columns: tuple[str, ...],
+    model_name: str,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Build immediate-returner and gap-returner priors from one aging contract."""
+
+    raw_priors, metadata = build_aging_exposure_gated_priors(
+        season=season,
+        panel=panel,
+        completed_results=completed_results,
+        exposure_history=exposure_history,
+        replacement_tokens=replacement_tokens,
+        feature_columns=feature_columns,
+        model_name=model_name,
     )
     aging_model = metadata.get("_aging_model")
     gap_priors, projected_states = _gap_returner_priors(
@@ -56,6 +99,7 @@ def build_centered_value_conditioned_aging_gap_returner_priors(
         exposure_history=exposure_history,
         existing_prior_ids=set(raw_priors["player_id"].astype(int)),
         aging_model=aging_model,
+        feature_columns=feature_columns,
     )
     combined = _combine_priors(raw_priors, gap_priors)
     centered, centering_metadata = center_player_priors(
@@ -85,6 +129,7 @@ def _gap_returner_priors(
     exposure_history: Sequence[pd.DataFrame],
     existing_prior_ids: set[int],
     aging_model: object | None,
+    feature_columns: tuple[str, ...] = VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Create only non-immediate returner priors and their projected states."""
 
@@ -153,7 +198,7 @@ def _gap_returner_priors(
             transformed = prepare_aging_prior_features(step_features)
             next_rating = float(
                 aging_model.predict(
-                    transformed.loc[:, VALUE_CONDITIONED_AGING_FEATURE_COLUMNS]
+                    transformed.loc[:, feature_columns]
                 )[0]
             )
             projected.append(

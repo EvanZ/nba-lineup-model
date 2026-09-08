@@ -22,7 +22,7 @@ without a result under the selected contract remain visible in the unranked
 lane to preserve the full methodological lineage. The older frozen-2025-26 and
 in-season selectors remain available for their respective historical snapshots.
 
-<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260830-continuity-replacement">
+<div class="model-tree" data-model-tree data-source="../assets/data/model-tree.json?v=20260904-player-trend-aging">
   <div class="model-tree__loading" role="status">Loading model evolution…</div>
 </div>
 
@@ -205,6 +205,17 @@ back-to-back control. It is retained as the prior production release.
 [NAIL-RAPM v1.2.1.3](nail-rapm-v1213-residualized-lambda.md) keeps the complete
 v1.2.1.2 contract but selects the player penalty on each source season's
 context- and schedule-residualized target. It is the current production model.
+
+[NAIL-RAPM v1.2.1.4](nail-rapm-v1214-player-trend-aging.md) adds an
+exposure-aware, strictly forward individual change signal to the aging prior.
+It cleared its frozen bootstrap gate against production and is recorded as
+promotion eligible, but remains undeployed pending release approval.
+
+[Frozen Lineup Residual Archetypes](lineup-residual-archetypes.md) uses only
+the frozen production residuals of realized five-man units to generate and
+stress-test future context hypotheses. It is deliberately descriptive rather
+than a leaderboard candidate: any proposed feature must still pass the declared
+frozen screen and recursive-refit evaluation sequence.
 
 [Prior Teammate Continuity](nail-teammate-continuity.md) adds a strictly lagged
 relationship feature: the mean log prior-season shared possessions over a

@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "updated": "2026-08-29",
+  "updated": "2026-09-04",
   "default_metric": "rolling_regular_game_margin_rmse",
   "metrics": [
     {
@@ -939,6 +939,24 @@
         "frozen_regular_pythagorean_wins_rmse": 6.9423,
         "frozen_playoff_possession_rmse": 1.192717,
         "frozen_playoff_game_margin_rmse": 16.5784
+      }
+    },
+    {
+      "id": "nail-rapm-v1214-player-trend-aging",
+      "name": "NAIL-RAPM v1.2.1.4 Player-Trend Aging (Promotion Eligible)",
+      "short_name": "Player-trend aging",
+      "parent": "nail-rapm-v1213-residualized-lambda",
+      "change": "+ a strictly forward, exposure-aware individual RAPM change from the two completed consecutive seasons before a target. Gap returners retain the production bridge and receive no synthetic trend. It cleared the bootstrap non-promotion gate but is not deployed.",
+      "docs": "./nail-rapm-v1214-player-trend-aging/",
+      "metrics": {
+        "frozen_regular_possession_rmse": 1.197944,
+        "frozen_regular_game_margin_rmse": 13.9885,
+        "frozen_regular_full_game_margin_rmse": 14.2080,
+        "frozen_regular_game_winner_accuracy": 0.685560,
+        "frozen_regular_team_net_rating_rmse": 3.2206,
+        "frozen_regular_pythagorean_wins_rmse": 6.8851,
+        "frozen_playoff_possession_rmse": 1.192716,
+        "frozen_playoff_game_margin_rmse": 16.5704
       }
     },
     {

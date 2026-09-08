@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from nba_lineup_model.modeling.aging import (
     ERA_CONDITIONED_VALUE_AGING_FEATURE_COLUMNS,
     VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
+    VALUE_CONDITIONED_TREND_AGING_FEATURE_COLUMNS,
     prepare_aging_prior_features,
 )
 from nba_lineup_model.modeling.forward_aging_player_prior import (
     _aging_transition_history,
+    _attach_prior_rapm_trend_features,
     _target_returning_features,
     build_aging_exposure_gated_priors,
     center_player_priors,
@@ -81,6 +84,31 @@ def test_recursive_aging_transition_uses_completed_model_state() -> None:
     assert first["target_rapm_possessions"] == 200.0
 
 
+def test_player_trend_uses_only_the_two_completed_seasons_before_target() -> None:
+    results = [_result("1996-97", 1.0), _result("1997-98", 2.5), _result("1998-99", 3.0)]
+    exposure = [
+        pd.DataFrame({"player_id": [1], "on_court_possessions": [100.0]}),
+        pd.DataFrame({"player_id": [1], "on_court_possessions": [200.0]}),
+        pd.DataFrame({"player_id": [1], "on_court_possessions": [300.0]}),
+    ]
+    transitions = _attach_prior_rapm_trend_features(
+        _aging_transition_history(_panel(), results, exposure),
+        completed_results=results,
+        exposure_history=exposure,
+    )
+    features = prepare_aging_prior_features(transitions)
+
+    first = features.loc[features["target_season"].eq("1997-98")].iloc[0]
+    second = features.loc[features["target_season"].eq("1998-99")].iloc[0]
+    assert first["has_prior_rapm_change"] == 0.0
+    assert first["prior_rapm_change"] == 0.0
+    assert second["has_prior_rapm_change"] == 1.0
+    assert second["prior_rapm_change"] == pytest.approx(1.5)
+    assert second["prior_rapm_change_x_log_min_possessions"] == pytest.approx(
+        1.5 * np.log1p(100.0)
+    )
+
+
 def test_aging_prior_features_do_not_require_target_outcomes() -> None:
     features = prepare_aging_prior_features(
         pd.DataFrame(
@@ -121,6 +149,28 @@ def test_value_conditioned_age_feature_uses_only_known_prior_rapm() -> None:
 
     assert "age_by_prior_rapm" in VALUE_CONDITIONED_AGING_FEATURE_COLUMNS
     assert features["age_by_prior_rapm"].tolist() == pytest.approx([6.0, 0.0])
+    assert "prior_rapm_change" in VALUE_CONDITIONED_TREND_AGING_FEATURE_COLUMNS
+
+
+def test_missing_player_trend_is_explicitly_zero_for_gap_projection_features() -> None:
+    features = prepare_aging_prior_features(
+        pd.DataFrame(
+            {
+                "target_season": ["2025-26"],
+                "player_id": [1],
+                "target_age": [30.0],
+                "target_nba_experience_years": [8],
+                "is_rookie": [False],
+                "has_prior_season": [True],
+                "prior_rapm": [2.0],
+                "prior_rapm_possessions": [4000.0],
+            }
+        )
+    )
+
+    assert features["has_prior_rapm_change"].item() == 0.0
+    assert features["prior_rapm_change"].item() == 0.0
+    assert features["prior_rapm_change_x_log_min_possessions"].item() == 0.0
 
 
 def test_era_conditioning_uses_only_the_known_target_season() -> None:

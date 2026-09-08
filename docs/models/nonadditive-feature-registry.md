@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-30"
+last_updated: "2026-09-08"
 ---
 
 # Non-Additive Context Feature Registry
@@ -55,6 +55,19 @@ explicitly pre-registers a different source.
   profiles. It is less influential than usage concentration but has stable
   incremental signal. See
   [NAIL-RAPM v1.2.1](nail-rapm-v121-pruned-nonadditive.md).
+- [x] **Low usage concentration: rejected at frozen screen.** The share of
+  usage supplied by the two lowest-usage players is almost a mirror of the
+  retained high-usage share (weighted edge correlation `-0.898` pooled). Its
+  conditional residual correlations were `-0.0017`, `-0.0004`, and `-0.0017`
+  across 2023-24 through 2025-26 (`-0.0013` pooled), so it does not justify a
+  recursive fit.
+- [x] **Primary-usage shooting alignment: rejected at frozen screen.** This
+  multiplies the top-two usage players' share of unit USG% by their mean
+  shrunken 3PM per 100. Conditional residual correlations were `-0.0049`,
+  `-0.0011`, and `+0.0040` across the three frozen seasons (`-0.0005` pooled),
+  while the low-to-high decile residual direction reversed in 2025-26. It does
+  not justify a recursive fit. Artifact:
+  `artifacts/models/analysis/frozen_feature_screen/primary_usage_shooting_alignment/frozen-feature-screen-primary_usage_shooting_alignment-20260908T164805Z-505d405e`.
 - [x] **Median three-point makes: rejected at frozen screen.** The residual
   deciles were flat and the pooled weighted correlation was **+0.0003**.
   See [Screen a Frozen Feature](../guides/screen-frozen-feature.md#initial-result-median-lineup-3pm-100).
