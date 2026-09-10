@@ -145,7 +145,13 @@ def materialize_win_projection_cache(
     minutes = build_forward_conditional_preseason_minutes_payload(
         preseason_rankings=evaluator.preseason_rankings,
     )
-    payload = build_win_projection_payload(evaluator=evaluator, minutes_payload=minutes)
+    payload = {
+        "minutes": minutes,
+        "win_projection": build_win_projection_payload(
+            evaluator=evaluator,
+            minutes_payload=minutes,
+        ),
+    }
     path = Path(output_path) if output_path is not None else win_projection_cache_path(
         MODEL_ARTIFACT, evaluator.run_id
     )

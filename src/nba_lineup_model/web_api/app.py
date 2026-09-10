@@ -76,20 +76,36 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
 
     @lru_cache(maxsize=1)
     def get_win_projection_payload() -> dict[str, object]:
-        minutes = build_forward_conditional_preseason_minutes_payload(
-            preseason_rankings=get_evaluator().preseason_rankings,
-        )
         try:
-            win_projection = read_win_projection_cache(
+            cached = read_win_projection_cache(
                 model_artifact=MODEL_ARTIFACT,
                 run_id=get_evaluator().run_id,
             )
+            if {"minutes", "win_projection"}.issubset(cached):
+                minutes = cached["minutes"]
+                win_projection = cached["win_projection"]
+                if not isinstance(minutes, dict) or not isinstance(win_projection, dict):
+                    raise ValueError("Invalid combined win projection cache payload")
+                return {
+                    **minutes,
+                    "win_projection": win_projection,
+                }
         except FileNotFoundError:
-            # Keep local development self-contained. The release publisher
-            # materializes and ships this cache before production deployment.
-            win_projection = build_win_projection_payload(
+            cached = None
+
+        # Keep local development self-contained and tolerate an older cache.
+        # The release publisher writes the combined payload above, so production
+        # never reconstructs it from the training-only availability mart.
+        minutes = build_forward_conditional_preseason_minutes_payload(
+            preseason_rankings=get_evaluator().preseason_rankings,
+        )
+        win_projection = (
+            cached
+            if cached is not None
+            else build_win_projection_payload(
                 evaluator=get_evaluator(), minutes_payload=minutes
             )
+        )
         return {
             **minutes,
             "win_projection": win_projection,
