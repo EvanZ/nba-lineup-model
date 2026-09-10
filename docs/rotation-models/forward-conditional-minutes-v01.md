@@ -64,10 +64,16 @@ teammates.
 
 The Win Projections page exposes both forward inputs for every player:
 
-- (P(\mathrm{available})), the medical-availability probability;
+- \(+/-\), the default NAIL-RAPM projection, which users may override for a
+  scenario;
+- \(G_{\mathrm{available}}\), projected medically available games out of 82;
 - (E[\mathrm{MPG}\mid\mathrm{available}]), conditional playing time.
 
-Users may override either input before the raw expected totals are calculated.
+Internally, the page converts the whole-game control to
+\(P(\mathrm{available}) = G_{\mathrm{available}}/82\). Users may override
+any of these inputs before recalculating. A \(+/-\) override affects only the
+local scenario's minute-weighted team strength; it does not alter the minutes
+allocation or stored NAIL release.
 The page re-ranks the full roster after each edit, then applies the same
 top-15 normalization. Thus, setting a current rotation player's availability
 to zero drops them from the rotation and promotes the next-highest raw

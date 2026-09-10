@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calculator, CircleAlert, LoaderCircle, RotateCcw } from "lucide-react";
+import { Calculator, ChevronDown, ChevronUp, CircleAlert, LoaderCircle, RotateCcw } from "lucide-react";
 
 import type {
   MinutesProjectionPayload,
@@ -11,9 +11,12 @@ import type {
 type PlayerInputOverride = {
   availabilityProbability?: number;
   conditionalMinutesPerGame?: number;
+  nailRating?: number;
 };
 
 type Overrides = Record<string, PlayerInputOverride>;
+type ForecastSortColumn = "team" | "team_strength" | "betmgm_win_total" | "projected_wins" | "delta";
+type SortDirection = "ascending" | "descending";
 
 type MinuteAllocation = {
   minutes: Map<number, number>;
@@ -24,6 +27,7 @@ type MinuteAllocation = {
 // The active-15 baseline changes the meaning of every residual allocation.
 // Do not carry manual judgments made against the earlier all-roster baseline.
 const STORAGE_KEY = "nba-gestalt:win-projection-input-overrides:v3";
+const SEASON_GAMES = 82;
 
 function overrideKey(team: string, playerId: number) {
   return `${team}:${playerId}`;
@@ -39,10 +43,10 @@ function marketDirection(projectedWins: number, total: number | undefined) {
   return projectedWins > total ? "O" : "U";
 }
 
-function formatMarketDelta(projectedWins: number, total: number | undefined) {
-  if (total === undefined) return "";
-  const delta = projectedWins - total;
-  return `(${delta >= 0 ? "+" : ""}${delta.toFixed(1)})`;
+function marketDelta(team: WinProjectionTeam) {
+  return team.betmgm_win_total === undefined
+    ? null
+    : team.projected_wins - team.betmgm_win_total;
 }
 
 function readOverrides(): Overrides {
@@ -56,12 +60,16 @@ function readOverrides(): Overrides {
         const candidate = value as Record<string, unknown>;
         const availabilityProbability = candidate.availabilityProbability;
         const conditionalMinutesPerGame = candidate.conditionalMinutesPerGame;
+        const nailRating = candidate.nailRating;
         const output: PlayerInputOverride = {};
         if (typeof availabilityProbability === "number" && Number.isFinite(availabilityProbability)) {
           output.availabilityProbability = availabilityProbability;
         }
         if (typeof conditionalMinutesPerGame === "number" && Number.isFinite(conditionalMinutesPerGame)) {
           output.conditionalMinutesPerGame = conditionalMinutesPerGame;
+        }
+        if (typeof nailRating === "number" && Number.isFinite(nailRating)) {
+          output.nailRating = nailRating;
         }
         return Object.keys(output).length ? [[key, output]] : [];
       }),
@@ -76,6 +84,7 @@ function playerInputs(player: MinutesProjectionPlayer, overrides: Overrides) {
   return {
     availabilityProbability: override?.availabilityProbability ?? player.availability_probability,
     conditionalMinutesPerGame: override?.conditionalMinutesPerGame ?? player.conditional_minutes_per_game,
+    nailRating: override?.nailRating ?? player.projected_nail,
   };
 }
 
@@ -87,7 +96,7 @@ function minuteAllocation(
 ): MinuteAllocation {
   const rawTotals = new Map(players.map((player) => {
     const inputs = playerInputs(player, overrides);
-    const rawMinutes = 82 * inputs.availabilityProbability * inputs.conditionalMinutesPerGame;
+    const rawMinutes = SEASON_GAMES * inputs.availabilityProbability * inputs.conditionalMinutesPerGame;
     return [player.player_id, rawMinutes];
   }));
   const rotationPlayers = [...players].sort((left, right) => (
@@ -129,7 +138,7 @@ function calculateProjection(
       payload.initial_rotation_size,
     );
     rawStrength.set(team, players.reduce((total, player) => (
-      total + (minutes.get(player.player_id) ?? 0) * player.projected_nail / 48
+      total + (minutes.get(player.player_id) ?? 0) * playerInputs(player, overrides).nailRating / 48
     ), 0));
   }
   const meanStrength = Array.from(rawStrength.values()).reduce((total, value) => total + value, 0)
@@ -180,6 +189,8 @@ export function WinProjectionsPage() {
   const [overrides, setOverrides] = useState<Overrides>(readOverrides);
   const [calculatedForecast, setCalculatedForecast] = useState<WinProjectionPayload | null>(null);
   const [forecastNeedsUpdate, setForecastNeedsUpdate] = useState(false);
+  const [forecastSortColumn, setForecastSortColumn] = useState<ForecastSortColumn>("projected_wins");
+  const [forecastSortDirection, setForecastSortDirection] = useState<SortDirection>("descending");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -224,6 +235,21 @@ export function WinProjectionsPage() {
       || left.player_id - right.player_id
     ))
   ), [minutes, players]);
+  const forecast = calculatedForecast ?? payload?.win_projection ?? null;
+  const sortedForecastTeams = useMemo(() => {
+    if (!forecast) return [];
+    const direction = forecastSortDirection === "ascending" ? 1 : -1;
+    return [...forecast.teams].sort((left, right) => {
+      const leftValue = forecastSortColumn === "delta" ? marketDelta(left) : left[forecastSortColumn];
+      const rightValue = forecastSortColumn === "delta" ? marketDelta(right) : right[forecastSortColumn];
+      if (leftValue === null || leftValue === undefined) return 1;
+      if (rightValue === null || rightValue === undefined) return -1;
+      if (typeof leftValue === "number" && typeof rightValue === "number") {
+        return direction * (leftValue - rightValue) || left.team.localeCompare(right.team);
+      }
+      return direction * String(leftValue).localeCompare(String(rightValue)) || left.team.localeCompare(right.team);
+    });
+  }, [forecast, forecastSortColumn, forecastSortDirection]);
   const activeOverrides = players.filter((player) => (
     overrides[overrideKey(player.team, player.player_id)] !== undefined
   )).length;
@@ -253,8 +279,10 @@ export function WinProjectionsPage() {
       [key]: {
         ...(current[key] ?? {}),
         [field]: field === "availabilityProbability"
-          ? Math.max(0, Math.min(1, value / 100))
-          : Math.max(0, Math.min(48, value)),
+          ? Math.max(0, Math.min(1, value / SEASON_GAMES))
+          : field === "conditionalMinutesPerGame"
+            ? Math.max(0, Math.min(48, value))
+            : value,
       },
     }));
   };
@@ -270,10 +298,18 @@ export function WinProjectionsPage() {
     setTeam(nextTeam);
   };
 
+  const changeForecastSort = (column: ForecastSortColumn) => {
+    if (column === forecastSortColumn) {
+      setForecastSortDirection((direction) => direction === "ascending" ? "descending" : "ascending");
+      return;
+    }
+    setForecastSortColumn(column);
+    setForecastSortDirection(column === "team" ? "ascending" : "descending");
+  };
+
   if (error) return <p className="error win-projections-error"><CircleAlert size={16} /> {error}</p>;
   if (!payload) return <div className="profile-loading"><LoaderCircle className="spin" size={20} /> Loading preseason minutes</div>;
   const baselineForecast = payload.win_projection;
-  const forecast = calculatedForecast ?? baselineForecast;
   const calculateForecast = () => {
     if (!baselineForecast || hasInvalidOverrides) return;
     setCalculatedForecast(calculateProjection(payload, baselineForecast, overrides));
@@ -295,20 +331,34 @@ export function WinProjectionsPage() {
             <p>{forecast.scheduled_games_per_team} scheduled games + {forecast.unassigned_regular_games_per_team} unassigned NBA Cup-related games.</p>
           </div>
           <div className="win-forecast-table-wrap"><table className="win-forecast-table">
-            <thead><tr><th>Team</th><th>Strength</th><th>BetMGM</th><th>GESTALT</th><th>Losses</th></tr></thead>
-            <tbody>{forecast.teams.map((item) => {
+            <thead><tr>
+              {([
+                ["team", "Team"],
+                ["team_strength", "Strength"],
+                ["betmgm_win_total", "BetMGM"],
+                ["projected_wins", "Projected Wins"],
+                ["delta", "Delta"],
+              ] as Array<[ForecastSortColumn, string]>).map(([column, label]) => <th scope="col" key={column} aria-sort={forecastSortColumn === column ? forecastSortDirection : "none"}>
+                <button className="win-forecast-sort" type="button" onClick={() => changeForecastSort(column)}>
+                  {label}
+                  {forecastSortColumn === column && (forecastSortDirection === "ascending" ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+                </button>
+              </th>)}
+            </tr></thead>
+            <tbody>{sortedForecastTeams.map((item) => {
+              const delta = marketDelta(item);
               const direction = marketDirection(item.projected_wins, item.betmgm_win_total);
-              const directionClass = direction === "U" ? "negative" : "positive";
+              const directionClass = delta !== null && delta < 0 ? "negative" : "positive";
               return <tr key={item.team} className={item.team === team ? "selected-team" : ""}>
                 <th><button className="win-forecast-team-link" type="button" aria-controls="team-minutes" aria-pressed={item.team === team} onClick={() => selectForecastTeam(item.team)}>{item.team}</button></th>
                 <td className={item.team_strength < 0 ? "negative" : "positive"}>{formatRating(item.team_strength)}</td>
                 <td>{item.betmgm_win_total?.toFixed(1) ?? "-"}</td>
-                <td className="win-forecast-wins">{item.projected_wins.toFixed(1)} <small className={directionClass}>{direction} {formatMarketDelta(item.projected_wins, item.betmgm_win_total)}</small></td>
-                <td>{item.projected_losses.toFixed(1)}</td>
+                <td className="win-forecast-wins">{item.projected_wins.toFixed(1)}</td>
+                <td className={directionClass}>{delta === null ? "-" : `${direction} ${formatRating(delta)}`}</td>
               </tr>;
             })}</tbody>
           </table></div>
-          <p className="win-projections-note">{forecast.contract} {forecast.market_win_totals && <><a href={forecast.market_win_totals.source_url} target="_blank" rel="noreferrer">{forecast.market_win_totals.provider} win totals</a> captured {forecast.market_win_totals.as_of}; O/U compares GESTALT wins to that line. </>}Calibration: {forecast.calibration.calibration_season} only; {forecast.calibration.holdout_season} Brier {forecast.calibration.holdout_brier.toFixed(3)}, accuracy {(forecast.calibration.holdout_accuracy * 100).toFixed(1)}%.</p>
+          <p className="win-projections-note">{forecast.contract} {forecast.market_win_totals && <><a href={forecast.market_win_totals.source_url} target="_blank" rel="noreferrer">{forecast.market_win_totals.provider} win totals</a> captured {forecast.market_win_totals.as_of}; O/U compares projected wins to that line. </>}Calibration: {forecast.calibration.calibration_season} only; {forecast.calibration.holdout_season} Brier {forecast.calibration.holdout_brier.toFixed(3)}, accuracy {(forecast.calibration.holdout_accuracy * 100).toFixed(1)}%.</p>
         </section>}
         <section className="win-team-panel" id="team-minutes" aria-label={`${team} minute projection`}>
         <div className="win-projections-toolbar">
@@ -318,7 +368,7 @@ export function WinProjectionsPage() {
               {payload.teams.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
           </label>
-          <button className="win-projections-reset" type="button" onClick={resetTeam} disabled={activeOverrides === 0} title="Reset this team to its baseline availability and conditional-minute inputs">
+          <button className="win-projections-reset" type="button" onClick={resetTeam} disabled={activeOverrides === 0} title="Reset this team to its baseline availability, conditional minutes, and rating inputs">
             <RotateCcw size={15} aria-hidden="true" />
             <span>Reset team</span>
           </button>
@@ -330,17 +380,18 @@ export function WinProjectionsPage() {
         {hasInvalidOverrides && <p className="error win-projections-error"><CircleAlert size={16} /> At least one player must have positive availability and conditional minutes.</p>}
         <div className="win-projections-table-wrap">
           <table className="win-projections-table">
-            <thead><tr><th>Player</th><th>NAIL</th><th>P(available)</th><th>E[MPG | available]</th><th>Squashed MPG</th></tr></thead>
+            <thead><tr><th>Player</th><th>+/-</th><th><i>G</i><sub>available</sub></th><th>E[MPG | available]</th><th>Squashed MPG</th></tr></thead>
             <tbody>
               {orderedPlayers.map((player) => {
                 const key = overrideKey(player.team, player.player_id);
                 const override = overrides[key];
+                const inputs = playerInputs(player, overrides);
                 const projected = minutes.get(player.player_id) ?? player.baseline_minutes_per_game;
                 return <tr key={player.player_id} className={override === undefined ? "" : "has-minute-override"}>
                   <th scope="row"><a href={`#player/${player.player_id}`}>{player.player_name}</a><small>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</small></th>
-                  <td className={player.projected_nail < 0 ? "negative" : "positive"}>{formatRating(player.projected_nail)}</td>
-                  <td><input aria-label={`Availability probability for ${player.player_name}`} type="number" min="0" max="100" step="1" value={((override?.availabilityProbability ?? player.availability_probability) * 100).toFixed(1)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /><small>%</small></td>
-                  <td><input aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={(override?.conditionalMinutesPerGame ?? player.conditional_minutes_per_game).toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></td>
+                  <td className={inputs.nailRating < 0 ? "negative" : "positive"}><input className={inputs.nailRating < 0 ? "negative" : "positive"} aria-label={`Plus minus rating for ${player.player_name}`} type="number" step="0.1" value={inputs.nailRating.toFixed(1)} onChange={(event) => updateOverride(player, "nailRating", event.target.value)} /></td>
+                  <td><input aria-label={`Projected available games for ${player.player_name}`} type="number" min="0" max={SEASON_GAMES} step="1" value={Math.round((override?.availabilityProbability ?? player.availability_probability) * SEASON_GAMES)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /></td>
+                  <td><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={(override?.conditionalMinutesPerGame ?? player.conditional_minutes_per_game).toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></td>
                   <td className="projected-minutes">{projected.toFixed(1)}</td>
                 </tr>;
               })}
@@ -351,16 +402,18 @@ export function WinProjectionsPage() {
           {orderedPlayers.map((player) => {
             const key = overrideKey(player.team, player.player_id);
             const override = overrides[key];
+            const inputs = playerInputs(player, overrides);
             const projected = minutes.get(player.player_id) ?? player.baseline_minutes_per_game;
             return <li key={player.player_id} className={override === undefined ? "" : "has-minute-override"}>
               <div className="win-projections-mobile-heading">
                 <a href={`#player/${player.player_id}`}>{player.player_name}</a>
-                <span className={player.projected_nail < 0 ? "negative" : "positive"}>{formatRating(player.projected_nail)}</span>
+                <span className={inputs.nailRating < 0 ? "negative" : "positive"}>{formatRating(inputs.nailRating)}</span>
               </div>
               <p>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</p>
               <dl>
-                <div><dt>P(available)</dt><dd><input aria-label={`Availability probability for ${player.player_name}`} type="number" min="0" max="100" step="1" value={((override?.availabilityProbability ?? player.availability_probability) * 100).toFixed(1)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} />%</dd></div>
-                <div><dt>E[MPG | available]</dt><dd><input aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={(override?.conditionalMinutesPerGame ?? player.conditional_minutes_per_game).toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></dd></div>
+                <div><dt>+/-</dt><dd><input className={inputs.nailRating < 0 ? "negative" : "positive"} aria-label={`Plus minus rating for ${player.player_name}`} type="number" step="0.1" value={inputs.nailRating.toFixed(1)} onChange={(event) => updateOverride(player, "nailRating", event.target.value)} /></dd></div>
+                <div><dt><i>G</i><sub>available</sub></dt><dd><input aria-label={`Projected available games for ${player.player_name}`} type="number" min="0" max={SEASON_GAMES} step="1" value={Math.round((override?.availabilityProbability ?? player.availability_probability) * SEASON_GAMES)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /></dd></div>
+                <div><dt>E[MPG | available]</dt><dd><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={(override?.conditionalMinutesPerGame ?? player.conditional_minutes_per_game).toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></dd></div>
                 <div><dt>Squashed MPG</dt><dd className="projected-minutes">{projected.toFixed(1)}</dd></div>
               </dl>
             </li>;

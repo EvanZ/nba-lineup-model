@@ -145,6 +145,9 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .win-forecast-table thead th { position: sticky; top: 0; background: #f8f6ef; color: #69716b; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .win-forecast-table th:first-child, .win-forecast-table tbody th { text-align: left; }
 .win-forecast-table tr.selected-team { background: #edf2e9; }
+.win-forecast-sort { display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; font-weight: inherit; text-transform: inherit; }
+.win-forecast-sort:hover { color: #245a47; }
+.win-forecast-sort:focus-visible { outline: 2px solid #e8502f; outline-offset: 3px; }
 .win-forecast-team-link { padding: 0; border: 0; background: transparent; color: #17201c; cursor: pointer; font: inherit; font-weight: 900; text-decoration: none; }
 .win-forecast-team-link:hover { color: #245a47; text-decoration: underline; text-decoration-color: #e8502f; text-underline-offset: 3px; }
 .win-forecast-team-link:focus-visible { outline: 2px solid #e8502f; outline-offset: 3px; }
@@ -171,6 +174,9 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .win-projections-table .positive { color: #167157; }
 .win-projections-table .negative { color: #be3b29; }
 .win-projections-table input { width: 56px; height: 29px; padding: 0 6px; border: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #17201c; font: inherit; text-align: right; }
+.win-projections-table input.conditional-minutes-input { width: 68px; }
+.win-projections-table input.positive, .win-projections-mobile-list input.positive { color: #167157; }
+.win-projections-table input.negative, .win-projections-mobile-list input.negative { color: #be3b29; }
 .win-projections-table .projected-minutes { color: #245a47; font-size: 14px; font-weight: 900; }
 .win-projections-table tr.has-minute-override { background: #edf2e9; }
 .win-projections-mobile-list { display: none; margin: 0; padding: 0; list-style: none; }
@@ -684,10 +690,11 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .win-projections-mobile-heading a:hover { color: #245a47; text-decoration: underline; text-decoration-color: #e8502f; text-underline-offset: 3px; }
   .win-projections-mobile-heading span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 900; }
   .win-projections-mobile-list p { margin: 4px 0 0; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
-  .win-projections-mobile-list dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 11px 0 0; }
+  .win-projections-mobile-list dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 11px 0 0; }
   .win-projections-mobile-list dt { color: #69716b; font-size: 8px; font-weight: 800; text-transform: uppercase; }
   .win-projections-mobile-list dd { margin: 4px 0 0; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 800; }
   .win-projections-mobile-list input { width: 52px; height: 28px; padding: 0 5px; border: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #17201c; font: inherit; text-align: right; }
+  .win-projections-mobile-list input.conditional-minutes-input { width: 62px; }
   .win-projections-mobile-list .projected-minutes { color: #245a47; font-size: 14px; font-weight: 900; }
   .lineup-columns { grid-template-columns: 1fr; gap: 28px; }
   .environment-control { align-items: flex-start; flex-direction: column; }
