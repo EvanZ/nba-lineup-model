@@ -137,6 +137,85 @@ export type RosterMovesPayload = {
   new_or_unmatched_current_player_count: number;
 };
 
+export type MinutesProjectionPlayer = {
+  player_id: number;
+  player_name: string;
+  position: string;
+  age: number | null;
+  team: string;
+  prior_season_minutes: number;
+  is_rating_fallback: boolean;
+  is_baseline_rotation_candidate: boolean;
+  has_prior_availability_state: boolean;
+  has_prior_minutes_state: boolean;
+  availability_probability: number;
+  conditional_minutes_per_game: number;
+  raw_expected_total_minutes: number;
+  baseline_minute_share: number;
+  baseline_minutes_per_game: number;
+  projected_nail: number;
+  rating_source: string;
+};
+
+export type MinutesProjectionPayload = {
+  season: string;
+  completed_season: string;
+  model: string;
+  initial_rotation_size: number;
+  regulation_team_minutes: number;
+  contract: string;
+  teams: string[];
+  players: MinutesProjectionPlayer[];
+  win_projection?: WinProjectionPayload;
+};
+
+export type WinProjectionTeam = {
+  team: string;
+  team_strength: number;
+  betmgm_win_total?: number;
+  scheduled_wins: number;
+  scheduled_games: number;
+  unassigned_wins: number;
+  projected_wins: number;
+  projected_losses: number;
+};
+
+export type WinProjectionScheduledGame = {
+  game_id: string;
+  home_team: string;
+  away_team: string;
+  home_back_to_back: number;
+  away_back_to_back: number;
+};
+
+export type WinProjectionPayload = {
+  model: string;
+  season: string;
+  scheduled_game_count: number;
+  scheduled_games_per_team: number;
+  unassigned_regular_games_per_team: number;
+  win_probability_scale: number;
+  home_court: number;
+  back_to_back: number;
+  calibration: {
+    calibration_season: string;
+    holdout_season: string;
+    calibration_beta: number;
+    holdout_brier: number;
+    holdout_log_loss: number;
+    holdout_accuracy: number;
+    production_beta: number;
+  };
+  market_win_totals?: {
+    provider: string;
+    as_of: string;
+    source_url: string;
+  };
+  teams: WinProjectionTeam[];
+  scheduled_games: WinProjectionScheduledGame[];
+  contract: string;
+};
+
 export type ContextFeatureDetail = {
   kind: "generic" | "usage_concentration" | "top_two_assists";
   unit_value: number;

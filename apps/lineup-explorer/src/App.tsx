@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BlockMath } from "react-katex";
 import { trackPageView } from "./analytics";
 import { RosterMovesPage } from "./RosterMovesPage";
+import { WinProjectionsPage } from "./WinProjectionsPage";
 import {
   ArrowLeft,
   ArrowRight,
@@ -24,7 +25,7 @@ import {
 import type { ContextFeature, FeatureResponseCurve, Matchup, Player, RankedLineup, RankedPlayer } from "./types";
 
 type Side = "unit" | "opponent";
-type AppView = "lab" | "rankings" | "lineups" | "moves" | "about" | "player";
+type AppView = "lab" | "rankings" | "lineups" | "moves" | "wins" | "about" | "player";
 type AppRoute = { view: AppView; playerId?: number };
 type Environment = "unit" | "neutral" | "opponent";
 type Court = "neutral" | "unit_home" | "opponent_home";
@@ -113,6 +114,7 @@ function useAppView(): AppRoute {
     if (window.location.hash === "#rankings") return { view: "rankings" };
     if (window.location.hash === "#lineups") return { view: "lineups" };
     if (window.location.hash === "#moves" || window.location.hash.startsWith("#moves?")) return { view: "moves" };
+    if (window.location.hash === "#wins") return { view: "wins" };
     return { view: "lab" };
   };
   const [view, setView] = useState<AppRoute>(getView);
@@ -917,6 +919,7 @@ function App() {
             <a className={view === "rankings" ? "active" : ""} href="#rankings">Rankings</a>
             <a className={view === "lineups" ? "active" : ""} href="#lineups">Lineups</a>
             <a className={view === "moves" ? "active" : ""} href="#moves">Moves</a>
+            <a className={view === "wins" ? "active" : ""} href="#wins">Wins</a>
             <a className={view === "about" ? "active" : ""} href="#about">About</a>
           </nav>
           <span className="header-links">
@@ -945,7 +948,7 @@ function App() {
         </div>
       </header>
 
-      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "moves" ? <RosterMovesPage /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
+      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
         <section className="intro" aria-labelledby="page-title">
           <div className="gestalt-entry" aria-label="Definition of gestalt">
             <div className="gestalt-entry-heading">

@@ -14,11 +14,11 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from nba_lineup_model.modeling.aging import (
-    VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
-    fit_aging_pipeline,
-    prepare_aging_prior_features,
-    prepare_aging_transitions,
+from nba_lineup_model.modeling.forward_portable_matchup_contextual_rapm import (
+    _recover_replacement_tokens,
+)
+from nba_lineup_model.modeling.gap_returner_prior import (
+    build_centered_value_conditioned_aging_gap_returner_priors,
 )
 from nba_lineup_model.modeling.prior_rapm import PRIOR_MEAN_COLUMN, ForwardLaggedRapmSeason
 from nba_lineup_model.web_api.inference import (
@@ -65,7 +65,7 @@ def materialize_preseason_rankings(
     )
     panel = pd.read_parquet(panel_path)
     roster = _load_roster(target_season)
-    target_panel = _append_target_bios(panel, roster, target_season=target_season)
+    target_panel = append_target_bios(panel, roster, target_season=target_season)
     roster = roster.merge(
         target_panel.loc[
             target_panel["season"].eq(target_season),
@@ -78,13 +78,18 @@ def materialize_preseason_rankings(
     historical = pd.read_parquet(run_dir / "historical_player_coefficients.parquet")
     results = _completed_results(historical)
     exposure_history = _exposure_history(run_id, historical, panel)
+    prior_metadata = pd.read_parquet(run_dir / "season_player_prior_metadata.parquet")
+    replacement_tokens = _recover_replacement_tokens(
+        prior_metadata,
+        tuple(result.season for result in results),
+    )
     print("Fitting frozen forward prior", flush=True)
-    priors = _forward_returner_prior(
-        target_season=target_season,
+    priors, prior_contract = build_centered_value_conditioned_aging_gap_returner_priors(
+        season=target_season,
         panel=target_panel,
-        results=results,
+        completed_results=results,
         exposure_history=exposure_history,
-        regularization=_aging_regularization(run_dir),
+        replacement_tokens=replacement_tokens,
     )
     prior_by_player = dict(
         zip(priors["player_id"].astype(int), priors[PRIOR_MEAN_COLUMN].astype(float), strict=True)
@@ -95,13 +100,22 @@ def materialize_preseason_rankings(
             historical["season"].eq(completed_season), "player_id"
         ].astype(int)
     )
+    gap_returner_ids = set(
+        prior_contract["_gap_returner_states"].loc[
+            prior_contract["_gap_returner_states"]["is_return_season"], "player_id"
+        ].astype(int)
+    )
+    established_returner_ids = completed_ids | gap_returner_ids
     replacement = float(draft["replacement_rapm"].dropna().iloc[0])
     roster["player_id"] = roster["player_id"].astype(int)
     roster["base_prior"] = roster["player_id"].map(prior_by_player)
-    roster["forecast_source"] = np.where(
-        roster["player_id"].isin(completed_ids),
-        "forward_value_conditioned_aging_prior",
-        "replacement_cold_start_prior",
+    roster.loc[~roster["player_id"].isin(established_returner_ids), "base_prior"] = np.nan
+    roster["forecast_source"] = "replacement_cold_start_prior"
+    roster.loc[roster["player_id"].isin(completed_ids), "forecast_source"] = (
+        "forward_value_conditioned_aging_prior"
+    )
+    roster.loc[roster["player_id"].isin(gap_returner_ids), "forecast_source"] = (
+        "forward_value_conditioned_aging_gap_returner_prior"
     )
     draft_prior = dict(
         zip(
@@ -284,114 +298,6 @@ def _exposure_history(
     return histories
 
 
-def _aging_regularization(run_dir: Path) -> float:
-    metadata = pd.read_parquet(run_dir / "season_player_prior_metadata.parquet")
-    value = metadata.loc[metadata["season"].eq(DISPLAY_SEASON), "aging_selected_regularization"]
-    if value.empty or pd.isna(value.iloc[0]):
-        raise ValueError("Published model lacks an aging regularization selection")
-    return float(value.iloc[0])
-
-
-def _forward_returner_prior(
-    *,
-    target_season: str,
-    panel: pd.DataFrame,
-    results: list[ForwardLaggedRapmSeason],
-    exposure_history: list[pd.DataFrame],
-    regularization: float,
-) -> pd.DataFrame:
-    """Fit only the completed-state returner aging branch, without cold starts."""
-
-    exposures = {
-        result.season: frame.loc[:, ["player_id", "on_court_possessions"]].copy()
-        for result, frame in zip(results, exposure_history, strict=True)
-    }
-    bio_columns = [
-        "player_id", "player_name", "age", "nba_experience_years", "is_rookie",
-        "draft_year", "draft_number", "height_inches", "weight_pounds", "is_undrafted",
-        "rapm_seconds", "rapm_exposure_eligible",
-    ]
-    transitions: list[pd.DataFrame] = []
-    for prior, target in zip(results, results[1:], strict=False):
-        if int(target.season[:4]) != int(prior.season[:4]) + 1:
-            continue
-        target_bios = panel.loc[panel["season"].eq(target.season), bio_columns].copy()
-        transition = (
-            target_bios.merge(
-                target.player_estimates.loc[:, ["player_id", "rapm"]].rename(
-                    columns={"rapm": "target_rapm"}
-                ),
-                on="player_id", how="inner", validate="one_to_one",
-            )
-            .merge(exposures[target.season], on="player_id", how="inner", validate="one_to_one")
-            .merge(
-                prior.player_estimates.loc[:, ["player_id", "rapm"]].rename(
-                    columns={"rapm": "prior_rapm"}
-                ),
-                on="player_id", how="inner", validate="one_to_one",
-            )
-            .merge(
-                exposures[prior.season].rename(
-                    columns={"on_court_possessions": "prior_rapm_possessions"}
-                ),
-                on="player_id", how="inner", validate="one_to_one",
-            )
-            .rename(
-                columns={
-                    "age": "target_age",
-                    "nba_experience_years": "target_nba_experience_years",
-                    "on_court_possessions": "target_rapm_possessions",
-                    "rapm_seconds": "target_rapm_seconds",
-                    "rapm_exposure_eligible": "target_rapm_exposure_eligible",
-                }
-            )
-        )
-        transition.insert(0, "target_season", target.season)
-        transition.insert(1, "prior_season", prior.season)
-        transition["has_prior_season"] = True
-        transitions.append(transition)
-    training = prepare_aging_transitions(pd.concat(transitions, ignore_index=True))
-    model = fit_aging_pipeline(
-        training,
-        regularization=regularization,
-        age_spline_knots=5,
-        age_spline_degree=2,
-        feature_columns=VALUE_CONDITIONED_AGING_FEATURE_COLUMNS,
-    )
-    latest = results[-1].player_estimates.loc[:, ["player_id", "rapm"]].rename(
-        columns={"rapm": "prior_rapm"}
-    )
-    target_bios = panel.loc[panel["season"].eq(target_season), bio_columns].copy()
-    target = (
-        target_bios.merge(latest, on="player_id", how="inner", validate="one_to_one")
-        .merge(
-            exposures[results[-1].season].rename(
-                columns={"on_court_possessions": "prior_rapm_possessions"}
-            ),
-            on="player_id", how="inner", validate="one_to_one",
-        )
-        .rename(
-            columns={
-                "age": "target_age",
-                "nba_experience_years": "target_nba_experience_years",
-            }
-        )
-    )
-    target["target_season"] = target_season
-    target["has_prior_season"] = True
-    features = prepare_aging_prior_features(target)
-    output = features.loc[:, ["player_id"]].copy()
-    output[PRIOR_MEAN_COLUMN] = model.predict(
-        features.loc[:, VALUE_CONDITIONED_AGING_FEATURE_COLUMNS]
-    )
-    weights = output.merge(
-        exposures[results[-1].season], on="player_id", how="left", validate="one_to_one"
-    )["on_court_possessions"].fillna(0.0)
-    center = float(np.average(output[PRIOR_MEAN_COLUMN], weights=weights))
-    output[PRIOR_MEAN_COLUMN] -= center
-    return output
-
-
 def _load_roster(target_season: str) -> pd.DataFrame:
     roster = pd.read_parquet(team_roster_path(target_season)).copy()
     roster["player_id"] = pd.to_numeric(roster["player_id"], errors="raise").astype(int)
@@ -410,7 +316,7 @@ def _draft_cold_start(target_season: str) -> pd.DataFrame:
     return draft.drop_duplicates("player_id", keep="first")
 
 
-def _append_target_bios(
+def append_target_bios(
     panel: pd.DataFrame, roster: pd.DataFrame, *, target_season: str
 ) -> pd.DataFrame:
     """Append roster-only target rows; no target box-score or RAPM field is read."""

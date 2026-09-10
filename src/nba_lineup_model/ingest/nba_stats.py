@@ -25,6 +25,7 @@ class NbaStatsEndpoint(StrEnum):
 
     PLAY_BY_PLAY_V3 = "playbyplayv3"
     BOXSCORE_TRADITIONAL_V3 = "boxscoretraditionalv3"
+    BOXSCORE_SUMMARY_V2 = "boxscoresummaryv2"
     GAME_ROTATION = "gamerotation"
 
 
@@ -396,6 +397,8 @@ def stats_endpoint_parameters(
             "EndRange": "0",
             "RangeType": "0",
         }
+    if endpoint is NbaStatsEndpoint.BOXSCORE_SUMMARY_V2:
+        return {"GameID": game_id}
     if endpoint is NbaStatsEndpoint.GAME_ROTATION:
         return {
             "GameID": game_id,
@@ -428,6 +431,39 @@ def validate_stats_payload(
             dict,
         ):
             raise NbaStatsError(f"NBA {endpoint.value} response is missing teams")
+        return
+
+    if endpoint is NbaStatsEndpoint.BOXSCORE_SUMMARY_V2:
+        result_sets = payload.get("resultSets")
+        if not isinstance(result_sets, list):
+            raise NbaStatsError(f"NBA {endpoint.value} response is missing resultSets")
+        by_name = {
+            result_set.get("name"): result_set
+            for result_set in result_sets
+            if isinstance(result_set, dict)
+        }
+        game_summary = by_name.get("GameSummary")
+        inactive_players = by_name.get("InactivePlayers")
+        if not isinstance(game_summary, dict) or not isinstance(inactive_players, dict):
+            raise NbaStatsError(
+                f"NBA {endpoint.value} response is missing game or inactive-player tables"
+            )
+        headers = game_summary.get("headers")
+        rows = game_summary.get("rowSet")
+        if not isinstance(headers, list) or not isinstance(rows, list) or not rows:
+            raise NbaStatsError(f"NBA {endpoint.value} response has no game summary row")
+        try:
+            game_id_index = headers.index("GAME_ID")
+        except ValueError as error:
+            raise NbaStatsError(
+                f"NBA {endpoint.value} game summary is missing GAME_ID"
+            ) from error
+        if str(rows[0][game_id_index]) != game_id:
+            raise NbaStatsError(f"NBA {endpoint.value} response game ID does not match {game_id}")
+        if not isinstance(inactive_players.get("headers"), list) or not isinstance(
+            inactive_players.get("rowSet"), list
+        ):
+            raise NbaStatsError(f"NBA {endpoint.value} inactive-player table is malformed")
         return
 
     if endpoint is NbaStatsEndpoint.GAME_ROTATION:

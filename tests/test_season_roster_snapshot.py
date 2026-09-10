@@ -6,6 +6,7 @@ import pandas as pd
 
 from nba_lineup_model.players.season_roster_snapshot import (
     build_final_regular_season_roster_snapshot,
+    player_game_roster_frame,
 )
 
 
@@ -78,4 +79,22 @@ def test_final_regular_season_snapshot_uses_last_observed_team(tmp_path) -> None
             "last_regular_season_game_id": "0022500002",
             "game_date": pd.Timestamp("2026-04-12T00:00:00+0000", tz="UTC"),
         },
+    ]
+
+
+def test_player_game_roster_frame_joins_box_score_name_fields(tmp_path) -> None:
+    path = tmp_path / "players.parquet"
+    pd.DataFrame(
+        {
+            "personId": [1],
+            "firstName": ["New"],
+            "familyName": ["Schema"],
+            "team_tricode": ["MIN"],
+        }
+    ).to_parquet(path, index=False)
+
+    actual = player_game_roster_frame(path)
+
+    assert actual.to_dict("records") == [
+        {"player_id": 1, "player_name": "New Schema", "team": "MIN"}
     ]

@@ -22,6 +22,7 @@ function analyticsPath(): string {
   if (window.location.hash === "#about") return "/about";
   if (window.location.hash === "#rankings") return "/rankings";
   if (window.location.hash === "#lineups") return "/lineups";
+  if (window.location.hash === "#wins") return "/wins";
   return "/lab";
 }
 

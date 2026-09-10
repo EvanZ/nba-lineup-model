@@ -18,7 +18,11 @@ from nba_lineup_model.web_api.inference import (
     LineupEvaluationError,
     LineupEvaluator,
 )
+from nba_lineup_model.web_api.preseason_minutes import (
+    build_forward_conditional_preseason_minutes_payload,
+)
 from nba_lineup_model.web_api.roster_movements import build_roster_movement_payload
+from nba_lineup_model.web_api.win_projections import build_win_projection_payload
 
 
 class MatchupRequest(BaseModel):
@@ -65,6 +69,18 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     @lru_cache(maxsize=1)
     def get_evaluator() -> LineupEvaluator:
         return evaluator or LineupEvaluator.from_latest_artifact()
+
+    @lru_cache(maxsize=1)
+    def get_win_projection_payload() -> dict[str, object]:
+        minutes = build_forward_conditional_preseason_minutes_payload(
+            preseason_rankings=get_evaluator().preseason_rankings,
+        )
+        return {
+            **minutes,
+            "win_projection": build_win_projection_payload(
+                evaluator=get_evaluator(), minutes_payload=minutes
+            ),
+        }
 
     @app.get("/api/health")
     def health() -> dict[str, object]:
@@ -193,6 +209,15 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             return build_roster_movement_payload(
                 preseason_rankings=get_evaluator().preseason_rankings,
             )
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/api/win-projections")
+    def win_projections() -> dict[str, object]:
+        """Return the immutable preseason minute baseline for the planning page."""
+
+        try:
+            return get_win_projection_payload()
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 

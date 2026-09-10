@@ -36,6 +36,12 @@ BOXSCORE_BODY = (
     b'Format=json"},"boxScoreTraditional":{"gameId":"0021900194",'
     b'"homeTeam":{"teamId":1610612742},"awayTeam":{"teamId":1610612759}}}'
 )
+BOXSCORE_SUMMARY_BODY = (
+    b'{"resource":"boxscoresummaryv2","parameters":{"GameID":"0021900194"},'
+    b'"resultSets":[{"name":"GameSummary","headers":["GAME_ID"],'
+    b'"rowSet":[["0021900194"]]},{"name":"InactivePlayers",'
+    b'"headers":["PLAYER_ID"],"rowSet":[]}]}'
+)
 GAME_ROTATION_BODY = (
     b'{"resource":"gamerotation","parameters":{"GameID":"0021900194","LeagueID":"00"},'
     b'"resultSets":[{"name":"AwayTeam","headers":["GAME_ID"],'
@@ -83,6 +89,11 @@ def catalog_game() -> CatalogGame:
                 "EndRange": "0",
                 "RangeType": "0",
             },
+        ),
+        (
+            NbaStatsEndpoint.BOXSCORE_SUMMARY_V2,
+            BOXSCORE_SUMMARY_BODY,
+            {"GameID": GAME_ID},
         ),
         (
             NbaStatsEndpoint.GAME_ROTATION,

@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 
 def build_final_regular_season_roster_snapshot(
@@ -23,6 +24,25 @@ def build_final_regular_season_roster_snapshot(
     season aggregates. This is a roster snapshot, not a transaction ledger.
     """
 
+    snapshot = final_regular_season_roster_frame(
+        season,
+        schedule_path=schedule_path,
+        processed_players_dir=processed_players_dir,
+    )
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.to_parquet(target, index=False)
+    return target
+
+
+def final_regular_season_roster_frame(
+    season: str,
+    *,
+    schedule_path: Path | str,
+    processed_players_dir: Path | str,
+) -> pd.DataFrame:
+    """Return each player's final observed regular-season team for one season."""
+
     schedule = _regular_season_games(Path(schedule_path))
     players_root = Path(processed_players_dir)
     rows: list[pd.DataFrame] = []
@@ -30,17 +50,7 @@ def build_final_regular_season_roster_snapshot(
         player_path = players_root / f"{game.game_id}.parquet"
         if not player_path.exists():
             continue
-        frame = pd.read_parquet(
-            player_path,
-            columns=["personId", "name", "team_tricode"],
-        ).rename(
-            columns={
-                "personId": "player_id",
-                "name": "player_name",
-                "team_tricode": "team",
-            }
-        )
-        frame["player_id"] = frame["player_id"].astype(str)
+        frame = player_game_roster_frame(player_path)
         frame["game_id"] = str(game.game_id)
         frame["game_date"] = game.game_date
         rows.append(frame)
@@ -49,6 +59,7 @@ def build_final_regular_season_roster_snapshot(
 
     observed = pd.concat(rows, ignore_index=True)
     observed = observed.dropna(subset=["player_id", "team"]).copy()
+    observed["player_id"] = observed["player_id"].astype(str)
     observed["team"] = observed["team"].astype(str)
     snapshot = (
         observed.sort_values(["player_id", "game_date", "game_id"], kind="stable")
@@ -61,10 +72,43 @@ def build_final_regular_season_roster_snapshot(
     )
     if snapshot["player_id"].duplicated().any():
         raise ValueError("Final regular-season snapshot contains duplicate player IDs")
-    target = Path(output_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    snapshot.to_parquet(target, index=False)
-    return target
+    return snapshot
+
+
+def player_game_roster_frame(path: Path | str) -> pd.DataFrame:
+    """Normalize either supported processed player-game roster schema.
+
+    Historical files have a combined ``name`` field. Newer files retain the
+    NBA box-score ``firstName`` and ``familyName`` fields separately.
+    """
+
+    player_path = Path(path)
+    fields = set(pq.ParquetFile(player_path).schema_arrow.names)
+    required = {"personId", "team_tricode"}
+    if not required <= fields:
+        missing = ", ".join(sorted(required - fields))
+        raise ValueError(f"Player game roster {player_path} is missing: {missing}")
+    if "name" in fields:
+        frame = pd.read_parquet(
+            player_path,
+            columns=["personId", "name", "team_tricode"],
+        ).rename(columns={"name": "player_name"})
+    elif {"firstName", "familyName"} <= fields:
+        frame = pd.read_parquet(
+            player_path,
+            columns=["personId", "firstName", "familyName", "team_tricode"],
+        )
+        frame["player_name"] = (
+            frame["firstName"].fillna("").astype(str).str.strip()
+            + " "
+            + frame["familyName"].fillna("").astype(str).str.strip()
+        ).str.strip()
+        frame = frame.drop(columns=["firstName", "familyName"])
+    else:
+        raise ValueError(
+            f"Player game roster {player_path} has neither name nor firstName/familyName"
+        )
+    return frame.rename(columns={"personId": "player_id", "team_tricode": "team"})
 
 
 def _regular_season_games(schedule_path: Path) -> pd.DataFrame:

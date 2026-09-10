@@ -432,7 +432,10 @@ def _corresponding_cdn_artifact_is_missing(
     endpoint: NbaStatsEndpoint,
     game_id: str,
 ) -> bool:
-    if endpoint is NbaStatsEndpoint.GAME_ROTATION:
+    if endpoint in {
+        NbaStatsEndpoint.BOXSCORE_SUMMARY_V2,
+        NbaStatsEndpoint.GAME_ROTATION,
+    }:
         return True
     cdn_endpoint = (
         NbaCdnEndpoint.PLAY_BY_PLAY
