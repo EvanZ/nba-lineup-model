@@ -79,6 +79,7 @@ def build_win_projection_payload(
         "market_win_totals": BETMGM_WIN_TOTALS_2026_27_METADATA,
         "teams": teams.to_dict(orient="records"),
         "scheduled_games": game_rows.assign(
+            game_date=lambda frame: pd.to_datetime(frame["game_date"]).dt.strftime("%Y-%m-%d"),
             home_back_to_back=lambda frame: frame["home_back_to_back"].astype(int),
             away_back_to_back=lambda frame: frame["away_back_to_back"].astype(int),
         )
@@ -86,6 +87,7 @@ def build_win_projection_payload(
             :,
             [
                 "game_id",
+                "game_date",
                 "home_team_tricode",
                 "away_team_tricode",
                 "home_back_to_back",

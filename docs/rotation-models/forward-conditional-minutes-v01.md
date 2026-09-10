@@ -111,3 +111,23 @@ Artifact:
 
 This is a prerequisite for the later game-level joint availability and rotation
 model in Issue #7.
+
+## Win-Loss Envelope
+
+The Win Projections page also shows a browser-side Win-Loss Envelope above the
+player controls. It simulates all 82 games for the selected team 10,000 times
+using the same minute-weighted team strengths, home-court term, back-to-back
+term, and logistic game probabilities as the win-total table. The chart shows
+both the 1st--99th and 5th--95th percentile intervals around cumulative wins.
+
+The 80 published games retain their actual opponents, dates, home/away status,
+and back-to-back flags. The two NBA Cup-dependent regular-season slots are
+modeled as one home and one away game against a neutral-strength opponent, to
+match the win-total table's existing assumption. They are inserted in the Dec.
+4--10 Cup window and labeled `NBA CUP` until the actual matchup details are
+known.
+
+The chart can be downloaded as a self-contained PNG. The export adds the NBA
+GESTALT title, season and simulation subtitle, percentile legend, team
+watermark, and the opponent-logo annotations for the five toughest modeled
+games.

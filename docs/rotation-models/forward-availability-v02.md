@@ -5,8 +5,8 @@ last_updated: "2026-09-09"
 # Forward Availability v0.2
 
 **Forward Availability v0.2** corrects the first-state overconfidence found in
-[v0.1](forward-availability-v01.md). It remains a separate availability model,
-not yet an input to the minutes or win-projection pipeline.
+[v0.1](forward-availability-v01.md). It is the promoted availability component
+of the preseason minutes and win-projection stack.
 
 ## Corrected State Contract
 
@@ -70,7 +70,7 @@ Thomas Sorber is also retained despite zero NBA minutes in 2025-26: the panel
 records `1 / 82` availability at age 20 from the roster birth date. He is no
 longer silently omitted from the model family.
 
-## Integration Boundary
+## Integration
 
 This is the first availability model that clears its age-only benchmark. The
 next product decision is integration, not a replacement of the minutes model:
@@ -81,6 +81,8 @@ P(\mathrm{available}_{i,t})
 \times E[\mathrm{minutes}_{i,t} \mid \mathrm{available}_{i,t},\ \mathrm{team}].
 \]
 
-The probability is player-specific. Conditional minutes remain a joint team
-allocation, so availability should be wired in only with an explicit
-reallocation contract.
+The probability is player-specific. [Forward Conditional Minutes
+v0.1](forward-conditional-minutes-v01.md) supplies the other input, and the
+preseason pipeline ranks each opening roster by its raw expected total before
+normalizing the top 15 players to exactly 240 regulation minutes per game.
+Manual availability overrides are applied before that reallocation.

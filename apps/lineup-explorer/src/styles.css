@@ -152,7 +152,43 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .win-forecast-team-link:hover { color: #245a47; text-decoration: underline; text-decoration-color: #e8502f; text-underline-offset: 3px; }
 .win-forecast-team-link:focus-visible { outline: 2px solid #e8502f; outline-offset: 3px; }
 .win-forecast-wins { color: #245a47; font-size: 14px !important; font-weight: 900 !important; }
-.win-projections-toolbar { display: flex; align-items: end; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid #d9d6ce; }
+.win-loss-envelope { padding: 0 0 20px; border-bottom: 1px solid #d9d6ce; }
+.win-loss-envelope-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding: 0 0 12px; }
+.win-loss-envelope-heading .eyebrow { margin: 0 0 6px; }
+.win-loss-envelope-heading h2 { margin: 0; color: #17201c; font-size: 20px; line-height: 1; }
+.win-loss-envelope-meta { display: flex; align-items: center; justify-content: end; gap: 9px; }
+.win-loss-envelope-meta > p { margin: 0; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; text-align: right; white-space: nowrap; }
+.win-loss-envelope-download { height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #245a47; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.win-loss-envelope-download:hover:not(:disabled) { border-color: #245a47; background: #edf2e9; }
+.win-loss-envelope-download:disabled { cursor: default; opacity: 0.55; }
+.win-loss-envelope-export-error { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 11px; }
+.win-loss-envelope-chart { display: block; width: 100%; height: auto; overflow: visible; }
+.win-loss-envelope-chart line { stroke: #d9d6ce; stroke-width: 1; }
+.win-loss-envelope-chart text { fill: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; font-weight: 700; }
+.win-loss-envelope-chart .win-loss-envelope-axis-label { fill: #4f5851; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.win-loss-envelope-chart .win-loss-envelope-month-tick { stroke: #8d948e; stroke-width: 1; }
+.win-loss-envelope-chart .win-loss-envelope-month-label { fill: #4f5851; font-size: 9px; font-weight: 800; }
+.win-loss-envelope-watermark { opacity: 0.08; pointer-events: none; }
+.win-loss-envelope-outer-band { fill: #c9e0d4; opacity: 0.32; }
+.win-loss-envelope-band { fill: #c9e0d4; opacity: 0.78; }
+.win-loss-envelope-outer-boundary { fill: none; stroke: #9aafa3; stroke-dasharray: 2 4; stroke-width: 1; }
+.win-loss-envelope-boundary { fill: none; stroke: #6e8d7d; stroke-dasharray: 4 4; stroke-width: 1.25; }
+.win-loss-envelope-median { fill: none; stroke: #245a47; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; }
+.win-loss-envelope-tough-opponent line { stroke: #e8502f; stroke-dasharray: 2 3; stroke-width: 1; opacity: 0.62; }
+.win-loss-envelope-tough-game { fill: #e8502f; stroke: #fffefa; stroke-width: 1.5; }
+.win-loss-envelope-hover-line { stroke: #17201c !important; stroke-dasharray: 3 3; stroke-width: 1; }
+.win-loss-envelope-hover-point { fill: #fffefa; stroke: #245a47; stroke-width: 1.5; }
+.win-loss-envelope-hover-point.outer { stroke: #6e8d7d; stroke-width: 1.25; }
+.win-loss-envelope-hit-area { cursor: crosshair; fill: transparent; }
+.win-loss-envelope-tooltip { pointer-events: none; }
+.win-loss-envelope-tooltip rect { fill: #17201c; opacity: 0.82; }
+.win-loss-envelope-chart .win-loss-envelope-tooltip text { fill: #fffefa; font-size: 9px; font-weight: 700; }
+.win-loss-envelope-chart .win-loss-envelope-tooltip text:first-of-type { font-weight: 900; }
+.win-loss-envelope-chart .win-loss-envelope-tooltip .win-loss-envelope-tooltip-median { fill: #ffd84d; font-weight: 900; }
+.win-loss-envelope-endpoints { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 3px; }
+.win-loss-envelope-endpoints span { color: #245a47; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 900; text-align: center; }
+.win-loss-envelope-endpoints small { display: block; margin-bottom: 3px; color: #69716b; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.win-projections-toolbar { display: flex; align-items: end; gap: 20px; padding-top: 18px; padding-bottom: 18px; border-bottom: 1px solid #d9d6ce; }
 .win-projections-team-filter { display: grid; gap: 6px; color: #69716b; font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .win-projections-team-filter select { width: 128px; height: 38px; padding: 0 28px 0 10px; border: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 800; }
 .win-projections-reset { height: 32px; display: inline-flex; align-items: center; gap: 6px; margin-left: auto; padding: 0 10px; border: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #245a47; font-size: 11px; font-weight: 800; }
@@ -598,6 +634,8 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .win-projections-toolbar { align-items: flex-end; flex-wrap: wrap; }
   .win-forecast-heading { align-items: start; flex-direction: column; gap: 10px; }
   .win-forecast-heading > p { max-width: none; text-align: left; }
+  .win-loss-envelope-heading { align-items: start; flex-direction: column; }
+  .win-loss-envelope-meta { justify-content: start; }
   .win-projections-reset { margin-left: auto; }
   .win-projections-calculate { margin-left: -10px; }
   .rankings-page { padding-top: 52px; }

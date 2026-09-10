@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { Calculator, ChevronDown, ChevronUp, CircleAlert, LoaderCircle, RotateCcw } from "lucide-react";
+import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Calculator, ChevronDown, ChevronUp, CircleAlert, Download, LoaderCircle, RotateCcw } from "lucide-react";
 
 import type {
   MinutesProjectionPayload,
   MinutesProjectionPlayer,
   WinProjectionPayload,
+  WinProjectionScheduledGame,
   WinProjectionTeam,
 } from "./types";
 
@@ -28,6 +29,129 @@ type MinuteAllocation = {
 // Do not carry manual judgments made against the earlier all-roster baseline.
 const STORAGE_KEY = "nba-gestalt:win-projection-input-overrides:v3";
 const SEASON_GAMES = 82;
+const ENVELOPE_TRIALS = 10_000;
+
+type WinLossEnvelopePoint = {
+  game: number;
+  month: string | null;
+  opponent: string;
+  opponentTeam: string | null;
+  backToBack: boolean;
+  winProbability: number;
+  p1: number;
+  p5: number;
+  median: number;
+  p95: number;
+  p99: number;
+};
+
+type WinLossEnvelope = {
+  points: WinLossEnvelopePoint[];
+  gameCount: number;
+};
+
+type WinLossEnvelopeGame = {
+  gameDate: string;
+  gameId: string;
+  opponent: string;
+  opponentTeam: string | null;
+  backToBack: boolean;
+  winProbability: number;
+};
+
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const TEAM_LOGO_SLUGS: Record<string, string> = {
+  NOP: "no",
+  UTA: "utah",
+};
+
+function monthLabel(date: string) {
+  const month = Number(date.slice(5, 7));
+  return MONTH_LABELS[month - 1] ?? "";
+}
+
+function teamLogoUrl(team: string) {
+  const slug = TEAM_LOGO_SLUGS[team] ?? team.toLowerCase();
+  return `https://a.espncdn.com/i/teamlogos/nba/500/${slug}.png`;
+}
+
+function escapeSvg(value: string) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+function blobAsDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read team logo."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function loadTeamLogoDataUrls(teams: string[]) {
+  const entries = await Promise.all([...new Set(teams)].map(async (team) => {
+    try {
+      const response = await fetch(teamLogoUrl(team));
+      if (!response.ok) return [team, ""] as const;
+      return [team, await blobAsDataUrl(await response.blob())] as const;
+    } catch {
+      return [team, ""] as const;
+    }
+  }));
+  return new Map(entries);
+}
+
+async function downloadSvgAsPng(svg: string, filename: string) {
+  const sourceUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  try {
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("Could not render the Win-Loss Envelope."));
+      image.src = sourceUrl;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = 2400;
+    canvas.height = 1600;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("PNG export is unavailable in this browser.");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const png = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not encode the PNG.")), "image/png");
+    });
+    const downloadUrl = URL.createObjectURL(png);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(downloadUrl);
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+}
+
+const WIN_LOSS_ENVELOPE_EXPORT_STYLE = `
+  text { fill: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; font-weight: 700; }
+  .export-brand { fill: #69716b; font-size: 17px; font-weight: 800; }
+  .export-title { fill: #17201c; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 32px; font-weight: 800; }
+  .export-subtitle { fill: #69716b; font-size: 15px; }
+  .export-legend text { fill: #4f5851; font-size: 12px; }
+  .export-endpoint-label { fill: #69716b; font-size: 12px; font-weight: 800; }
+  .export-endpoint-value { fill: #245a47; font-size: 25px; font-weight: 900; }
+  line { stroke: #d9d6ce; stroke-width: 1; }
+  .win-loss-envelope-axis-label { fill: #4f5851; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+  .win-loss-envelope-month-tick { stroke: #8d948e; stroke-width: 1; }
+  .win-loss-envelope-month-label { fill: #4f5851; font-size: 9px; font-weight: 800; }
+  .win-loss-envelope-watermark { opacity: 0.08; }
+  .win-loss-envelope-outer-band { fill: #c9e0d4; opacity: 0.32; }
+  .win-loss-envelope-band { fill: #c9e0d4; opacity: 0.78; }
+  .win-loss-envelope-outer-boundary { fill: none; stroke: #9aafa3; stroke-dasharray: 2 4; stroke-width: 1; }
+  .win-loss-envelope-boundary { fill: none; stroke: #6e8d7d; stroke-dasharray: 4 4; stroke-width: 1.25; }
+  .win-loss-envelope-median { fill: none; stroke: #245a47; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; }
+  .win-loss-envelope-tough-opponent line { stroke: #e8502f; stroke-dasharray: 2 3; stroke-width: 1; opacity: 0.62; }
+  .win-loss-envelope-tough-game { fill: #e8502f; stroke: #fffefa; stroke-width: 1.5; }
+  .win-loss-envelope-hit-area { fill: transparent; }
+`;
 
 function overrideKey(team: string, playerId: number) {
   return `${team}:${playerId}`;
@@ -47,6 +171,327 @@ function marketDelta(team: WinProjectionTeam) {
   return team.betmgm_win_total === undefined
     ? null
     : team.projected_wins - team.betmgm_win_total;
+}
+
+function sigmoid(value: number) {
+  return 1 / (1 + Math.exp(-Math.max(-35, Math.min(35, value))));
+}
+
+function scheduledHomeWinProbability(
+  game: WinProjectionScheduledGame,
+  teamStrength: Map<string, number>,
+  winProbabilityScale: number,
+  homeCourt: number,
+  backToBack: number,
+) {
+  const edge = (teamStrength.get(game.home_team) ?? 0) - (teamStrength.get(game.away_team) ?? 0)
+    + homeCourt
+    + backToBack * (game.home_back_to_back - game.away_back_to_back);
+  return sigmoid(winProbabilityScale * edge);
+}
+
+function hashSeed(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  }
+  return hash >>> 0;
+}
+
+function seededRandom(seed: number) {
+  let state = seed;
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ value >>> 15, value | 1);
+    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+    return ((value ^ value >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function percentileFromHistogram(
+  histogram: Uint32Array,
+  offset: number,
+  binCount: number,
+  trials: number,
+  percentile: number,
+) {
+  const threshold = percentile * (trials - 1);
+  let cumulative = 0;
+  for (let value = 0; value < binCount; value += 1) {
+    cumulative += histogram[offset + value];
+    if (cumulative > threshold) return value;
+  }
+  return binCount - 1;
+}
+
+function simulateWinLossEnvelope(forecast: WinProjectionPayload, team: string): WinLossEnvelope | null {
+  const teamStrength = new Map(forecast.teams.map((item) => [item.team, item.team_strength]));
+  const scheduledGames: WinLossEnvelopeGame[] = forecast.scheduled_games
+    .filter((game) => game.home_team === team || game.away_team === team)
+    .map((game) => {
+      const homeProbability = scheduledHomeWinProbability(
+        game,
+        teamStrength,
+        forecast.win_probability_scale,
+        forecast.home_court,
+        forecast.back_to_back,
+      );
+      const home = team === game.home_team;
+      return {
+        gameDate: game.game_date,
+        gameId: game.game_id,
+        opponent: home ? `vs ${game.away_team}` : `@ ${game.home_team}`,
+        opponentTeam: home ? game.away_team : game.home_team,
+        backToBack: home ? game.home_back_to_back === 1 : game.away_back_to_back === 1,
+        winProbability: home ? homeProbability : 1 - homeProbability,
+      };
+    });
+  const cupGames: WinLossEnvelopeGame[] = Array.from(
+    { length: forecast.unassigned_regular_games_per_team },
+    (_, index) => {
+      const homeCourt = index % 2 === 0 ? forecast.home_court : -forecast.home_court;
+      return {
+        gameDate: index === 0 ? "2026-12-04" : "2026-12-10",
+        gameId: `NBA-CUP-${team}-${index + 1}`,
+        opponent: "NBA CUP",
+        opponentTeam: null,
+        backToBack: false,
+        winProbability: sigmoid(forecast.win_probability_scale * ((teamStrength.get(team) ?? 0) + homeCourt)),
+      };
+    },
+  );
+  const games = [...scheduledGames, ...cupGames].sort((left, right) => (
+    left.gameDate.localeCompare(right.gameDate) || left.gameId.localeCompare(right.gameId)
+  ));
+  const probabilities = games.map((game) => game.winProbability);
+  if (!probabilities.length) return null;
+
+  const binCount = probabilities.length + 1;
+  const histogram = new Uint32Array(probabilities.length * binCount);
+  const random = seededRandom(hashSeed(`${team}:${probabilities.map((value) => value.toFixed(6)).join(",")}`));
+  for (let trial = 0; trial < ENVELOPE_TRIALS; trial += 1) {
+    let wins = 0;
+    for (let game = 0; game < probabilities.length; game += 1) {
+      if (random() < probabilities[game]) wins += 1;
+      histogram[game * binCount + wins] += 1;
+    }
+  }
+
+  const points: WinLossEnvelopePoint[] = [{
+    game: 0, month: null, opponent: "", opponentTeam: null, backToBack: false, winProbability: 0, p1: 0, p5: 0, median: 0, p95: 0, p99: 0,
+  }];
+  for (let game = 0; game < probabilities.length; game += 1) {
+    const offset = game * binCount;
+    const currentMonth = games[game].gameDate.slice(0, 7);
+    const previousMonth = games[game - 1]?.gameDate.slice(0, 7);
+    points.push({
+      game: game + 1,
+      month: currentMonth === previousMonth ? null : monthLabel(games[game].gameDate),
+      opponent: games[game].opponent,
+      opponentTeam: games[game].opponentTeam,
+      backToBack: games[game].backToBack,
+      winProbability: games[game].winProbability,
+      p1: percentileFromHistogram(histogram, offset, binCount, ENVELOPE_TRIALS, 0.01),
+      p5: percentileFromHistogram(histogram, offset, binCount, ENVELOPE_TRIALS, 0.05),
+      median: percentileFromHistogram(histogram, offset, binCount, ENVELOPE_TRIALS, 0.5),
+      p95: percentileFromHistogram(histogram, offset, binCount, ENVELOPE_TRIALS, 0.95),
+      p99: percentileFromHistogram(histogram, offset, binCount, ENVELOPE_TRIALS, 0.99),
+    });
+  }
+  return { points, gameCount: probabilities.length };
+}
+
+function WinLossEnvelopeChart({ forecast, team }: { forecast: WinProjectionPayload; team: string }) {
+  const envelope = useMemo(() => simulateWinLossEnvelope(forecast, team), [forecast, team]);
+  const chartRef = useRef<SVGSVGElement>(null);
+  const [hoveredGame, setHoveredGame] = useState<number | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  if (!envelope) return null;
+
+  const width = 560;
+  const height = 300;
+  const margin = { top: 22, right: 20, bottom: 52, left: 38 };
+  const chartWidth = width - margin.left - margin.right;
+  const chartHeight = height - margin.top - margin.bottom;
+  const x = (game: number) => margin.left + chartWidth * game / envelope.gameCount;
+  const y = (wins: number) => margin.top + chartHeight * (1 - wins / envelope.gameCount);
+  const line = (key: "p1" | "p5" | "median" | "p95" | "p99") => envelope.points.map(
+    (point) => `${x(point.game)},${y(point[key])}`,
+  ).join(" ");
+  const band = (low: "p1" | "p5", high: "p95" | "p99") => [
+    ...envelope.points.map((point) => `${x(point.game)},${y(point[high])}`),
+    ...[...envelope.points].reverse().map((point) => `${x(point.game)},${y(point[low])}`),
+  ].join(" ");
+  const yTicks = [0, 20, 40, 60, 80].filter((tick) => tick <= envelope.gameCount);
+  const xTicks = [0, 20, 40, 60, 80].filter((tick) => tick <= envelope.gameCount);
+  const monthTicks = envelope.points.filter((point) => point.month);
+  const toughestGames = new Set(
+    envelope.points.slice(1)
+      .sort((left, right) => left.winProbability - right.winProbability || left.game - right.game)
+      .slice(0, 5)
+      .map((point) => point.game),
+  );
+  const final = envelope.points.at(-1)!;
+  const hovered = hoveredGame === null ? null : envelope.points[hoveredGame];
+  const tooltipWidth = 174;
+  const tooltipHeight = 136;
+  const tooltipX = hovered ? Math.min(x(hovered.game) + 10, width - margin.right - tooltipWidth) : 0;
+  const tooltipY = hovered ? Math.max(margin.top + 4, y(hovered.median) - tooltipHeight - 8) : 0;
+  const onPointerMove = (event: PointerEvent<SVGRectElement>) => {
+    const svg = event.currentTarget.ownerSVGElement;
+    if (!svg) return;
+    const bounds = svg.getBoundingClientRect();
+    const position = (event.clientX - bounds.left) * width / bounds.width;
+    const game = Math.max(1, Math.min(
+      envelope.gameCount,
+      Math.round((position - margin.left) * envelope.gameCount / chartWidth),
+    ));
+    setHoveredGame(game);
+  };
+  const record = (wins: number, game: number) => `${wins} W · ${game - wins} L`;
+  const downloadPng = async () => {
+    if (!chartRef.current || isExporting) return;
+    setIsExporting(true);
+    setExportError(null);
+    try {
+      const logos = await loadTeamLogoDataUrls([
+        team,
+        ...envelope.points.flatMap((point) => point.opponentTeam ? [point.opponentTeam] : []),
+      ]);
+      const inlinedByUrl = new Map(
+        Array.from(logos, ([logoTeam, dataUrl]) => [teamLogoUrl(logoTeam), dataUrl]),
+      );
+      const chart = chartRef.current.cloneNode(true) as SVGSVGElement;
+      chart.querySelectorAll("image").forEach((image) => {
+        const source = image.getAttribute("href");
+        const dataUrl = source ? inlinedByUrl.get(source) : undefined;
+        if (dataUrl) image.setAttribute("href", dataUrl);
+        else image.remove();
+      });
+      const exportSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800">
+        <style>${WIN_LOSS_ENVELOPE_EXPORT_STYLE}</style>
+        <rect width="1200" height="800" fill="#f8f6ef"/>
+        <text class="export-brand" x="44" y="50">NBA GESTALT</text>
+        <text class="export-title" x="44" y="87">${escapeSvg(team)} Win-Loss Envelope</text>
+        <text class="export-subtitle" x="44" y="114">${escapeSvg(forecast.season)} preseason outlook · ${envelope.gameCount} modeled games · ${ENVELOPE_TRIALS.toLocaleString()} trials</text>
+        <g class="export-legend" transform="translate(620 43)">
+          <rect x="0" y="0" width="24" height="13" fill="#c9e0d4" opacity="0.32"/><text x="31" y="11" font-size="12">P1–P99</text>
+          <rect x="132" y="0" width="24" height="13" fill="#c9e0d4" opacity="0.78"/><text x="163" y="11" font-size="12">P5–P95</text>
+          <line x1="0" x2="24" y1="31" y2="31" stroke="#245a47" stroke-width="3"/><text x="31" y="35" font-size="12">Median</text>
+          <circle cx="144" cy="31" r="5" fill="#e8502f" stroke="#fffefa" stroke-width="1.5"/><text x="157" y="35" font-size="12">Five toughest games</text>
+        </g>
+        <g transform="translate(40 145) scale(2)">${chart.innerHTML}</g>
+        <line x1="40" x2="1160" y1="754" y2="754" stroke="#d9d6ce" stroke-width="1"/>
+        <g text-anchor="middle">
+          <text class="export-endpoint-label" x="152" y="772">P1</text><text class="export-endpoint-value" x="152" y="792">${final.p1}</text>
+          <text class="export-endpoint-label" x="376" y="772">P5</text><text class="export-endpoint-value" x="376" y="792">${final.p5}</text>
+          <text class="export-endpoint-label" x="600" y="772">Median</text><text class="export-endpoint-value" x="600" y="792">${final.median}</text>
+          <text class="export-endpoint-label" x="824" y="772">P95</text><text class="export-endpoint-value" x="824" y="792">${final.p95}</text>
+          <text class="export-endpoint-label" x="1048" y="772">P99</text><text class="export-endpoint-value" x="1048" y="792">${final.p99}</text>
+        </g>
+      </svg>`;
+      await downloadSvgAsPng(
+        exportSvg,
+        `${team.toLowerCase()}-${forecast.season.replaceAll(/[^0-9]+/g, "-")}-win-loss-envelope.png`,
+      );
+    } catch (error) {
+      setExportError((error as Error).message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  return <section className="win-loss-envelope" aria-labelledby="win-loss-envelope-title">
+    <div className="win-loss-envelope-heading">
+      <div><p className="eyebrow">{team} outlook</p><h2 id="win-loss-envelope-title">Win-Loss Envelope.</h2></div>
+      <div className="win-loss-envelope-meta">
+        <p>{envelope.gameCount} modeled games · {ENVELOPE_TRIALS.toLocaleString()} trials</p>
+        <button type="button" className="win-loss-envelope-download" disabled={isExporting} onClick={() => void downloadPng()}>
+          {isExporting ? <LoaderCircle className="spin" size={13} /> : <Download size={13} />}
+          <span>{isExporting ? "Building PNG" : "Download PNG"}</span>
+        </button>
+      </div>
+    </div>
+    {exportError && <p className="win-loss-envelope-export-error"><CircleAlert size={14} /> {exportError}</p>}
+    <svg ref={chartRef} className="win-loss-envelope-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${team} cumulative wins through ${envelope.gameCount} known games, with 1st to 99th and 5th to 95th percentile prediction intervals`}>
+      {yTicks.map((tick) => <g key={`y-${tick}`}>
+        <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} />
+        <text x={margin.left - 7} y={y(tick) + 4} textAnchor="end">{tick}</text>
+      </g>)}
+      {xTicks.map((tick) => <g key={`x-${tick}`}>
+        <text x={x(tick)} y={height - margin.bottom + 20} textAnchor="middle">{tick}</text>
+      </g>)}
+      {monthTicks.map((point) => <g key={`month-${point.game}`}>
+        <line className="win-loss-envelope-month-tick" x1={x(point.game)} x2={x(point.game)} y1={height - margin.bottom} y2={height - margin.bottom + 5} />
+        <text className="win-loss-envelope-month-label" x={x(point.game)} y={height - margin.bottom + 37} textAnchor="middle">{point.month}</text>
+      </g>)}
+      <image
+        aria-hidden="true"
+        className="win-loss-envelope-watermark"
+        height="220"
+        href={teamLogoUrl(team)}
+        preserveAspectRatio="xMidYMid meet"
+        width="220"
+        x={margin.left + (chartWidth - 220) / 2}
+        y={margin.top + (chartHeight - 220) / 2}
+      />
+      <polygon className="win-loss-envelope-outer-band" points={band("p1", "p99")} />
+      <polygon className="win-loss-envelope-band" points={band("p5", "p95")} />
+      <polyline className="win-loss-envelope-outer-boundary" points={line("p1")} />
+      <polyline className="win-loss-envelope-outer-boundary" points={line("p99")} />
+      <polyline className="win-loss-envelope-boundary" points={line("p5")} />
+      <polyline className="win-loss-envelope-boundary" points={line("p95")} />
+      <polyline className="win-loss-envelope-median" points={line("median")} />
+      {envelope.points.slice(1).filter((point) => toughestGames.has(point.game) && point.opponentTeam).map((point) => (
+        <g key={`tough-opponent-${point.game}`} className="win-loss-envelope-tough-opponent">
+          <line x1={x(point.game)} x2={x(point.game)} y1={margin.top + 30} y2={y(point.median) - 5} />
+          <image
+            aria-hidden="true"
+            height="24"
+            href={teamLogoUrl(point.opponentTeam!)}
+            preserveAspectRatio="xMidYMid meet"
+            width="24"
+            x={x(point.game) - 12}
+            y={margin.top + 2}
+          />
+        </g>
+      ))}
+      {envelope.points.slice(1).filter((point) => toughestGames.has(point.game)).map((point) => (
+        <circle key={`tough-${point.game}`} className="win-loss-envelope-tough-game" cx={x(point.game)} cy={y(point.median)} r="4">
+          <title>One of the five lowest win-probability games</title>
+        </circle>
+      ))}
+      {hovered && <>
+        <line className="win-loss-envelope-hover-line" x1={x(hovered.game)} x2={x(hovered.game)} y1={margin.top} y2={height - margin.bottom} />
+        <circle className="win-loss-envelope-hover-point outer" cx={x(hovered.game)} cy={y(hovered.p1)} r="2.5" />
+        <circle className="win-loss-envelope-hover-point" cx={x(hovered.game)} cy={y(hovered.p5)} r="3" />
+        <circle className="win-loss-envelope-hover-point" cx={x(hovered.game)} cy={y(hovered.median)} r="3.5" />
+        <circle className="win-loss-envelope-hover-point" cx={x(hovered.game)} cy={y(hovered.p95)} r="3" />
+        <circle className="win-loss-envelope-hover-point outer" cx={x(hovered.game)} cy={y(hovered.p99)} r="2.5" />
+        <g className="win-loss-envelope-tooltip" transform={`translate(${tooltipX} ${tooltipY})`}>
+          <rect width={tooltipWidth} height={tooltipHeight} />
+          <text x="8" y="15">Game {hovered.game} · {hovered.opponent}{hovered.backToBack ? " · B2B" : ""}</text>
+          <text x="8" y="34">P1: {record(hovered.p1, hovered.game)}</text>
+          <text x="8" y="52">P5: {record(hovered.p5, hovered.game)}</text>
+          <text className="win-loss-envelope-tooltip-median" x="8" y="70">Median: {record(hovered.median, hovered.game)}</text>
+          <text x="8" y="88">P95: {record(hovered.p95, hovered.game)}</text>
+          <text x="8" y="106">P99: {record(hovered.p99, hovered.game)}</text>
+          <text x="8" y="124">Win probability: {(hovered.winProbability * 100).toFixed(1)}%</text>
+        </g>
+      </>}
+      <rect className="win-loss-envelope-hit-area" x={margin.left} y={margin.top} width={chartWidth} height={chartHeight} onPointerMove={onPointerMove} onPointerLeave={() => setHoveredGame(null)} />
+      <text className="win-loss-envelope-axis-label" x={margin.left} y={12}>Wins</text>
+    </svg>
+    <div className="win-loss-envelope-endpoints" aria-label="Final modeled-schedule win range">
+      <span><small>P1</small>{final.p1}</span>
+      <span><small>P5</small>{final.p5}</span>
+      <span><small>Median</small>{final.median}</span>
+      <span><small>P95</small>{final.p95}</span>
+      <span><small>P99</small>{final.p99}</span>
+    </div>
+  </section>;
 }
 
 function readOverrides(): Overrides {
@@ -145,13 +590,15 @@ function calculateProjection(
     / rawStrength.size;
   const strength = new Map(Array.from(rawStrength, ([team, value]) => [team, value - meanStrength]));
   const scheduledWins = new Map(payload.teams.map((team) => [team, 0]));
-  const sigmoid = (value: number) => 1 / (1 + Math.exp(-Math.max(-35, Math.min(35, value))));
 
   for (const game of baseline.scheduled_games) {
-    const edge = (strength.get(game.home_team) ?? 0) - (strength.get(game.away_team) ?? 0)
-      + baseline.home_court
-      + baseline.back_to_back * (game.home_back_to_back - game.away_back_to_back);
-    const homeWinProbability = sigmoid(baseline.win_probability_scale * edge);
+    const homeWinProbability = scheduledHomeWinProbability(
+      game,
+      strength,
+      baseline.win_probability_scale,
+      baseline.home_court,
+      baseline.back_to_back,
+    );
     scheduledWins.set(
       game.home_team,
       (scheduledWins.get(game.home_team) ?? 0) + homeWinProbability,
@@ -287,13 +734,6 @@ export function WinProjectionsPage() {
     }));
   };
 
-  const resetTeam = () => {
-    setForecastNeedsUpdate(true);
-    setOverrides((current) => Object.fromEntries(
-      Object.entries(current).filter(([key]) => !key.startsWith(`${team}:`)),
-    ));
-  };
-
   const selectForecastTeam = (nextTeam: string) => {
     setTeam(nextTeam);
   };
@@ -315,6 +755,16 @@ export function WinProjectionsPage() {
     setCalculatedForecast(calculateProjection(payload, baselineForecast, overrides));
     setForecastNeedsUpdate(false);
   };
+  const resetTeam = () => {
+    const nextOverrides = Object.fromEntries(
+      Object.entries(overrides).filter(([key]) => !key.startsWith(`${team}:`)),
+    );
+    setOverrides(nextOverrides);
+    if (baselineForecast) {
+      setCalculatedForecast(calculateProjection(payload, baselineForecast, nextOverrides));
+    }
+    setForecastNeedsUpdate(false);
+  };
 
   return (
     <article className="win-projections-page" aria-labelledby="win-projections-title">
@@ -328,7 +778,7 @@ export function WinProjectionsPage() {
         {forecast && <section className="win-forecast" aria-labelledby="win-forecast-title">
           <div className="win-forecast-heading">
             <div><p className="eyebrow">{calculatedForecast && !forecastNeedsUpdate ? "Custom forecast" : "Baseline forecast"}</p><h2 id="win-forecast-title">Projected wins.</h2></div>
-            <p>{forecast.scheduled_games_per_team} scheduled games + {forecast.unassigned_regular_games_per_team} unassigned NBA Cup-related games.</p>
+            <p>{forecast.scheduled_games_per_team} scheduled games + {forecast.unassigned_regular_games_per_team} modeled NBA Cup games.</p>
           </div>
           <div className="win-forecast-table-wrap"><table className="win-forecast-table">
             <thead><tr>
@@ -361,6 +811,7 @@ export function WinProjectionsPage() {
           <p className="win-projections-note">{forecast.contract} {forecast.market_win_totals && <><a href={forecast.market_win_totals.source_url} target="_blank" rel="noreferrer">{forecast.market_win_totals.provider} win totals</a> captured {forecast.market_win_totals.as_of}; O/U compares projected wins to that line. </>}Calibration: {forecast.calibration.calibration_season} only; {forecast.calibration.holdout_season} Brier {forecast.calibration.holdout_brier.toFixed(3)}, accuracy {(forecast.calibration.holdout_accuracy * 100).toFixed(1)}%.</p>
         </section>}
         <section className="win-team-panel" id="team-minutes" aria-label={`${team} minute projection`}>
+        {forecast && <WinLossEnvelopeChart forecast={forecast} team={team} />}
         <div className="win-projections-toolbar">
           <label className="win-projections-team-filter">
             <span>Team</span>

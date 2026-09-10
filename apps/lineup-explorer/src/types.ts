@@ -182,6 +182,7 @@ export type WinProjectionTeam = {
 
 export type WinProjectionScheduledGame = {
   game_id: string;
+  game_date: string;
   home_team: string;
   away_team: string;
   home_back_to_back: number;
