@@ -23,6 +23,7 @@ HISTORICAL_REALIZED_PROFILE_CACHE="artifacts/web/historical_realized_profiles/${
 PRESEASON_CACHE="artifacts/web/preseason_rankings/${MODEL_ARTIFACT}/${RUN_ID}"
 PRESEASON_PROFILE_CACHE="artifacts/web/preseason_profiles/${MODEL_ARTIFACT}/${RUN_ID}"
 CONSTRAINED_SPLIT_CACHE="artifacts/web/constrained_split_ratings/${MODEL_ARTIFACT}/${RUN_ID}"
+WIN_PROJECTION_CACHE="artifacts/web/win_projections/${MODEL_ARTIFACT}/${RUN_ID}.json"
 RELEASE_MANIFEST="artifacts/web/releases/${MODEL_ARTIFACT}/${RUN_ID}/bundle_manifest.json"
 PANEL="data/analytical/player_season_panel"
 CURRENT_ROSTERS="data/curated/team_rosters/2026-27"
@@ -30,6 +31,7 @@ PRIOR_ROSTER_SNAPSHOT="data/curated/team_rosters/2025-26/final_regular_season_sn
 PLAYER_CATALOG="data/catalog/players.parquet"
 
 cd "$ROOT_DIR"
+uv run nba-build-gestalt-win-projections
 uv run nba-validate-gestalt-release --season "$DISPLAY_SEASON" --run-id "$RUN_ID"
 
 required_paths=(
@@ -44,6 +46,7 @@ required_paths=(
   "$PRESEASON_CACHE"
   "$PRESEASON_PROFILE_CACHE"
   "$CONSTRAINED_SPLIT_CACHE"
+  "$WIN_PROJECTION_CACHE"
   "$RELEASE_MANIFEST"
   "$PANEL"
   "$CURRENT_ROSTERS"
@@ -70,6 +73,7 @@ mkdir -p "$(dirname "$STAGING_DIR/$HISTORICAL_REALIZED_PROFILE_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$PRESEASON_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$PRESEASON_PROFILE_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$CONSTRAINED_SPLIT_CACHE")"
+mkdir -p "$(dirname "$STAGING_DIR/$WIN_PROJECTION_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$RELEASE_MANIFEST")"
 mkdir -p "$STAGING_DIR/$CURRENT_ROSTERS"
 mkdir -p "$(dirname "$STAGING_DIR/$PRIOR_ROSTER_SNAPSHOT")"
@@ -89,6 +93,7 @@ rsync -a "$HISTORICAL_REALIZED_PROFILE_CACHE" "$STAGING_DIR/$HISTORICAL_REALIZED
 rsync -a "$PRESEASON_CACHE/" "$STAGING_DIR/$PRESEASON_CACHE/"
 rsync -a "$PRESEASON_PROFILE_CACHE/" "$STAGING_DIR/$PRESEASON_PROFILE_CACHE/"
 rsync -a "$CONSTRAINED_SPLIT_CACHE/" "$STAGING_DIR/$CONSTRAINED_SPLIT_CACHE/"
+rsync -a "$WIN_PROJECTION_CACHE" "$STAGING_DIR/$WIN_PROJECTION_CACHE"
 rsync -a "$RELEASE_MANIFEST" "$STAGING_DIR/$RELEASE_MANIFEST"
 rsync -a "$PANEL/" "$STAGING_DIR/$PANEL/"
 rsync -a "$CURRENT_ROSTERS/" "$STAGING_DIR/$CURRENT_ROSTERS/"
@@ -106,6 +111,7 @@ cat > "$STAGING_DIR/release.json" <<EOF
   "context_alpha": 10000,
   "profile_padding_contract": "medvedovsky_2020_stat_specific",
   "constrained_split_cache": "${CONSTRAINED_SPLIT_CACHE}",
+  "win_projection_cache": "${WIN_PROJECTION_CACHE}",
   "bundle_manifest": "${RELEASE_MANIFEST}"
 }
 EOF

@@ -142,6 +142,11 @@ def test_forward_conditional_payload_squashes_availability_times_minutes(
     )
     monkeypatch.setattr(
         preseason_minutes,
+        "attach_cold_start_biographies",
+        lambda frame: frame,
+    )
+    monkeypatch.setattr(
+        preseason_minutes,
         "predict_availability_roster",
         lambda *_a, **_k: (
             pd.DataFrame(

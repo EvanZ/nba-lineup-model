@@ -6,6 +6,7 @@ import pytest
 
 from nba_lineup_model.rotation.forward_conditional_minutes import (
     AGE_ONLY_CONFIG,
+    ColdStartConditionalMinutesConfig,
     ForwardConditionalMinutesConfig,
     attach_expected_total_minutes,
     normalize_opening_roster_minutes,
@@ -125,3 +126,60 @@ def test_combined_expected_minutes_multiplies_both_forward_components() -> None:
     availability = pd.DataFrame({"player_id": [1], "predicted_available_share": [0.5]})
     combined = attach_expected_total_minutes(conditional, availability)
     assert combined.loc[0, "raw_expected_total_minutes"] == pytest.approx(820.0)
+
+
+def test_draft_cold_start_prior_lifts_top_pick_without_affecting_non_rookie() -> None:
+    history = pd.DataFrame(
+        [
+            {
+                "season": "2020-21",
+                "season_start_year": 2020,
+                "player_id": player_id,
+                "player_name": name,
+                "age": 20.0,
+                "available_games": 60,
+                "known_player_games": 82,
+                "available_share": 60 / 82,
+                "total_nba_minutes": 60 * mpg,
+                "minutes_per_available_game": mpg,
+                "draft_number": pick,
+                "is_undrafted": False,
+                "listed_position": "G",
+                "is_rookie": True,
+            }
+            for player_id, name, pick, mpg in (
+                (10, "Top pick", 1, 31.0),
+                (11, "Lottery pick", 8, 26.0),
+                (12, "Late pick", 44, 8.0),
+                (13, "Second round", 56, 5.0),
+            )
+        ]
+    )
+    roster = pd.DataFrame(
+        {
+            "player_id": [20, 21, 22],
+            "player_name": ["New top pick", "New late pick", "Veteran arrival"],
+            "age": [20.0, 20.0, 20.0],
+            "draft_number": [2.0, 52.0, 15.0],
+            "is_undrafted": [False, False, False],
+            "listed_position": ["G", "G", "G"],
+            "is_rookie": [True, True, False],
+        }
+    )
+
+    predictions, _age = predict_conditional_minutes_roster(
+        history,
+        roster=roster,
+        target_season="2021-22",
+        config=ForwardConditionalMinutesConfig(1.0, 15.0, 15.0),
+        cold_start_config=ColdStartConditionalMinutesConfig(alpha=1.0),
+    )
+
+    values = predictions.set_index("player_id")
+    assert values.loc[20, "uses_draft_cold_start_prior"]
+    assert values.loc[21, "uses_draft_cold_start_prior"]
+    assert not values.loc[22, "uses_draft_cold_start_prior"]
+    assert (
+        values.loc[20, "predicted_minutes_per_available_game"]
+        > values.loc[21, "predicted_minutes_per_available_game"]
+    )

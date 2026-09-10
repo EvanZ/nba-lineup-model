@@ -252,6 +252,7 @@ nba-build-gestalt-exposure-cohort = "nba_lineup_model.web_api.exposure_cohort_ca
 nba-build-gestalt-historical-profiles = "nba_lineup_model.web_api.historical_profile_cache:main"
 nba-build-gestalt-realized-profiles = "nba_lineup_model.web_api.historical_realized_profile_cache:main"
 nba-build-gestalt-preseason-rankings = "nba_lineup_model.web_api.preseason_rankings_cache:main"
+nba-build-gestalt-win-projections = "nba_lineup_model.web_api.win_projections:main"
 nba-validate-gestalt-release = "nba_lineup_model.web_api.release_validation:main"
 nba-build-win-total-benchmark = "nba_lineup_model.rotation.win_total_benchmark:main"
 

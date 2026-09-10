@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -26,6 +29,9 @@ CALIBRATION_SEASON = "2024-25"
 HOLDOUT_SEASON = "2025-26"
 PROJECTION_SEASON = "2026-27"
 UNASSIGNED_REGULAR_GAMES = 2
+WIN_TOTAL_INTERVAL_TRIALS = 10_000
+WIN_TOTAL_INTERVAL_SEED = 20_260_910
+DEFAULT_WIN_PROJECTION_CACHE_DIR = Path("artifacts/web/win_projections")
 
 
 def build_win_projection_payload(
@@ -66,6 +72,13 @@ def build_win_projection_payload(
     if teams["betmgm_win_total"].isna().any():
         missing = teams.loc[teams["betmgm_win_total"].isna(), "team"].tolist()
         raise ValueError(f"Missing BetMGM win totals for current teams: {missing}")
+    intervals = simulate_baseline_win_total_intervals(
+        game_rows,
+        team_strength=current_strength,
+        beta=calibration["production_beta"],
+        home_court=float(controls.home_court),
+    )
+    teams = teams.merge(intervals, on="team", how="left", validate="one_to_one")
     return {
         "model": "W0 minute-weighted NAIL",
         "season": PROJECTION_SEASON,
@@ -75,6 +88,7 @@ def build_win_projection_payload(
         "win_probability_scale": float(calibration["production_beta"]),
         "home_court": float(controls.home_court),
         "back_to_back": float(controls.back_to_back),
+        "win_total_interval_trials": WIN_TOTAL_INTERVAL_TRIALS,
         "calibration": calibration,
         "market_win_totals": BETMGM_WIN_TOTALS_2026_27_METADATA,
         "teams": teams.to_dict(orient="records"),
@@ -108,6 +122,130 @@ def build_win_projection_payload(
             "games are estimated against a neutral opponent with one home and one away setting."
         ),
     }
+
+
+def win_projection_cache_path(model_artifact: str, run_id: str) -> Path:
+    """Return the immutable release path for a baseline W0 payload."""
+
+    return DEFAULT_WIN_PROJECTION_CACHE_DIR / model_artifact / f"{run_id}.json"
+
+
+def materialize_win_projection_cache(
+    *,
+    evaluator: LineupEvaluator,
+    output_path: Path | str | None = None,
+) -> Path:
+    """Build the all-team baseline envelope once for a release bundle."""
+
+    from nba_lineup_model.web_api.inference import MODEL_ARTIFACT
+    from nba_lineup_model.web_api.preseason_minutes import (
+        build_forward_conditional_preseason_minutes_payload,
+    )
+
+    minutes = build_forward_conditional_preseason_minutes_payload(
+        preseason_rankings=evaluator.preseason_rankings,
+    )
+    payload = build_win_projection_payload(evaluator=evaluator, minutes_payload=minutes)
+    path = Path(output_path) if output_path is not None else win_projection_cache_path(
+        MODEL_ARTIFACT, evaluator.run_id
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=_json_default) + "\n")
+    return path
+
+
+def read_win_projection_cache(*, model_artifact: str, run_id: str) -> dict[str, object]:
+    """Read the release-materialized W0 payload without a request-path replay."""
+
+    path = win_projection_cache_path(model_artifact, run_id)
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing materialized win projection cache: {path}")
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid win projection cache payload: {path}")
+    return payload
+
+
+def simulate_baseline_win_total_intervals(
+    games: pd.DataFrame,
+    *,
+    team_strength: pd.Series,
+    beta: float,
+    home_court: float,
+    trials: int = WIN_TOTAL_INTERVAL_TRIALS,
+    seed: int = WIN_TOTAL_INTERVAL_SEED,
+) -> pd.DataFrame:
+    """Simulate final win-total quantiles for every baseline team schedule.
+
+    Each team gets an independent deterministic draw stream. This mirrors the
+    public envelope's within-team Bernoulli contract while making the published
+    P5--P95 table values reproducible in the release bundle.
+    """
+
+    if trials <= 0:
+        raise ValueError("Win-total interval trials must be positive")
+    required = {"home_team_tricode", "away_team_tricode", "home_win_probability"}
+    missing = sorted(required - set(games))
+    if missing:
+        raise ValueError("Win-total intervals require: " + ", ".join(missing))
+
+    probabilities: dict[str, list[float]] = {str(team): [] for team in team_strength.index}
+    for row in games.loc[
+        :, ["home_team_tricode", "away_team_tricode", "home_win_probability"]
+    ].itertuples(index=False):
+        home_team = str(row.home_team_tricode)
+        away_team = str(row.away_team_tricode)
+        home_probability = float(row.home_win_probability)
+        probabilities[home_team].append(home_probability)
+        probabilities[away_team].append(1.0 - home_probability)
+
+    for team, strength in team_strength.items():
+        probabilities[str(team)].extend(
+            [
+                float(_sigmoid(beta * (float(strength) + home_court))),
+                float(_sigmoid(beta * (float(strength) - home_court))),
+            ]
+        )
+
+    rows: list[dict[str, float | str]] = []
+    for team in sorted(probabilities):
+        team_probabilities = np.asarray(probabilities[team], dtype=float)
+        if len(team_probabilities) != 82:
+            raise ValueError(
+                f"Expected 82 modeled games for {team}; found {len(team_probabilities)}"
+            )
+        team_seed = seed + sum((index + 1) * ord(character) for index, character in enumerate(team))
+        generator = np.random.default_rng(team_seed)
+        totals = (generator.random((trials, len(team_probabilities))) < team_probabilities).sum(axis=1)
+        ordered = np.sort(totals)
+        rows.append(
+            {
+                "team": team,
+                "win_total_p1": float(_empirical_quantile(ordered, 0.01)),
+                "win_total_p5": float(_empirical_quantile(ordered, 0.05)),
+                "win_total_p50": float(_empirical_quantile(ordered, 0.50)),
+                "win_total_p95": float(_empirical_quantile(ordered, 0.95)),
+                "win_total_p99": float(_empirical_quantile(ordered, 0.99)),
+            }
+        )
+    return pd.DataFrame.from_records(rows)
+
+
+def _empirical_quantile(ordered_values: np.ndarray, probability: float) -> int:
+    """Match the public envelope's nearest-upper empirical percentile rule."""
+
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError("Empirical percentile must lie between zero and one")
+    index = int(np.ceil(probability * (len(ordered_values) - 1)))
+    return int(ordered_values[index])
+
+
+def _json_default(value: Any) -> object:
+    """Serialize NumPy scalars without changing the cache's JSON contract."""
+
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"Object is not JSON serializable: {type(value).__name__}")
 
 
 def _frozen_calibration(*, evaluator: LineupEvaluator, catalog: pd.DataFrame) -> dict[str, float]:
@@ -294,7 +432,15 @@ def _team_win_totals(
     )
     neutral_home = _sigmoid(beta * (output["team_strength"].to_numpy(dtype=float) + home_court))
     neutral_away = _sigmoid(beta * (output["team_strength"].to_numpy(dtype=float) - home_court))
-    output["unassigned_wins"] = UNASSIGNED_REGULAR_GAMES * (neutral_home + neutral_away) / 2.0
+    raw_unassigned_wins = UNASSIGNED_REGULAR_GAMES * (neutral_home + neutral_away) / 2.0
+    # The two unresolved Cup games must still contribute exactly 30 league wins.
+    # Preserve teams' relative neutral-opponent differences, then center their
+    # aggregate expectation to one win per team.
+    output["unassigned_wins"] = (
+        raw_unassigned_wins
+        - float(raw_unassigned_wins.mean())
+        + UNASSIGNED_REGULAR_GAMES / 2.0
+    )
     output["projected_wins"] = output["scheduled_wins"] + output["unassigned_wins"]
     output["projected_losses"] = 82.0 - output["projected_wins"]
     return output.sort_values(
@@ -480,3 +626,21 @@ def _previous_season(season: str) -> str:
 def _sigmoid(values: np.ndarray) -> np.ndarray:
     clipped = np.clip(values, -35.0, 35.0)
     return 1.0 / (1.0 + np.exp(-clipped))
+
+
+def main() -> int:
+    """Materialize the immutable baseline win-total interval cache."""
+
+    parser = argparse.ArgumentParser(
+        description="Build the release-time NBA GESTALT win projection cache"
+    )
+    parser.add_argument("--output", type=Path, default=None)
+    args = parser.parse_args()
+    evaluator = LineupEvaluator.from_latest_artifact()
+    path = materialize_win_projection_cache(evaluator=evaluator, output_path=args.output)
+    print(f"Materialized win projection cache: {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -6,9 +6,11 @@ import pytest
 from nba_lineup_model.web_api.market_win_totals import BETMGM_WIN_TOTALS_2026_27
 from nba_lineup_model.web_api.win_projections import (
     _completed_team_win_totals,
+    _team_win_totals,
     fit_win_probability_scale,
     score_season_win_forecasts,
     score_win_probabilities,
+    simulate_baseline_win_total_intervals,
 )
 
 
@@ -51,3 +53,48 @@ def test_completed_team_win_totals_and_scores() -> None:
         "rmse": pytest.approx(1.0),
         "bias": pytest.approx(0.0),
     }
+
+
+def test_baseline_win_total_intervals_are_deterministic_and_ordered() -> None:
+    games = pd.DataFrame(
+        {
+            "home_team_tricode": ["AAA"] * 40 + ["BBB"] * 40,
+            "away_team_tricode": ["BBB"] * 40 + ["AAA"] * 40,
+            "home_win_probability": [0.5] * 80,
+        }
+    )
+    strength = pd.Series({"AAA": 0.0, "BBB": 0.0})
+
+    first = simulate_baseline_win_total_intervals(
+        games, team_strength=strength, beta=0.1, home_court=0.0, trials=1_000, seed=7
+    )
+    second = simulate_baseline_win_total_intervals(
+        games, team_strength=strength, beta=0.1, home_court=0.0, trials=1_000, seed=7
+    )
+
+    pd.testing.assert_frame_equal(first, second)
+    assert first["win_total_p1"].le(first["win_total_p5"]).all()
+    assert first["win_total_p5"].le(first["win_total_p50"]).all()
+    assert first["win_total_p50"].le(first["win_total_p95"]).all()
+    assert first["win_total_p95"].le(first["win_total_p99"]).all()
+
+
+def test_unassigned_cup_placeholder_preserves_the_league_win_total() -> None:
+    games = pd.DataFrame(
+        {
+            "home_team_tricode": ["AAA"] * 40 + ["BBB"] * 40,
+            "away_team_tricode": ["BBB"] * 40 + ["AAA"] * 40,
+            "home_win_probability": [0.6] * 40 + [0.4] * 40,
+        }
+    )
+
+    totals = _team_win_totals(
+        games,
+        team_strength=pd.Series({"AAA": 2.0, "BBB": -2.0}),
+        beta=0.1,
+        home_court=2.0,
+    )
+
+    assert totals["scheduled_wins"].sum() == pytest.approx(80.0)
+    assert totals["unassigned_wins"].sum() == pytest.approx(2.0)
+    assert totals["projected_wins"].sum() == pytest.approx(82.0)

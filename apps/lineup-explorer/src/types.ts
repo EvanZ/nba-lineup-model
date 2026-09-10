@@ -173,6 +173,11 @@ export type WinProjectionTeam = {
   team: string;
   team_strength: number;
   betmgm_win_total?: number;
+  win_total_p1: number;
+  win_total_p5: number;
+  win_total_p50: number;
+  win_total_p95: number;
+  win_total_p99: number;
   scheduled_wins: number;
   scheduled_games: number;
   unassigned_wins: number;
@@ -198,6 +203,7 @@ export type WinProjectionPayload = {
   win_probability_scale: number;
   home_court: number;
   back_to_back: number;
+  win_total_interval_trials: number;
   calibration: {
     calibration_season: string;
     holdout_season: string;

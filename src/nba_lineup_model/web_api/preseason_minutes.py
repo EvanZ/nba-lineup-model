@@ -14,7 +14,9 @@ from nba_lineup_model.rotation.forward_availability import (
 )
 from nba_lineup_model.rotation.forward_conditional_minutes import (
     PROMOTED_AVAILABILITY_CONFIG,
+    ColdStartConditionalMinutesConfig,
     ForwardConditionalMinutesConfig,
+    attach_cold_start_biographies,
     attach_expected_total_minutes,
     normalize_opening_roster_minutes,
     predict_conditional_minutes_roster,
@@ -46,6 +48,9 @@ PROMOTED_CONDITIONAL_MINUTES_CONFIG = ForwardConditionalMinutesConfig(
     persistence=1.0,
     update_strength=15.0,
     initial_strength=30.0,
+)
+PROMOTED_COLD_START_CONDITIONAL_MINUTES_CONFIG = ColdStartConditionalMinutesConfig(
+    alpha=0.01
 )
 
 
@@ -215,7 +220,10 @@ def build_forward_conditional_preseason_minutes_payload(
     target_year = int(target_season[:4])
     history_seasons = tuple(f"{year}-{str(year + 1)[-2:]}" for year in range(2015, target_year))
     summary = build_availability_season_summary(history_seasons, curated_dir=curated_dir)
-    forecast_roster = roster.loc[:, ["player_id", "player_name", "age"]].copy()
+    summary = attach_cold_start_biographies(summary)
+    forecast_roster = _conditional_minutes_roster_profile(
+        roster, target_season=target_season, curated_dir=curated_dir
+    )
     availability, _availability_age, _availability_metadata = predict_availability_roster(
         summary,
         roster=forecast_roster,
@@ -227,6 +235,7 @@ def build_forward_conditional_preseason_minutes_payload(
         roster=forecast_roster,
         target_season=target_season,
         config=PROMOTED_CONDITIONAL_MINUTES_CONFIG,
+        cold_start_config=PROMOTED_COLD_START_CONDITIONAL_MINUTES_CONFIG,
     )
     combined = attach_expected_total_minutes(conditional, availability)
     opening_roster = roster.rename(columns={"team_abbreviation": "team"}).loc[
@@ -315,7 +324,7 @@ def build_forward_conditional_preseason_minutes_payload(
     return {
         "season": target_season,
         "completed_season": history_seasons[-1],
-        "model": "Forward Availability v0.2 + Forward Conditional Minutes v0.1",
+        "model": "Forward Availability v0.2 + Forward Conditional Minutes v0.2",
         "initial_rotation_size": initial_rotation_size,
         "regulation_team_minutes": REGULATION_TEAM_MINUTES,
         "contract": (
@@ -328,6 +337,36 @@ def build_forward_conditional_preseason_minutes_payload(
         "teams": sorted(roster["team_abbreviation"].astype(str).unique().tolist()),
         "players": rows,
     }
+
+
+def _conditional_minutes_roster_profile(
+    roster: pd.DataFrame,
+    *,
+    target_season: str,
+    curated_dir: Path | str,
+) -> pd.DataFrame:
+    """Return the static rookie fields required by the conditional-minutes prior."""
+
+    columns = ["player_id", "player_name", "age", "listed_position"]
+    if "experience" in roster:
+        columns.append("experience")
+    output = roster.loc[:, columns].copy()
+    if "experience" not in output:
+        output["experience"] = 0.0
+    output["player_id"] = pd.to_numeric(output["player_id"], errors="raise").astype(int)
+    experience = pd.to_numeric(output["experience"], errors="coerce")
+    output["is_rookie"] = experience.fillna(0.0).eq(0.0)
+    draft_path = Path(curated_dir) / "draft_history" / target_season / "part-00000.parquet"
+    if draft_path.exists():
+        draft = pd.read_parquet(draft_path, columns=["player_id", "draft_number"])
+        draft["player_id"] = pd.to_numeric(draft["player_id"], errors="raise").astype(int)
+        draft = draft.drop_duplicates("player_id", keep="last")
+        output = output.merge(draft, on="player_id", how="left", validate="one_to_one")
+    else:
+        output["draft_number"] = np.nan
+    output["draft_number"] = pd.to_numeric(output["draft_number"], errors="coerce")
+    output["is_undrafted"] = output["is_rookie"] & output["draft_number"].isna()
+    return output.drop(columns="experience")
 
 
 def _apply_raw_expected_total_rotation_limit(

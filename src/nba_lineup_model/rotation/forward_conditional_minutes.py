@@ -29,8 +29,17 @@ DEFAULT_FROZEN_SEASONS = ("2023-24", "2024-25", "2025-26")
 DEFAULT_PERSISTENCE_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)
 DEFAULT_UPDATE_STRENGTH_GRID = (5.0, 15.0, 30.0, 60.0)
 DEFAULT_INITIAL_STRENGTH_GRID = (5.0, 15.0, 30.0, 60.0)
+DEFAULT_COLD_START_ALPHA_GRID = (0.01, 0.1, 1.0, 10.0, 100.0)
 PROMOTED_AVAILABILITY_CONFIG = ForwardAvailabilityConfig(0.5, 60.0, 15.0, -0.25)
 REGULATION_SEASON_TEAM_MINUTES = 82.0 * 240.0
+_COLD_START_FEATURE_COLUMNS = (
+    "draft_capital",
+    "is_undrafted",
+    "rookie_age_offset",
+    "is_guard",
+    "is_forward",
+    "is_center",
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +52,13 @@ class ForwardConditionalMinutesConfig:
 
 
 AGE_ONLY_CONFIG = ForwardConditionalMinutesConfig(0.0, 0.0, 0.0)
+
+
+@dataclass(frozen=True)
+class ColdStartConditionalMinutesConfig:
+    """Ridge penalty for the draft-informed rookie conditional-minutes prior."""
+
+    alpha: float
 
 
 @dataclass(frozen=True)
@@ -61,6 +77,22 @@ class AgeConditionalMinutesModel:
             design = np.column_stack((np.ones(len(centered)), centered, np.square(centered)))
             output[known] = design @ self.coefficients
         return output
+
+
+@dataclass(frozen=True)
+class FittedColdStartConditionalMinutesModel:
+    """Draft-informed residual around the pooled age conditional-minutes curve."""
+
+    feature_mean: np.ndarray
+    feature_scale: np.ndarray
+    coefficients: np.ndarray
+    intercept: float
+    config: ColdStartConditionalMinutesConfig
+
+    def predict_residual(self, features: pd.DataFrame) -> np.ndarray:
+        values = features.loc[:, list(_COLD_START_FEATURE_COLUMNS)].to_numpy(dtype=float)
+        standardized = (values - self.feature_mean) / self.feature_scale
+        return standardized @ self.coefficients + self.intercept
 
 
 @dataclass(frozen=True)
@@ -100,11 +132,77 @@ def fit_age_conditional_minutes_model(summary: pd.DataFrame) -> AgeConditionalMi
     )
 
 
+def prepare_cold_start_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return only preseason biography features for the rookie minutes branch."""
+
+    output = pd.DataFrame(index=frame.index)
+    draft_number = pd.to_numeric(
+        frame.get("draft_number", pd.Series(np.nan, index=frame.index)), errors="coerce"
+    )
+    output["draft_capital"] = np.where(
+        draft_number.notna(), np.clip((61.0 - draft_number) / 60.0, 0.0, 1.0), 0.0
+    )
+    undrafted = frame.get("is_undrafted", pd.Series(False, index=frame.index))
+    output["is_undrafted"] = undrafted.astype("boolean").fillna(False).astype(float)
+    age = pd.to_numeric(
+        frame.get("age", pd.Series(np.nan, index=frame.index)), errors="coerce"
+    )
+    output["rookie_age_offset"] = age.fillna(21.0) - 21.0
+    position = frame.get("listed_position", pd.Series("", index=frame.index)).fillna("").astype(str)
+    output["is_guard"] = position.str.contains("G", regex=False).astype(float)
+    output["is_forward"] = position.str.contains("F", regex=False).astype(float)
+    output["is_center"] = position.str.contains("C", regex=False).astype(float)
+    return output.loc[:, list(_COLD_START_FEATURE_COLUMNS)]
+
+
+def fit_cold_start_conditional_minutes_model(
+    history: pd.DataFrame,
+    *,
+    age_model: AgeConditionalMinutesModel,
+    config: ColdStartConditionalMinutesConfig,
+) -> FittedColdStartConditionalMinutesModel:
+    """Fit a rookie-only ridge residual without using any target-season outcomes."""
+
+    if config.alpha < 0.0:
+        raise ValueError("Cold-start ridge penalty must be non-negative")
+    rookie = history.loc[
+        history.get("is_rookie", pd.Series(False, index=history.index))
+        .astype("boolean")
+        .fillna(False)
+        & history["available_games"].gt(0)
+    ].copy()
+    if rookie.empty:
+        raise ValueError("Cold-start minutes model requires observed rookie seasons")
+    features = prepare_cold_start_features(rookie)
+    mean = features.mean(axis=0).to_numpy(dtype=float)
+    scale = features.std(axis=0, ddof=0).to_numpy(dtype=float)
+    scale = np.where(scale > 1e-12, scale, 1.0)
+    standardized = (features.to_numpy(dtype=float) - mean) / scale
+    target = np.log1p(rookie["minutes_per_available_game"].to_numpy(dtype=float)) - age_model.predict_log_minutes(
+        rookie["age"].to_numpy(dtype=float)
+    )
+    weights = rookie["available_games"].to_numpy(dtype=float)
+    design = np.column_stack((np.ones(len(rookie)), standardized))
+    penalty = np.diag(np.r_[0.0, np.full(standardized.shape[1], config.alpha)])
+    coefficients = np.linalg.solve(
+        design.T @ (weights[:, None] * design) + penalty,
+        design.T @ (weights * target),
+    )
+    return FittedColdStartConditionalMinutesModel(
+        feature_mean=mean,
+        feature_scale=scale,
+        coefficients=np.asarray(coefficients[1:], dtype=float),
+        intercept=float(coefficients[0]),
+        config=config,
+    )
+
+
 def predict_conditional_minutes_season(
     summary: pd.DataFrame,
     *,
     target_season: str,
     config: ForwardConditionalMinutesConfig,
+    cold_start_config: ColdStartConditionalMinutesConfig | None = None,
 ) -> tuple[pd.DataFrame, AgeConditionalMinutesModel]:
     """Forecast target conditional minutes using only completed prior seasons."""
 
@@ -115,32 +213,52 @@ def predict_conditional_minutes_season(
     if history.empty or target.empty:
         raise ValueError(f"Target {target_season} requires non-empty history and observations")
     age_model = fit_age_conditional_minutes_model(history)
+    cold_start_model = (
+        fit_cold_start_conditional_minutes_model(
+            history, age_model=age_model, config=cold_start_config
+        )
+        if cold_start_config is not None
+        else None
+    )
     state = _filtered_minutes_state(history, config=config)
-    output = target.loc[
-        :,
-        [
-            "season",
-            "season_start_year",
-            "player_id",
-            "player_name",
-            "age",
-            "available_games",
-            "known_player_games",
-            "available_share",
-            "total_nba_minutes",
-            "minutes_per_available_game",
-        ],
-    ].copy()
+    output_columns = [
+        "season",
+        "season_start_year",
+        "player_id",
+        "player_name",
+        "age",
+        "available_games",
+        "known_player_games",
+        "available_share",
+        "total_nba_minutes",
+        "minutes_per_available_game",
+    ]
+    output_columns.extend(
+        column
+        for column in ("draft_number", "is_undrafted", "listed_position", "is_rookie")
+        if column in target and column not in output_columns
+    )
+    output = target.loc[:, output_columns].copy()
     predicted_log: list[float] = []
     gap_years: list[int] = []
     prior_state: list[bool] = []
+    cold_start_prior: list[bool] = []
+    cold_start_adjustment: list[float] = []
     for row in output.itertuples(index=False):
         baseline = float(age_model.predict_log_minutes(np.array([row.age]))[0])
         prior = state.get(int(row.player_id))
         if prior is None:
-            predicted_log.append(baseline)
+            is_rookie = bool(getattr(row, "is_rookie", False))
+            if cold_start_model is not None and is_rookie:
+                row_features = prepare_cold_start_features(pd.DataFrame([row._asdict()]))
+                adjustment = float(cold_start_model.predict_residual(row_features)[0])
+            else:
+                adjustment = 0.0
+            predicted_log.append(baseline + adjustment)
             gap_years.append(-1)
             prior_state.append(False)
+            cold_start_prior.append(cold_start_model is not None and is_rookie)
+            cold_start_adjustment.append(adjustment)
             continue
         gap = max(target_year - int(prior["season_start_year"]), 1)
         prior_baseline = float(age_model.predict_log_minutes(np.array([prior["age"]]))[0])
@@ -150,10 +268,14 @@ def predict_conditional_minutes_season(
         predicted_log.append(prediction)
         gap_years.append(gap)
         prior_state.append(True)
+        cold_start_prior.append(False)
+        cold_start_adjustment.append(0.0)
     output["predicted_log_minutes_per_available_game"] = predicted_log
     output["predicted_minutes_per_available_game"] = np.expm1(predicted_log).clip(0.0)
     output["prior_gap_years"] = gap_years
     output["has_prior_minutes_state"] = prior_state
+    output["uses_draft_cold_start_prior"] = cold_start_prior
+    output["cold_start_log_minutes_adjustment"] = cold_start_adjustment
     output["conditional_absolute_error"] = np.abs(
         output["minutes_per_available_game"] - output["predicted_minutes_per_available_game"]
     )
@@ -169,6 +291,7 @@ def predict_conditional_minutes_roster(
     roster: pd.DataFrame,
     target_season: str,
     config: ForwardConditionalMinutesConfig,
+    cold_start_config: ColdStartConditionalMinutesConfig | None = None,
 ) -> tuple[pd.DataFrame, AgeConditionalMinutesModel]:
     """Forecast conditional minutes for an opening roster without target outcomes."""
 
@@ -184,8 +307,21 @@ def predict_conditional_minutes_roster(
     if history.empty:
         raise ValueError(f"Target {target_season} requires completed conditional-minutes history")
     age_model = fit_age_conditional_minutes_model(history)
+    cold_start_model = (
+        fit_cold_start_conditional_minutes_model(
+            history, age_model=age_model, config=cold_start_config
+        )
+        if cold_start_config is not None
+        else None
+    )
     state = _filtered_minutes_state(history, config=config)
-    output = roster.loc[:, ["player_id", "player_name", "age"]].copy()
+    roster_columns = ["player_id", "player_name", "age"]
+    roster_columns.extend(
+        column
+        for column in ("draft_number", "is_undrafted", "listed_position", "is_rookie")
+        if column in roster and column not in roster_columns
+    )
+    output = roster.loc[:, roster_columns].copy()
     output.insert(0, "season_start_year", target_year)
     output.insert(0, "season", target_season)
     output["player_id"] = pd.to_numeric(output["player_id"], errors="raise").astype(int)
@@ -193,13 +329,23 @@ def predict_conditional_minutes_roster(
     predicted_log: list[float] = []
     gap_years: list[int] = []
     prior_state: list[bool] = []
+    cold_start_prior: list[bool] = []
+    cold_start_adjustment: list[float] = []
     for row in output.itertuples(index=False):
         baseline = float(age_model.predict_log_minutes(np.array([row.age]))[0])
         prior = state.get(int(row.player_id))
         if prior is None:
-            predicted_log.append(baseline)
+            is_rookie = bool(getattr(row, "is_rookie", False))
+            if cold_start_model is not None and is_rookie:
+                row_features = prepare_cold_start_features(pd.DataFrame([row._asdict()]))
+                adjustment = float(cold_start_model.predict_residual(row_features)[0])
+            else:
+                adjustment = 0.0
+            predicted_log.append(baseline + adjustment)
             gap_years.append(-1)
             prior_state.append(False)
+            cold_start_prior.append(cold_start_model is not None and is_rookie)
+            cold_start_adjustment.append(adjustment)
             continue
         gap = max(target_year - int(prior["season_start_year"]), 1)
         prior_baseline = float(age_model.predict_log_minutes(np.array([prior["age"]]))[0])
@@ -211,10 +357,14 @@ def predict_conditional_minutes_roster(
         )
         gap_years.append(gap)
         prior_state.append(True)
+        cold_start_prior.append(False)
+        cold_start_adjustment.append(0.0)
     output["predicted_log_minutes_per_available_game"] = predicted_log
     output["predicted_minutes_per_available_game"] = np.expm1(predicted_log).clip(0.0)
     output["prior_gap_years"] = gap_years
     output["has_prior_minutes_state"] = prior_state
+    output["uses_draft_cold_start_prior"] = cold_start_prior
+    output["cold_start_log_minutes_adjustment"] = cold_start_adjustment
     return output, age_model
 
 
@@ -343,6 +493,79 @@ def tune_forward_conditional_minutes(
     )
 
 
+def summarize_cold_start_minutes_metrics(predictions: pd.DataFrame) -> dict[str, float]:
+    """Report conditional-minutes accuracy for the explicit rookie prior branch."""
+
+    required = {
+        "uses_draft_cold_start_prior",
+        "available_games",
+        "conditional_absolute_error",
+        "conditional_squared_error",
+    }
+    missing = sorted(required - set(predictions))
+    if missing:
+        raise ValueError(f"Cold-start predictions lack columns: {missing}")
+    subset = predictions.loc[predictions["uses_draft_cold_start_prior"]].copy()
+    weights = subset["available_games"].to_numpy(dtype=float)
+    if subset.empty or weights.sum() <= 0.0:
+        raise ValueError("Cold-start metrics require observed rookie availability")
+    absolute = subset["conditional_absolute_error"].to_numpy(dtype=float)
+    squared = subset["conditional_squared_error"].to_numpy(dtype=float)
+    return {
+        "cold_start_player_season_count": float(len(subset)),
+        "cold_start_conditional_mae": float(absolute.mean()),
+        "cold_start_conditional_rmse": float(np.sqrt(squared.mean())),
+        "cold_start_available_game_weighted_mae": float(np.average(absolute, weights=weights)),
+        "cold_start_available_game_weighted_rmse": float(
+            np.sqrt(np.average(squared, weights=weights))
+        ),
+    }
+
+
+def tune_cold_start_conditional_minutes(
+    summary: pd.DataFrame,
+    *,
+    state_config: ForwardConditionalMinutesConfig,
+    target_seasons: tuple[str, ...] = DEFAULT_TUNING_SEASONS,
+    alpha_grid: tuple[float, ...] = DEFAULT_COLD_START_ALPHA_GRID,
+) -> tuple[ColdStartConditionalMinutesConfig, pd.DataFrame]:
+    """Select the rookie-only ridge penalty on completed pre-frozen seasons."""
+
+    rows: list[dict[str, float]] = []
+    for alpha in sorted(set(alpha_grid)):
+        config = ColdStartConditionalMinutesConfig(alpha=float(alpha))
+        predictions = [
+            predict_conditional_minutes_season(
+                summary,
+                target_season=season,
+                config=state_config,
+                cold_start_config=config,
+            )[0]
+            for season in target_seasons
+        ]
+        joined = pd.concat(predictions, ignore_index=True)
+        rows.append(
+            {
+                "alpha": float(alpha),
+                **summarize_cold_start_minutes_metrics(joined),
+                **summarize_conditional_minutes_metrics(joined),
+            }
+        )
+    grid = (
+        pd.DataFrame(rows)
+        .sort_values(
+            [
+                "cold_start_available_game_weighted_rmse",
+                "cold_start_available_game_weighted_mae",
+                "alpha",
+            ],
+            kind="stable",
+        )
+        .reset_index(drop=True)
+    )
+    return ColdStartConditionalMinutesConfig(alpha=float(grid.loc[0, "alpha"])), grid
+
+
 def summarize_conditional_minutes_metrics(predictions: pd.DataFrame) -> dict[str, float]:
     """Report conditional and raw expected-total metrics before roster squashing."""
 
@@ -374,6 +597,32 @@ def summarize_conditional_minutes_metrics(predictions: pd.DataFrame) -> dict[str
     return output
 
 
+def attach_cold_start_biographies(
+    summary: pd.DataFrame,
+    *,
+    player_panel_path: Path | str = DEFAULT_PLAYER_PANEL_PATH,
+) -> pd.DataFrame:
+    """Attach static rookie biography fields without reading target outcomes."""
+
+    columns = [
+        "season",
+        "player_id",
+        "draft_number",
+        "is_undrafted",
+        "listed_position",
+        "is_rookie",
+    ]
+    panel = pd.read_parquet(player_panel_path, columns=columns)
+    panel["player_id"] = pd.to_numeric(panel["player_id"], errors="raise").astype(int)
+    panel = panel.drop_duplicates(["season", "player_id"], keep="last")
+    output = summary.merge(panel, on=["season", "player_id"], how="left", validate="one_to_one")
+    output["draft_number"] = pd.to_numeric(output["draft_number"], errors="coerce")
+    output["is_undrafted"] = output["is_undrafted"].astype("boolean").fillna(False)
+    output["listed_position"] = output["listed_position"].fillna("Unknown").astype(str)
+    output["is_rookie"] = output["is_rookie"].astype("boolean").fillna(False)
+    return output
+
+
 def run_forward_conditional_minutes(
     *,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
@@ -393,9 +642,17 @@ def run_forward_conditional_minutes(
     summary = build_availability_season_summary(
         all_seasons, curated_dir=curated_dir, player_panel_path=player_panel_path
     )
+    summary = attach_cold_start_biographies(summary, player_panel_path=player_panel_path)
     print("Forward conditional minutes: tuning player-state filter", flush=True)
     config, tuning_grid = tune_forward_conditional_minutes(summary, target_seasons=tuning_seasons)
     print(f"Forward conditional minutes: selected {asdict(config)}", flush=True)
+    print("Forward conditional minutes: tuning rookie cold-start prior", flush=True)
+    cold_start_config, cold_start_grid = tune_cold_start_conditional_minutes(
+        summary,
+        state_config=config,
+        target_seasons=tuning_seasons,
+    )
+    print(f"Forward conditional minutes: selected cold-start {asdict(cold_start_config)}", flush=True)
     run_id = (
         f"forward-conditional-minutes-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-"
         f"{uuid4().hex[:7]}"
@@ -404,6 +661,7 @@ def run_forward_conditional_minutes(
     run_dir.mkdir(parents=True, exist_ok=False)
     summary.to_parquet(run_dir / "player_season_summary.parquet", index=False)
     tuning_grid.to_parquet(run_dir / "tuning_grid.parquet", index=False)
+    cold_start_grid.to_parquet(run_dir / "cold_start_tuning_grid.parquet", index=False)
 
     metrics_rows: list[dict[str, float | str]] = []
     roster_rows: list[pd.DataFrame] = []
@@ -413,31 +671,43 @@ def run_forward_conditional_minutes(
             flush=True,
         )
         conditional, _age_model = predict_conditional_minutes_season(
-            summary, target_season=season, config=config
+            summary,
+            target_season=season,
+            config=config,
+            cold_start_config=cold_start_config,
         )
-        age_only, _age_only_model = predict_conditional_minutes_season(
-            summary, target_season=season, config=AGE_ONLY_CONFIG
+        v01_control, _v01_age_model = predict_conditional_minutes_season(
+            summary, target_season=season, config=config
         )
         availability, _availability_age, _metadata = predict_availability_season(
             summary, target_season=season, config=PROMOTED_AVAILABILITY_CONFIG
         )
         combined = attach_expected_total_minutes(conditional, availability)
-        combined_age_only = attach_expected_total_minutes(age_only, availability)
+        combined_v01_control = attach_expected_total_minutes(v01_control, availability)
         combined.to_parquet(run_dir / f"{season}_predictions.parquet", index=False)
-        combined_age_only.to_parquet(
-            run_dir / f"{season}_age_only_control_predictions.parquet", index=False
+        combined_v01_control.to_parquet(
+            run_dir / f"{season}_v01_control_predictions.parquet", index=False
         )
         metrics_rows.extend(
             [
                 {
                     "season": season,
-                    "model": "Forward Conditional Minutes v0.1",
+                    "model": "Forward Conditional Minutes v0.2",
                     **summarize_conditional_minutes_metrics(combined),
+                    **summarize_cold_start_minutes_metrics(combined),
                 },
                 {
                     "season": season,
-                    "model": "Age-only conditional-minutes control",
-                    **summarize_conditional_minutes_metrics(combined_age_only),
+                    "model": "Forward Conditional Minutes v0.1",
+                    **summarize_conditional_minutes_metrics(combined_v01_control),
+                    **summarize_cold_start_minutes_metrics(
+                        combined_v01_control.assign(
+                            uses_draft_cold_start_prior=(
+                                ~combined_v01_control["has_prior_minutes_state"]
+                                & combined_v01_control["is_rookie"].astype(bool)
+                            )
+                        )
+                    ),
                 },
             ]
         )
@@ -459,13 +729,18 @@ def run_forward_conditional_minutes(
         json.dumps(
             {
                 "model": "forward_conditional_minutes",
-                "version": "v0.1",
+                "version": "v0.2",
                 "run_id": run_id,
                 "created_at": datetime.now(UTC).isoformat(),
                 "selected_config": asdict(config),
+                "selected_cold_start_config": asdict(cold_start_config),
                 "tuning_seasons": list(tuning_seasons),
                 "frozen_seasons": list(frozen_seasons),
                 "target": "total NBA minutes / medically available games",
+                "cold_start_contract": (
+                    "rookie-only ridge residual around the age baseline using draft capital, "
+                    "undrafted status, rookie age, and listed position"
+                ),
                 "availability_component": {
                     "model": "Forward Availability v0.2",
                     "config": asdict(PROMOTED_AVAILABILITY_CONFIG),

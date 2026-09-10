@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from nba_lineup_model.web_api.inference import (
     MODEL_DISPLAY_NAME,
+    MODEL_ARTIFACT,
     MODEL_NAME,
     LineupEvaluationError,
     LineupEvaluator,
@@ -22,7 +23,10 @@ from nba_lineup_model.web_api.preseason_minutes import (
     build_forward_conditional_preseason_minutes_payload,
 )
 from nba_lineup_model.web_api.roster_movements import build_roster_movement_payload
-from nba_lineup_model.web_api.win_projections import build_win_projection_payload
+from nba_lineup_model.web_api.win_projections import (
+    build_win_projection_payload,
+    read_win_projection_cache,
+)
 
 
 class MatchupRequest(BaseModel):
@@ -75,11 +79,20 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         minutes = build_forward_conditional_preseason_minutes_payload(
             preseason_rankings=get_evaluator().preseason_rankings,
         )
+        try:
+            win_projection = read_win_projection_cache(
+                model_artifact=MODEL_ARTIFACT,
+                run_id=get_evaluator().run_id,
+            )
+        except FileNotFoundError:
+            # Keep local development self-contained. The release publisher
+            # materializes and ships this cache before production deployment.
+            win_projection = build_win_projection_payload(
+                evaluator=get_evaluator(), minutes_payload=minutes
+            )
         return {
             **minutes,
-            "win_projection": build_win_projection_payload(
-                evaluator=get_evaluator(), minutes_payload=minutes
-            ),
+            "win_projection": win_projection,
         }
 
     @app.get("/api/health")

@@ -1,5 +1,5 @@
 import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Calculator, ChevronDown, ChevronUp, CircleAlert, Download, LoaderCircle, RotateCcw } from "lucide-react";
+import { ArrowUpRight, Calculator, ChevronDown, ChevronUp, CircleAlert, Download, LoaderCircle, RotateCcw } from "lucide-react";
 
 import type {
   MinutesProjectionPayload,
@@ -30,6 +30,7 @@ type MinuteAllocation = {
 const STORAGE_KEY = "nba-gestalt:win-projection-input-overrides:v3";
 const SEASON_GAMES = 82;
 const ENVELOPE_TRIALS = 10_000;
+const WIN_PROJECTIONS_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/rotation-models/win-projections/";
 
 type WinLossEnvelopePoint = {
   game: number;
@@ -173,6 +174,20 @@ function marketDelta(team: WinProjectionTeam) {
     : team.projected_wins - team.betmgm_win_total;
 }
 
+function marketIntervalPosition(team: WinProjectionTeam) {
+  if (team.betmgm_win_total === undefined) return "inside";
+  if (team.betmgm_win_total < team.win_total_p5) return "below";
+  if (team.betmgm_win_total > team.win_total_p95) return "above";
+  return "inside";
+}
+
+function marketIntervalDescription(team: WinProjectionTeam) {
+  const position = marketIntervalPosition(team);
+  if (position === "below") return "BetMGM total is below the model's 5th percentile.";
+  if (position === "above") return "BetMGM total is above the model's 95th percentile.";
+  return "BetMGM total is within the model's 5th to 95th percentile range.";
+}
+
 function sigmoid(value: number) {
   return 1 / (1 + Math.exp(-Math.max(-35, Math.min(35, value))));
 }
@@ -300,6 +315,29 @@ function simulateWinLossEnvelope(forecast: WinProjectionPayload, team: string): 
     });
   }
   return { points, gameCount: probabilities.length };
+}
+
+function attachBrowserWinTotalIntervals(forecast: WinProjectionPayload): WinProjectionPayload {
+  const intervals = new Map(forecast.teams.flatMap((team) => {
+    const endpoint = simulateWinLossEnvelope(forecast, team.team)?.points.at(-1);
+    return endpoint ? [[team.team, endpoint] as const] : [];
+  }));
+  return {
+    ...forecast,
+    win_total_interval_trials: ENVELOPE_TRIALS,
+    teams: forecast.teams.map((team) => {
+      const endpoint = intervals.get(team.team);
+      if (!endpoint) return team;
+      return {
+        ...team,
+        win_total_p1: endpoint.p1,
+        win_total_p5: endpoint.p5,
+        win_total_p50: endpoint.median,
+        win_total_p95: endpoint.p95,
+        win_total_p99: endpoint.p99,
+      };
+    }),
+  };
 }
 
 function WinLossEnvelopeChart({ forecast, team }: { forecast: WinProjectionPayload; team: string }) {
@@ -574,6 +612,7 @@ function calculateProjection(
   const marketTotals = new Map(
     baseline.teams.map((team) => [team.team, team.betmgm_win_total]),
   );
+  const baselineTeams = new Map(baseline.teams.map((team) => [team.team, team]));
   for (const team of payload.teams) {
     const players = payload.players.filter((player) => player.team === team);
     const { minutes } = minuteAllocation(
@@ -608,17 +647,36 @@ function calculateProjection(
       (scheduledWins.get(game.away_team) ?? 0) + 1 - homeWinProbability,
     );
   }
-  const teams: WinProjectionTeam[] = payload.teams.map((team) => {
+  const rawUnassignedWins = new Map(payload.teams.map((team) => {
     const teamStrength = strength.get(team) ?? 0;
-    const scheduled = scheduledWins.get(team) ?? 0;
     const neutralHome = sigmoid(baseline.win_probability_scale * (teamStrength + baseline.home_court));
     const neutralAway = sigmoid(baseline.win_probability_scale * (teamStrength - baseline.home_court));
-    const unassigned = baseline.unassigned_regular_games_per_team * (neutralHome + neutralAway) / 2;
+    return [
+      team,
+      baseline.unassigned_regular_games_per_team * (neutralHome + neutralAway) / 2,
+    ] as const;
+  }));
+  const rawUnassignedMean = Array.from(rawUnassignedWins.values()).reduce(
+    (total, value) => total + value,
+    0,
+  ) / rawUnassignedWins.size;
+  const neutralUnassignedWins = baseline.unassigned_regular_games_per_team / 2;
+  const teams: WinProjectionTeam[] = payload.teams.map((team) => {
+    const baselineTeam = baselineTeams.get(team);
+    if (!baselineTeam) throw new Error(`Missing baseline interval for ${team}.`);
+    const teamStrength = strength.get(team) ?? 0;
+    const scheduled = scheduledWins.get(team) ?? 0;
+    const unassigned = (rawUnassignedWins.get(team) ?? 0) - rawUnassignedMean + neutralUnassignedWins;
     const wins = scheduled + unassigned;
     return {
       team,
       team_strength: teamStrength,
       betmgm_win_total: marketTotals.get(team),
+      win_total_p1: baselineTeam.win_total_p1,
+      win_total_p5: baselineTeam.win_total_p5,
+      win_total_p50: baselineTeam.win_total_p50,
+      win_total_p95: baselineTeam.win_total_p95,
+      win_total_p99: baselineTeam.win_total_p99,
       scheduled_wins: scheduled,
       scheduled_games: baseline.scheduled_games_per_team,
       unassigned_wins: unassigned,
@@ -627,7 +685,7 @@ function calculateProjection(
     };
   });
   teams.sort((left, right) => right.projected_wins - left.projected_wins || left.team.localeCompare(right.team));
-  return { ...baseline, teams };
+  return attachBrowserWinTotalIntervals({ ...baseline, teams });
 }
 
 export function WinProjectionsPage() {
@@ -772,6 +830,14 @@ export function WinProjectionsPage() {
         <p className="eyebrow">{payload.season} preseason planning</p>
         <h1 id="win-projections-title">Win projections.</h1>
         <p>Adjust medical availability and conditional playing time, then recalculate. The top {payload.initial_rotation_size} override-adjusted raw projections form the rotation.</p>
+        <a
+          className="win-projections-doc-link"
+          href={WIN_PROJECTIONS_DOCUMENTATION_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Read the methodology <ArrowUpRight size={15} aria-hidden="true" />
+        </a>
       </section>
 
       <section className="win-projections-workspace" aria-label="Team minute projections">
@@ -793,18 +859,25 @@ export function WinProjectionsPage() {
                   {label}
                   {forecastSortColumn === column && (forecastSortDirection === "ascending" ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
                 </button>
-              </th>)}
+              </th>)}<th scope="col">P5-P95</th>
             </tr></thead>
             <tbody>{sortedForecastTeams.map((item) => {
               const delta = marketDelta(item);
               const direction = marketDirection(item.projected_wins, item.betmgm_win_total);
               const directionClass = delta !== null && delta < 0 ? "negative" : "positive";
-              return <tr key={item.team} className={item.team === team ? "selected-team" : ""}>
+              const intervalPosition = marketIntervalPosition(item);
+              const rowClassName = [
+                item.team === team ? "selected-team" : "",
+                intervalPosition === "below" ? "market-below-range" : "",
+                intervalPosition === "above" ? "market-above-range" : "",
+              ].filter(Boolean).join(" ");
+              return <tr key={item.team} className={rowClassName}>
                 <th><button className="win-forecast-team-link" type="button" aria-controls="team-minutes" aria-pressed={item.team === team} onClick={() => selectForecastTeam(item.team)}>{item.team}</button></th>
                 <td className={item.team_strength < 0 ? "negative" : "positive"}>{formatRating(item.team_strength)}</td>
-                <td>{item.betmgm_win_total?.toFixed(1) ?? "-"}</td>
+                <td title={marketIntervalDescription(item)}>{item.betmgm_win_total?.toFixed(1) ?? "-"}</td>
                 <td className="win-forecast-wins">{item.projected_wins.toFixed(1)}</td>
                 <td className={directionClass}>{delta === null ? "-" : `${direction} ${formatRating(delta)}`}</td>
+                <td className="win-forecast-interval">{item.win_total_p5}&ndash;{item.win_total_p95}</td>
               </tr>;
             })}</tbody>
           </table></div>
@@ -825,7 +898,7 @@ export function WinProjectionsPage() {
           </button>
           <button className="win-projections-calculate" type="button" onClick={calculateForecast} disabled={hasInvalidOverrides}>
             <Calculator size={15} aria-hidden="true" />
-            <span>{forecastNeedsUpdate ? "Recalculate" : "Calculate projection"}</span>
+            <span>Calculate projection</span>
           </button>
         </div>
         {hasInvalidOverrides && <p className="error win-projections-error"><CircleAlert size={16} /> At least one player must have positive availability and conditional minutes.</p>}

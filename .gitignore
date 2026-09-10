@@ -35,6 +35,7 @@ artifacts/mlflow/*
 !artifacts/mlflow/.gitkeep
 artifacts/web/preseason_rankings/
 artifacts/web/constrained_split_ratings/
+artifacts/web/win_projections/
 artifacts/web/releases/
 artifacts/assisted_shot_taxonomy_parts/
 artifacts/logs/*.log
