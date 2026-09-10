@@ -9,8 +9,15 @@ from uuid import uuid4
 
 import numpy as np
 import pandas as pd
-import torch
-from torch.utils.data import Dataset
+
+try:
+    import torch
+    from torch.utils.data import Dataset
+except ModuleNotFoundError:  # Keep tabular readers usable in the lightweight web runtime.
+    torch = None
+
+    class Dataset:  # type: ignore[no-redef]
+        pass
 
 from nba_lineup_model.modeling.schema import NeuralPossessionManifest
 from nba_lineup_model.season.compact import (
@@ -76,7 +83,7 @@ _REQUIRED_SEGMENT_COLUMNS = {
 }
 
 
-class PossessionTensorDataset(Dataset[dict[str, torch.Tensor]]):
+class PossessionTensorDataset(Dataset):
     """Contiguous tensor representation of fixed-lineup possessions."""
 
     def __init__(
@@ -84,6 +91,11 @@ class PossessionTensorDataset(Dataset[dict[str, torch.Tensor]]):
         possessions: pd.DataFrame,
         player_columns: Mapping[int, int],
     ) -> None:
+        if torch is None:
+            raise ModuleNotFoundError(
+                "PyTorch is required to construct PossessionTensorDataset. "
+                "Install the project's neural modeling dependencies."
+            )
         if possessions.empty:
             raise ValueError("Tensor possession dataset cannot be empty")
         mapping = {int(player_id): int(column) for player_id, column in player_columns.items()}
