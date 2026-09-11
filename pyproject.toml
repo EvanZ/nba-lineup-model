@@ -132,6 +132,7 @@ nba-evaluate-l20-nail-minute-share = "nba_lineup_model.rotation.l20_nail_minute_
 nba-evaluate-l20-preseason-nail-minute-share = "nba_lineup_model.rotation.l20_preseason_nail_forecast_minute_share:main"
 nba-evaluate-l20-source-aware-preseason-minute-share = "nba_lineup_model.rotation.l20_source_aware_preseason_minute_share:main"
 nba-run-forward-availability = "nba_lineup_model.rotation.forward_availability:main"
+nba-build-medical-episode-mart = "nba_lineup_model.rotation.medical_episode_mart:main"
 nba-evaluate-ac-minute-share-projection = "nba_lineup_model.rotation.ac_minute_share_projection:main"
 nba-run-forward-conditional-minutes = "nba_lineup_model.rotation.forward_conditional_minutes:main"
 nba-backfill-history = "nba_lineup_model.flows.backfill_history:main"
