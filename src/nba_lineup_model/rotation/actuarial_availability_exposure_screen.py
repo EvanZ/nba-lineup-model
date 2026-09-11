@@ -1,7 +1,9 @@
-"""Frozen workload-covariate screens for availability-loss episode frequency.
+"""Frozen availability-loss frequency screens with observed risk exposure.
 
-Target rostered team games are the Poisson exposure/offset. Every candidate in
-this module is a strictly lagged workload predictor, including minutes per game.
+The count target is new binary-unavailability episodes. Each candidate uses a
+different realized target-season at-risk exposure as the Poisson offset. This is
+an out-of-time actuarial rate study, not a preseason forecast: target exposure
+is observed after the season and must later be forecast for prospective use.
 """
 
 from __future__ import annotations
@@ -20,12 +22,17 @@ from nba_lineup_model.rotation.availability_episode_mart import (
 
 DEFAULT_OUTPUT_DIR = Path("artifacts/rotation/actuarial_availability/exposure_screen")
 DEFAULT_FROZEN_SEASONS = ("2023-24", "2024-25", "2025-26")
-_CANDIDATES = {
-    "GP": "prior_panel_gp",
-    "GS": "prior_panel_gs",
-    "Minutes": "prior_panel_minutes",
-    "Minutes per GP": "prior_minutes_per_gp",
-    "Available rostered games": "prior_available_rostered_games",
+_OFFSET_SPECS = {
+    "Player minutes": {
+        "column": "target_panel_minutes",
+        "rate_multiplier": 1_000.0,
+        "rate_label": "Episodes per 1,000 player minutes",
+    },
+    "Medically available games": {
+        "column": "target_available_rostered_games",
+        "rate_multiplier": 100.0,
+        "rate_label": "Episodes per 100 medically available games",
+    },
 }
 _RIDGE = 1e-4
 
@@ -34,7 +41,7 @@ def build_forward_exposure_pairs(
     player_seasons: pd.DataFrame,
     episodes: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Pair prior workload with strictly next-season episode starts.
+    """Pair prior state with strictly next-season episode starts and exposure.
 
     An availability-loss episode that starts before a target season is a carried episode,
     not a new target-season event. Such rows are retained and flagged for the
@@ -49,7 +56,6 @@ def build_forward_exposure_pairs(
         "availability_episode_count",
         "unavailability_loss_cost",
         "available_rostered_games",
-        "rostered_team_games",
         "panel_gp",
         "panel_gs",
         "panel_minutes",
@@ -100,7 +106,8 @@ def build_forward_exposure_pairs(
             "player_id",
             "player_name",
             "availability_episode_count",
-            "rostered_team_games",
+            "available_rostered_games",
+            "panel_minutes",
             "panel_age",
         ],
     ].rename(
@@ -109,7 +116,8 @@ def build_forward_exposure_pairs(
             "season_start_year": "target_season_start_year",
             "player_name": "target_player_name",
             "availability_episode_count": "target_availability_episode_count",
-            "rostered_team_games": "target_rostered_team_games",
+            "available_rostered_games": "target_available_rostered_games",
+            "panel_minutes": "target_panel_minutes",
             "panel_age": "target_age",
         }
     )
@@ -152,74 +160,82 @@ def run_frozen_exposure_screen(
     *,
     frozen_seasons: tuple[str, ...] = DEFAULT_FROZEN_SEASONS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Score lagged workload covariates with expanding-window Poisson fits.
+    """Evaluate observed minutes and medical availability as frequency offsets.
 
-    The Poisson offset is target rostered team games. Candidates are never used
-    as the frequency exposure, because they are prior-season summaries rather
-    than target-horizon at-risk opportunity.
+    Both offset candidates use the same strictly forward state covariates. The
+    target-season exposure makes this a retrospective rate validation rather
+    than a standalone prospective forecast.
     """
 
     required = {
         "target_season",
         "target_season_start_year",
         "target_availability_episode_count",
-        "target_rostered_team_games",
+        "target_available_rostered_games",
+        "target_panel_minutes",
         "has_cross_season_unavailability_carryover",
         "prior_unavailability_loss_cost",
         "prior_availability_episode_count",
         "target_age",
-        *_CANDIDATES.values(),
     }
     missing = sorted(required - set(pairs))
     if missing:
-        raise ValueError(f"Forward workload pairs missing columns: {missing}")
+        raise ValueError(f"Forward availability pairs missing columns: {missing}")
     eligible = pairs.loc[
         ~pairs["has_cross_season_unavailability_carryover"].astype(bool)
-        & pairs["target_rostered_team_games"].gt(0)
+        # Keep a shared population so total deviance is comparable across the
+        # minute and medically-available-game offsets.
+        & pairs["target_panel_minutes"].gt(0)
+        & pairs["target_available_rostered_games"].gt(0)
     ].copy()
     metrics: list[dict[str, object]] = []
     predictions: list[pd.DataFrame] = []
-    for candidate_name, candidate_column in _CANDIDATES.items():
-        candidate_predictions: list[pd.DataFrame] = []
+    for offset_name, offset_spec in _OFFSET_SPECS.items():
+        offset_column = str(offset_spec["column"])
+        rate_multiplier = float(offset_spec["rate_multiplier"])
+        rate_label = str(offset_spec["rate_label"])
+        offset_predictions: list[pd.DataFrame] = []
         for target_season in frozen_seasons:
             target_year = _season_year(target_season)
             train = eligible.loc[eligible["target_season_start_year"].lt(target_year)].copy()
             test = eligible.loc[eligible["target_season"].eq(target_season)].copy()
             if train.empty or test.empty:
-                raise ValueError(f"Frozen workload screen lacks data for {target_season}")
+                raise ValueError(f"Frozen frequency screen lacks data for {target_season}")
             columns = [
                 "target_age",
                 "prior_unavailability_loss_cost",
                 "prior_availability_episode_count",
-                candidate_column,
             ]
             train_x, test_x = _standardized_design(train, test, columns)
             coefficients = _fit_poisson_glm(
                 train_x,
                 train["target_availability_episode_count"].to_numpy(dtype=float),
-                np.log(train["target_rostered_team_games"].to_numpy(dtype=float)),
+                np.log(train[offset_column].to_numpy(dtype=float)),
             )
             expected = _predict_poisson_glm(
                 test_x,
-                np.log(test["target_rostered_team_games"].to_numpy(dtype=float)),
+                np.log(test[offset_column].to_numpy(dtype=float)),
                 coefficients,
             )
-            candidate_predictions.append(
+            offset_predictions.append(
                 test.assign(
-                    candidate=candidate_name,
-                    candidate_value=test[candidate_column].to_numpy(dtype=float),
+                    frequency_offset=offset_name,
+                    exposure_value=test[offset_column].to_numpy(dtype=float),
+                    rate_multiplier=rate_multiplier,
+                    rate_label=rate_label,
                     predicted_episode_count=expected,
                 )
             )
-        combined = pd.concat(candidate_predictions, ignore_index=True)
+        combined = pd.concat(offset_predictions, ignore_index=True)
         deviance = poisson_deviance(
             combined["target_availability_episode_count"].to_numpy(dtype=float),
             combined["predicted_episode_count"].to_numpy(dtype=float),
         )
         metrics.append(
             {
-                "candidate": candidate_name,
+                "frequency_offset": offset_name,
                 "poisson_deviance": deviance,
+                "poisson_deviance_per_player_season": deviance / len(combined),
                 "mean_predicted_episode_count": float(combined["predicted_episode_count"].mean()),
                 "mean_observed_episode_count": float(
                     combined["target_availability_episode_count"].mean()
@@ -239,10 +255,10 @@ def run_frozen_exposure_screen(
 
 
 def build_risk_decile_table(predictions: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate frozen predictions into equal-count risk deciles by candidate."""
+    """Aggregate frozen predictions into equal-count risk deciles by offset."""
 
     rows: list[dict[str, object]] = []
-    for candidate, group in predictions.groupby("candidate", sort=False):
+    for offset_name, group in predictions.groupby("frequency_offset", sort=False):
         ordered = group.sort_values(
             ["predicted_episode_count", "player_id"], kind="stable"
         ).copy()
@@ -254,18 +270,20 @@ def build_risk_decile_table(predictions: pd.DataFrame) -> pd.DataFrame:
         for decile, values in ordered.groupby("risk_decile", sort=True):
             observed = float(values["target_availability_episode_count"].sum())
             predicted = float(values["predicted_episode_count"].sum())
-            exposure = float(values["target_rostered_team_games"].sum())
+            exposure = float(values["exposure_value"].sum())
+            multiplier = float(values["rate_multiplier"].iloc[0])
             rows.append(
                 {
-                    "candidate": candidate,
+                    "frequency_offset": offset_name,
                     "risk_decile": int(decile),
                     "player_seasons": int(len(values)),
-                    "mean_candidate_value": float(values["candidate_value"].mean()),
-                    "target_rostered_team_games": exposure,
+                    "exposure_total": exposure,
+                    "rate_multiplier": multiplier,
+                    "rate_label": str(values["rate_label"].iloc[0]),
                     "observed_episode_count": observed,
                     "predicted_episode_count": predicted,
-                    "observed_episodes_per_100_games": 100.0 * observed / exposure,
-                    "predicted_episodes_per_100_games": 100.0 * predicted / exposure,
+                    "observed_episodes_per_rate_unit": multiplier * observed / exposure,
+                    "predicted_episodes_per_rate_unit": multiplier * predicted / exposure,
                     "observed_to_expected": observed / predicted if predicted > 0.0 else np.nan,
                 }
             )
@@ -296,34 +314,31 @@ def concentration_gini(observed: np.ndarray, scores: np.ndarray) -> float:
 
 
 def plot_risk_decile_lift(deciles: pd.DataFrame, output_path: Path | str) -> None:
-    """Write pooled frozen observed-versus-predicted unavailable-episode lift panels."""
+    """Write pooled frozen observed-versus-predicted episode-rate lift panels."""
 
-    candidates = list(deciles["candidate"].drop_duplicates())
-    figure, axes = plt.subplots(2, 3, figsize=(16, 8), sharey=True)
-    for axis, candidate in zip(axes.flat, candidates, strict=False):
-        values = deciles.loc[deciles["candidate"].eq(candidate)].sort_values("risk_decile")
+    offset_names = list(deciles["frequency_offset"].drop_duplicates())
+    figure, axes = plt.subplots(1, len(offset_names), figsize=(14, 5), squeeze=False)
+    for axis, offset_name in zip(axes.flat, offset_names, strict=False):
+        values = deciles.loc[deciles["frequency_offset"].eq(offset_name)].sort_values("risk_decile")
         axis.plot(
             values["risk_decile"],
-            values["observed_episodes_per_100_games"],
+            values["observed_episodes_per_rate_unit"],
             color="#1f5d9d",
             marker="o",
             label="Observed",
         )
         axis.plot(
             values["risk_decile"],
-            values["predicted_episodes_per_100_games"],
+            values["predicted_episodes_per_rate_unit"],
             color="#d97706",
             marker="o",
             label="Predicted",
         )
-        axis.set_title(candidate)
+        axis.set_title(offset_name)
         axis.set_xlabel("Predicted frequency-risk decile")
         axis.set_xticks(range(1, 11))
+        axis.set_ylabel(str(values["rate_label"].iloc[0]))
         axis.grid(axis="y", alpha=0.25)
-    for axis in axes[:, 0]:
-        axis.set_ylabel("Episodes per 100 rostered games")
-    for axis in axes.flat[len(candidates) :]:
-        axis.axis("off")
     figure.legend(["Observed", "Predicted"], loc="upper center", ncol=2, frameon=False)
     figure.suptitle("Frozen unavailable-episode frequency lift and calibration", y=0.99)
     figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
@@ -393,10 +408,10 @@ def _season_year(season: str) -> int:
 
 
 def main() -> int:
-    """Run and persist the frozen GP/GS/minutes workload-frequency screen."""
+    """Run and persist the frozen observed-exposure frequency screen."""
 
     parser = argparse.ArgumentParser(
-        description="Screen lagged workload covariates for availability-loss frequency"
+        description="Compare observed exposure offsets for availability-loss frequency"
     )
     parser.add_argument("--episode-dir", type=Path, default=DEFAULT_EPISODE_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
