@@ -1,4 +1,8 @@
-"""Frozen exposure screens for availability-loss episode frequency."""
+"""Frozen workload-covariate screens for availability-loss episode frequency.
+
+Target rostered team games are the Poisson exposure/offset. Every candidate in
+this module is a strictly lagged workload predictor, including minutes per game.
+"""
 
 from __future__ import annotations
 
@@ -148,7 +152,12 @@ def run_frozen_exposure_screen(
     *,
     frozen_seasons: tuple[str, ...] = DEFAULT_FROZEN_SEASONS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Score each lagged workload candidate with expanding-window Poisson fits."""
+    """Score lagged workload covariates with expanding-window Poisson fits.
+
+    The Poisson offset is target rostered team games. Candidates are never used
+    as the frequency exposure, because they are prior-season summaries rather
+    than target-horizon at-risk opportunity.
+    """
 
     required = {
         "target_season",
@@ -163,7 +172,7 @@ def run_frozen_exposure_screen(
     }
     missing = sorted(required - set(pairs))
     if missing:
-        raise ValueError(f"Forward exposure pairs missing columns: {missing}")
+        raise ValueError(f"Forward workload pairs missing columns: {missing}")
     eligible = pairs.loc[
         ~pairs["has_cross_season_unavailability_carryover"].astype(bool)
         & pairs["target_rostered_team_games"].gt(0)
@@ -177,7 +186,7 @@ def run_frozen_exposure_screen(
             train = eligible.loc[eligible["target_season_start_year"].lt(target_year)].copy()
             test = eligible.loc[eligible["target_season"].eq(target_season)].copy()
             if train.empty or test.empty:
-                raise ValueError(f"Frozen exposure screen lacks data for {target_season}")
+                raise ValueError(f"Frozen workload screen lacks data for {target_season}")
             columns = [
                 "target_age",
                 "prior_unavailability_loss_cost",
@@ -367,7 +376,7 @@ def _fit_poisson_glm(design: np.ndarray, observed: np.ndarray, offset: np.ndarra
         method="L-BFGS-B",
     )
     if not result.success:
-        raise RuntimeError(f"Poisson exposure screen failed: {result.message}")
+        raise RuntimeError(f"Poisson workload screen failed: {result.message}")
     return np.asarray(result.x, dtype=float)
 
 
@@ -384,10 +393,10 @@ def _season_year(season: str) -> int:
 
 
 def main() -> int:
-    """Run and persist the frozen GP/GS/minutes exposure-frequency screen."""
+    """Run and persist the frozen GP/GS/minutes workload-frequency screen."""
 
     parser = argparse.ArgumentParser(
-        description="Screen real basketball exposure for availability-loss frequency"
+        description="Screen lagged workload covariates for availability-loss frequency"
     )
     parser.add_argument("--episode-dir", type=Path, default=DEFAULT_EPISODE_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
