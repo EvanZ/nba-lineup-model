@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+import pandas as pd
+
+from nba_lineup_model.rotation.actuarial_availability_exposure_screen import (
+    build_forward_exposure_pairs,
+    concentration_gini,
+    poisson_deviance,
+)
+
+
+def _summary() -> pd.DataFrame:
+    rows = []
+    for season, episodes in (("2022-23", 1), ("2023-24", 0), ("2024-25", 2)):
+        rows.append(
+            {
+                "season": season,
+                "player_id": 1,
+                "player_name": "Carryover",
+                "availability_episode_count": episodes,
+                "unavailability_loss_cost": 0.1,
+                "available_rostered_games": 70,
+                "rostered_team_games": 82,
+                "panel_gp": 65,
+                "panel_gs": 60,
+                "panel_minutes": 2100.0,
+            }
+        )
+        rows.append(
+            {
+                "season": season,
+                "player_id": 2,
+                "player_name": "Independent",
+                "availability_episode_count": episodes,
+                "unavailability_loss_cost": 0.0,
+                "available_rostered_games": 82,
+                "rostered_team_games": 82,
+                "panel_gp": 75,
+                "panel_gs": 70,
+                "panel_minutes": 2400.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def test_cross_season_episode_is_excluded_from_new_frequency_target() -> None:
+    episodes = pd.DataFrame(
+        {
+            "player_id": [1],
+            "episode_start_season": ["2022-23"],
+            "episode_end_season": ["2023-24"],
+        }
+    )
+
+    pairs = build_forward_exposure_pairs(_summary(), episodes)
+
+    carryover = pairs.loc[
+        pairs["player_id"].eq(1) & pairs["target_season"].eq("2023-24")
+    ].iloc[0]
+    independent = pairs.loc[
+        pairs["player_id"].eq(2) & pairs["target_season"].eq("2023-24")
+    ].iloc[0]
+    assert carryover["has_cross_season_unavailability_carryover"]
+    assert not independent["has_cross_season_unavailability_carryover"]
+
+
+def test_count_metrics_reward_correct_episode_predictions() -> None:
+    assert poisson_deviance([0.0, 2.0], [0.01, 1.99]) < poisson_deviance(
+        [0.0, 2.0], [1.0, 0.1]
+    )
+    assert concentration_gini([0.0, 0.0, 2.0], [0.1, 0.2, 0.9]) > 0.0
