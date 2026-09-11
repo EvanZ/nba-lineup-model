@@ -42,6 +42,7 @@ class ForwardAvailabilityConfig:
     prior_strength: float
     initial_prior_strength: float
     workload_weight: float
+    use_age_baseline: bool = True
 
 
 @dataclass(frozen=True)
@@ -215,12 +216,33 @@ def fit_age_availability_model(summary: pd.DataFrame) -> AgeAvailabilityModel:
     )
 
 
+def fit_availability_baseline(
+    summary: pd.DataFrame,
+    *,
+    use_age_baseline: bool,
+) -> AgeAvailabilityModel:
+    """Fit the configured population baseline for the filtered player state."""
+
+    if use_age_baseline:
+        return fit_age_availability_model(summary)
+    _validate_summary(summary)
+    available = summary["available_games"].to_numpy(dtype=float)
+    known = summary["known_player_games"].to_numpy(dtype=float)
+    population_logit = logit(
+        np.clip(float(available.sum() / known.sum()), _EPSILON, 1.0 - _EPSILON)
+    )
+    return AgeAvailabilityModel(
+        coefficients=np.array((population_logit, 0.0, 0.0)),
+        population_logit=float(population_logit),
+    )
+
+
 def predict_availability_season(
     summary: pd.DataFrame,
     *,
     target_season: str,
     config: ForwardAvailabilityConfig,
-) -> tuple[pd.DataFrame, AgeAvailabilityModel, dict[str, float]]:
+) -> tuple[pd.DataFrame, AgeAvailabilityModel, dict[str, float | bool]]:
     """Make strictly forward predictions for one completed target season."""
 
     target_year = _season_year(target_season)
@@ -230,7 +252,7 @@ def predict_availability_season(
         raise ValueError(
             f"Target {target_season} requires non-empty history and target observations"
         )
-    age_model = fit_age_availability_model(history)
+    age_model = fit_availability_baseline(history, use_age_baseline=config.use_age_baseline)
     workload_mean = float(history["log_workload"].mean())
     workload_scale = float(history["log_workload"].std())
     if workload_scale <= 1e-12:
@@ -290,6 +312,7 @@ def predict_availability_season(
         "age_linear": float(age_model.coefficients[1]),
         "age_quadratic": float(age_model.coefficients[2]),
         "age_missing_population_logit": float(age_model.population_logit),
+        "use_age_baseline": bool(config.use_age_baseline),
     }
     return output, age_model, metadata
 
@@ -300,7 +323,7 @@ def predict_availability_roster(
     roster: pd.DataFrame,
     target_season: str,
     config: ForwardAvailabilityConfig,
-) -> tuple[pd.DataFrame, AgeAvailabilityModel, dict[str, float]]:
+) -> tuple[pd.DataFrame, AgeAvailabilityModel, dict[str, float | bool]]:
     """Forecast target-season availability for an opening roster only.
 
     Unlike ``predict_availability_season``, this path deliberately has no
@@ -319,7 +342,7 @@ def predict_availability_roster(
     history = summary.loc[summary["season_start_year"].lt(target_year)].copy()
     if history.empty:
         raise ValueError(f"Target {target_season} requires completed availability history")
-    age_model = fit_age_availability_model(history)
+    age_model = fit_availability_baseline(history, use_age_baseline=config.use_age_baseline)
     workload_mean = float(history["log_workload"].mean())
     workload_scale = float(history["log_workload"].std())
     if workload_scale <= 1e-12:
@@ -361,6 +384,7 @@ def predict_availability_roster(
         "age_linear": float(age_model.coefficients[1]),
         "age_quadratic": float(age_model.coefficients[2]),
         "age_missing_population_logit": float(age_model.population_logit),
+        "use_age_baseline": bool(config.use_age_baseline),
     }
     return output, age_model, metadata
 
@@ -530,10 +554,10 @@ def _filtered_player_state(
     for year in sorted(ordered["season_start_year"].unique()):
         completed = ordered.loc[ordered["season_start_year"].lt(year)]
         current = ordered.loc[ordered["season_start_year"].eq(year)]
-        age_model = (
-            fit_age_availability_model(completed)
-            if not completed.empty
-            else fit_age_availability_model(current)
+        baseline_data = completed if not completed.empty else current
+        age_model = fit_availability_baseline(
+            baseline_data,
+            use_age_baseline=config.use_age_baseline,
         )
         workload_mean = float(completed["log_workload"].mean()) if not completed.empty else 0.0
         workload_scale = float(completed["log_workload"].std()) if not completed.empty else 1.0

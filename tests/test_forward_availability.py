@@ -110,6 +110,32 @@ def test_roster_forecast_requires_no_target_availability_outcomes() -> None:
     assert values.loc[1, "predicted_available_share"] > values.loc[2, "predicted_available_share"]
 
 
+def test_constant_baseline_ablates_age_for_cold_starts() -> None:
+    roster = pd.DataFrame(
+        {
+            "player_id": [3, 4],
+            "player_name": ["Young cold start", "Older cold start"],
+            "age": [20.0, 35.0],
+        }
+    )
+
+    predictions, _baseline, metadata = predict_availability_roster(
+        _summary(),
+        roster=roster,
+        target_season="2023-24",
+        config=ForwardAvailabilityConfig(
+            persistence=0.5,
+            prior_strength=60.0,
+            initial_prior_strength=15.0,
+            workload_weight=0.0,
+            use_age_baseline=False,
+        ),
+    )
+
+    assert not metadata["use_age_baseline"]
+    assert predictions["predicted_available_share"].nunique() == 1
+
+
 def test_age_model_keeps_rows_without_a_known_age_on_population_baseline() -> None:
     summary = _summary()
     summary.loc[summary["player_id"].eq(2), "age"] = float("nan")
