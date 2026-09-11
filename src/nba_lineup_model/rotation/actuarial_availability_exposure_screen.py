@@ -1,9 +1,10 @@
 """Frozen availability-loss frequency screens with observed risk exposure.
 
 The count target is new binary-unavailability episodes. Each candidate uses a
-different realized target-season at-risk exposure as the Poisson offset. This is
-an out-of-time actuarial rate study, not a preseason forecast: target exposure
-is observed after the season and must later be forecast for prospective use.
+different realized target-season at-risk exposure as the Poisson offset. The
+only covariates are age and lagged player availability state. This is an
+out-of-time actuarial rate study, not a preseason forecast: target exposure is
+observed after the season and must later be forecast for prospective use.
 """
 
 from __future__ import annotations
@@ -56,8 +57,6 @@ def build_forward_exposure_pairs(
         "availability_episode_count",
         "unavailability_loss_cost",
         "available_rostered_games",
-        "panel_gp",
-        "panel_gs",
         "panel_minutes",
     }
     missing = sorted(required - set(player_seasons))
@@ -80,9 +79,6 @@ def build_forward_exposure_pairs(
             "availability_episode_count",
             "unavailability_loss_cost",
             "available_rostered_games",
-            "panel_gp",
-            "panel_gs",
-            "panel_minutes",
             "panel_age",
         ],
     ].rename(
@@ -93,9 +89,6 @@ def build_forward_exposure_pairs(
             "availability_episode_count": "prior_availability_episode_count",
             "unavailability_loss_cost": "prior_unavailability_loss_cost",
             "available_rostered_games": "prior_available_rostered_games",
-            "panel_gp": "prior_panel_gp",
-            "panel_gs": "prior_panel_gs",
-            "panel_minutes": "prior_panel_minutes",
         }
     )
     target = frame.loc[
@@ -125,9 +118,6 @@ def build_forward_exposure_pairs(
     pairs = pairs.loc[
         pairs["target_season_start_year"].eq(pairs["prior_season_start_year"] + 1)
     ].copy()
-    pairs["prior_minutes_per_gp"] = (
-        pairs["prior_panel_minutes"] / pairs["prior_panel_gp"].clip(lower=1.0)
-    )
     pairs["has_cross_season_unavailability_carryover"] = False
     if not episodes.empty:
         required_episodes = {
@@ -162,7 +152,8 @@ def run_frozen_exposure_screen(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Evaluate observed minutes and medical availability as frequency offsets.
 
-    Both offset candidates use the same strictly forward state covariates. The
+    Both offset candidates use only age and strictly forward player-state
+    covariates: prior availability loss and prior episode count. The
     target-season exposure makes this a retrospective rate validation rather
     than a standalone prospective forecast.
     """
