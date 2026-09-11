@@ -5,7 +5,6 @@ import pandas as pd
 from nba_lineup_model.rotation.actuarial_availability_exposure_screen import (
     build_forward_exposure_pairs,
     concentration_gini,
-    poisson_deviance,
     run_frozen_exposure_screen,
 )
 
@@ -65,14 +64,11 @@ def test_cross_season_episode_is_excluded_from_new_frequency_target() -> None:
     assert not independent["has_cross_season_unavailability_carryover"]
 
 
-def test_count_metrics_reward_correct_episode_predictions() -> None:
-    assert poisson_deviance([0.0, 2.0], [0.01, 1.99]) < poisson_deviance(
-        [0.0, 2.0], [1.0, 0.1]
-    )
+def test_concentration_gini_rewards_correct_risk_ordering() -> None:
     assert concentration_gini([0.0, 0.0, 2.0], [0.1, 0.2, 0.9]) > 0.0
 
 
-def test_frequency_screen_uses_target_minutes_and_available_games_as_offsets() -> None:
+def test_age_lift_uses_target_minutes_as_the_fixed_offset() -> None:
     rows = []
     for year in range(2016, 2024):
         season = f"{year}-{str(year + 1)[-2:]}"
@@ -98,17 +94,8 @@ def test_frequency_screen_uses_target_minutes_and_available_games_as_offsets() -
         frozen_seasons=("2023-24",),
     )
 
-    assert set(metrics["frequency_offset"]) == {
-        "Player minutes",
-        "Medically available games",
-    }
+    assert set(metrics["frequency_offset"]) == {"Player minutes"}
+    assert metrics["top_to_bottom_observed_rate_lift"].notna().all()
     minutes = predictions.loc[predictions["frequency_offset"].eq("Player minutes")]
-    available_games = predictions.loc[
-        predictions["frequency_offset"].eq("Medically available games")
-    ]
     assert minutes["exposure_value"].tolist() == [950.0, 1450.0, 1950.0, 2450.0]
-    assert available_games["exposure_value"].tolist() == [35.0, 50.0, 65.0, 80.0]
-    assert set(deciles["rate_label"]) == {
-        "Episodes per 1,000 player minutes",
-        "Episodes per 100 medically available games",
-    }
+    assert set(deciles["rate_label"]) == {"Episodes per 1,000 player minutes"}

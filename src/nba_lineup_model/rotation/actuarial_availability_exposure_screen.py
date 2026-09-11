@@ -1,10 +1,8 @@
-"""Frozen availability-loss frequency screens with observed risk exposure.
+"""Frozen age-only availability-loss lift diagnostic.
 
-The count target is new binary-unavailability episodes. Each candidate uses a
-different realized target-season at-risk exposure as the Poisson offset. The
-only covariates are age and lagged player availability state. This is an
-out-of-time actuarial rate study, not a preseason forecast: target exposure is
-observed after the season and must later be forecast for prospective use.
+The count target is new binary-unavailability episodes. Total target-season
+player minutes are the fixed Poisson offset and age is the only fitted risk
+factor. This isolates the historical risk ordering associated with age.
 """
 
 from __future__ import annotations
@@ -28,11 +26,6 @@ _OFFSET_SPECS = {
         "column": "target_panel_minutes",
         "rate_multiplier": 1_000.0,
         "rate_label": "Episodes per 1,000 player minutes",
-    },
-    "Medically available games": {
-        "column": "target_available_rostered_games",
-        "rate_multiplier": 100.0,
-        "rate_label": "Episodes per 100 medically available games",
     },
 }
 _RIDGE = 1e-4
@@ -150,23 +143,14 @@ def run_frozen_exposure_screen(
     *,
     frozen_seasons: tuple[str, ...] = DEFAULT_FROZEN_SEASONS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Evaluate observed minutes and medical availability as frequency offsets.
-
-    Both offset candidates use only age and strictly forward player-state
-    covariates: prior availability loss and prior episode count. The
-    target-season exposure makes this a retrospective rate validation rather
-    than a standalone prospective forecast.
-    """
+    """Evaluate age-only risk ordering with total player minutes as the offset."""
 
     required = {
         "target_season",
         "target_season_start_year",
         "target_availability_episode_count",
-        "target_available_rostered_games",
         "target_panel_minutes",
         "has_cross_season_unavailability_carryover",
-        "prior_unavailability_loss_cost",
-        "prior_availability_episode_count",
         "target_age",
     }
     missing = sorted(required - set(pairs))
@@ -174,10 +158,7 @@ def run_frozen_exposure_screen(
         raise ValueError(f"Forward availability pairs missing columns: {missing}")
     eligible = pairs.loc[
         ~pairs["has_cross_season_unavailability_carryover"].astype(bool)
-        # Keep a shared population so total deviance is comparable across the
-        # minute and medically-available-game offsets.
         & pairs["target_panel_minutes"].gt(0)
-        & pairs["target_available_rostered_games"].gt(0)
     ].copy()
     metrics: list[dict[str, object]] = []
     predictions: list[pd.DataFrame] = []
@@ -192,11 +173,7 @@ def run_frozen_exposure_screen(
             test = eligible.loc[eligible["target_season"].eq(target_season)].copy()
             if train.empty or test.empty:
                 raise ValueError(f"Frozen frequency screen lacks data for {target_season}")
-            columns = [
-                "target_age",
-                "prior_unavailability_loss_cost",
-                "prior_availability_episode_count",
-            ]
+            columns = ["target_age"]
             train_x, test_x = _standardized_design(train, test, columns)
             coefficients = _fit_poisson_glm(
                 train_x,
@@ -208,40 +185,47 @@ def run_frozen_exposure_screen(
                 np.log(test[offset_column].to_numpy(dtype=float)),
                 coefficients,
             )
+            risk_rate = _predict_poisson_glm(
+                test_x,
+                np.zeros(len(test), dtype=float),
+                coefficients,
+            )
             offset_predictions.append(
                 test.assign(
                     frequency_offset=offset_name,
                     exposure_value=test[offset_column].to_numpy(dtype=float),
                     rate_multiplier=rate_multiplier,
                     rate_label=rate_label,
+                    risk_score=risk_rate,
                     predicted_episode_count=expected,
                 )
             )
         combined = pd.concat(offset_predictions, ignore_index=True)
-        deviance = poisson_deviance(
-            combined["target_availability_episode_count"].to_numpy(dtype=float),
-            combined["predicted_episode_count"].to_numpy(dtype=float),
-        )
         metrics.append(
             {
                 "frequency_offset": offset_name,
-                "poisson_deviance": deviance,
-                "poisson_deviance_per_player_season": deviance / len(combined),
-                "mean_predicted_episode_count": float(combined["predicted_episode_count"].mean()),
-                "mean_observed_episode_count": float(
-                    combined["target_availability_episode_count"].mean()
-                ),
                 "concentration_gini": concentration_gini(
                     combined["target_availability_episode_count"].to_numpy(dtype=float),
-                    combined["predicted_episode_count"].to_numpy(dtype=float),
+                    combined["risk_score"].to_numpy(dtype=float),
                 ),
                 "player_seasons": int(len(combined)),
             }
         )
         predictions.append(combined)
     prediction_frame = pd.concat(predictions, ignore_index=True)
-    metrics_frame = pd.DataFrame(metrics).sort_values("poisson_deviance", kind="stable")
     deciles = build_risk_decile_table(prediction_frame)
+    lift = _observed_decile_lift(deciles)
+    metrics_frame = pd.DataFrame(metrics).merge(
+        lift,
+        on="frequency_offset",
+        how="left",
+        validate="one_to_one",
+    )
+    metrics_frame = metrics_frame.sort_values(
+        ["concentration_gini", "top_to_bottom_observed_rate_lift"],
+        ascending=False,
+        kind="stable",
+    )
     return metrics_frame.reset_index(drop=True), prediction_frame, deciles
 
 
@@ -250,11 +234,9 @@ def build_risk_decile_table(predictions: pd.DataFrame) -> pd.DataFrame:
 
     rows: list[dict[str, object]] = []
     for offset_name, group in predictions.groupby("frequency_offset", sort=False):
-        ordered = group.sort_values(
-            ["predicted_episode_count", "player_id"], kind="stable"
-        ).copy()
+        ordered = group.sort_values(["risk_score", "player_id"], kind="stable").copy()
         ordered["risk_decile"] = pd.qcut(
-            ordered["predicted_episode_count"].rank(method="first"),
+            ordered["risk_score"].rank(method="first"),
             q=10,
             labels=False,
         ).astype(int) + 1
@@ -273,22 +255,14 @@ def build_risk_decile_table(predictions: pd.DataFrame) -> pd.DataFrame:
                     "rate_label": str(values["rate_label"].iloc[0]),
                     "observed_episode_count": observed,
                     "predicted_episode_count": predicted,
+                    "mean_predicted_rate_per_rate_unit": multiplier
+                    * float(values["risk_score"].mean()),
                     "observed_episodes_per_rate_unit": multiplier * observed / exposure,
                     "predicted_episodes_per_rate_unit": multiplier * predicted / exposure,
                     "observed_to_expected": observed / predicted if predicted > 0.0 else np.nan,
                 }
             )
     return pd.DataFrame(rows)
-
-
-def poisson_deviance(observed: np.ndarray, predicted: np.ndarray) -> float:
-    """Return the total Poisson deviance for count predictions."""
-
-    y = np.asarray(observed, dtype=float)
-    mu = np.clip(np.asarray(predicted, dtype=float), 1e-12, None)
-    positive = y > 0.0
-    terms = np.where(positive, y * np.log(np.clip(y, 1e-12, None) / mu) - (y - mu), mu)
-    return float(2.0 * terms.sum())
 
 
 def concentration_gini(observed: np.ndarray, scores: np.ndarray) -> float:
@@ -304,8 +278,27 @@ def concentration_gini(observed: np.ndarray, scores: np.ndarray) -> float:
     return float(1.0 - 2.0 * area)
 
 
+def _observed_decile_lift(deciles: pd.DataFrame) -> pd.DataFrame:
+    """Summarize observed top-versus-bottom risk-decile episode-rate lift."""
+
+    rows: list[dict[str, object]] = []
+    for offset_name, values in deciles.groupby("frequency_offset", sort=False):
+        ordered = values.sort_values("risk_decile", kind="stable")
+        bottom = float(ordered["observed_episodes_per_rate_unit"].iloc[0])
+        top = float(ordered["observed_episodes_per_rate_unit"].iloc[-1])
+        rows.append(
+            {
+                "frequency_offset": offset_name,
+                "bottom_decile_observed_rate": bottom,
+                "top_decile_observed_rate": top,
+                "top_to_bottom_observed_rate_lift": top / bottom if bottom > 0.0 else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def plot_risk_decile_lift(deciles: pd.DataFrame, output_path: Path | str) -> None:
-    """Write pooled frozen observed-versus-predicted episode-rate lift panels."""
+    """Write pooled observed episode lift panels by predicted-risk decile."""
 
     offset_names = list(deciles["frequency_offset"].drop_duplicates())
     figure, axes = plt.subplots(1, len(offset_names), figsize=(14, 5), squeeze=False)
@@ -316,22 +309,14 @@ def plot_risk_decile_lift(deciles: pd.DataFrame, output_path: Path | str) -> Non
             values["observed_episodes_per_rate_unit"],
             color="#1f5d9d",
             marker="o",
-            label="Observed",
-        )
-        axis.plot(
-            values["risk_decile"],
-            values["predicted_episodes_per_rate_unit"],
-            color="#d97706",
-            marker="o",
-            label="Predicted",
+            label="Observed episode rate",
         )
         axis.set_title(offset_name)
         axis.set_xlabel("Predicted frequency-risk decile")
         axis.set_xticks(range(1, 11))
         axis.set_ylabel(str(values["rate_label"].iloc[0]))
         axis.grid(axis="y", alpha=0.25)
-    figure.legend(["Observed", "Predicted"], loc="upper center", ncol=2, frameon=False)
-    figure.suptitle("Frozen unavailable-episode frequency lift and calibration", y=0.99)
+    figure.suptitle("Frozen unavailable-episode rate lift by age-risk decile", y=0.99)
     figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
     figure.savefig(output_path, dpi=180, bbox_inches="tight")
     plt.close(figure)
@@ -402,7 +387,7 @@ def main() -> int:
     """Run and persist the frozen observed-exposure frequency screen."""
 
     parser = argparse.ArgumentParser(
-        description="Compare observed exposure offsets for availability-loss frequency"
+        description="Build an age-only availability-loss lift diagnostic"
     )
     parser.add_argument("--episode-dir", type=Path, default=DEFAULT_EPISODE_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
