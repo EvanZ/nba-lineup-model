@@ -134,6 +134,7 @@ nba-evaluate-l20-source-aware-preseason-minute-share = "nba_lineup_model.rotatio
 nba-run-forward-availability = "nba_lineup_model.rotation.forward_availability:main"
 nba-ablate-forward-availability-components = "nba_lineup_model.rotation.availability_component_ablation:main"
 nba-run-forward-tweedie-availability-loss-cost = "nba_lineup_model.rotation.forward_tweedie_availability_loss_cost:main"
+nba-run-forward-tweedie-availability-v02-components = "nba_lineup_model.rotation.forward_tweedie_availability_v02_components:main"
 nba-build-availability-loss-episode-mart = "nba_lineup_model.rotation.availability_episode_mart:main"
 nba-screen-actuarial-availability-exposure = "nba_lineup_model.rotation.actuarial_availability_exposure_screen:main"
 nba-evaluate-ac-minute-share-projection = "nba_lineup_model.rotation.ac_minute_share_projection:main"

@@ -53,3 +53,26 @@ def test_tweedie_deviance_is_zero_when_mean_equals_observed_loss() -> None:
     model = fit_tweedie_loss_cost_model(_state_panel().iloc[:6], power=1.5)
     assert np.isfinite(model.intercept)
     assert np.isfinite(model.state_weight)
+
+
+def test_tweedie_model_accepts_multiple_forward_feature_blocks() -> None:
+    panel = _state_panel().assign(
+        age_baseline_logit=-0.5,
+        carried_state_residual_logit=lambda frame: frame["loss_state_logit"],
+        carried_workload_adjustment_logit=0.1,
+    )
+    features = (
+        "age_baseline_logit",
+        "carried_state_residual_logit",
+        "carried_workload_adjustment_logit",
+    )
+    predictions, model = predict_tweedie_loss_cost(
+        panel,
+        target_season="2023-24",
+        power=1.5,
+        feature_columns=features,
+    )
+
+    assert model.feature_names == features
+    assert len(model.feature_weights) == len(features)
+    assert predictions["predicted_unavailable_games"].notna().all()

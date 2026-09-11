@@ -54,8 +54,16 @@ class TweedieLossCostModel:
     """Fitted log-link Tweedie mean model with an exposure offset."""
 
     intercept: float
-    state_weight: float
+    feature_names: tuple[str, ...]
+    feature_weights: tuple[float, ...]
     power: float
+
+    @property
+    def state_weight(self) -> float:
+        """Return the loss-state coefficient for the original one-feature candidate."""
+
+        index = self.feature_names.index("loss_state_logit")
+        return self.feature_weights[index]
 
 
 @dataclass(frozen=True)
@@ -107,12 +115,13 @@ def fit_tweedie_loss_cost_model(
     training: pd.DataFrame,
     *,
     power: float,
+    feature_columns: tuple[str, ...] = ("loss_state_logit",),
 ) -> TweedieLossCostModel:
     """Fit a log-link Tweedie mean with log rostered-game exposure offset."""
 
     if not 1.0 < power < 2.0:
         raise ValueError("Tweedie power must be strictly between 1 and 2")
-    required = {"unavailable_games", "known_player_games", "loss_state_logit"}
+    required = {"unavailable_games", "known_player_games", *feature_columns}
     missing = sorted(required - set(training))
     if missing:
         raise ValueError(f"Tweedie training rows missing columns: {missing}")
@@ -121,13 +130,14 @@ def fit_tweedie_loss_cost_model(
 
     losses = training["unavailable_games"].to_numpy(dtype=float)
     exposure = training["known_player_games"].to_numpy(dtype=float)
-    state = training["loss_state_logit"].to_numpy(dtype=float)
     if np.any(exposure <= 0.0):
         raise ValueError("Tweedie exposure must be positive")
-    design = np.column_stack((np.ones(len(training)), state))
+    features = training.loc[:, feature_columns].to_numpy(dtype=float)
+    design = np.column_stack((np.ones(len(training)), features))
     offset = np.log(exposure)
     population_rate = np.clip(losses.sum() / exposure.sum(), _EPSILON, 1.0)
-    initial = np.array((np.log(population_rate), 0.0))
+    initial = np.zeros(design.shape[1], dtype=float)
+    initial[0] = np.log(population_rate)
 
     def objective(coefficients: np.ndarray) -> tuple[float, np.ndarray]:
         linear = np.clip(offset + design @ coefficients, -30.0, 30.0)
@@ -148,7 +158,8 @@ def fit_tweedie_loss_cost_model(
         raise RuntimeError(f"Tweedie loss-cost fit failed: {result.message}")
     return TweedieLossCostModel(
         intercept=float(result.x[0]),
-        state_weight=float(result.x[1]),
+        feature_names=feature_columns,
+        feature_weights=tuple(float(value) for value in result.x[1:]),
         power=float(power),
     )
 
@@ -158,6 +169,7 @@ def predict_tweedie_loss_cost(
     *,
     target_season: str,
     power: float,
+    feature_columns: tuple[str, ...] = ("loss_state_logit",),
 ) -> tuple[pd.DataFrame, TweedieLossCostModel]:
     """Fit on previous state rows and score one completed target season."""
 
@@ -166,12 +178,16 @@ def predict_tweedie_loss_cost(
     target = state_panel.loc[state_panel["season"].eq(target_season)].copy()
     if target.empty:
         raise ValueError(f"Loss-state panel has no target rows for {target_season}")
-    model = fit_tweedie_loss_cost_model(training, power=power)
+    model = fit_tweedie_loss_cost_model(
+        training,
+        power=power,
+        feature_columns=feature_columns,
+    )
     exposure = target["known_player_games"].to_numpy(dtype=float)
-    state = target["loss_state_logit"].to_numpy(dtype=float)
+    features = target.loc[:, model.feature_names].to_numpy(dtype=float)
     raw_cost = np.exp(
         np.clip(
-            np.log(exposure) + model.intercept + model.state_weight * state,
+            np.log(exposure) + model.intercept + features @ np.asarray(model.feature_weights),
             -30.0,
             30.0,
         )
@@ -251,6 +267,7 @@ def tune_tweedie_power(
     *,
     target_seasons: tuple[str, ...] = DEFAULT_TUNING_SEASONS,
     power_grid: tuple[float, ...] = DEFAULT_TWEEDIE_POWER_GRID,
+    feature_columns: tuple[str, ...] = ("loss_state_logit",),
 ) -> tuple[float, pd.DataFrame]:
     """Select Tweedie power on the same pre-frozen target seasons."""
 
@@ -261,6 +278,7 @@ def tune_tweedie_power(
                 state_panel,
                 target_season=season,
                 power=float(power),
+                feature_columns=feature_columns,
             )[0]
             for season in target_seasons
         ]

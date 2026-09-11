@@ -278,27 +278,41 @@ def predict_availability_season(
     predicted: list[float] = []
     gap_years: list[int] = []
     has_history: list[bool] = []
+    age_baseline_logits: list[float] = []
+    carried_state_residuals: list[float] = []
+    carried_workload_adjustments: list[float] = []
     for row in output.itertuples(index=False):
         player_id = int(row.player_id)
         age_baseline = float(age_model.predict_logit(np.array([row.age]))[0])
+        age_baseline_logits.append(age_baseline)
         prior = state.get(player_id)
         if prior is None:
             predicted.append(float(expit(age_baseline)))
             gap_years.append(-1)
             has_history.append(False)
+            carried_state_residuals.append(0.0)
+            carried_workload_adjustments.append(0.0)
             continue
         gap = max(target_year - int(prior["season_start_year"]), 1)
         prior_age_baseline = float(age_model.predict_logit(np.array([prior["age"]]))[0])
         deviation = float(prior["posterior_logit"] - prior_age_baseline)
         workload_z = (float(prior["log_workload"]) - workload_mean) / workload_scale
         workload_effect = config.workload_weight * workload_z
-        predicted_logit = age_baseline + (config.persistence**gap) * (deviation + workload_effect)
+        decay = config.persistence**gap
+        carried_state = decay * deviation
+        carried_workload = decay * workload_effect
+        predicted_logit = age_baseline + carried_state + carried_workload
         predicted.append(float(expit(predicted_logit)))
         gap_years.append(gap)
         has_history.append(True)
+        carried_state_residuals.append(carried_state)
+        carried_workload_adjustments.append(carried_workload)
     output["predicted_available_share"] = predicted
     output["prior_gap_years"] = gap_years
     output["has_prior_availability_state"] = has_history
+    output["age_baseline_logit"] = age_baseline_logits
+    output["carried_state_residual_logit"] = carried_state_residuals
+    output["carried_workload_adjustment_logit"] = carried_workload_adjustments
     output["absolute_error"] = np.abs(
         output["available_share"] - output["predicted_available_share"]
     )
@@ -356,27 +370,39 @@ def predict_availability_roster(
     predicted: list[float] = []
     gap_years: list[int] = []
     has_history: list[bool] = []
+    age_baseline_logits: list[float] = []
+    carried_state_residuals: list[float] = []
+    carried_workload_adjustments: list[float] = []
     for row in output.itertuples(index=False):
         age_baseline = float(age_model.predict_logit(np.array([row.age]))[0])
+        age_baseline_logits.append(age_baseline)
         prior = state.get(int(row.player_id))
         if prior is None:
             predicted.append(float(expit(age_baseline)))
             gap_years.append(-1)
             has_history.append(False)
+            carried_state_residuals.append(0.0)
+            carried_workload_adjustments.append(0.0)
             continue
         gap = max(target_year - int(prior["season_start_year"]), 1)
         prior_age_baseline = float(age_model.predict_logit(np.array([prior["age"]]))[0])
         deviation = float(prior["posterior_logit"] - prior_age_baseline)
         workload_z = (float(prior["log_workload"]) - workload_mean) / workload_scale
-        predicted_logit = age_baseline + config.persistence**gap * (
-            deviation + config.workload_weight * workload_z
-        )
+        decay = config.persistence**gap
+        carried_state = decay * deviation
+        carried_workload = decay * config.workload_weight * workload_z
+        predicted_logit = age_baseline + carried_state + carried_workload
         predicted.append(float(expit(predicted_logit)))
         gap_years.append(gap)
         has_history.append(True)
+        carried_state_residuals.append(carried_state)
+        carried_workload_adjustments.append(carried_workload)
     output["predicted_available_share"] = predicted
     output["prior_gap_years"] = gap_years
     output["has_prior_availability_state"] = has_history
+    output["age_baseline_logit"] = age_baseline_logits
+    output["carried_state_residual_logit"] = carried_state_residuals
+    output["carried_workload_adjustment_logit"] = carried_workload_adjustments
     metadata = {
         "workload_mean": workload_mean,
         "workload_scale": workload_scale,

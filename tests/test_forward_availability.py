@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+from scipy.special import logit
 
 from nba_lineup_model.rotation.forward_availability import (
     ForwardAvailabilityConfig,
@@ -82,6 +83,28 @@ def test_first_observed_season_is_shrunk_to_the_age_baseline() -> None:
         2, "predicted_available_share"
     ]
     assert low_availability_prediction > 0.1
+
+
+def test_prediction_exposes_exact_forward_component_logits() -> None:
+    predictions, _age, _metadata = predict_availability_season(
+        _summary(),
+        target_season="2022-23",
+        config=ForwardAvailabilityConfig(
+            persistence=0.5,
+            prior_strength=60.0,
+            initial_prior_strength=15.0,
+            workload_weight=-0.25,
+        ),
+    )
+
+    component_sum = (
+        predictions["age_baseline_logit"]
+        + predictions["carried_state_residual_logit"]
+        + predictions["carried_workload_adjustment_logit"]
+    )
+    assert logit(predictions["predicted_available_share"].to_numpy()) == pytest.approx(
+        component_sum.to_numpy()
+    )
 
 
 def test_roster_forecast_requires_no_target_availability_outcomes() -> None:
