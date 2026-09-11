@@ -1,8 +1,8 @@
 """Frozen age-only availability-loss lift diagnostic.
 
 The count target is new binary-unavailability episodes. Total target-season
-player minutes are the fixed Poisson offset and age is the only fitted risk
-factor. This isolates the historical risk ordering associated with age.
+player minutes are the exposure denominator. The chart bins player-seasons
+directly by age, isolating the observed historical age relationship.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
 
 from nba_lineup_model.rotation.availability_episode_mart import (
     DEFAULT_OUTPUT_DIR as DEFAULT_EPISODE_DIR,
@@ -143,7 +142,7 @@ def run_frozen_exposure_screen(
     *,
     frozen_seasons: tuple[str, ...] = DEFAULT_FROZEN_SEASONS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Evaluate age-only risk ordering with total player minutes as the offset."""
+    """Build the pooled observed episode-rate lift by literal age decile."""
 
     required = {
         "target_season",
@@ -166,41 +165,16 @@ def run_frozen_exposure_screen(
         offset_column = str(offset_spec["column"])
         rate_multiplier = float(offset_spec["rate_multiplier"])
         rate_label = str(offset_spec["rate_label"])
-        offset_predictions: list[pd.DataFrame] = []
-        for target_season in frozen_seasons:
-            target_year = _season_year(target_season)
-            train = eligible.loc[eligible["target_season_start_year"].lt(target_year)].copy()
-            test = eligible.loc[eligible["target_season"].eq(target_season)].copy()
-            if train.empty or test.empty:
-                raise ValueError(f"Frozen frequency screen lacks data for {target_season}")
-            columns = ["target_age"]
-            train_x, test_x = _standardized_design(train, test, columns)
-            coefficients = _fit_poisson_glm(
-                train_x,
-                train["target_availability_episode_count"].to_numpy(dtype=float),
-                np.log(train[offset_column].to_numpy(dtype=float)),
-            )
-            expected = _predict_poisson_glm(
-                test_x,
-                np.log(test[offset_column].to_numpy(dtype=float)),
-                coefficients,
-            )
-            risk_rate = _predict_poisson_glm(
-                test_x,
-                np.zeros(len(test), dtype=float),
-                coefficients,
-            )
-            offset_predictions.append(
-                test.assign(
-                    frequency_offset=offset_name,
-                    exposure_value=test[offset_column].to_numpy(dtype=float),
-                    rate_multiplier=rate_multiplier,
-                    rate_label=rate_label,
-                    risk_score=risk_rate,
-                    predicted_episode_count=expected,
-                )
-            )
-        combined = pd.concat(offset_predictions, ignore_index=True)
+        combined = eligible.loc[eligible["target_season"].isin(frozen_seasons)].copy()
+        if combined.empty:
+            raise ValueError("Age lift diagnostic lacks rows for its frozen target seasons")
+        combined = combined.assign(
+            frequency_offset=offset_name,
+            exposure_value=combined[offset_column].to_numpy(dtype=float),
+            rate_multiplier=rate_multiplier,
+            rate_label=rate_label,
+            risk_score=combined["target_age"].to_numpy(dtype=float),
+        )
         metrics.append(
             {
                 "frequency_offset": offset_name,
@@ -213,7 +187,7 @@ def run_frozen_exposure_screen(
         )
         predictions.append(combined)
     prediction_frame = pd.concat(predictions, ignore_index=True)
-    deciles = build_risk_decile_table(prediction_frame)
+    deciles = build_age_decile_table(prediction_frame)
     lift = _observed_decile_lift(deciles)
     metrics_frame = pd.DataFrame(metrics).merge(
         lift,
@@ -229,37 +203,34 @@ def run_frozen_exposure_screen(
     return metrics_frame.reset_index(drop=True), prediction_frame, deciles
 
 
-def build_risk_decile_table(predictions: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate frozen predictions into equal-count risk deciles by offset."""
+def build_age_decile_table(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate frozen player-seasons into literal-age, equal-count deciles."""
 
     rows: list[dict[str, object]] = []
     for offset_name, group in predictions.groupby("frequency_offset", sort=False):
-        ordered = group.sort_values(["risk_score", "player_id"], kind="stable").copy()
-        ordered["risk_decile"] = pd.qcut(
+        ordered = group.sort_values(["target_age", "player_id"], kind="stable").copy()
+        ordered["age_decile"] = pd.qcut(
             ordered["risk_score"].rank(method="first"),
             q=10,
             labels=False,
         ).astype(int) + 1
-        for decile, values in ordered.groupby("risk_decile", sort=True):
+        for decile, values in ordered.groupby("age_decile", sort=True):
             observed = float(values["target_availability_episode_count"].sum())
-            predicted = float(values["predicted_episode_count"].sum())
             exposure = float(values["exposure_value"].sum())
             multiplier = float(values["rate_multiplier"].iloc[0])
             rows.append(
                 {
                     "frequency_offset": offset_name,
-                    "risk_decile": int(decile),
+                    "age_decile": int(decile),
                     "player_seasons": int(len(values)),
+                    "minimum_age": float(values["target_age"].min()),
+                    "mean_age": float(values["target_age"].mean()),
+                    "maximum_age": float(values["target_age"].max()),
                     "exposure_total": exposure,
                     "rate_multiplier": multiplier,
                     "rate_label": str(values["rate_label"].iloc[0]),
                     "observed_episode_count": observed,
-                    "predicted_episode_count": predicted,
-                    "mean_predicted_rate_per_rate_unit": multiplier
-                    * float(values["risk_score"].mean()),
                     "observed_episodes_per_rate_unit": multiplier * observed / exposure,
-                    "predicted_episodes_per_rate_unit": multiplier * predicted / exposure,
-                    "observed_to_expected": observed / predicted if predicted > 0.0 else np.nan,
                 }
             )
     return pd.DataFrame(rows)
@@ -283,7 +254,7 @@ def _observed_decile_lift(deciles: pd.DataFrame) -> pd.DataFrame:
 
     rows: list[dict[str, object]] = []
     for offset_name, values in deciles.groupby("frequency_offset", sort=False):
-        ordered = values.sort_values("risk_decile", kind="stable")
+        ordered = values.sort_values("age_decile", kind="stable")
         bottom = float(ordered["observed_episodes_per_rate_unit"].iloc[0])
         top = float(ordered["observed_episodes_per_rate_unit"].iloc[-1])
         rows.append(
@@ -298,85 +269,28 @@ def _observed_decile_lift(deciles: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_risk_decile_lift(deciles: pd.DataFrame, output_path: Path | str) -> None:
-    """Write pooled observed episode lift panels by predicted-risk decile."""
+    """Write pooled observed episode-rate lift panels by literal age decile."""
 
     offset_names = list(deciles["frequency_offset"].drop_duplicates())
     figure, axes = plt.subplots(1, len(offset_names), figsize=(14, 5), squeeze=False)
     for axis, offset_name in zip(axes.flat, offset_names, strict=False):
-        values = deciles.loc[deciles["frequency_offset"].eq(offset_name)].sort_values("risk_decile")
+        values = deciles.loc[deciles["frequency_offset"].eq(offset_name)].sort_values("age_decile")
         axis.plot(
-            values["risk_decile"],
+            values["age_decile"],
             values["observed_episodes_per_rate_unit"],
             color="#1f5d9d",
             marker="o",
             label="Observed episode rate",
         )
         axis.set_title(offset_name)
-        axis.set_xlabel("Predicted frequency-risk decile")
+        axis.set_xlabel("Age decile (youngest to oldest)")
         axis.set_xticks(range(1, 11))
         axis.set_ylabel(str(values["rate_label"].iloc[0]))
         axis.grid(axis="y", alpha=0.25)
-    figure.suptitle("Frozen unavailable-episode rate lift by age-risk decile", y=0.99)
+    figure.suptitle("Frozen unavailable-episode rate lift by age decile", y=0.99)
     figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
     figure.savefig(output_path, dpi=180, bbox_inches="tight")
     plt.close(figure)
-
-
-def _standardized_design(
-    train: pd.DataFrame,
-    test: pd.DataFrame,
-    columns: list[str],
-) -> tuple[np.ndarray, np.ndarray]:
-    train_values: list[np.ndarray] = []
-    test_values: list[np.ndarray] = []
-    for column in columns:
-        train_column = (
-            pd.to_numeric(train[column], errors="coerce").fillna(0.0).to_numpy(dtype=float)
-        )
-        test_column = (
-            pd.to_numeric(test[column], errors="coerce").fillna(0.0).to_numpy(dtype=float)
-        )
-        mean = float(train_column.mean())
-        scale = float(train_column.std())
-        if scale <= 1e-12:
-            scale = 1.0
-        train_values.append((train_column - mean) / scale)
-        test_values.append((test_column - mean) / scale)
-    return (
-        np.column_stack([np.ones(len(train)), *train_values]),
-        np.column_stack([np.ones(len(test)), *test_values]),
-    )
-
-
-def _fit_poisson_glm(design: np.ndarray, observed: np.ndarray, offset: np.ndarray) -> np.ndarray:
-    """Fit a lightly ridge-stabilized Poisson log-link model with an offset."""
-
-    def objective(coefficients: np.ndarray) -> tuple[float, np.ndarray]:
-        linear = np.clip(offset + design @ coefficients, -30.0, 30.0)
-        expected = np.exp(linear)
-        value = float((expected - observed * linear).sum())
-        gradient = design.T @ (expected - observed)
-        value += 0.5 * _RIDGE * float(np.dot(coefficients[1:], coefficients[1:]))
-        gradient[1:] += _RIDGE * coefficients[1:]
-        return value, gradient
-
-    result = minimize(
-        fun=lambda values: objective(values)[0],
-        x0=np.zeros(design.shape[1], dtype=float),
-        jac=lambda values: objective(values)[1],
-        method="L-BFGS-B",
-    )
-    if not result.success:
-        raise RuntimeError(f"Poisson workload screen failed: {result.message}")
-    return np.asarray(result.x, dtype=float)
-
-
-def _predict_poisson_glm(
-    design: np.ndarray,
-    offset: np.ndarray,
-    coefficients: np.ndarray,
-) -> np.ndarray:
-    return np.exp(np.clip(offset + design @ coefficients, -30.0, 30.0))
 
 
 def _season_year(season: str) -> int:

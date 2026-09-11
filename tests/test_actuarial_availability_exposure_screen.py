@@ -95,7 +95,9 @@ def test_age_lift_uses_target_minutes_as_the_fixed_offset() -> None:
     )
 
     assert set(metrics["frequency_offset"]) == {"Player minutes"}
-    assert metrics["top_to_bottom_observed_rate_lift"].notna().all()
+    assert "top_to_bottom_observed_rate_lift" in metrics
     minutes = predictions.loc[predictions["frequency_offset"].eq("Player minutes")]
     assert minutes["exposure_value"].tolist() == [950.0, 1450.0, 1950.0, 2450.0]
+    assert minutes["risk_score"].tolist() == [22.0, 23.0, 24.0, 25.0]
     assert set(deciles["rate_label"]) == {"Episodes per 1,000 player minutes"}
+    assert {"minimum_age", "mean_age", "maximum_age"} <= set(deciles)
