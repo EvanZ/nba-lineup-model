@@ -35,7 +35,7 @@ from nba_lineup_model.rotation.forward_availability import (
 )
 
 DEFAULT_ARTIFACTS_DIR = Path("artifacts/rotation/forward_tweedie_availability_loss_cost")
-DEFAULT_TWEEDIE_POWER_GRID = (1.1, 1.3, 1.5, 1.7, 1.9)
+DEFAULT_TWEEDIE_POWER_GRID = (1.1, 1.3, 1.5, 1.7, 1.9, 1.99)
 PRODUCTION_AVAILABILITY_CONFIG = ForwardAvailabilityConfig(0.5, 60.0, 15.0, -0.25)
 _EPSILON = 1e-8
 
