@@ -16,12 +16,17 @@ from nba_lineup_model.players.availability import (
     STATE_UNAVAILABLE_REST,
     STATE_UNAVAILABLE_SUSPENSION,
     STATE_UNKNOWN_DNP,
+    _apply_official_gleague_assignment_overrides,
     _correct_isolated_coach_dnp_with_medical_neighbors,
     availability_label,
     availability_rows_from_payload,
     availability_rows_from_stats_v3_and_summary,
     build_player_availability_mart,
     classify_availability_state,
+)
+from nba_lineup_model.players.gleague_assignments import (
+    OFFICIAL_GLEAGUE_SOURCE,
+    load_official_gleague_assignment_intervals,
 )
 
 
@@ -422,3 +427,66 @@ def test_builds_season_mart_with_live_source_preferred(tmp_path) -> None:
     assert mart.set_index("player_id").loc[8, "available"]
     assert coverage.loc[0, "live_boxscore_games"] == 1
     assert coverage.loc[0, "missing_source_games"] == 0
+
+
+def test_official_gleague_assignment_override_is_exact_and_auditable(tmp_path) -> None:
+    transactions_path = tmp_path / "GLeagueTransactions.json"
+    transactions_path.write_text(
+        json.dumps(
+            [
+                {
+                    "PLAYER_ID": 7,
+                    "TEAM_ID": 1612709902,
+                    "TEAM_SLUG": "warriors",
+                    "TRANSACTION_DATE": "2023-02-01",
+                    "TRANSACTION_DESCRIPTION": "Assigned",
+                },
+                {
+                    "PLAYER_ID": 7,
+                    "TEAM_ID": 1612709902,
+                    "TEAM_SLUG": "warriors",
+                    "TRANSACTION_DATE": "2023-02-05",
+                    "TRANSACTION_DESCRIPTION": "Recalled",
+                },
+            ]
+        )
+    )
+    intervals = load_official_gleague_assignment_intervals(transactions_path)
+    interval = intervals.iloc[0]
+    assert interval["nba_parent_team_id"] == 1610612744
+    assert interval["assignment_date"] == pd.Timestamp("2023-02-01", tz="UTC")
+    assert interval["recall_date"] == pd.Timestamp("2023-02-05", tz="UTC")
+
+    player_games = pd.DataFrame(
+        {
+            "season": ["2022-23"] * 4,
+            "game_id": ["a", "b", "c", "d"],
+            "game_date": pd.to_datetime(
+                ["2023-02-03", "2023-02-03", "2023-02-03", "2023-02-06"], utc=True
+            ),
+            "team_id": [1610612744, 1610612747, 1610612744, 1610612744],
+            "player_id": [7, 7, 7, 7],
+            "availability_state": [
+                STATE_UNAVAILABLE_INACTIVE_UNSPECIFIED,
+                STATE_UNAVAILABLE_INACTIVE_UNSPECIFIED,
+                STATE_UNAVAILABLE_INJURY,
+                STATE_UNAVAILABLE_INACTIVE_UNSPECIFIED,
+            ],
+            "available": [False, False, False, False],
+            "availability_state_known": [True, True, True, True],
+        }
+    )
+
+    output, audit = _apply_official_gleague_assignment_overrides(
+        player_games,
+        season="2022-23",
+        transactions_path=transactions_path,
+    )
+
+    assert output.loc[0, "availability_state"] == STATE_AVAILABLE_G_LEAGUE_ASSIGNMENT
+    assert output.loc[0, "available"]
+    assert output.loc[0, "availability_override_source"] == OFFICIAL_GLEAGUE_SOURCE
+    assert output.loc[1, "availability_state"] == STATE_UNAVAILABLE_INACTIVE_UNSPECIFIED
+    assert output.loc[2, "availability_state"] == STATE_UNAVAILABLE_INJURY
+    assert output.loc[3, "availability_state"] == STATE_UNAVAILABLE_INACTIVE_UNSPECIFIED
+    assert audit.loc[0, "overridden_generic_inactive_rows"] == 1

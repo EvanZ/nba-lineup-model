@@ -15,10 +15,16 @@ from typing import Any
 
 import pandas as pd
 
+from nba_lineup_model.players.gleague_assignments import (
+    OFFICIAL_GLEAGUE_SOURCE,
+    OFFICIAL_GLEAGUE_TRANSACTIONS_URL,
+    load_official_gleague_assignment_intervals,
+)
 from nba_lineup_model.season.schema import validate_season
 
 DEFAULT_FIRST_SEASON = "2015-16"
 DEFAULT_LAST_SEASON = "2025-26"
+DEFAULT_GLEAGUE_TRANSACTIONS_PATH = Path("gleague/GLeagueTransactions.json")
 
 STATE_PLAYED = "played"
 STATE_AVAILABLE_DNP_COACH = "available_dnp_coach"
@@ -101,6 +107,7 @@ def build_player_availability_mart(
     *,
     raw_dir: Path | str = Path("data/raw"),
     curated_dir: Path | str = Path("data/curated"),
+    gleague_transactions_path: Path | str | None = None,
 ) -> Path:
     """Publish regular-season player availability states for one NBA season.
 
@@ -167,8 +174,16 @@ def build_player_availability_mart(
     if not rows:
         raise AvailabilityMartError(f"No box-score sources found for {season}")
 
-    player_games = pd.concat(rows, ignore_index=True)
+    player_games = _initialize_assignment_override_columns(pd.concat(rows, ignore_index=True))
     player_games = _correct_isolated_coach_dnp_with_medical_neighbors(player_games)
+    resolved_gleague_path = _resolve_gleague_transactions_path(
+        raw_root, gleague_transactions_path
+    )
+    player_games, gleague_audit = _apply_official_gleague_assignment_overrides(
+        player_games,
+        season=season,
+        transactions_path=resolved_gleague_path,
+    )
     _validate_player_games(player_games, season=season)
     source_coverage = pd.DataFrame(source_rows)
     target = Path(curated_dir) / "player_availability" / season
@@ -185,6 +200,7 @@ def build_player_availability_mart(
     _reason_counts_frame(season, player_games).to_parquet(
         target / "reason_counts.parquet", index=False
     )
+    gleague_audit.to_parquet(target / "gleague_assignment_audit.parquet", index=False)
     (target / "_manifest.json").write_text(
         json.dumps(
             {
@@ -196,6 +212,16 @@ def build_player_availability_mart(
                 "availability_states": list(AVAILABILITY_STATES),
                 "source_precedence": ["live_boxscore", "stats_v3_summary_v2", "stats_v3"],
                 "source_player_table_contract": SOURCE_PLAYER_TABLE_CONTRACT,
+                "official_gleague_assignment_override": {
+                    "transactions_path": (
+                        str(resolved_gleague_path) if resolved_gleague_path is not None else None
+                    ),
+                    "source": OFFICIAL_GLEAGUE_SOURCE,
+                    "source_url": OFFICIAL_GLEAGUE_TRANSACTIONS_URL,
+                    "overridden_player_games": int(
+                        gleague_audit.loc[0, "overridden_generic_inactive_rows"]
+                    ),
+                },
             },
             indent=2,
         )
@@ -444,7 +470,166 @@ def _player_game_columns() -> list[str]:
         "availability_state",
         "available",
         "availability_state_known",
+        "availability_override_source",
+        "availability_override_source_url",
+        "availability_override_assignment_date",
+        "availability_override_recall_date",
+        "availability_override_gleague_team_id",
+        "availability_override_gleague_team",
     ]
+
+
+_ASSIGNMENT_OVERRIDE_COLUMNS = tuple(
+    column for column in _player_game_columns() if column.startswith("availability_override_")
+)
+_ASSIGNMENT_OVERRIDE_STRING_COLUMNS = frozenset(
+    {
+        "availability_override_source",
+        "availability_override_source_url",
+        "availability_override_gleague_team",
+    }
+)
+_ASSIGNMENT_OVERRIDE_DATE_COLUMNS = frozenset(
+    {
+        "availability_override_assignment_date",
+        "availability_override_recall_date",
+    }
+)
+
+
+def _initialize_assignment_override_columns(player_games: pd.DataFrame) -> pd.DataFrame:
+    """Add stable null provenance fields before an optional source overlay."""
+
+    output = player_games.copy()
+    for column in _ASSIGNMENT_OVERRIDE_COLUMNS:
+        if column in _ASSIGNMENT_OVERRIDE_STRING_COLUMNS:
+            if column in output:
+                output[column] = output[column].astype("string")
+            else:
+                output[column] = pd.Series(pd.NA, index=output.index, dtype="string")
+        elif column in _ASSIGNMENT_OVERRIDE_DATE_COLUMNS:
+            if column in output:
+                output[column] = pd.to_datetime(output[column], errors="coerce", utc=True)
+            else:
+                output[column] = pd.Series(
+                    pd.NaT, index=output.index, dtype="datetime64[ns, UTC]"
+                )
+        else:
+            if column in output:
+                output[column] = pd.to_numeric(output[column], errors="coerce").astype(
+                    "Int64"
+                )
+            else:
+                output[column] = pd.Series(pd.NA, index=output.index, dtype="Int64")
+    return output
+
+
+def _resolve_gleague_transactions_path(
+    raw_root: Path, transactions_path: Path | str | None
+) -> Path | None:
+    path = (
+        Path(transactions_path)
+        if transactions_path is not None
+        else raw_root / DEFAULT_GLEAGUE_TRANSACTIONS_PATH
+    )
+    return path if path.exists() else None
+
+
+def _apply_official_gleague_assignment_overrides(
+    player_games: pd.DataFrame,
+    *,
+    season: str,
+    transactions_path: Path | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Mark only uniquely matched generic inactive rows as G League available.
+
+    Historical Summary V2 rows carry NBA player and team IDs but not an absence
+    reason. The override is intentionally narrower than the source: it requires
+    an observed assignment-recall interval, an explicit affiliate-parent map,
+    and an exact player-parent-date match.
+    """
+
+    output = _initialize_assignment_override_columns(player_games)
+    generic_mask = output["availability_state"].eq(STATE_UNAVAILABLE_INACTIVE_UNSPECIFIED)
+    audit: dict[str, Any] = {
+        "season": season,
+        "transactions_path": str(transactions_path) if transactions_path is not None else None,
+        "assignment_source": OFFICIAL_GLEAGUE_SOURCE,
+        "assignment_source_url": OFFICIAL_GLEAGUE_TRANSACTIONS_URL,
+        "source_available": transactions_path is not None,
+        "assignment_records": 0,
+        "paired_assignment_records": 0,
+        "unpaired_assignment_records": 0,
+        "unmapped_affiliate_assignment_records": 0,
+        "generic_inactive_rows": int(generic_mask.sum()),
+        "parent_date_candidate_rows": 0,
+        "ambiguous_interval_rows": 0,
+        "overridden_generic_inactive_rows": 0,
+    }
+    if transactions_path is None or not generic_mask.any():
+        return output, pd.DataFrame([audit])
+
+    intervals = load_official_gleague_assignment_intervals(transactions_path)
+    audit["assignment_records"] = int(len(intervals))
+    audit["paired_assignment_records"] = int(intervals["recall_date"].notna().sum())
+    audit["unpaired_assignment_records"] = int(intervals["recall_date"].isna().sum())
+    audit["unmapped_affiliate_assignment_records"] = int(
+        intervals["nba_parent_team_id"].isna().sum()
+    )
+    eligible_intervals = intervals.loc[
+        intervals["recall_date"].notna() & intervals["nba_parent_team_id"].notna()
+    ].copy()
+    if eligible_intervals.empty:
+        return output, pd.DataFrame([audit])
+
+    generic = output.loc[generic_mask].reset_index(names="_player_game_index")
+    matches = generic.merge(
+        eligible_intervals,
+        left_on=["player_id", "team_id"],
+        right_on=["player_id", "nba_parent_team_id"],
+        how="inner",
+    )
+    matches = matches.loc[
+        matches["game_date"].ge(matches["assignment_date"])
+        & matches["game_date"].le(matches["recall_date"])
+    ].copy()
+    audit["parent_date_candidate_rows"] = int(matches["_player_game_index"].nunique())
+    if matches.empty:
+        return output, pd.DataFrame([audit])
+
+    interval_counts = matches.groupby("_player_game_index", sort=False).size()
+    ambiguous_indices = interval_counts.index[interval_counts.gt(1)]
+    audit["ambiguous_interval_rows"] = int(len(ambiguous_indices))
+    unique_matches = matches.loc[
+        matches["_player_game_index"].isin(interval_counts.index[interval_counts.eq(1)])
+    ].copy()
+    if unique_matches.empty:
+        return output, pd.DataFrame([audit])
+
+    target_index = unique_matches["_player_game_index"].to_numpy()
+    output.loc[target_index, "availability_state"] = STATE_AVAILABLE_G_LEAGUE_ASSIGNMENT
+    output.loc[target_index, "available"] = True
+    output.loc[target_index, "availability_state_known"] = True
+    output.loc[target_index, "availability_override_source"] = unique_matches[
+        "assignment_source"
+    ].to_numpy()
+    output.loc[target_index, "availability_override_source_url"] = unique_matches[
+        "assignment_source_url"
+    ].to_numpy()
+    output.loc[target_index, "availability_override_assignment_date"] = unique_matches[
+        "assignment_date"
+    ].to_numpy()
+    output.loc[target_index, "availability_override_recall_date"] = unique_matches[
+        "recall_date"
+    ].to_numpy()
+    output.loc[target_index, "availability_override_gleague_team_id"] = unique_matches[
+        "gleague_team_id"
+    ].to_numpy()
+    output.loc[target_index, "availability_override_gleague_team"] = unique_matches[
+        "gleague_team"
+    ].to_numpy()
+    audit["overridden_generic_inactive_rows"] = int(len(unique_matches))
+    return output, pd.DataFrame([audit])
 
 
 def classify_availability_state(
