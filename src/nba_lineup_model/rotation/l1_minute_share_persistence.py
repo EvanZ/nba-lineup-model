@@ -7,15 +7,24 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import numpy as np
 import pandas as pd
 
+from nba_lineup_model.ingest.nba_cdn import NbaCdnEndpoint, RawJsonCache
+from nba_lineup_model.ingest.nba_stats import NbaStatsEndpoint, NbaStatsRawCache
+from nba_lineup_model.normalize.stats_v3 import adapt_stats_v3_boxscore
+from nba_lineup_model.season.fetch import select_catalog_games
+from nba_lineup_model.season.storage import read_game_catalog
+
 MODEL_NAME = "l1_minute_share_persistence"
 MODEL_VERSION = "v0.0"
 DEFAULT_SEASONS = ("2024-25", "2025-26")
 DEFAULT_CURATED_DIR = Path("data/curated")
+DEFAULT_CATALOG_PATH = Path("data/catalog/games.parquet")
+DEFAULT_RAW_DIR = Path("data/raw")
 DEFAULT_ARTIFACTS_DIR = Path("artifacts/rotation")
 
 
@@ -31,48 +40,62 @@ def read_regular_game_minutes(
     season: str,
     *,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
+    catalog_path: Path | str = DEFAULT_CATALOG_PATH,
+    raw_dir: Path | str = DEFAULT_RAW_DIR,
 ) -> pd.DataFrame:
-    """Return one player row per regular-season team-game, including DNP zeros."""
+    """Return one player row per cataloged regular-season team-game.
 
-    root = Path(curated_dir) / "players" / season / "regular"
-    paths = sorted(root.glob("*.parquet"))
-    if not paths:
-        raise FileNotFoundError(f"No regular-season player box scores for {season}: {root}")
-    source = pd.concat((pd.read_parquet(path) for path in paths), ignore_index=True)
-    required = {
-        "game_id",
-        "team_id",
-        "team_tricode",
-        "personId",
-        "nameI",
-        "statistics_minutes",
-        "game_time_utc",
-    }
-    missing = sorted(required - set(source))
-    if missing:
-        raise ValueError(f"Game-player source lacks required columns: {missing}")
-    if source.duplicated(["game_id", "team_id", "personId"]).any():
-        raise ValueError(f"Duplicate game-player rows in {season}")
+    Minutes labels deliberately come from raw NBA box scores, not the curated
+    player partition. The latter is filtered by play-by-play lineup quality for
+    RAPM and therefore excludes otherwise valid completed games. ``curated_dir``
+    remains an accepted argument for existing callers but is not a source of
+    truth for rotation targets.
+    """
 
-    output = source.loc[
-        :,
-        [
-            "game_id",
-            "team_id",
-            "team_tricode",
-            "personId",
-            "nameI",
-            "statistics_minutes",
-            "game_time_utc",
-        ],
-    ].copy()
-    output = output.rename(columns={"personId": "player_id", "nameI": "player_name"})
-    output["player_id"] = pd.to_numeric(output["player_id"], errors="raise").astype("int64")
-    output["minutes"] = (
-        pd.to_timedelta(output["statistics_minutes"], errors="coerce").dt.total_seconds() / 60.0
+    del curated_dir
+    catalog_games = select_catalog_games(
+        read_game_catalog(catalog_path),
+        season=season,
+        season_types=["regular"],
     )
-    # CDN box scores may encode DNP rows with a blank minutes field.
-    output["minutes"] = output["minutes"].fillna(0.0)
+    if not catalog_games:
+        raise ValueError(f"No cataloged regular-season games for {season}")
+
+    raw_root = Path(raw_dir)
+    stats_cache = NbaStatsRawCache(raw_root / "stats")
+    live_cache = RawJsonCache(raw_root)
+    rows: list[dict[str, object]] = []
+    missing_boxscores: list[str] = []
+    for catalog_game in catalog_games:
+        boxscore = _read_cached_boxscore(
+            catalog_game.game_id,
+            stats_cache=stats_cache,
+            live_cache=live_cache,
+        )
+        if boxscore is None:
+            missing_boxscores.append(catalog_game.game_id)
+            continue
+        rows.extend(
+            _boxscore_player_rows(
+                game_id=catalog_game.game_id,
+                game_time_utc=catalog_game.game_time_utc,
+                game_date=catalog_game.game_date,
+                boxscore=boxscore,
+            )
+        )
+    if missing_boxscores:
+        preview = ", ".join(missing_boxscores[:10])
+        suffix = "..." if len(missing_boxscores) > 10 else ""
+        raise FileNotFoundError(
+            f"Missing raw box scores for {season}: {len(missing_boxscores)} "
+            f"catalog games ({preview}{suffix})"
+        )
+
+    output = pd.DataFrame(rows)
+    if output.empty:
+        raise ValueError(f"No player box-score rows for {season}")
+    if output.duplicated(["game_id", "team_id", "player_id"]).any():
+        raise ValueError(f"Duplicate game-player rows in {season}")
     if output["minutes"].lt(0).any():
         raise ValueError(f"Negative player minutes in {season}")
     team_minutes = output.groupby(["game_id", "team_id"], as_index=False, sort=False).agg(
@@ -85,6 +108,89 @@ def read_regular_game_minutes(
     return output.sort_values(
         ["team_id", "game_time_utc", "game_id", "player_id"], kind="stable"
     ).reset_index(drop=True)
+
+
+def _read_cached_boxscore(
+    game_id: str,
+    *,
+    stats_cache: NbaStatsRawCache,
+    live_cache: RawJsonCache,
+) -> dict[str, Any] | None:
+    """Load one already-fetched box score without requiring valid play-by-play."""
+
+    stats = stats_cache.read(NbaStatsEndpoint.BOXSCORE_TRADITIONAL_V3, game_id)
+    if stats is not None:
+        return adapt_stats_v3_boxscore(stats.payload)
+    live = live_cache.read(NbaCdnEndpoint.BOXSCORE, game_id)
+    return live.payload if live is not None else None
+
+
+def _boxscore_player_rows(
+    *,
+    game_id: str,
+    game_time_utc: datetime | None,
+    game_date: object,
+    boxscore: dict[str, Any],
+) -> list[dict[str, object]]:
+    """Normalize a liveData-shaped box score into player-minute target rows."""
+
+    game = boxscore.get("game")
+    if not isinstance(game, dict):
+        raise ValueError(f"Box score {game_id} lacks game payload")
+    timestamp = pd.Timestamp(game_time_utc or game_date)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    rows: list[dict[str, object]] = []
+    for side in ("homeTeam", "awayTeam"):
+        team = game.get(side)
+        if not isinstance(team, dict):
+            raise ValueError(f"Box score {game_id} lacks {side}")
+        players = team.get("players")
+        if not isinstance(players, list):
+            raise ValueError(f"Box score {game_id} {side} lacks player rows")
+        team_id = int(team["teamId"])
+        team_tricode = str(team["teamTricode"])
+        for player in players:
+            if not isinstance(player, dict):
+                raise ValueError(f"Box score {game_id} has malformed player row")
+            statistics = player.get("statistics")
+            if not isinstance(statistics, dict):
+                statistics = {}
+            minute_value = statistics.get("minutes")
+            parsed_minutes = pd.to_timedelta(minute_value, errors="coerce")
+            minutes = (
+                0.0
+                if pd.isna(parsed_minutes)
+                else float(parsed_minutes.total_seconds() / 60.0)
+            )
+            rows.append(
+                {
+                    "game_id": game_id,
+                    "team_id": team_id,
+                    "team_tricode": team_tricode,
+                    "player_id": int(player["personId"]),
+                    "player_name": _boxscore_player_name(player),
+                    "game_time_utc": timestamp,
+                    "minutes": float(minutes),
+                }
+            )
+    return rows
+
+
+def _boxscore_player_name(player: dict[str, Any]) -> str:
+    """Prefer the provider's abbreviated display name, with a stable fallback."""
+
+    display_name = str(player.get("nameI") or "").strip()
+    if display_name:
+        return display_name
+    full_name = " ".join(
+        str(player.get(field) or "").strip() for field in ("firstName", "familyName")
+    ).strip()
+    if full_name:
+        return full_name
+    return str(player["personId"])
 
 
 def evaluate_l1_minute_share_persistence(

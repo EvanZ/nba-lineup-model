@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ from scipy.stats import qmc
 
 from nba_lineup_model.rotation.ac_minute_share_projection import (
     REGULATION_TEAM_MINUTES,
+    load_regulation_available_minutes,
     load_regulation_roster_minutes,
 )
 from nba_lineup_model.rotation.forward_availability import (
@@ -35,9 +37,10 @@ from nba_lineup_model.rotation.forward_plackett_luce_rotation import (
     DEFAULT_HISTORY_START_SEASON,
     PROMOTED_FORWARD_PL_CONFIG,
     ForwardPlackettLuceConfig,
+    _PlayerRoleState,
     _season_range,
     _season_year,
-    _TeamRoleState,
+    fit_forward_plackett_luce_player_roles,
     prepare_forward_plackett_luce_panel,
 )
 
@@ -103,53 +106,130 @@ def predict_availability_integrated_plackett_luce(
     """Forecast unconditional minutes with Forward Availability and PL rotation.
 
     The current game's availability label is held out of the allocation. It is
-    used only after prediction to update the team's role state for later games.
+    used only after prediction to update the global player role state for later
+    games. The one-panel entry point is equivalent to a single fresh season.
     """
 
-    _validate_integrated_panel(panel)
+    panels = {
+        str(season): frame.copy()
+        for season, frame in panel.groupby("season", sort=False)
+    }
+    return pd.concat(
+        predict_availability_integrated_plackett_luce_sequence(
+            panels,
+            config=config,
+            scenario_count=scenario_count,
+            scenario_seed=scenario_seed,
+        ).values(),
+        ignore_index=True,
+    )
+
+
+def predict_availability_integrated_plackett_luce_sequence(
+    panels: Mapping[str, pd.DataFrame],
+    *,
+    config: ForwardPlackettLuceConfig,
+    scenario_count: int = DEFAULT_SCENARIO_COUNT,
+    scenario_seed: int = DEFAULT_SCENARIO_SEED,
+    initial_player_roles: Mapping[int, float] | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Forecast availability-weighted minutes with global player PL updates.
+
+    The conditional-minute prior is fixed before each target season. A player
+    residual is updated only after a completed game, travels with that player
+    after a trade, and carries to the next season only through the configured
+    retained prior-season mean. Posterior precision resets at each boundary.
+    """
+
     _validate_scenario_count(scenario_count)
+    _validate_integrated_config(config)
+    output: dict[str, pd.DataFrame] = {}
+    prior_season_roles = {
+        int(player_id): float(role)
+        for player_id, role in (initial_player_roles or {}).items()
+    }
+    for season in sorted(panels, key=_season_year):
+        prediction, prior_season_roles = _predict_availability_integrated_season(
+            panels[season],
+            config=config,
+            scenario_count=scenario_count,
+            scenario_seed=scenario_seed,
+            prior_season_roles=prior_season_roles,
+        )
+        output[season] = prediction
+    return output
+
+
+def _predict_availability_integrated_season(
+    panel: pd.DataFrame,
+    *,
+    config: ForwardPlackettLuceConfig,
+    scenario_count: int,
+    scenario_seed: int,
+    prior_season_roles: Mapping[int, float],
+) -> tuple[pd.DataFrame, dict[int, float]]:
+    """Forecast one season and return the final observed-availability state."""
+
+    _validate_integrated_panel(panel)
+    seeded_roles = {
+        int(player_id): config.season_role_retention * float(role)
+        for player_id, role in prior_season_roles.items()
+    }
+    state = _PlayerRoleState(
+        prior_precision=config.role_prior_precision,
+        initial_role_by_player=seeded_roles,
+    )
     rows: list[pd.DataFrame] = []
     ordered = panel.sort_values(
-        ["season", "team_id", "game_date", "game_id", "player_id"], kind="stable"
+        ["game_date", "game_id", "team_id", "player_id"], kind="stable"
     )
-    for (_season, _team_id), team_rows in ordered.groupby(["season", "team_id"], sort=False):
-        state = _TeamRoleState(prior_precision=config.role_prior_precision)
-        for game_id, game in team_rows.groupby("game_id", sort=False):
-            game = game.sort_values("player_id", kind="stable").copy()
-            player_ids = game["player_id"].to_numpy(dtype=int)
-            state_indices = state.ensure_players(player_ids)
-            prior_utilities = game["prior_utility"].to_numpy(dtype=float)
-            role_before = state.role[state_indices].copy()
-            utilities = prior_utilities + role_before
-            shares, selection_probability, mean_available = _expected_scenario_allocation(
-                utilities=utilities,
-                availability_probability=game["predicted_available_share"].to_numpy(dtype=float),
-                player_ids=player_ids,
-                scenario_count=scenario_count,
-                seed=_game_seed(
-                    scenario_seed,
-                    str(game.iloc[0]["season"]),
-                    str(game_id),
-                    int(_team_id),
-                ),
-            )
-            game["predicted_minute_share"] = shares
-            game["predicted_minutes"] = REGULATION_TEAM_MINUTES * shares
-            game["selected_top_15_probability"] = selection_probability
-            game["mean_scenario_available_players"] = mean_available
-            game["team_role_adjustment"] = role_before
-            game["plackett_luce_utility"] = utilities
-            game["team_role_games_completed"] = state.games_completed
-            rows.append(game)
+    for _key, game in ordered.groupby(["game_date", "game_id", "team_id"], sort=False):
+        game = game.sort_values("player_id", kind="stable").copy()
+        player_ids = game["player_id"].to_numpy(dtype=int)
+        state_indices = state.ensure_players(player_ids)
+        prior_utilities = game["prior_utility"].to_numpy(dtype=float)
+        role_before = state.role[state_indices].copy()
+        utilities = prior_utilities + role_before
+        shares, selection_probability, mean_available = _expected_scenario_allocation(
+            utilities=utilities,
+            availability_probability=game["predicted_available_share"].to_numpy(dtype=float),
+            player_ids=player_ids,
+            scenario_count=scenario_count,
+            seed=_game_seed(
+                scenario_seed,
+                str(game.iloc[0]["season"]),
+                str(game.iloc[0]["game_id"]),
+                int(game.iloc[0]["team_id"]),
+            ),
+        )
+        game["predicted_minute_share"] = shares
+        game["predicted_minutes"] = REGULATION_TEAM_MINUTES * shares
+        game["selected_top_15_probability"] = selection_probability
+        game["mean_scenario_available_players"] = mean_available
+        game["player_role_adjustment"] = role_before
+        game["prior_season_player_role_adjustment"] = [
+            seeded_roles.get(int(player_id), 0.0) for player_id in player_ids
+        ]
+        game["has_prior_season_player_role"] = [
+            int(player_id) in seeded_roles for player_id in player_ids
+        ]
+        game["plackett_luce_utility"] = utilities
+        game["player_role_games_observed"] = state.player_games_observed[state_indices]
+        rows.append(game)
 
-            observed_available = game["available"].astype(bool).to_numpy()
-            state.update(
-                candidate_indices=state_indices[observed_available],
-                prior_utilities=prior_utilities[observed_available],
-                minutes=game.loc[observed_available, "minutes"].to_numpy(dtype=float),
-                player_ids=player_ids[observed_available],
-            )
-    return _finalize_integrated_predictions(pd.concat(rows, ignore_index=True))
+        observed_available = game["available"].astype(bool).to_numpy()
+        state.update(
+            candidate_indices=state_indices[observed_available],
+            prior_utilities=prior_utilities[observed_available],
+            minutes=game.loc[observed_available, "minutes"].to_numpy(dtype=float),
+            player_ids=player_ids[observed_available],
+        )
+    final_roles = {
+        player_id: float(state.role[index])
+        for player_id, index in state.player_index.items()
+        if state.player_games_observed[index] > 0
+    }
+    return _finalize_integrated_predictions(pd.concat(rows, ignore_index=True)), final_roles
 
 
 def predict_availability_integrated_fcm_control(
@@ -183,9 +263,9 @@ def predict_availability_integrated_fcm_control(
         game["predicted_minutes"] = REGULATION_TEAM_MINUTES * shares
         game["selected_top_15_probability"] = selection_probability
         game["mean_scenario_available_players"] = mean_available
-        game["team_role_adjustment"] = 0.0
+        game["player_role_adjustment"] = 0.0
         game["plackett_luce_utility"] = utilities
-        game["team_role_games_completed"] = 0
+        game["player_role_games_observed"] = 0
         rows.append(game)
     return _finalize_integrated_predictions(pd.concat(rows, ignore_index=True))
 
@@ -251,10 +331,17 @@ def run_availability_integrated_plackett_luce(
     artifacts_dir: Path | str = DEFAULT_ARTIFACTS_DIR,
     history_start_season: str = DEFAULT_HISTORY_START_SEASON,
     frozen_seasons: tuple[str, ...] = DEFAULT_FROZEN_SEASONS,
+    plackett_luce_config: ForwardPlackettLuceConfig = PROMOTED_FORWARD_PL_CONFIG,
+    no_carry_plackett_luce_config: ForwardPlackettLuceConfig | None = None,
     scenario_count: int = DEFAULT_SCENARIO_COUNT,
     scenario_seed: int = DEFAULT_SCENARIO_SEED,
 ) -> ForwardPlackettLuceAvailabilityRun:
-    """Run a frozen end-to-end test using the promoted availability and FCM models."""
+    """Run a frozen end-to-end replay with global player PL role updates.
+
+    Observed-availability panels before the first frozen season establish the
+    player residual state. Frozen predictions use forecast availability for
+    allocation, then update that same state only after each completed game.
+    """
 
     _validate_scenario_count(scenario_count)
     season_range = _season_range(history_start_season, max(frozen_seasons, key=_season_year))
@@ -266,50 +353,90 @@ def run_availability_integrated_plackett_luce(
         season_range, curated_dir=curated_dir, player_panel_path=player_panel_path
     )
     summary = attach_cold_start_biographies(summary, player_panel_path=player_panel_path)
-    panels: dict[str, pd.DataFrame] = {}
-    for index, season in enumerate(frozen_seasons, start=1):
-        print(f"Availability + PL: preparing {index}/{len(frozen_seasons)} {season}", flush=True)
+    earliest_frozen = min(frozen_seasons, key=_season_year)
+    panel_seasons = season_range[1:]
+    observed_source_panels: dict[str, pd.DataFrame] = {}
+    frozen_panels: dict[str, pd.DataFrame] = {}
+    for index, season in enumerate(panel_seasons, start=1):
+        print(
+            f"Availability + PL: preparing {index}/{len(panel_seasons)} {season}",
+            flush=True,
+        )
         conditional_prior, _ = predict_conditional_minutes_season(
             summary,
             target_season=season,
             config=PROMOTED_CONDITIONAL_MINUTES_CONFIG,
             cold_start_config=PROMOTED_COLD_START_CONDITIONAL_MINUTES_CONFIG,
         )
-        availability_prior, _age_model, _metadata = predict_availability_season(
-            summary,
-            target_season=season,
-            config=PROMOTED_AVAILABILITY_CONFIG,
-        )
-        roster_minutes = load_regulation_roster_minutes(season, curated_dir=curated_dir)
-        panels[season] = prepare_availability_integrated_panel(
-            roster_minutes, conditional_prior, availability_prior
-        )
+        if _season_year(season) < _season_year(earliest_frozen):
+            available_minutes = load_regulation_available_minutes(season, curated_dir=curated_dir)
+            observed_source_panels[season] = prepare_forward_plackett_luce_panel(
+                available_minutes, conditional_prior
+            )
+        else:
+            availability_prior, _age_model, _metadata = predict_availability_season(
+                summary,
+                target_season=season,
+                config=PROMOTED_AVAILABILITY_CONFIG,
+            )
+            roster_minutes = load_regulation_roster_minutes(season, curated_dir=curated_dir)
+            frozen_panels[season] = prepare_availability_integrated_panel(
+                roster_minutes, conditional_prior, availability_prior
+            )
+
+    no_carry_config = no_carry_plackett_luce_config or ForwardPlackettLuceConfig(
+        role_prior_precision=plackett_luce_config.role_prior_precision,
+        season_role_retention=0.0,
+    )
+    source_player_roles = fit_forward_plackett_luce_player_roles(
+        observed_source_panels,
+        config=plackett_luce_config,
+    )
 
     run_id = (
         f"availability-pl-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:7]}"
     )
     run_dir = Path(artifacts_dir) / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
+    print("Availability + PL: forecasting frozen sequence", flush=True)
+    candidate_predictions = predict_availability_integrated_plackett_luce_sequence(
+        frozen_panels,
+        config=plackett_luce_config,
+        initial_player_roles=source_player_roles,
+        scenario_count=scenario_count,
+        scenario_seed=scenario_seed,
+    )
+    no_carry_predictions = predict_availability_integrated_plackett_luce_sequence(
+        frozen_panels,
+        config=no_carry_config,
+        scenario_count=scenario_count,
+        scenario_seed=scenario_seed,
+    )
     metrics_rows: list[pd.DataFrame] = []
     for index, season in enumerate(frozen_seasons, start=1):
-        print(f"Availability + PL: frozen {index}/{len(frozen_seasons)} {season}", flush=True)
-        fitted = predict_availability_integrated_plackett_luce(
-            panels[season],
-            scenario_count=scenario_count,
-            scenario_seed=scenario_seed,
-        )
+        print(f"Availability + PL: scoring {index}/{len(frozen_seasons)} {season}", flush=True)
+        fitted = candidate_predictions[season]
+        no_carry = no_carry_predictions[season]
         control = predict_availability_integrated_fcm_control(
-            panels[season],
+            frozen_panels[season],
             scenario_count=scenario_count,
             scenario_seed=scenario_seed,
         )
         fitted.to_parquet(run_dir / f"{season}_predictions.parquet", index=False)
+        no_carry.to_parquet(
+            run_dir / f"{season}_no_carry_control_predictions.parquet", index=False
+        )
         control.to_parquet(run_dir / f"{season}_fcm_v02_control_predictions.parquet", index=False)
         metrics_rows.extend(
             [
                 summarize_integrated_rotation_metrics(
                     fitted,
-                    model="Forward Availability v0.2 + Forward PL Rotation v0.1",
+                    model="Forward Availability v0.2 + Forward Player PL v0.2",
+                    season=season,
+                ),
+                summarize_integrated_rotation_metrics(
+                    no_carry,
+                    model="Forward Availability v0.2 + Forward Player PL no-carry control",
                     season=season,
                 ),
                 summarize_integrated_rotation_metrics(
@@ -340,14 +467,15 @@ def run_availability_integrated_plackett_luce(
         json.dumps(
             {
                 "model": "forward_availability_plackett_luce_rotation",
-                "version": "v0.1",
+                "version": "v0.2",
                 "run_id": run_id,
                 "created_at": datetime.now(UTC).isoformat(),
                 "frozen_seasons": list(frozen_seasons),
                 "availability_config": asdict(PROMOTED_AVAILABILITY_CONFIG),
                 "conditional_minutes_config": asdict(PROMOTED_CONDITIONAL_MINUTES_CONFIG),
                 "cold_start_config": asdict(PROMOTED_COLD_START_CONDITIONAL_MINUTES_CONFIG),
-                "plackett_luce_config": asdict(PROMOTED_FORWARD_PL_CONFIG),
+                "plackett_luce_config": asdict(plackett_luce_config),
+                "no_carry_plackett_luce_config": asdict(no_carry_config),
                 "scenario_method": (
                     "scrambled Sobol availability masks conditioned on at least five players"
                 ),
@@ -355,6 +483,14 @@ def run_availability_integrated_plackett_luce(
                 "scenario_seed": scenario_seed,
                 "availability_mask": (
                     "forecast from Forward Availability v0.2; not observed in prediction"
+                ),
+                "pl_state": (
+                    "league-wide player residual with a diagonal online-Laplace precision "
+                    "approximation; it travels across in-season team changes"
+                ),
+                "season_carryover": (
+                    "the final observed prior-season player role mean is retained according "
+                    "to the configured factor; precision resets at each season boundary"
                 ),
                 "pl_state_update": "observed availability and minutes used only after the game",
                 "control": (
@@ -451,6 +587,13 @@ def _validate_scenario_count(scenario_count: int) -> None:
         raise ValueError("Scenario count must be a power of two and at least two")
 
 
+def _validate_integrated_config(config: ForwardPlackettLuceConfig) -> None:
+    if config.role_prior_precision <= 0.0:
+        raise ValueError("Role prior precision must be positive")
+    if not 0.0 <= config.season_role_retention <= 1.0:
+        raise ValueError("Season role retention must lie in [0, 1]")
+
+
 def _validate_integrated_panel(panel: pd.DataFrame) -> None:
     required = {
         "season",
@@ -481,6 +624,17 @@ def main() -> None:
     parser.add_argument("--artifacts-dir", type=Path, default=DEFAULT_ARTIFACTS_DIR)
     parser.add_argument("--history-start-season", default=DEFAULT_HISTORY_START_SEASON)
     parser.add_argument("--frozen-seasons", nargs="+", default=list(DEFAULT_FROZEN_SEASONS))
+    parser.add_argument(
+        "--role-prior-precision",
+        type=float,
+        default=PROMOTED_FORWARD_PL_CONFIG.role_prior_precision,
+    )
+    parser.add_argument(
+        "--season-role-retention",
+        type=float,
+        default=PROMOTED_FORWARD_PL_CONFIG.season_role_retention,
+    )
+    parser.add_argument("--no-carry-role-prior-precision", type=float)
     parser.add_argument("--scenario-count", type=int, default=DEFAULT_SCENARIO_COUNT)
     parser.add_argument("--scenario-seed", type=int, default=DEFAULT_SCENARIO_SEED)
     args = parser.parse_args()
@@ -490,6 +644,15 @@ def main() -> None:
         artifacts_dir=args.artifacts_dir,
         history_start_season=args.history_start_season,
         frozen_seasons=tuple(args.frozen_seasons),
+        plackett_luce_config=ForwardPlackettLuceConfig(
+            role_prior_precision=args.role_prior_precision,
+            season_role_retention=args.season_role_retention,
+        ),
+        no_carry_plackett_luce_config=(
+            ForwardPlackettLuceConfig(args.no_carry_role_prior_precision, 0.0)
+            if args.no_carry_role_prior_precision is not None
+            else None
+        ),
         scenario_count=args.scenario_count,
         scenario_seed=args.scenario_seed,
     )

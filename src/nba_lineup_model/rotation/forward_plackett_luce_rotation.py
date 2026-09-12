@@ -1,15 +1,15 @@
-"""Forward, roster-conditional Plackett-Luce regulation-minute model.
+"""Forward, player-state Plackett-Luce regulation-minute model.
 
 The promoted Forward Conditional Minutes model supplies a preseason utility for
-each player.  This module updates a separate team-season role state only after
-each observed game.  A transfer therefore retains the player prior but starts
-with no team-role adjustment on the destination team.
+each player. This module updates one player-level residual role state only
+after observed games; that state travels with a player across teams.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +39,7 @@ DEFAULT_ARTIFACTS_DIR = Path("artifacts/rotation/forward_plackett_luce_rotation"
 DEFAULT_TUNING_SEASONS = ("2020-21", "2021-22", "2022-23")
 DEFAULT_FROZEN_SEASONS = ("2023-24", "2024-25", "2025-26")
 DEFAULT_ROLE_PRIOR_PRECISION_GRID = (0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0)
+DEFAULT_SEASON_ROLE_RETENTION_GRID = (0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0)
 MAX_ROTATION_PLAYERS = 15
 _MINUTE_WEIGHT_FLOOR = 1e-3
 _TIE_TOLERANCE = 1e-8
@@ -46,12 +47,13 @@ _TIE_TOLERANCE = 1e-8
 
 @dataclass(frozen=True)
 class ForwardPlackettLuceConfig:
-    """Gaussian prior precision for team-specific log minute-role adjustments."""
+    """Season role prior precision and prior-season mean retention."""
 
     role_prior_precision: float
+    season_role_retention: float = 0.0
 
 
-PROMOTED_FORWARD_PL_CONFIG = ForwardPlackettLuceConfig(10.0)
+PROMOTED_FORWARD_PL_CONFIG = ForwardPlackettLuceConfig(10.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -62,20 +64,36 @@ class ForwardPlackettLuceRun:
     run_id: str
 
 
-class _TeamRoleState:
-    """Sequential Laplace approximation for one team-season's PL role state."""
+class _PlayerRoleState:
+    """Diagonal online-Laplace approximation for league-wide player residuals.
 
-    def __init__(self, *, prior_precision: float) -> None:
+    A dense posterior would couple every pair of players who ever shared a
+    choice set and becomes impractical for a league-wide state. The diagonal
+    approximation retains each player's own curvature while dropping those
+    posterior correlations. It lets the residual travel across teams without
+    changing the forward information set.
+    """
+
+    def __init__(
+        self,
+        *,
+        prior_precision: float,
+        initial_role_by_player: Mapping[int, float] | None = None,
+    ) -> None:
         if prior_precision <= 0.0:
             raise ValueError("Role prior precision must be positive")
         self.prior_precision = float(prior_precision)
         self.player_index: dict[int, int] = {}
         self.role = np.empty(0, dtype=float)
-        self.precision = np.empty((0, 0), dtype=float)
-        self.games_completed = 0
+        self.precision = np.empty(0, dtype=float)
+        self.player_games_observed = np.empty(0, dtype=int)
+        self.initial_role_by_player = {
+            int(player_id): float(role)
+            for player_id, role in (initial_role_by_player or {}).items()
+        }
 
     def ensure_players(self, player_ids: np.ndarray) -> np.ndarray:
-        """Add destination-team players with a zero team-role adjustment."""
+        """Add players, seeding only their independently available prior mean."""
 
         indices: list[int] = []
         for player_id in player_ids.astype(int):
@@ -83,12 +101,11 @@ class _TeamRoleState:
             if index is None:
                 index = len(self.player_index)
                 self.player_index[int(player_id)] = index
-                self.role = np.append(self.role, 0.0)
-                expanded = np.zeros((index + 1, index + 1), dtype=float)
-                if index:
-                    expanded[:index, :index] = self.precision
-                expanded[index, index] = self.prior_precision
-                self.precision = expanded
+                self.role = np.append(
+                    self.role, self.initial_role_by_player.get(int(player_id), 0.0)
+                )
+                self.precision = np.append(self.precision, self.prior_precision)
+                self.player_games_observed = np.append(self.player_games_observed, 0)
             indices.append(index)
         return np.asarray(indices, dtype=int)
 
@@ -128,17 +145,12 @@ class _TeamRoleState:
             selected_index = candidate_indices[selected_local]
             gradient[active_indices] -= weight * probabilities
             gradient[selected_index] += weight
-            covariance = np.diag(probabilities) - np.outer(probabilities, probabilities)
-            curvature[np.ix_(active_indices, active_indices)] += weight * covariance
+            curvature[active_indices] += weight * probabilities * (1.0 - probabilities)
             remaining = np.delete(remaining, chosen_position[0])
 
         self.precision += curvature
-        try:
-            step = np.linalg.solve(self.precision, gradient)
-        except np.linalg.LinAlgError:
-            step = np.linalg.lstsq(self.precision, gradient, rcond=None)[0]
-        self.role += step
-        self.games_completed += 1
+        self.role += gradient / self.precision
+        self.player_games_observed[candidate_indices] += 1
 
 
 def prepare_forward_plackett_luce_panel(
@@ -183,41 +195,136 @@ def predict_forward_plackett_luce(
     *,
     config: ForwardPlackettLuceConfig,
 ) -> pd.DataFrame:
-    """Allocate game minutes before each game updates its team-specific role state."""
+    """Predict an already-assembled panel with a fresh player role state."""
+
+    panels = {
+        str(season): frame.copy()
+        for season, frame in panel.groupby("season", sort=False)
+    }
+    return pd.concat(
+        predict_forward_plackett_luce_sequence(panels, config=config).values(),
+        ignore_index=True,
+    )
+
+
+def predict_forward_plackett_luce_sequence(
+    panels: Mapping[str, pd.DataFrame],
+    *,
+    config: ForwardPlackettLuceConfig,
+    initial_player_roles: Mapping[int, float] | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Predict chronologically, carrying player role means across team changes.
+
+    Every panel uses a target-season FCM prior constructed before that season.
+    At a season boundary the role precision is reset to its configured Gaussian
+    prior. The final prior-season player role mean, multiplied by the selected
+    retention factor, seeds that player wherever the player appears next. This
+    prevents posterior exposure from one season from being counted again while
+    retaining the player-level residual identified through team changes.
+    """
+
+    _validate_config(config)
+    output: dict[str, pd.DataFrame] = {}
+    prior_season_roles = {
+        int(player_id): float(role)
+        for player_id, role in (initial_player_roles or {}).items()
+    }
+    for season in sorted(panels, key=_season_year):
+        prediction, prior_season_roles = _predict_forward_plackett_luce_season(
+            panels[season],
+            config=config,
+            prior_season_roles=prior_season_roles,
+        )
+        output[season] = prediction
+    return output
+
+
+def fit_forward_plackett_luce_player_roles(
+    panels: Mapping[str, pd.DataFrame],
+    *,
+    config: ForwardPlackettLuceConfig,
+    initial_player_roles: Mapping[int, float] | None = None,
+) -> dict[int, float]:
+    """Fit chronological player residuals and return the final season state.
+
+    This is useful when a downstream evaluator has a different prediction
+    surface, such as forecast availability, but must begin from exactly the
+    same forward PL information state.  The returned state contains only
+    players who appeared in at least one observed choice set during its final
+    processed season.
+    """
+
+    _validate_config(config)
+    prior_season_roles = {
+        int(player_id): float(role)
+        for player_id, role in (initial_player_roles or {}).items()
+    }
+    for season in sorted(panels, key=_season_year):
+        _prediction, prior_season_roles = _predict_forward_plackett_luce_season(
+            panels[season],
+            config=config,
+            prior_season_roles=prior_season_roles,
+        )
+    return prior_season_roles
+
+
+def _predict_forward_plackett_luce_season(
+    panel: pd.DataFrame,
+    *,
+    config: ForwardPlackettLuceConfig,
+    prior_season_roles: Mapping[int, float],
+) -> tuple[pd.DataFrame, dict[int, float]]:
+    """Return one season's predictions and its final player role means."""
 
     _validate_panel(panel)
     rows: list[pd.DataFrame] = []
-    ordered = panel.sort_values(
-        ["season", "team_id", "game_date", "game_id", "player_id"], kind="stable"
+    seeded_roles = {
+        int(player_id): config.season_role_retention * float(role)
+        for player_id, role in prior_season_roles.items()
+    }
+    state = _PlayerRoleState(
+        prior_precision=config.role_prior_precision,
+        initial_role_by_player=seeded_roles,
     )
-    for (_, _team_id), team_rows in ordered.groupby(["season", "team_id"], sort=False):
-        state = _TeamRoleState(prior_precision=config.role_prior_precision)
-        for _game_id, game in team_rows.groupby("game_id", sort=False):
-            game = game.sort_values("player_id", kind="stable").copy()
-            player_ids = game["player_id"].to_numpy(dtype=int)
-            state_indices = state.ensure_players(player_ids)
-            prior_utilities = game["prior_utility"].to_numpy(dtype=float)
-            role_before = state.role[state_indices].copy()
-            utilities = prior_utilities + role_before
-            shares, selected = _allocate_top_rotation(utilities, player_ids)
-            game["predicted_minute_share"] = shares
-            game["predicted_minutes"] = REGULATION_TEAM_MINUTES * shares
-            game["team_role_adjustment"] = role_before
-            game["plackett_luce_utility"] = utilities
-            game["team_role_games_completed"] = state.games_completed
-            game["selected_top_15"] = selected
-            rows.append(game)
-            state.update(
-                candidate_indices=state_indices,
-                prior_utilities=prior_utilities,
-                minutes=game["minutes"].to_numpy(dtype=float),
-                player_ids=player_ids,
-            )
+    ordered = panel.sort_values(
+        ["game_date", "game_id", "team_id", "player_id"], kind="stable"
+    )
+    for _key, game in ordered.groupby(["game_date", "game_id", "team_id"], sort=False):
+        game = game.sort_values("player_id", kind="stable").copy()
+        player_ids = game["player_id"].to_numpy(dtype=int)
+        state_indices = state.ensure_players(player_ids)
+        prior_utilities = game["prior_utility"].to_numpy(dtype=float)
+        role_before = state.role[state_indices].copy()
+        utilities = prior_utilities + role_before
+        shares, selected = _allocate_top_rotation(utilities, player_ids)
+        game["predicted_minute_share"] = shares
+        game["predicted_minutes"] = REGULATION_TEAM_MINUTES * shares
+        game["player_role_adjustment"] = role_before
+        game["prior_season_player_role_adjustment"] = [
+            seeded_roles.get(int(player_id), 0.0) for player_id in player_ids
+        ]
+        game["has_prior_season_player_role"] = [
+            int(player_id) in seeded_roles for player_id in player_ids
+        ]
+        game["plackett_luce_utility"] = utilities
+        game["player_role_games_observed"] = state.player_games_observed[state_indices]
+        game["selected_top_15"] = selected
+        rows.append(game)
+        state.update(
+            candidate_indices=state_indices,
+            prior_utilities=prior_utilities,
+            minutes=game["minutes"].to_numpy(dtype=float),
+            player_ids=player_ids,
+        )
     output = pd.concat(rows, ignore_index=True)
     output["absolute_error"] = np.abs(
         output["actual_minute_share"] - output["predicted_minute_share"]
     )
-    return output
+    final_roles = {
+        player_id: float(state.role[index])
+        for player_id, index in state.player_index.items()
+    }
+    return output, final_roles
 
 
 def predict_forward_conditional_minutes_control(panel: pd.DataFrame) -> pd.DataFrame:
@@ -236,9 +343,9 @@ def predict_forward_conditional_minutes_control(panel: pd.DataFrame) -> pd.DataF
         shares, selected = _allocate_top_rotation(utilities, player_ids)
         game["predicted_minute_share"] = shares
         game["predicted_minutes"] = REGULATION_TEAM_MINUTES * shares
-        game["team_role_adjustment"] = 0.0
+        game["player_role_adjustment"] = 0.0
         game["plackett_luce_utility"] = utilities
-        game["team_role_games_completed"] = 0
+        game["player_role_games_observed"] = 0
         game["selected_top_15"] = selected
         rows.append(game)
     output = pd.concat(rows, ignore_index=True)
@@ -335,61 +442,92 @@ def summarize_rotation_metrics(
     )
 
 
-def tune_forward_plackett_luce(
-    panels: dict[str, pd.DataFrame],
+def tune_forward_plackett_luce_season_carryover(
+    panels: Mapping[str, pd.DataFrame],
     *,
     tuning_seasons: tuple[str, ...] = DEFAULT_TUNING_SEASONS,
     role_prior_precision_grid: tuple[float, ...] = DEFAULT_ROLE_PRIOR_PRECISION_GRID,
-) -> tuple[ForwardPlackettLuceConfig, pd.DataFrame]:
-    """Select team-role precision exclusively from completed tuning seasons."""
+    season_role_retention_grid: tuple[float, ...] = DEFAULT_SEASON_ROLE_RETENTION_GRID,
+) -> tuple[ForwardPlackettLuceConfig, ForwardPlackettLuceConfig, pd.DataFrame]:
+    """Select player-role precision and prior-season mean retention forwardly.
 
+    The sequence includes source seasons before each tuning season solely to
+    construct the role mean available at that season's opening game. Metrics
+    are computed only for ``tuning_seasons``.
+    """
+
+    missing = sorted(set(tuning_seasons) - set(panels))
+    if missing:
+        raise ValueError(f"Carryover tuning panels are missing: {missing}")
     rows: list[dict[str, float]] = []
     precisions = sorted(set(role_prior_precision_grid))
-    for index, precision in enumerate(precisions, start=1):
-        print(
-            "Forward PL rotation: tuning precision "
-            f"{index}/{len(precisions)} ({precision:g})",
-            flush=True,
-        )
-        metrics = [
-            summarize_rotation_metrics(
-                predict_forward_plackett_luce(
-                    panels[season],
-                    config=ForwardPlackettLuceConfig(role_prior_precision=float(precision)),
-                ),
-                model=MODEL_NAME,
-                season=season,
+    retentions = sorted(set(season_role_retention_grid))
+    for precision_index, precision in enumerate(precisions, start=1):
+        for retention_index, retention in enumerate(retentions, start=1):
+            print(
+                "Forward PL carryover: tuning "
+                f"precision {precision_index}/{len(precisions)} ({precision:g}), "
+                f"retention {retention_index}/{len(retentions)} ({retention:g})",
+                flush=True,
             )
-            for season in tuning_seasons
-        ]
-        aggregate = pd.concat(metrics, ignore_index=True)
-        rows.append(
-            {
-                "role_prior_precision": float(precision),
-                "validation_season_count": float(len(aggregate)),
-                "mean_allocation_total_variation": float(
-                    aggregate["mean_allocation_total_variation"].mean()
-                ),
-                "mean_brier_score": float(aggregate["mean_brier_score"].mean()),
-                "mean_cross_entropy": float(aggregate["mean_cross_entropy"].mean()),
-                "player_share_mae": float(aggregate["player_share_mae"].mean()),
-                "player_share_rmse": float(aggregate["player_share_rmse"].mean()),
-                "pairwise_rank_accuracy": float(aggregate["pairwise_rank_accuracy"].mean()),
-                "positive_rotation_recall_at_15": float(
-                    aggregate["positive_rotation_recall_at_15"].mean()
-                ),
-            }
-        )
+            config = ForwardPlackettLuceConfig(
+                role_prior_precision=float(precision),
+                season_role_retention=float(retention),
+            )
+            predictions = predict_forward_plackett_luce_sequence(panels, config=config)
+            metrics = pd.concat(
+                [
+                    summarize_rotation_metrics(
+                        predictions[season],
+                        model="Forward PL carryover tuning",
+                        season=season,
+                    )
+                    for season in tuning_seasons
+                ],
+                ignore_index=True,
+            )
+            rows.append(
+                {
+                    "role_prior_precision": float(precision),
+                    "season_role_retention": float(retention),
+                    "validation_season_count": float(len(metrics)),
+                    "mean_allocation_total_variation": float(
+                        metrics["mean_allocation_total_variation"].mean()
+                    ),
+                    "mean_brier_score": float(metrics["mean_brier_score"].mean()),
+                    "mean_cross_entropy": float(metrics["mean_cross_entropy"].mean()),
+                    "player_share_mae": float(metrics["player_share_mae"].mean()),
+                    "player_share_rmse": float(metrics["player_share_rmse"].mean()),
+                    "pairwise_rank_accuracy": float(
+                        metrics["pairwise_rank_accuracy"].mean()
+                    ),
+                    "positive_rotation_recall_at_15": float(
+                        metrics["positive_rotation_recall_at_15"].mean()
+                    ),
+                }
+            )
     grid = pd.DataFrame(rows).sort_values(
         [
             "mean_allocation_total_variation",
             "mean_brier_score",
             "mean_cross_entropy",
+            "season_role_retention",
             "role_prior_precision",
         ],
         kind="stable",
     ).reset_index(drop=True)
-    return ForwardPlackettLuceConfig(float(grid.loc[0, "role_prior_precision"])), grid
+    selected = ForwardPlackettLuceConfig(
+        role_prior_precision=float(grid.loc[0, "role_prior_precision"]),
+        season_role_retention=float(grid.loc[0, "season_role_retention"]),
+    )
+    no_carry = grid.loc[grid["season_role_retention"].eq(0.0)].reset_index(drop=True)
+    if no_carry.empty:
+        raise ValueError("Season role retention grid must include zero for the no-carry control")
+    no_carry_config = ForwardPlackettLuceConfig(
+        role_prior_precision=float(no_carry.loc[0, "role_prior_precision"]),
+        season_role_retention=0.0,
+    )
+    return selected, no_carry_config, grid
 
 
 def run_forward_plackett_luce_rotation(
@@ -401,8 +539,9 @@ def run_forward_plackett_luce_rotation(
     tuning_seasons: tuple[str, ...] = DEFAULT_TUNING_SEASONS,
     frozen_seasons: tuple[str, ...] = DEFAULT_FROZEN_SEASONS,
     role_prior_precision_grid: tuple[float, ...] = DEFAULT_ROLE_PRIOR_PRECISION_GRID,
+    season_role_retention_grid: tuple[float, ...] = DEFAULT_SEASON_ROLE_RETENTION_GRID,
 ) -> ForwardPlackettLuceRun:
-    """Run the forward team-role PL replay against the production FCM control."""
+    """Validate global player PL updates and optional prior-season carry."""
 
     target_seasons = (*tuning_seasons, *frozen_seasons)
     season_range = _season_range(history_start_season, max(target_seasons, key=_season_year))
@@ -415,9 +554,10 @@ def run_forward_plackett_luce_rotation(
     )
     summary = attach_cold_start_biographies(summary, player_panel_path=player_panel_path)
     panels: dict[str, pd.DataFrame] = {}
-    for index, season in enumerate(target_seasons, start=1):
+    panel_seasons = season_range[1:]
+    for index, season in enumerate(panel_seasons, start=1):
         print(
-            f"Forward PL rotation: preparing {index}/{len(target_seasons)} {season}",
+            f"Forward PL rotation: preparing {index}/{len(panel_seasons)} {season}",
             flush=True,
         )
         conditional_prior, _ = predict_conditional_minutes_season(
@@ -429,14 +569,19 @@ def run_forward_plackett_luce_rotation(
         available_minutes = load_regulation_available_minutes(season, curated_dir=curated_dir)
         panels[season] = prepare_forward_plackett_luce_panel(available_minutes, conditional_prior)
 
-    print("Forward PL rotation: tuning team-role prior precision", flush=True)
-    config, tuning_grid = tune_forward_plackett_luce(
+    print("Forward PL rotation: tuning player-role carry", flush=True)
+    config, no_carry_config, tuning_grid = tune_forward_plackett_luce_season_carryover(
         panels,
         tuning_seasons=tuning_seasons,
         role_prior_precision_grid=role_prior_precision_grid,
+        season_role_retention_grid=season_role_retention_grid,
     )
     print(
-        f"Forward PL rotation: selected role prior precision={config.role_prior_precision:g}",
+        "Forward PL rotation: selected "
+        f"precision={config.role_prior_precision:g}, "
+        f"retention={config.season_role_retention:g}; "
+        "no-carry control "
+        f"precision={no_carry_config.role_prior_precision:g}",
         flush=True,
     )
     run_id = f"forward-pl-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:7]}"
@@ -444,25 +589,34 @@ def run_forward_plackett_luce_rotation(
     run_dir.mkdir(parents=True, exist_ok=False)
     tuning_grid.to_parquet(run_dir / "tuning_grid.parquet", index=False)
 
+    candidate_predictions = predict_forward_plackett_luce_sequence(panels, config=config)
+    no_carry_predictions = predict_forward_plackett_luce_sequence(
+        panels, config=no_carry_config
+    )
     metric_rows: list[pd.DataFrame] = []
-    prediction_rows: list[pd.DataFrame] = []
+    candidate_rows: list[pd.DataFrame] = []
     for index, season in enumerate(frozen_seasons, start=1):
         print(f"Forward PL rotation: frozen {index}/{len(frozen_seasons)} {season}", flush=True)
-        fitted = predict_forward_plackett_luce(panels[season], config=config)
-        control = predict_forward_conditional_minutes_control(panels[season])
+        fitted = candidate_predictions[season]
+        no_carry = no_carry_predictions[season]
+        fcm_prior = predict_forward_conditional_minutes_control(panels[season])
         fitted.to_parquet(run_dir / f"{season}_predictions.parquet", index=False)
-        control.to_parquet(run_dir / f"{season}_fcm_v02_control_predictions.parquet", index=False)
+        no_carry.to_parquet(run_dir / f"{season}_no_carry_control_predictions.parquet", index=False)
+        fcm_prior.to_parquet(run_dir / f"{season}_fcm_v02_prior_predictions.parquet", index=False)
         metric_rows.extend(
             [
                 summarize_rotation_metrics(
-                    fitted, model="Forward PL Rotation v0.1", season=season
+                    fitted, model="Forward Player PL v0.2", season=season
                 ),
                 summarize_rotation_metrics(
-                    control, model="Forward Conditional Minutes v0.2 control", season=season
+                    no_carry, model="Forward Player PL no-carry control", season=season
+                ),
+                summarize_rotation_metrics(
+                    fcm_prior, model="Forward Conditional Minutes v0.2 prior", season=season
                 ),
             ]
         )
-        prediction_rows.append(fitted)
+        candidate_rows.append(fitted)
     metrics = pd.concat(metric_rows, ignore_index=True)
     metrics.to_parquet(run_dir / "frozen_metrics.parquet", index=False)
     summary_metrics = (
@@ -482,8 +636,12 @@ def run_forward_plackett_luce_rotation(
         .reset_index(drop=True)
     )
     summary_metrics.to_parquet(run_dir / "frozen_summary.parquet", index=False)
-    transfer_audit = _build_transfer_reset_audit(pd.concat(prediction_rows, ignore_index=True))
-    transfer_audit.to_parquet(run_dir / "transfer_reset_audit.parquet", index=False)
+    transfer_audit = _build_player_transfer_carry_audit(
+        pd.concat(candidate_rows, ignore_index=True)
+    )
+    transfer_audit.to_parquet(run_dir / "transfer_carry_audit.parquet", index=False)
+    carry_audit = _build_season_carryover_audit(pd.concat(candidate_rows, ignore_index=True))
+    carry_audit.to_parquet(run_dir / "season_carryover_audit.parquet", index=False)
     (run_dir / "metadata.json").write_text(
         json.dumps(
             {
@@ -492,6 +650,7 @@ def run_forward_plackett_luce_rotation(
                 "run_id": run_id,
                 "created_at": datetime.now(UTC).isoformat(),
                 "selected_config": asdict(config),
+                "no_carry_control_config": asdict(no_carry_config),
                 "history_start_season": history_start_season,
                 "tuning_seasons": list(tuning_seasons),
                 "frozen_seasons": list(frozen_seasons),
@@ -502,13 +661,17 @@ def run_forward_plackett_luce_rotation(
                 "overtime": "excluded; no rescaling",
                 "prior": "Forward Conditional Minutes v0.2 conditional MPG, without P(available)",
                 "role_state": (
-                    "team-season-specific sequential Plackett-Luce Laplace state; "
-                    "new team starts at zero adjustment"
+                    "league-wide player residual state with a diagonal online-Laplace "
+                    "precision approximation; player state travels across teams"
+                ),
+                "season_carryover": (
+                    "every player receives retention times the final prior-season player "
+                    "role mean, regardless of the player's next team; precision resets each season"
                 ),
                 "game_weighting": (
                     "each team's game likelihood is normalized by its positive-minute ranks"
                 ),
-                "positive_minute_ties": "resolved by stable player-ID order in v0.1",
+                "positive_minute_ties": "resolved by stable player-ID order in v0.2",
                 "allocation": f"top {MAX_ROTATION_PLAYERS} by PL utility, normalized to 240",
                 "control": (
                     "Forward Conditional Minutes v0.2 prior restricted to the same observed "
@@ -536,14 +699,21 @@ def _allocate_top_rotation(
     return shares, selected
 
 
+def _validate_config(config: ForwardPlackettLuceConfig) -> None:
+    if config.role_prior_precision <= 0.0:
+        raise ValueError("Role prior precision must be positive")
+    if not 0.0 <= config.season_role_retention <= 1.0:
+        raise ValueError("Season role retention must lie in [0, 1]")
+
+
 def _softmax(values: np.ndarray) -> np.ndarray:
     maximum = float(np.max(values))
     weights = np.exp(values - maximum)
     return weights / weights.sum()
 
 
-def _build_transfer_reset_audit(predictions: pd.DataFrame) -> pd.DataFrame:
-    """Verify in artifacts that a destination-team role begins at zero."""
+def _build_player_transfer_carry_audit(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Show that a player residual travels to an in-season destination team."""
 
     ordered = predictions.sort_values(
         ["season", "player_id", "game_date", "game_id", "team_id"], kind="stable"
@@ -566,14 +736,52 @@ def _build_transfer_reset_audit(predictions: pd.DataFrame) -> pd.DataFrame:
             "player_id",
             "player_name",
             "predicted_minutes_per_available_game",
-            "team_role_adjustment",
-            "team_role_games_completed",
+            "player_role_adjustment",
+            "player_role_games_observed",
             "minutes",
             "predicted_minutes",
         ],
     ].copy()
-    result["destination_role_reset"] = np.isclose(result["team_role_adjustment"], 0.0)
     return result.reset_index(drop=True)
+
+
+def _build_season_carryover_audit(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Expose each player's opening-season carry state for no-leakage review."""
+
+    required = {
+        "season",
+        "team_id",
+        "player_id",
+        "game_id",
+        "game_date",
+        "prior_season_player_role_adjustment",
+        "has_prior_season_player_role",
+        "player_role_adjustment",
+    }
+    missing = sorted(required - set(predictions))
+    if missing:
+        raise ValueError(f"Carryover audit requires: {missing}")
+    ordered = predictions.sort_values(
+        ["season", "player_id", "game_date", "game_id", "team_id"], kind="stable"
+    ).copy()
+    first_target_game = ordered.groupby(["season", "player_id"], sort=False).cumcount().eq(0)
+    return ordered.loc[
+        first_target_game,
+        [
+            "season",
+            "game_id",
+            "game_date",
+            "team_id",
+            "team",
+            "player_id",
+            "player_name",
+            "has_prior_season_player_role",
+            "prior_season_player_role_adjustment",
+            "player_role_adjustment",
+            "predicted_minutes_per_available_game",
+            "predicted_minutes",
+        ],
+    ].reset_index(drop=True)
 
 
 def _validate_panel(panel: pd.DataFrame) -> None:
@@ -610,7 +818,7 @@ def _season_year(season: str) -> int:
 
 
 MODEL_NAME = "forward_plackett_luce_rotation"
-MODEL_VERSION = "v0.1"
+MODEL_VERSION = "v0.2"
 
 
 def main() -> None:
@@ -629,6 +837,12 @@ def main() -> None:
         type=float,
         default=list(DEFAULT_ROLE_PRIOR_PRECISION_GRID),
     )
+    parser.add_argument(
+        "--season-role-retention-grid",
+        nargs="+",
+        type=float,
+        default=list(DEFAULT_SEASON_ROLE_RETENTION_GRID),
+    )
     args = parser.parse_args()
     run = run_forward_plackett_luce_rotation(
         curated_dir=args.curated_dir,
@@ -638,6 +852,7 @@ def main() -> None:
         tuning_seasons=tuple(args.tuning_seasons),
         frozen_seasons=tuple(args.frozen_seasons),
         role_prior_precision_grid=tuple(args.role_prior_precision_grid),
+        season_role_retention_grid=tuple(args.season_role_retention_grid),
     )
     print(run.run_dir)
 

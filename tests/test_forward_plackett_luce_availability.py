@@ -91,6 +91,22 @@ def test_current_game_outcome_does_not_change_integrated_prediction() -> None:
     assert np.allclose(original_game, revised_game)
 
 
+def test_integrated_player_residual_travels_to_destination_team() -> None:
+    roster_minutes = _roster_minutes()
+    roster_minutes.loc[roster_minutes["game_id"].eq("002"), "team_id"] = 2
+    panel = prepare_availability_integrated_panel(
+        roster_minutes, _conditional_prior(), _availability_prior()
+    )
+    predictions = predict_availability_integrated_plackett_luce(
+        panel, config=ForwardPlackettLuceConfig(10.0), scenario_count=8
+    )
+    destination = predictions.loc[
+        predictions["game_id"].eq("002") & predictions["player_id"].eq(1)
+    ].iloc[0]
+    assert destination["player_role_games_observed"] == 1
+    assert destination["player_role_adjustment"] > 0.0
+
+
 def test_integrated_metrics_use_complete_roster_support() -> None:
     panel = prepare_availability_integrated_panel(
         _roster_minutes(), _conditional_prior(), _availability_prior()
