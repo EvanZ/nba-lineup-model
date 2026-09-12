@@ -30,6 +30,7 @@ DEFAULT_PERSISTENCE_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)
 DEFAULT_UPDATE_STRENGTH_GRID = (5.0, 15.0, 30.0, 60.0)
 DEFAULT_INITIAL_STRENGTH_GRID = (5.0, 15.0, 30.0, 60.0)
 DEFAULT_COLD_START_ALPHA_GRID = (0.01, 0.1, 1.0, 10.0, 100.0)
+DEFAULT_DRAFT_PICK_HALF_LIFE_GRID = (None, 5.0, 10.0, 20.0, 40.0)
 REGULATION_SEASON_TEAM_MINUTES = 82.0 * 240.0
 _COLD_START_FEATURE_COLUMNS = (
     "draft_capital",
@@ -39,6 +40,7 @@ _COLD_START_FEATURE_COLUMNS = (
     "is_forward",
     "is_center",
 )
+_INCUMBENT_TEAM_STRENGTH_COLUMN = "incumbent_team_nail"
 
 
 @dataclass(frozen=True)
@@ -56,12 +58,44 @@ PROMOTED_CONDITIONAL_MINUTES_CONFIG = ForwardConditionalMinutesConfig(1.0, 15.0,
 
 @dataclass(frozen=True)
 class ColdStartConditionalMinutesConfig:
-    """Ridge penalty for the draft-informed rookie conditional-minutes prior."""
+    """Ridge penalty and optional exponential draft-pick transform."""
 
     alpha: float
+    draft_pick_half_life: float | None = None
+    include_incumbent_team_strength: bool = False
 
 
 PROMOTED_COLD_START_CONDITIONAL_MINUTES_CONFIG = ColdStartConditionalMinutesConfig(0.01)
+
+
+def build_forward_conditional_roster_profile(
+    roster: pd.DataFrame,
+    *,
+    target_season: str,
+    curated_dir: Path | str = DEFAULT_CURATED_DIR,
+) -> pd.DataFrame:
+    """Return the static target-roster fields used by the forward minutes model."""
+
+    columns = ["player_id", "player_name", "age", "listed_position"]
+    if "experience" in roster:
+        columns.append("experience")
+    output = roster.loc[:, columns].copy()
+    if "experience" not in output:
+        output["experience"] = 0.0
+    output["player_id"] = pd.to_numeric(output["player_id"], errors="raise").astype(int)
+    experience = pd.to_numeric(output["experience"], errors="coerce")
+    output["is_rookie"] = experience.fillna(0.0).eq(0.0)
+    draft_path = Path(curated_dir) / "draft_history" / target_season / "part-00000.parquet"
+    if draft_path.exists():
+        draft = pd.read_parquet(draft_path, columns=["player_id", "draft_number"])
+        draft["player_id"] = pd.to_numeric(draft["player_id"], errors="raise").astype(int)
+        draft = draft.drop_duplicates("player_id", keep="last")
+        output = output.merge(draft, on="player_id", how="left", validate="one_to_one")
+    else:
+        output["draft_number"] = np.nan
+    output["draft_number"] = pd.to_numeric(output["draft_number"], errors="coerce")
+    output["is_undrafted"] = output["is_rookie"] & output["draft_number"].isna()
+    return output.drop(columns="experience")
 
 
 @dataclass(frozen=True)
@@ -91,9 +125,10 @@ class FittedColdStartConditionalMinutesModel:
     coefficients: np.ndarray
     intercept: float
     config: ColdStartConditionalMinutesConfig
+    feature_columns: tuple[str, ...]
 
     def predict_residual(self, features: pd.DataFrame) -> np.ndarray:
-        values = features.loc[:, list(_COLD_START_FEATURE_COLUMNS)].to_numpy(dtype=float)
+        values = features.loc[:, list(self.feature_columns)].to_numpy(dtype=float)
         standardized = (values - self.feature_mean) / self.feature_scale
         return standardized @ self.coefficients + self.intercept
 
@@ -135,16 +170,31 @@ def fit_age_conditional_minutes_model(summary: pd.DataFrame) -> AgeConditionalMi
     )
 
 
-def prepare_cold_start_features(frame: pd.DataFrame) -> pd.DataFrame:
+def prepare_cold_start_features(
+    frame: pd.DataFrame,
+    *,
+    draft_pick_half_life: float | None = None,
+    include_incumbent_team_strength: bool = False,
+) -> pd.DataFrame:
     """Return only preseason biography features for the rookie minutes branch."""
 
+    if draft_pick_half_life is not None and draft_pick_half_life <= 0.0:
+        raise ValueError("Draft-pick half-life must be positive when supplied")
     output = pd.DataFrame(index=frame.index)
     draft_number = pd.to_numeric(
         frame.get("draft_number", pd.Series(np.nan, index=frame.index)), errors="coerce"
     )
-    output["draft_capital"] = np.where(
-        draft_number.notna(), np.clip((61.0 - draft_number) / 60.0, 0.0, 1.0), 0.0
-    )
+    if draft_pick_half_life is None:
+        output["draft_capital"] = np.where(
+            draft_number.notna(), np.clip((61.0 - draft_number) / 60.0, 0.0, 1.0), 0.0
+        )
+    else:
+        pick_offset = (draft_number - 1.0).clip(lower=0.0)
+        output["draft_capital"] = np.where(
+            draft_number.notna(),
+            np.exp2(-pick_offset / draft_pick_half_life),
+            0.0,
+        )
     undrafted = frame.get("is_undrafted", pd.Series(False, index=frame.index))
     output["is_undrafted"] = undrafted.astype("boolean").fillna(False).astype(float)
     age = pd.to_numeric(
@@ -155,7 +205,14 @@ def prepare_cold_start_features(frame: pd.DataFrame) -> pd.DataFrame:
     output["is_guard"] = position.str.contains("G", regex=False).astype(float)
     output["is_forward"] = position.str.contains("F", regex=False).astype(float)
     output["is_center"] = position.str.contains("C", regex=False).astype(float)
-    return output.loc[:, list(_COLD_START_FEATURE_COLUMNS)]
+    columns = list(_COLD_START_FEATURE_COLUMNS)
+    if include_incumbent_team_strength:
+        output[_INCUMBENT_TEAM_STRENGTH_COLUMN] = pd.to_numeric(
+            frame.get(_INCUMBENT_TEAM_STRENGTH_COLUMN, pd.Series(0.0, index=frame.index)),
+            errors="coerce",
+        ).fillna(0.0)
+        columns.append(_INCUMBENT_TEAM_STRENGTH_COLUMN)
+    return output.loc[:, columns]
 
 
 def fit_cold_start_conditional_minutes_model(
@@ -174,9 +231,15 @@ def fit_cold_start_conditional_minutes_model(
         .fillna(False)
         & history["available_games"].gt(0)
     ].copy()
+    if config.include_incumbent_team_strength:
+        rookie = rookie.loc[rookie[_INCUMBENT_TEAM_STRENGTH_COLUMN].notna()].copy()
     if rookie.empty:
         raise ValueError("Cold-start minutes model requires observed rookie seasons")
-    features = prepare_cold_start_features(rookie)
+    features = prepare_cold_start_features(
+        rookie,
+        draft_pick_half_life=config.draft_pick_half_life,
+        include_incumbent_team_strength=config.include_incumbent_team_strength,
+    )
     mean = features.mean(axis=0).to_numpy(dtype=float)
     scale = features.std(axis=0, ddof=0).to_numpy(dtype=float)
     scale = np.where(scale > 1e-12, scale, 1.0)
@@ -197,6 +260,7 @@ def fit_cold_start_conditional_minutes_model(
         coefficients=np.asarray(coefficients[1:], dtype=float),
         intercept=float(coefficients[0]),
         config=config,
+        feature_columns=tuple(features.columns),
     )
 
 
@@ -238,7 +302,13 @@ def predict_conditional_minutes_season(
     ]
     output_columns.extend(
         column
-        for column in ("draft_number", "is_undrafted", "listed_position", "is_rookie")
+        for column in (
+            "draft_number",
+            "is_undrafted",
+            "listed_position",
+            "is_rookie",
+            _INCUMBENT_TEAM_STRENGTH_COLUMN,
+        )
         if column in target and column not in output_columns
     )
     output = target.loc[:, output_columns].copy()
@@ -253,7 +323,13 @@ def predict_conditional_minutes_season(
         if prior is None:
             is_rookie = bool(getattr(row, "is_rookie", False))
             if cold_start_model is not None and is_rookie:
-                row_features = prepare_cold_start_features(pd.DataFrame([row._asdict()]))
+                row_features = prepare_cold_start_features(
+                    pd.DataFrame([row._asdict()]),
+                    draft_pick_half_life=cold_start_model.config.draft_pick_half_life,
+                    include_incumbent_team_strength=(
+                        cold_start_model.config.include_incumbent_team_strength
+                    ),
+                )
                 adjustment = float(cold_start_model.predict_residual(row_features)[0])
             else:
                 adjustment = 0.0
@@ -321,7 +397,13 @@ def predict_conditional_minutes_roster(
     roster_columns = ["player_id", "player_name", "age"]
     roster_columns.extend(
         column
-        for column in ("draft_number", "is_undrafted", "listed_position", "is_rookie")
+        for column in (
+            "draft_number",
+            "is_undrafted",
+            "listed_position",
+            "is_rookie",
+            _INCUMBENT_TEAM_STRENGTH_COLUMN,
+        )
         if column in roster and column not in roster_columns
     )
     output = roster.loc[:, roster_columns].copy()
@@ -340,7 +422,13 @@ def predict_conditional_minutes_roster(
         if prior is None:
             is_rookie = bool(getattr(row, "is_rookie", False))
             if cold_start_model is not None and is_rookie:
-                row_features = prepare_cold_start_features(pd.DataFrame([row._asdict()]))
+                row_features = prepare_cold_start_features(
+                    pd.DataFrame([row._asdict()]),
+                    draft_pick_half_life=cold_start_model.config.draft_pick_half_life,
+                    include_incumbent_team_strength=(
+                        cold_start_model.config.include_incumbent_team_strength
+                    ),
+                )
                 adjustment = float(cold_start_model.predict_residual(row_features)[0])
             else:
                 adjustment = 0.0
@@ -531,29 +619,41 @@ def tune_cold_start_conditional_minutes(
     state_config: ForwardConditionalMinutesConfig,
     target_seasons: tuple[str, ...] = DEFAULT_TUNING_SEASONS,
     alpha_grid: tuple[float, ...] = DEFAULT_COLD_START_ALPHA_GRID,
+    draft_pick_half_life_grid: tuple[float | None, ...] = DEFAULT_DRAFT_PICK_HALF_LIFE_GRID,
+    include_incumbent_team_strength: bool = False,
 ) -> tuple[ColdStartConditionalMinutesConfig, pd.DataFrame]:
-    """Select the rookie-only ridge penalty on completed pre-frozen seasons."""
+    """Select rookie ridge shrinkage and draft-pick shape before frozen seasons."""
 
     rows: list[dict[str, float]] = []
+    half_lives = tuple(dict.fromkeys(draft_pick_half_life_grid))
     for alpha in sorted(set(alpha_grid)):
-        config = ColdStartConditionalMinutesConfig(alpha=float(alpha))
-        predictions = [
-            predict_conditional_minutes_season(
-                summary,
-                target_season=season,
-                config=state_config,
-                cold_start_config=config,
-            )[0]
-            for season in target_seasons
-        ]
-        joined = pd.concat(predictions, ignore_index=True)
-        rows.append(
-            {
-                "alpha": float(alpha),
-                **summarize_cold_start_minutes_metrics(joined),
-                **summarize_conditional_minutes_metrics(joined),
-            }
-        )
+        for half_life in half_lives:
+            config = ColdStartConditionalMinutesConfig(
+                alpha=float(alpha),
+                draft_pick_half_life=half_life,
+                include_incumbent_team_strength=include_incumbent_team_strength,
+            )
+            predictions = [
+                predict_conditional_minutes_season(
+                    summary,
+                    target_season=season,
+                    config=state_config,
+                    cold_start_config=config,
+                )[0]
+                for season in target_seasons
+            ]
+            joined = pd.concat(predictions, ignore_index=True)
+            rows.append(
+                {
+                    "alpha": float(alpha),
+                    "draft_pick_half_life": half_life,
+                    "draft_pick_half_life_sort": (
+                        np.inf if half_life is None else float(half_life)
+                    ),
+                    **summarize_cold_start_minutes_metrics(joined),
+                    **summarize_conditional_minutes_metrics(joined),
+                }
+            )
     grid = (
         pd.DataFrame(rows)
         .sort_values(
@@ -561,12 +661,23 @@ def tune_cold_start_conditional_minutes(
                 "cold_start_available_game_weighted_rmse",
                 "cold_start_available_game_weighted_mae",
                 "alpha",
+                "draft_pick_half_life_sort",
             ],
             kind="stable",
         )
         .reset_index(drop=True)
     )
-    return ColdStartConditionalMinutesConfig(alpha=float(grid.loc[0, "alpha"])), grid
+    winner_half_life = grid.loc[0, "draft_pick_half_life"]
+    return (
+        ColdStartConditionalMinutesConfig(
+            alpha=float(grid.loc[0, "alpha"]),
+            draft_pick_half_life=(
+                None if pd.isna(winner_half_life) else float(winner_half_life)
+            ),
+            include_incumbent_team_strength=include_incumbent_team_strength,
+        ),
+        grid.drop(columns="draft_pick_half_life_sort"),
+    )
 
 
 def summarize_conditional_minutes_metrics(predictions: pd.DataFrame) -> dict[str, float]:

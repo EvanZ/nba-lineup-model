@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import numpy as np
@@ -38,6 +39,27 @@ from nba_lineup_model.web_api.inference import (
     build_player_team_splits,
     build_published_player_ratings,
 )
+
+
+def test_win_projection_preview_cache_overrides_the_published_cache(
+    tmp_path, monkeypatch
+) -> None:
+    preview_path = tmp_path / "preview.json"
+    preview_path.write_text(
+        json.dumps(
+            {
+                "minutes": {"model": "Local preview", "players": []},
+                "win_projection": {"model": "Local preview wins", "teams": []},
+            }
+        )
+    )
+    monkeypatch.setenv("GESTALT_WIN_PROJECTION_CACHE_PATH", str(preview_path))
+
+    response = TestClient(create_app(_evaluator())).get("/api/win-projections")
+
+    assert response.status_code == 200
+    assert response.json()["model"] == "Local preview"
+    assert response.json()["win_projection"]["model"] == "Local preview wins"
 
 
 def _evaluator(*, bounded: bool = False, compiled_linear: bool = False) -> LineupEvaluator:

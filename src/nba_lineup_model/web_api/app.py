@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Literal
 
 import httpx
@@ -76,6 +79,19 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
 
     @lru_cache(maxsize=1)
     def get_win_projection_payload() -> dict[str, object]:
+        preview_path = os.environ.get("GESTALT_WIN_PROJECTION_CACHE_PATH")
+        if preview_path:
+            path = Path(preview_path)
+            if not path.is_file():
+                raise FileNotFoundError(f"Configured local preview cache is missing: {path}")
+            preview = json.loads(path.read_text())
+            if not isinstance(preview, dict) or not {"minutes", "win_projection"}.issubset(preview):
+                raise ValueError(f"Invalid local preview cache payload: {path}")
+            minutes = preview["minutes"]
+            win_projection = preview["win_projection"]
+            if not isinstance(minutes, dict) or not isinstance(win_projection, dict):
+                raise ValueError(f"Invalid local preview cache payload: {path}")
+            return {**minutes, "win_projection": win_projection}
         try:
             cached = read_win_projection_cache(
                 model_artifact=MODEL_ARTIFACT,

@@ -12,6 +12,7 @@ from nba_lineup_model.rotation.forward_conditional_minutes import (
     normalize_opening_roster_minutes,
     predict_conditional_minutes_roster,
     predict_conditional_minutes_season,
+    prepare_cold_start_features,
 )
 
 
@@ -126,6 +127,15 @@ def test_combined_expected_minutes_multiplies_both_forward_components() -> None:
     availability = pd.DataFrame({"player_id": [1], "predicted_available_share": [0.5]})
     combined = attach_expected_total_minutes(conditional, availability)
     assert combined.loc[0, "raw_expected_total_minutes"] == pytest.approx(820.0)
+
+
+def test_exponential_draft_capital_uses_pick_half_life() -> None:
+    features = prepare_cold_start_features(
+        pd.DataFrame({"draft_number": [1.0, 11.0, 21.0]}),
+        draft_pick_half_life=10.0,
+    )
+
+    assert features["draft_capital"].tolist() == pytest.approx([1.0, 0.5, 0.25])
 
 
 def test_draft_cold_start_prior_lifts_top_pick_without_affecting_non_rookie() -> None:

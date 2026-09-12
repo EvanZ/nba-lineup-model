@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-09-10"
+last_updated: "2026-09-12"
 ---
 
 # Win Projections
@@ -36,6 +36,13 @@ raw totals \(r_i\) into a 240-regulation-minute team rotation. See
 [Forward Conditional Minutes](forward-conditional-minutes.md) for the fitted
 player-level models.
 
+For a rookie, FCM v0.3 first conditions \(m_i\) on the incumbent strength of
+the opening roster. This is separate from the final win-projection strength
+defined below. The cold-start input is a pre-squash average of returning
+non-rookie players' NAIL forecasts, weighted by their own \(p_i m_i\). It is
+used only to form the rookie's conditional-minute forecast, then the full
+roster proceeds through the same active-15 gate and 240-minute normalization.
+
 For team \(k\), its neutral-court strength is the minutes-weighted player sum:
 
 \[
@@ -53,6 +60,41 @@ The availability and conditional-minutes models create independent player
 forecasts. Those raw forecasts cannot be used directly for team strength: they
 will not generally sum to a team's fixed 19,680 regulation minutes. W0 first
 reconciles every opening roster to one feasible preseason rotation.
+
+### Team-Strength Cold-Start Updates
+
+The FCM v0.3 team-strength feature is calculated before the steps below. It
+uses only returning non-rookies with a prior conditional-minutes state:
+
+\[
+C_k =
+\frac{\sum_{j\in I_k} p_j m_j R_j}
+{\sum_{j\in I_k} p_j m_j}.
+\]
+
+This is deliberately not the final team strength \(S_k\): it uses unsquashed
+conditional-minute forecasts and excludes the rookie receiving the adjustment,
+which prevents a feedback loop. The fitted coefficient is
+\(\beta_C=-0.2071\) on \(\log(1+m)\). A stronger incumbent rotation therefore
+compresses an eligible rookie's conditional-minute estimate; a weaker rotation
+expands it.
+
+When a user changes an incumbent's \(G_{\mathrm{available}}\), conditional
+MPG, or \(+/-\), the browser recalculates \(C_k\) from those edited values. It
+then updates every eligible rookie without refitting FCM:
+
+\[
+m_i^{\mathrm{live}} =
+\exp\!\left[
+\log(1+m_i^{\mathrm{published}})
++ \beta_C\left(C_k^{\mathrm{live}}-C_k^{\mathrm{published}}\right)
+\right]-1.
+\]
+
+Those live conditional-minute values feed the raw rotation weights, active-15
+selection, squashed minutes, team strengths, schedule probabilities, and
+Win-Loss Envelope. An explicit user override of a rookie's conditional MPG
+takes precedence over this automatic update.
 
 ### 1. Form A Raw Rotation Weight
 

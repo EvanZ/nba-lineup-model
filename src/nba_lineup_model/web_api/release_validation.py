@@ -31,9 +31,11 @@ from nba_lineup_model.web_api.inference import (
     preseason_rankings_path,
     published_player_ratings_path,
 )
+from nba_lineup_model.web_api.win_projections import win_projection_cache_path
 
 DEFAULT_RELEASE_MANIFEST_DIR = Path("artifacts/web/releases")
 EXPECTED_CONTEXT_ALPHA = 10_000.0
+EXPECTED_CONDITIONAL_MINUTES_VERSION = "v0.3"
 NUMERICAL_TOLERANCE = 1e-9
 
 
@@ -198,6 +200,10 @@ def validate_release_bundle(
     ):
         raise ReleaseValidationError("Preseason rankings belong to a different model run")
 
+    win_cache_path = win_projection_cache_path(MODEL_ARTIFACT, selected_run_id)
+    win_cache = json.loads(_require_file(win_cache_path).read_text())
+    _validate_win_projection_cache(win_cache)
+
     model_files = sorted(path for path in run_dir.rglob("*") if path.is_file())
     numerical_files = [
         ratings_path,
@@ -209,6 +215,7 @@ def validate_release_bundle(
         realized_path,
         preseason_path,
         preseason_metadata_path,
+        win_cache_path,
     ]
     manifest = {
         "schema_version": 1,
@@ -253,6 +260,47 @@ def _validate_model_contract(metadata: dict[str, Any], *, season: str) -> None:
         raise ReleaseValidationError(
             f"The release context alpha is not the published {EXPECTED_CONTEXT_ALPHA:g}"
         )
+
+
+def _validate_win_projection_cache(payload: Any) -> None:
+    """Require the versioned combined cache used by the production API."""
+
+    if not isinstance(payload, dict):
+        raise ReleaseValidationError("Win projection cache is not a JSON object")
+    minutes = payload.get("minutes")
+    win_projection = payload.get("win_projection")
+    if not isinstance(minutes, dict) or not isinstance(win_projection, dict):
+        raise ReleaseValidationError("Win projection cache lacks combined minutes and wins payloads")
+    if minutes.get("conditional_minutes_version") != EXPECTED_CONDITIONAL_MINUTES_VERSION:
+        raise ReleaseValidationError(
+            "Win projection cache does not use the published FCM "
+            f"{EXPECTED_CONDITIONAL_MINUTES_VERSION} contract"
+        )
+    strength = minutes.get("incumbent_team_strength")
+    if not isinstance(strength, dict):
+        raise ReleaseValidationError("FCM v0.3 cache lacks incumbent team strength")
+    required_strength = (
+        "league_strength_fallback",
+        "team_strength_log_minutes_coefficient",
+        "teams",
+    )
+    if any(key not in strength for key in required_strength):
+        raise ReleaseValidationError("FCM v0.3 incumbent team strength is incomplete")
+    if not np.isfinite(
+        [
+            float(strength["league_strength_fallback"]),
+            float(strength["team_strength_log_minutes_coefficient"]),
+        ]
+    ).all():
+        raise ReleaseValidationError("FCM v0.3 incumbent team strength is non-finite")
+    if not isinstance(strength["teams"], list) or not strength["teams"]:
+        raise ReleaseValidationError("FCM v0.3 incumbent team strength lacks team rows")
+    players = minutes.get("players")
+    teams = win_projection.get("teams")
+    if not isinstance(players, list) or not players:
+        raise ReleaseValidationError("Win projection cache lacks projected players")
+    if not isinstance(teams, list) or not teams:
+        raise ReleaseValidationError("Win projection cache lacks projected teams")
 
 
 def _validate_lineup_rankings(

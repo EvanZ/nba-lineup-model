@@ -16,6 +16,7 @@ from nba_lineup_model.web_api.release_validation import (
     EXPECTED_CONTEXT_ALPHA,
     ReleaseValidationError,
     _validate_model_contract,
+    _validate_win_projection_cache,
 )
 
 
@@ -55,3 +56,24 @@ def test_release_contract_rejects_a_different_context_alpha() -> None:
     metadata["context_alpha"] = 5_000.0
     with pytest.raises(ReleaseValidationError, match="context alpha"):
         _validate_model_contract(metadata, season="2025-26")
+
+
+def test_release_cache_requires_the_promoted_fcm_contract() -> None:
+    cache = {
+        "minutes": {
+            "conditional_minutes_version": "v0.3",
+            "incumbent_team_strength": {
+                "league_strength_fallback": 0.0,
+                "team_strength_log_minutes_coefficient": -0.2,
+                "teams": [{"team": "TST"}],
+            },
+            "players": [{"player_id": 1}],
+        },
+        "win_projection": {"teams": [{"team": "TST"}]},
+    }
+
+    _validate_win_projection_cache(cache)
+    cache["minutes"]["conditional_minutes_version"] = "v0.2"
+
+    with pytest.raises(ReleaseValidationError, match="FCM v0.3"):
+        _validate_win_projection_cache(cache)

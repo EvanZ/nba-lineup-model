@@ -18,6 +18,9 @@ from nba_lineup_model.rotation.forward_conditional_minutes import (
     ForwardConditionalMinutesConfig,
     attach_cold_start_biographies,
     attach_expected_total_minutes,
+    build_forward_conditional_roster_profile,
+    fit_age_conditional_minutes_model,
+    fit_cold_start_conditional_minutes_model,
     normalize_opening_roster_minutes,
     predict_conditional_minutes_roster,
 )
@@ -221,7 +224,7 @@ def build_forward_conditional_preseason_minutes_payload(
     history_seasons = tuple(f"{year}-{str(year + 1)[-2:]}" for year in range(2015, target_year))
     summary = build_availability_season_summary(history_seasons, curated_dir=curated_dir)
     summary = attach_cold_start_biographies(summary)
-    forecast_roster = _conditional_minutes_roster_profile(
+    forecast_roster = build_forward_conditional_roster_profile(
         roster, target_season=target_season, curated_dir=curated_dir
     )
     availability, _availability_age, _availability_metadata = predict_availability_roster(
@@ -339,34 +342,247 @@ def build_forward_conditional_preseason_minutes_payload(
     }
 
 
-def _conditional_minutes_roster_profile(
-    roster: pd.DataFrame,
+def build_incumbent_team_strength_minutes_payload(
     *,
-    target_season: str,
-    curated_dir: Path | str,
-) -> pd.DataFrame:
-    """Return the static rookie fields required by the conditional-minutes prior."""
+    baseline_minutes_payload: dict[str, object],
+    team_strength_history: pd.DataFrame,
+    roster_path: Path | str = DEFAULT_ROSTER_PATH,
+    curated_dir: Path | str = DEFAULT_CURATED_DIR,
+    target_season: str = DEFAULT_TARGET_SEASON,
+    initial_rotation_size: int = DEFAULT_INITIAL_ROTATION_SIZE,
+) -> dict[str, object]:
+    """Build the FCM v0.3 payload from the immutable baseline payload.
 
-    columns = ["player_id", "player_name", "age", "listed_position"]
-    if "experience" in roster:
-        columns.append("experience")
-    output = roster.loc[:, columns].copy()
-    if "experience" not in output:
-        output["experience"] = 0.0
-    output["player_id"] = pd.to_numeric(output["player_id"], errors="raise").astype(int)
-    experience = pd.to_numeric(output["experience"], errors="coerce")
-    output["is_rookie"] = experience.fillna(0.0).eq(0.0)
-    draft_path = Path(curated_dir) / "draft_history" / target_season / "part-00000.parquet"
-    if draft_path.exists():
-        draft = pd.read_parquet(draft_path, columns=["player_id", "draft_number"])
-        draft["player_id"] = pd.to_numeric(draft["player_id"], errors="raise").astype(int)
-        draft = draft.drop_duplicates("player_id", keep="last")
-        output = output.merge(draft, on="player_id", how="left", validate="one_to_one")
-    else:
-        output["draft_number"] = np.nan
-    output["draft_number"] = pd.to_numeric(output["draft_number"], errors="coerce")
-    output["is_undrafted"] = output["is_rookie"] & output["draft_number"].isna()
-    return output.drop(columns="experience")
+    Availability, preseason NAIL, and the published roster are read directly
+    from ``baseline_minutes_payload``.  Only the rookie conditional-minutes
+    prior is refit with the incumbent-team-strength feature; the raw expected
+    minutes are then passed through the same top-15 gate and 240-minute
+    normalization as the released payload.
+    """
+
+    baseline_players = pd.DataFrame(baseline_minutes_payload.get("players", []))
+    required_player_columns = {
+        "player_id",
+        "player_name",
+        "team",
+        "availability_probability",
+        "conditional_minutes_per_game",
+        "has_prior_minutes_state",
+        "projected_nail",
+    }
+    missing_player_columns = sorted(required_player_columns - set(baseline_players))
+    if missing_player_columns:
+        raise ValueError(
+            "Baseline minutes payload lacks required player fields: "
+            + ", ".join(missing_player_columns)
+        )
+    if baseline_players["player_id"].duplicated().any():
+        raise ValueError("Baseline minutes payload has duplicate player IDs")
+    if initial_rotation_size <= 0:
+        raise ValueError("Initial rotation size must be positive")
+
+    roster = pd.read_parquet(roster_path)
+    _validate_roster(roster)
+    roster = roster.copy()
+    roster["team_id"] = pd.to_numeric(roster["team_id"], errors="raise").astype("int64")
+    roster["player_id"] = pd.to_numeric(roster["player_id"], errors="raise").astype("int64")
+    opening_roster = roster.rename(columns={"team_abbreviation": "team"}).loc[
+        :, ["team_id", "team", "player_id", "player_name"]
+    ]
+    if opening_roster["player_id"].duplicated().any():
+        raise ValueError("Opening roster contains duplicate player IDs")
+
+    published = baseline_players.loc[
+        :,
+        [
+            "player_id",
+            "availability_probability",
+            "conditional_minutes_per_game",
+            "has_prior_minutes_state",
+            "projected_nail",
+        ],
+    ].copy()
+    published["player_id"] = pd.to_numeric(published["player_id"], errors="raise").astype(
+        "int64"
+    )
+    roster_profile = build_forward_conditional_roster_profile(
+        roster, target_season=target_season, curated_dir=curated_dir
+    ).merge(
+        opening_roster.loc[:, ["team_id", "team", "player_id"]],
+        on="player_id",
+        how="left",
+        validate="one_to_one",
+    ).merge(published, on="player_id", how="left", validate="one_to_one")
+    if roster_profile["availability_probability"].isna().any():
+        missing = roster_profile.loc[
+            roster_profile["availability_probability"].isna(), "player_name"
+        ].tolist()
+        raise ValueError("Production payload lacks rostered players: " + ", ".join(missing))
+
+    incumbent = roster_profile.copy()
+    incumbent["raw_incumbent_weight"] = (
+        pd.to_numeric(incumbent["availability_probability"], errors="raise")
+        * pd.to_numeric(incumbent["conditional_minutes_per_game"], errors="raise")
+    )
+    eligible = incumbent.loc[
+        incumbent["has_prior_minutes_state"].astype(bool)
+        & ~incumbent["is_rookie"].astype(bool)
+        & incumbent["raw_incumbent_weight"].gt(0.0)
+    ].copy()
+    if eligible.empty:
+        raise ValueError("No eligible returning players for incumbent team strength")
+    incumbent_player_ids = set(eligible["player_id"].astype(int).tolist())
+    eligible["weighted_nail"] = eligible["raw_incumbent_weight"] * eligible["projected_nail"]
+    team_strength = eligible.groupby(["team_id", "team"], as_index=False).agg(
+        incumbent_weight=("raw_incumbent_weight", "sum"),
+        weighted_nail=("weighted_nail", "sum"),
+    )
+    team_strength["incumbent_team_nail"] = (
+        team_strength["weighted_nail"] / team_strength["incumbent_weight"]
+    )
+    league_strength_fallback = float(
+        np.average(
+            team_strength["incumbent_team_nail"],
+            weights=team_strength["incumbent_weight"],
+        )
+    )
+    roster_profile = roster_profile.merge(
+        team_strength.loc[:, ["team_id", "incumbent_team_nail"]],
+        on="team_id",
+        how="left",
+        validate="many_to_one",
+    )
+    roster_profile["incumbent_team_nail"] = roster_profile["incumbent_team_nail"].fillna(
+        league_strength_fallback
+    )
+
+    candidate_config = ColdStartConditionalMinutesConfig(
+        alpha=PROMOTED_COLD_START_CONDITIONAL_MINUTES_CONFIG.alpha,
+        draft_pick_half_life=None,
+        include_incumbent_team_strength=True,
+    )
+    conditional, _age_model = predict_conditional_minutes_roster(
+        team_strength_history,
+        roster=roster_profile,
+        target_season=target_season,
+        config=PROMOTED_CONDITIONAL_MINUTES_CONFIG,
+        cold_start_config=candidate_config,
+    )
+    history = team_strength_history.loc[
+        pd.to_numeric(team_strength_history["season_start_year"], errors="raise").lt(
+            int(target_season[:4])
+        )
+    ].copy()
+    cold_start_model = fit_cold_start_conditional_minutes_model(
+        history,
+        age_model=fit_age_conditional_minutes_model(history),
+        config=candidate_config,
+    )
+    strength_index = cold_start_model.feature_columns.index("incumbent_team_nail")
+    strength_log_minutes_coefficient = float(
+        cold_start_model.coefficients[strength_index]
+        / cold_start_model.feature_scale[strength_index]
+    )
+    candidate = baseline_players.copy()
+    candidate["player_id"] = pd.to_numeric(candidate["player_id"], errors="raise").astype(
+        "int64"
+    )
+    candidate = candidate.merge(
+        conditional.loc[
+            :,
+            [
+                "player_id",
+                "predicted_minutes_per_available_game",
+                "uses_draft_cold_start_prior",
+            ],
+        ],
+        on="player_id",
+        how="left",
+        validate="one_to_one",
+    )
+    if candidate["predicted_minutes_per_available_game"].isna().any():
+        raise ValueError("Candidate conditional minutes lack a rostered player")
+    candidate["conditional_minutes_per_game"] = candidate[
+        "predicted_minutes_per_available_game"
+    ].astype(float)
+    candidate["uses_incumbent_team_strength"] = candidate[
+        "uses_draft_cold_start_prior"
+    ].astype(bool)
+    candidate["is_incumbent_team_strength_incumbent"] = candidate["player_id"].isin(
+        incumbent_player_ids
+    )
+    candidate["raw_expected_total_minutes"] = (
+        82.0
+        * candidate["availability_probability"].astype(float)
+        * candidate["conditional_minutes_per_game"].astype(float)
+    )
+    candidate = candidate.drop(
+        columns=[
+            "predicted_minutes_per_available_game",
+            "baseline_minute_share",
+            "baseline_minutes_per_game",
+        ],
+        errors="ignore",
+    )
+    candidate = opening_roster.merge(
+        candidate.drop(columns="team", errors="ignore"),
+        on=["player_id", "player_name"],
+        how="left",
+        validate="one_to_one",
+    )
+    gated = _apply_raw_expected_total_rotation_limit(
+        candidate,
+        opening_roster=opening_roster,
+        size=initial_rotation_size,
+    )
+    normalized = normalize_opening_roster_minutes(gated, opening_roster=opening_roster)
+    candidate = (
+        gated.drop(columns="team_id", errors="ignore")
+        .merge(
+            normalized.loc[
+                :, ["player_id", "projected_minute_share", "projected_total_minutes"]
+            ],
+            on="player_id",
+            how="left",
+            validate="one_to_one",
+        )
+        .rename(
+            columns={
+                "projected_minute_share": "baseline_minute_share",
+                "projected_total_minutes": "_projected_total_minutes",
+            }
+        )
+    )
+    candidate["baseline_minutes_per_game"] = candidate["_projected_total_minutes"] / 82.0
+    candidate = candidate.drop(columns="_projected_total_minutes")
+    candidate = candidate.sort_values(
+        ["team", "baseline_minutes_per_game", "player_name", "player_id"],
+        ascending=[True, False, True, True],
+        kind="stable",
+    )
+    duplicate_columns = candidate.columns[candidate.columns.duplicated()].unique().tolist()
+    if duplicate_columns:
+        raise ValueError(
+            "Team-strength payload produced duplicate player fields: "
+            + ", ".join(str(column) for column in duplicate_columns)
+        )
+    rows = candidate.to_dict(orient="records")
+    return {
+        **{key: value for key, value in baseline_minutes_payload.items() if key != "players"},
+        "model": "Forward Availability v0.2 + Forward Conditional Minutes v0.3: Team-Strength Cold Starts",
+        "conditional_minutes_version": "v0.3",
+        "contract": (
+            "Availability, the active-15 roster gate, and 240-minute normalization are "
+            "unchanged. FCM v0.3 adds incumbent preseason team NAIL strength only to the "
+            "rookie conditional-minutes prior."
+        ),
+        "players": rows,
+        "incumbent_team_strength": {
+            "league_strength_fallback": league_strength_fallback,
+            "team_strength_log_minutes_coefficient": strength_log_minutes_coefficient,
+            "teams": team_strength.sort_values("team", kind="stable").to_dict(orient="records"),
+        },
+    }
 
 
 def _apply_raw_expected_total_rotation_limit(

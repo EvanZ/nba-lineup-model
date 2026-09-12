@@ -32,6 +32,7 @@ PLAYER_CATALOG="data/catalog/players.parquet"
 
 cd "$ROOT_DIR"
 uv run nba-build-gestalt-win-projections
+uv run nba-build-gestalt-team-strength-win-projections
 uv run nba-validate-gestalt-release --season "$DISPLAY_SEASON" --run-id "$RUN_ID"
 
 required_paths=(
@@ -110,6 +111,7 @@ cat > "$STAGING_DIR/release.json" <<EOF
   "run_id": "${RUN_ID}",
   "context_alpha": 10000,
   "profile_padding_contract": "medvedovsky_2020_stat_specific",
+  "conditional_minutes_model": "Forward Conditional Minutes v0.3: Team-Strength Cold Starts",
   "constrained_split_cache": "${CONSTRAINED_SPLIT_CACHE}",
   "win_projection_cache": "${WIN_PROJECTION_CACHE}",
   "bundle_manifest": "${RELEASE_MANIFEST}"

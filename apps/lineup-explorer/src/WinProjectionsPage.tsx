@@ -21,8 +21,15 @@ type SortDirection = "ascending" | "descending";
 
 type MinuteAllocation = {
   minutes: Map<number, number>;
+  inputs: Map<number, PlayerInputs>;
   rotationPlayerIds: Set<number>;
   totalRawMinutes: number;
+};
+
+type PlayerInputs = {
+  availabilityProbability: number;
+  conditionalMinutesPerGame: number;
+  nailRating: number;
 };
 
 // The active-15 baseline changes the meaning of every residual allocation.
@@ -562,7 +569,7 @@ function readOverrides(): Overrides {
   }
 }
 
-function playerInputs(player: MinutesProjectionPlayer, overrides: Overrides) {
+function directPlayerInputs(player: MinutesProjectionPlayer, overrides: Overrides): PlayerInputs {
   const override = overrides[overrideKey(player.team, player.player_id)];
   return {
     availabilityProbability: override?.availabilityProbability ?? player.availability_probability,
@@ -571,15 +578,62 @@ function playerInputs(player: MinutesProjectionPlayer, overrides: Overrides) {
   };
 }
 
+function incumbentTeamStrength(
+  players: MinutesProjectionPlayer[],
+  overrides: Overrides,
+  fallback: number,
+) {
+  const incumbents = players.filter((player) => player.is_incumbent_team_strength_incumbent);
+  const weight = incumbents.reduce((total, player) => {
+    const inputs = directPlayerInputs(player, overrides);
+    return total + inputs.availabilityProbability * inputs.conditionalMinutesPerGame;
+  }, 0);
+  if (weight <= 0) return fallback;
+  return incumbents.reduce((total, player) => {
+    const inputs = directPlayerInputs(player, overrides);
+    return total + inputs.availabilityProbability * inputs.conditionalMinutesPerGame * inputs.nailRating;
+  }, 0) / weight;
+}
+
+function adjustedPlayerInputs(
+  player: MinutesProjectionPlayer,
+  overrides: Overrides,
+  payload: MinutesProjectionPayload,
+  teamStrength: number,
+): PlayerInputs {
+  const inputs = directPlayerInputs(player, overrides);
+  const contract = payload.incumbent_team_strength;
+  const hasConditionalOverride = overrides[overrideKey(player.team, player.player_id)]?.conditionalMinutesPerGame !== undefined;
+  if (!contract || !player.uses_incumbent_team_strength || hasConditionalOverride) return inputs;
+  const reference = contract.teams.find((item) => item.team === player.team)?.incumbent_team_nail
+    ?? contract.league_strength_fallback;
+  const adjustedLogMinutes = Math.log1p(inputs.conditionalMinutesPerGame)
+    + contract.team_strength_log_minutes_coefficient * (teamStrength - reference);
+  return {
+    ...inputs,
+    conditionalMinutesPerGame: Math.max(0, Math.expm1(Math.max(-20, Math.min(20, adjustedLogMinutes)))),
+  };
+}
+
 function minuteAllocation(
   players: MinutesProjectionPlayer[],
   overrides: Overrides,
   regulationMinutes: number,
   rotationSize: number,
+  payload: MinutesProjectionPayload,
 ): MinuteAllocation {
+  const strength = incumbentTeamStrength(
+    players,
+    overrides,
+    payload.incumbent_team_strength?.league_strength_fallback ?? 0,
+  );
+  const inputs = new Map(players.map((player) => [
+    player.player_id,
+    adjustedPlayerInputs(player, overrides, payload, strength),
+  ]));
   const rawTotals = new Map(players.map((player) => {
-    const inputs = playerInputs(player, overrides);
-    const rawMinutes = SEASON_GAMES * inputs.availabilityProbability * inputs.conditionalMinutesPerGame;
+    const input = inputs.get(player.player_id)!;
+    const rawMinutes = SEASON_GAMES * input.availabilityProbability * input.conditionalMinutesPerGame;
     return [player.player_id, rawMinutes];
   }));
   const rotationPlayers = [...players].sort((left, right) => (
@@ -600,7 +654,7 @@ function minuteAllocation(
       ? regulationMinutes * (rawTotals.get(player.player_id) ?? 0) / totalRawMinutes
       : 0,
   ]));
-  return { minutes, rotationPlayerIds, totalRawMinutes };
+  return { minutes, inputs, rotationPlayerIds, totalRawMinutes };
 }
 
 function calculateProjection(
@@ -615,14 +669,16 @@ function calculateProjection(
   const baselineTeams = new Map(baseline.teams.map((team) => [team.team, team]));
   for (const team of payload.teams) {
     const players = payload.players.filter((player) => player.team === team);
-    const { minutes } = minuteAllocation(
+    const allocation = minuteAllocation(
       players,
       overrides,
       payload.regulation_team_minutes,
       payload.initial_rotation_size,
+      payload,
     );
     rawStrength.set(team, players.reduce((total, player) => (
-      total + (minutes.get(player.player_id) ?? 0) * playerInputs(player, overrides).nailRating / 48
+      total + (allocation.minutes.get(player.player_id) ?? 0)
+        * (allocation.inputs.get(player.player_id)?.nailRating ?? 0) / 48
     ), 0));
   }
   const meanStrength = Array.from(rawStrength.values()).reduce((total, value) => total + value, 0)
@@ -728,8 +784,9 @@ export function WinProjectionsPage() {
         overrides,
         payload.regulation_team_minutes,
         payload.initial_rotation_size,
+        payload,
       )
-      : { minutes: new Map<number, number>(), rotationPlayerIds: new Set<number>(), totalRawMinutes: 0 }
+      : { minutes: new Map<number, number>(), inputs: new Map<number, PlayerInputs>(), rotationPlayerIds: new Set<number>(), totalRawMinutes: 0 }
   ), [overrides, payload, players]);
   const hasInvalidOverrides = payload !== null && allocation.totalRawMinutes <= 0;
   const minutes = allocation.minutes;
@@ -909,13 +966,13 @@ export function WinProjectionsPage() {
               {orderedPlayers.map((player) => {
                 const key = overrideKey(player.team, player.player_id);
                 const override = overrides[key];
-                const inputs = playerInputs(player, overrides);
+                const inputs = allocation.inputs.get(player.player_id) ?? directPlayerInputs(player, overrides);
                 const projected = minutes.get(player.player_id) ?? player.baseline_minutes_per_game;
                 return <tr key={player.player_id} className={override === undefined ? "" : "has-minute-override"}>
                   <th scope="row"><a href={`#player/${player.player_id}`}>{player.player_name}</a><small>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</small></th>
                   <td className={inputs.nailRating < 0 ? "negative" : "positive"}><input className={inputs.nailRating < 0 ? "negative" : "positive"} aria-label={`Plus minus rating for ${player.player_name}`} type="number" step="0.1" value={inputs.nailRating.toFixed(1)} onChange={(event) => updateOverride(player, "nailRating", event.target.value)} /></td>
                   <td><input aria-label={`Projected available games for ${player.player_name}`} type="number" min="0" max={SEASON_GAMES} step="1" value={Math.round((override?.availabilityProbability ?? player.availability_probability) * SEASON_GAMES)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /></td>
-                  <td><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={(override?.conditionalMinutesPerGame ?? player.conditional_minutes_per_game).toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></td>
+                  <td><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={inputs.conditionalMinutesPerGame.toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></td>
                   <td className="projected-minutes">{projected.toFixed(1)}</td>
                 </tr>;
               })}
@@ -926,7 +983,7 @@ export function WinProjectionsPage() {
           {orderedPlayers.map((player) => {
             const key = overrideKey(player.team, player.player_id);
             const override = overrides[key];
-            const inputs = playerInputs(player, overrides);
+            const inputs = allocation.inputs.get(player.player_id) ?? directPlayerInputs(player, overrides);
             const projected = minutes.get(player.player_id) ?? player.baseline_minutes_per_game;
             return <li key={player.player_id} className={override === undefined ? "" : "has-minute-override"}>
               <div className="win-projections-mobile-heading">
@@ -937,7 +994,7 @@ export function WinProjectionsPage() {
               <dl>
                 <div><dt>+/-</dt><dd><input className={inputs.nailRating < 0 ? "negative" : "positive"} aria-label={`Plus minus rating for ${player.player_name}`} type="number" step="0.1" value={inputs.nailRating.toFixed(1)} onChange={(event) => updateOverride(player, "nailRating", event.target.value)} /></dd></div>
                 <div><dt><i>G</i><sub>available</sub></dt><dd><input aria-label={`Projected available games for ${player.player_name}`} type="number" min="0" max={SEASON_GAMES} step="1" value={Math.round((override?.availabilityProbability ?? player.availability_probability) * SEASON_GAMES)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /></dd></div>
-                <div><dt>E[MPG | available]</dt><dd><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={(override?.conditionalMinutesPerGame ?? player.conditional_minutes_per_game).toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></dd></div>
+                <div><dt>E[MPG | available]</dt><dd><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={inputs.conditionalMinutesPerGame.toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></dd></div>
                 <div><dt>Squashed MPG</dt><dd className="projected-minutes">{projected.toFixed(1)}</dd></div>
               </dl>
             </li>;

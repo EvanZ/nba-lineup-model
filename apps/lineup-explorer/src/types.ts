@@ -155,6 +155,19 @@ export type MinutesProjectionPlayer = {
   baseline_minutes_per_game: number;
   projected_nail: number;
   rating_source: string;
+  uses_incumbent_team_strength?: boolean;
+  is_incumbent_team_strength_incumbent?: boolean;
+};
+
+export type IncumbentTeamStrength = {
+  league_strength_fallback: number;
+  team_strength_log_minutes_coefficient: number;
+  teams: Array<{
+    team: string;
+    incumbent_weight: number;
+    weighted_nail: number;
+    incumbent_team_nail: number;
+  }>;
 };
 
 export type MinutesProjectionPayload = {
@@ -166,6 +179,7 @@ export type MinutesProjectionPayload = {
   contract: string;
   teams: string[];
   players: MinutesProjectionPlayer[];
+  incumbent_team_strength?: IncumbentTeamStrength;
   win_projection?: WinProjectionPayload;
 };
 
