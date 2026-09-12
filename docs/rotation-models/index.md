@@ -20,6 +20,7 @@ The initial family member is deliberately parameter-free:
 | [L20-NAIL-MSP v0.3](l20-source-aware-preseason-minute-share.md) | Cumulative share across first 20 team games | Source-aware role evidence for continuous players, gap returners, and cold starts |
 | [Forward Availability](forward-availability.md) | Season medical-availability share | Promoted v0.2 component; age baseline plus exposure-shrunk player state |
 | [Forward Conditional Minutes](forward-conditional-minutes.md) | Preseason minutes per available game | Promoted v0.2 component; returner state plus draft-informed rookie prior |
+| [Forward Plackett-Luce Rotation v0.1](forward-plackett-luce-rotation.md) | Game-level conditional minute allocation | Forward team-specific rotation state over the FCM v0.2 prior |
 | [Win Projections](win-projections.md) | Schedule-aware expected team wins | W0 minute-weighted NAIL, logistic game calibration, and Win-Loss Envelope |
 | [AC-MSP v0.1](ac-minute-share-projection-v01.md) | Game-level conditional minute allocation | Observed availability mask; all regulation regular-season games |
 | [L1-MSP v0.0](l1-minute-share-persistence.md) | Next team-game minute share | That player's prior team-game minute share only |

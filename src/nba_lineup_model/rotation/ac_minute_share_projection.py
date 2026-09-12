@@ -61,16 +61,17 @@ class ACMSPRun:
     run_id: str
 
 
-def load_regulation_available_minutes(
+def load_regulation_roster_minutes(
     season: str,
     *,
     curated_dir: Path | str = DEFAULT_CURATED_DIR,
 ) -> pd.DataFrame:
-    """Load known, medically available player rows for exact-240 team-games.
+    """Load every known rostered player for exact-240 team-games.
 
     Overtime games and malformed/non-regulation records are excluded rather
-    than rescaled. Available coach DNPs and G-League assignments remain in the
-    candidate roster with zero actual minutes.
+    than rescaled. The returned roster retains unavailable players and coach
+    DNPs with zero actual minutes so downstream models can define their own
+    candidate contract.
     """
 
     path = Path(curated_dir) / "player_availability" / season / "part-00000.parquet"
@@ -113,6 +114,29 @@ def load_regulation_available_minutes(
         how="inner",
     )
     output = source.merge(eligible, on=["game_id", "team_id"], how="inner")
+    if output.empty:
+        raise ValueError(f"No regulation roster rows in {season}")
+    roster_totals = output.groupby(["game_id", "team_id"], as_index=False).agg(
+        allocated_minutes=("minutes", "sum")
+    )
+    if not np.isclose(
+        roster_totals["allocated_minutes"], REGULATION_TEAM_MINUTES, atol=0.01
+    ).all():
+        raise ValueError(f"Rostered-player minutes do not sum to 240 in {season}")
+    output["actual_minute_share"] = output["minutes"] / REGULATION_TEAM_MINUTES
+    return output.sort_values(
+        ["team_id", "game_date", "game_id", "player_id"], kind="stable"
+    ).reset_index(drop=True)
+
+
+def load_regulation_available_minutes(
+    season: str,
+    *,
+    curated_dir: Path | str = DEFAULT_CURATED_DIR,
+) -> pd.DataFrame:
+    """Load available candidates from the exact-240 rostered-player contract."""
+
+    output = load_regulation_roster_minutes(season, curated_dir=curated_dir)
     output = output.loc[output["available"].astype(bool)].copy()
     if output.empty:
         raise ValueError(f"No regulation available-player rows in {season}")
@@ -123,10 +147,7 @@ def load_regulation_available_minutes(
         candidate_totals["allocated_minutes"], REGULATION_TEAM_MINUTES, atol=0.01
     ).all():
         raise ValueError(f"Available-player minutes do not sum to 240 in {season}")
-    output["actual_minute_share"] = output["minutes"] / REGULATION_TEAM_MINUTES
-    return output.sort_values(
-        ["team_id", "game_date", "game_id", "player_id"], kind="stable"
-    ).reset_index(drop=True)
+    return output.reset_index(drop=True)
 
 
 def build_conditional_minute_panel(available_minutes: pd.DataFrame) -> pd.DataFrame:

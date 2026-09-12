@@ -14,7 +14,7 @@ import pandas as pd
 
 from nba_lineup_model.rotation.forward_availability import (
     DEFAULT_PLAYER_PANEL_PATH,
-    ForwardAvailabilityConfig,
+    PROMOTED_AVAILABILITY_CONFIG,
     build_availability_season_summary,
     predict_availability_season,
 )
@@ -30,7 +30,6 @@ DEFAULT_PERSISTENCE_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)
 DEFAULT_UPDATE_STRENGTH_GRID = (5.0, 15.0, 30.0, 60.0)
 DEFAULT_INITIAL_STRENGTH_GRID = (5.0, 15.0, 30.0, 60.0)
 DEFAULT_COLD_START_ALPHA_GRID = (0.01, 0.1, 1.0, 10.0, 100.0)
-PROMOTED_AVAILABILITY_CONFIG = ForwardAvailabilityConfig(0.5, 60.0, 15.0, -0.25)
 REGULATION_SEASON_TEAM_MINUTES = 82.0 * 240.0
 _COLD_START_FEATURE_COLUMNS = (
     "draft_capital",
@@ -52,6 +51,7 @@ class ForwardConditionalMinutesConfig:
 
 
 AGE_ONLY_CONFIG = ForwardConditionalMinutesConfig(0.0, 0.0, 0.0)
+PROMOTED_CONDITIONAL_MINUTES_CONFIG = ForwardConditionalMinutesConfig(1.0, 15.0, 30.0)
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,9 @@ class ColdStartConditionalMinutesConfig:
     """Ridge penalty for the draft-informed rookie conditional-minutes prior."""
 
     alpha: float
+
+
+PROMOTED_COLD_START_CONDITIONAL_MINUTES_CONFIG = ColdStartConditionalMinutesConfig(0.01)
 
 
 @dataclass(frozen=True)
@@ -178,9 +181,9 @@ def fit_cold_start_conditional_minutes_model(
     scale = features.std(axis=0, ddof=0).to_numpy(dtype=float)
     scale = np.where(scale > 1e-12, scale, 1.0)
     standardized = (features.to_numpy(dtype=float) - mean) / scale
-    target = np.log1p(rookie["minutes_per_available_game"].to_numpy(dtype=float)) - age_model.predict_log_minutes(
-        rookie["age"].to_numpy(dtype=float)
-    )
+    target = np.log1p(
+        rookie["minutes_per_available_game"].to_numpy(dtype=float)
+    ) - age_model.predict_log_minutes(rookie["age"].to_numpy(dtype=float))
     weights = rookie["available_games"].to_numpy(dtype=float)
     design = np.column_stack((np.ones(len(rookie)), standardized))
     penalty = np.diag(np.r_[0.0, np.full(standardized.shape[1], config.alpha)])
@@ -652,7 +655,10 @@ def run_forward_conditional_minutes(
         state_config=config,
         target_seasons=tuning_seasons,
     )
-    print(f"Forward conditional minutes: selected cold-start {asdict(cold_start_config)}", flush=True)
+    print(
+        f"Forward conditional minutes: selected cold-start {asdict(cold_start_config)}",
+        flush=True,
+    )
     run_id = (
         f"forward-conditional-minutes-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-"
         f"{uuid4().hex[:7]}"

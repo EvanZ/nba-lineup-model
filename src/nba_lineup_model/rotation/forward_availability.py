@@ -45,6 +45,9 @@ class ForwardAvailabilityConfig:
     use_age_baseline: bool = True
 
 
+PROMOTED_AVAILABILITY_CONFIG = ForwardAvailabilityConfig(0.5, 60.0, 15.0, -0.25)
+
+
 @dataclass(frozen=True)
 class AgeAvailabilityModel:
     """Pooled age expectation on the logit availability scale."""
