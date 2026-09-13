@@ -37,6 +37,7 @@ artifacts/web/preseason_rankings/
 artifacts/web/constrained_split_ratings/
 artifacts/web/win_projections/
 artifacts/web/releases/
+artifacts/web/local_previews/
 artifacts/assisted_shot_taxonomy_parts/
 artifacts/logs/*.log
 
