@@ -1,5 +1,5 @@
 import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Calculator, ChevronDown, ChevronUp, CircleAlert, Download, LoaderCircle, RotateCcw } from "lucide-react";
+import { ArrowUpRight, Calculator, ChevronDown, ChevronUp, CircleAlert, Download, LoaderCircle, Pin, RotateCcw } from "lucide-react";
 
 import type {
   MinutesProjectionPayload,
@@ -13,9 +13,11 @@ type PlayerInputOverride = {
   availabilityProbability?: number;
   conditionalMinutesPerGame?: number;
   nailRating?: number;
+  rotationPinned?: boolean;
 };
 
 type Overrides = Record<string, PlayerInputOverride>;
+type NumericOverrideField = Exclude<keyof PlayerInputOverride, "rotationPinned">;
 type ForecastSortColumn = "team" | "team_strength" | "betmgm_win_total" | "projected_wins" | "delta";
 type SortDirection = "ascending" | "descending";
 
@@ -551,6 +553,7 @@ function readOverrides(): Overrides {
         const availabilityProbability = candidate.availabilityProbability;
         const conditionalMinutesPerGame = candidate.conditionalMinutesPerGame;
         const nailRating = candidate.nailRating;
+        const rotationPinned = candidate.rotationPinned;
         const output: PlayerInputOverride = {};
         if (typeof availabilityProbability === "number" && Number.isFinite(availabilityProbability)) {
           output.availabilityProbability = availabilityProbability;
@@ -561,6 +564,7 @@ function readOverrides(): Overrides {
         if (typeof nailRating === "number" && Number.isFinite(nailRating)) {
           output.nailRating = nailRating;
         }
+        if (rotationPinned === true) output.rotationPinned = true;
         return Object.keys(output).length ? [[key, output]] : [];
       }),
     ) as Overrides;
@@ -636,12 +640,20 @@ function minuteAllocation(
     const rawMinutes = SEASON_GAMES * input.availabilityProbability * input.conditionalMinutesPerGame;
     return [player.player_id, rawMinutes];
   }));
-  const rotationPlayers = [...players].sort((left, right) => (
+  const byRawMinutes = (left: MinutesProjectionPlayer, right: MinutesProjectionPlayer) => (
     (rawTotals.get(right.player_id) ?? 0) - (rawTotals.get(left.player_id) ?? 0)
     || left.player_name.localeCompare(right.player_name)
     || left.player_id - right.player_id
-  )).slice(0, rotationSize);
-  const rotationPlayerIds = new Set(rotationPlayers.map((player) => player.player_id));
+  );
+  const baselineRotationPlayers = [...players].sort(byRawMinutes).slice(0, rotationSize);
+  const rotationPlayerIds = new Set(baselineRotationPlayers.map((player) => player.player_id));
+  for (const player of players) {
+    const rawMinutes = rawTotals.get(player.player_id) ?? 0;
+    if (overrides[overrideKey(player.team, player.player_id)]?.rotationPinned && rawMinutes > 0) {
+      rotationPlayerIds.add(player.player_id);
+    }
+  }
+  const rotationPlayers = players.filter((player) => rotationPlayerIds.has(player.player_id));
   const totalRawMinutes = rotationPlayers.reduce(
     (total, player) => total + (rawTotals.get(player.player_id) ?? 0),
     0,
@@ -817,7 +829,7 @@ export function WinProjectionsPage() {
   )).length;
   const updateOverride = (
     player: MinutesProjectionPlayer,
-    field: keyof PlayerInputOverride,
+    field: NumericOverrideField,
     rawValue: string,
   ) => {
     const key = overrideKey(player.team, player.player_id);
@@ -847,6 +859,19 @@ export function WinProjectionsPage() {
             : value,
       },
     }));
+  };
+  const toggleRotationPin = (player: MinutesProjectionPlayer) => {
+    const key = overrideKey(player.team, player.player_id);
+    setForecastNeedsUpdate(true);
+    setOverrides((current) => {
+      const next = { ...current };
+      const currentOverride = { ...(next[key] ?? {}) };
+      if (currentOverride.rotationPinned) delete currentOverride.rotationPinned;
+      else currentOverride.rotationPinned = true;
+      if (Object.keys(currentOverride).length) next[key] = currentOverride;
+      else delete next[key];
+      return next;
+    });
   };
 
   const selectForecastTeam = (nextTeam: string) => {
@@ -886,7 +911,7 @@ export function WinProjectionsPage() {
       <section className="win-projections-hero">
         <p className="eyebrow">{payload.season} preseason planning</p>
         <h1 id="win-projections-title">Win projections.</h1>
-        <p>Adjust medical availability and conditional playing time, then recalculate. The top {payload.initial_rotation_size} override-adjusted raw projections form the rotation.</p>
+        <p>Adjust medical availability and conditional playing time, then recalculate. The top {payload.initial_rotation_size} override-adjusted raw projections form the baseline rotation; pins can retain additional players.</p>
         <a
           className="win-projections-doc-link"
           href={WIN_PROJECTIONS_DOCUMENTATION_URL}
@@ -949,7 +974,7 @@ export function WinProjectionsPage() {
               {payload.teams.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
           </label>
-          <button className="win-projections-reset" type="button" onClick={resetTeam} disabled={activeOverrides === 0} title="Reset this team to its baseline availability, conditional minutes, and rating inputs">
+          <button className="win-projections-reset" type="button" onClick={resetTeam} disabled={activeOverrides === 0} title="Reset this team to its baseline availability, conditional minutes, rating inputs, and rotation pins">
             <RotateCcw size={15} aria-hidden="true" />
             <span>Reset team</span>
           </button>
@@ -963,13 +988,14 @@ export function WinProjectionsPage() {
           <table className="win-projections-table">
             <thead><tr><th>Player</th><th>+/-</th><th><i>G</i><sub>available</sub></th><th>E[MPG | available]</th><th>Squashed MPG</th></tr></thead>
             <tbody>
-              {orderedPlayers.map((player) => {
+              {orderedPlayers.map((player, index) => {
                 const key = overrideKey(player.team, player.player_id);
                 const override = overrides[key];
+                const isPinned = override?.rotationPinned === true;
                 const inputs = allocation.inputs.get(player.player_id) ?? directPlayerInputs(player, overrides);
                 const projected = minutes.get(player.player_id) ?? player.baseline_minutes_per_game;
                 return <tr key={player.player_id} className={override === undefined ? "" : "has-minute-override"}>
-                  <th scope="row"><a href={`#player/${player.player_id}`}>{player.player_name}</a><small>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</small></th>
+                  <th scope="row"><span className="win-projections-player-name"><span className="win-projections-player-number">{index + 1}</span><a href={`#player/${player.player_id}`}>{player.player_name}</a><button className={`rotation-pin ${isPinned ? "is-pinned" : ""}`} type="button" aria-label={`${isPinned ? "Unpin" : "Pin"} ${player.player_name} ${isPinned ? "from" : "in"} the rotation`} aria-pressed={isPinned} title={isPinned ? "Unpin from the rotation" : "Keep in the rotation"} onClick={() => toggleRotationPin(player)}><Pin size={14} aria-hidden="true" /></button></span><small>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</small></th>
                   <td className={inputs.nailRating < 0 ? "negative" : "positive"}><input className={inputs.nailRating < 0 ? "negative" : "positive"} aria-label={`Plus minus rating for ${player.player_name}`} type="number" step="0.1" value={inputs.nailRating.toFixed(1)} onChange={(event) => updateOverride(player, "nailRating", event.target.value)} /></td>
                   <td><input aria-label={`Projected available games for ${player.player_name}`} type="number" min="0" max={SEASON_GAMES} step="1" value={Math.round((override?.availabilityProbability ?? player.availability_probability) * SEASON_GAMES)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /></td>
                   <td><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={inputs.conditionalMinutesPerGame.toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></td>
@@ -980,15 +1006,16 @@ export function WinProjectionsPage() {
           </table>
         </div>
         <ul className="win-projections-mobile-list">
-          {orderedPlayers.map((player) => {
+          {orderedPlayers.map((player, index) => {
             const key = overrideKey(player.team, player.player_id);
             const override = overrides[key];
+            const isPinned = override?.rotationPinned === true;
             const inputs = allocation.inputs.get(player.player_id) ?? directPlayerInputs(player, overrides);
             const projected = minutes.get(player.player_id) ?? player.baseline_minutes_per_game;
             return <li key={player.player_id} className={override === undefined ? "" : "has-minute-override"}>
               <div className="win-projections-mobile-heading">
-                <a href={`#player/${player.player_id}`}>{player.player_name}</a>
-                <span className={inputs.nailRating < 0 ? "negative" : "positive"}>{formatRating(inputs.nailRating)}</span>
+                <span className="win-projections-player-name"><span className="win-projections-player-number">{index + 1}</span><a href={`#player/${player.player_id}`}>{player.player_name}</a></span>
+                <span className="win-projections-mobile-actions"><span className={inputs.nailRating < 0 ? "negative" : "positive"}>{formatRating(inputs.nailRating)}</span><button className={`rotation-pin ${isPinned ? "is-pinned" : ""}`} type="button" aria-label={`${isPinned ? "Unpin" : "Pin"} ${player.player_name} ${isPinned ? "from" : "in"} the rotation`} aria-pressed={isPinned} title={isPinned ? "Unpin from the rotation" : "Keep in the rotation"} onClick={() => toggleRotationPin(player)}><Pin size={14} aria-hidden="true" /></button></span>
               </div>
               <p>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</p>
               <dl>
