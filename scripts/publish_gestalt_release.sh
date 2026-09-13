@@ -84,7 +84,9 @@ mkdir -p "$STAGING_DIR/$CURRENT_ROSTERS"
 mkdir -p "$(dirname "$STAGING_DIR/$PRIOR_ROSTER_SNAPSHOT")"
 mkdir -p "$(dirname "$STAGING_DIR/$PLAYER_CATALOG")"
 
-rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' src/ "$STAGING_DIR/src/"
+# A release must contain only versioned runtime source. This avoids packaging
+# local experiments that happen to exist in the working tree.
+git ls-files -z -- src | rsync -a --from0 --files-from=- ./ "$STAGING_DIR/"
 rsync -a README.md pyproject.toml uv.lock "$STAGING_DIR/"
 rsync -a deploy/web-requirements.txt "$STAGING_DIR/deploy/"
 printf '{\n  "run_id": "%s"\n}\n' "$RUN_ID" > "$STAGING_DIR/$MODEL_SEASON_ROOT/latest.json"
