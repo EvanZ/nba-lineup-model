@@ -39,6 +39,7 @@ type PlayerInputs = {
 const STORAGE_KEY = "nba-gestalt:win-projection-input-overrides:v3";
 const SEASON_GAMES = 82;
 const ENVELOPE_TRIALS = 10_000;
+const INPUT_DEBOUNCE_MS = 450;
 const WIN_PROJECTIONS_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/rotation-models/win-projections/";
 
 type WinLossEnvelopePoint = {
@@ -760,6 +761,7 @@ export function WinProjectionsPage() {
   const [payload, setPayload] = useState<MinutesProjectionPayload | null>(null);
   const [team, setTeam] = useState("");
   const [overrides, setOverrides] = useState<Overrides>(readOverrides);
+  const [appliedOverrides, setAppliedOverrides] = useState<Overrides>(readOverrides);
   const [calculatedForecast, setCalculatedForecast] = useState<WinProjectionPayload | null>(null);
   const [forecastNeedsUpdate, setForecastNeedsUpdate] = useState(false);
   const [forecastSortColumn, setForecastSortColumn] = useState<ForecastSortColumn>("projected_wins");
@@ -786,6 +788,11 @@ export function WinProjectionsPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
   }, [overrides]);
 
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setAppliedOverrides(overrides), INPUT_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [overrides]);
+
   const players = useMemo(() => (
     payload?.players.filter((player) => player.team === team) ?? []
   ), [payload, team]);
@@ -793,13 +800,13 @@ export function WinProjectionsPage() {
     payload
       ? minuteAllocation(
         players,
-        overrides,
+        appliedOverrides,
         payload.regulation_team_minutes,
         payload.initial_rotation_size,
         payload,
       )
       : { minutes: new Map<number, number>(), inputs: new Map<number, PlayerInputs>(), rotationPlayerIds: new Set<number>(), totalRawMinutes: 0 }
-  ), [overrides, payload, players]);
+  ), [appliedOverrides, payload, players]);
   const hasInvalidOverrides = payload !== null && allocation.totalRawMinutes <= 0;
   const minutes = allocation.minutes;
   const orderedPlayers = useMemo(() => (
@@ -862,16 +869,15 @@ export function WinProjectionsPage() {
   };
   const toggleRotationPin = (player: MinutesProjectionPlayer) => {
     const key = overrideKey(player.team, player.player_id);
+    const next = { ...overrides };
+    const currentOverride = { ...(next[key] ?? {}) };
+    if (currentOverride.rotationPinned) delete currentOverride.rotationPinned;
+    else currentOverride.rotationPinned = true;
+    if (Object.keys(currentOverride).length) next[key] = currentOverride;
+    else delete next[key];
     setForecastNeedsUpdate(true);
-    setOverrides((current) => {
-      const next = { ...current };
-      const currentOverride = { ...(next[key] ?? {}) };
-      if (currentOverride.rotationPinned) delete currentOverride.rotationPinned;
-      else currentOverride.rotationPinned = true;
-      if (Object.keys(currentOverride).length) next[key] = currentOverride;
-      else delete next[key];
-      return next;
-    });
+    setOverrides(next);
+    setAppliedOverrides(next);
   };
 
   const selectForecastTeam = (nextTeam: string) => {
@@ -892,6 +898,7 @@ export function WinProjectionsPage() {
   const baselineForecast = payload.win_projection;
   const calculateForecast = () => {
     if (!baselineForecast || hasInvalidOverrides) return;
+    setAppliedOverrides(overrides);
     setCalculatedForecast(calculateProjection(payload, baselineForecast, overrides));
     setForecastNeedsUpdate(false);
   };
@@ -900,6 +907,7 @@ export function WinProjectionsPage() {
       Object.entries(overrides).filter(([key]) => !key.startsWith(`${team}:`)),
     );
     setOverrides(nextOverrides);
+    setAppliedOverrides(nextOverrides);
     if (baselineForecast) {
       setCalculatedForecast(calculateProjection(payload, baselineForecast, nextOverrides));
     }
@@ -992,13 +1000,18 @@ export function WinProjectionsPage() {
                 const key = overrideKey(player.team, player.player_id);
                 const override = overrides[key];
                 const isPinned = override?.rotationPinned === true;
-                const inputs = allocation.inputs.get(player.player_id) ?? directPlayerInputs(player, overrides);
+                const inputs = allocation.inputs.get(player.player_id) ?? directPlayerInputs(player, appliedOverrides);
+                const displayInputs = {
+                  availabilityProbability: override?.availabilityProbability ?? inputs.availabilityProbability,
+                  conditionalMinutesPerGame: override?.conditionalMinutesPerGame ?? inputs.conditionalMinutesPerGame,
+                  nailRating: override?.nailRating ?? inputs.nailRating,
+                };
                 const projected = minutes.get(player.player_id) ?? player.baseline_minutes_per_game;
                 return <tr key={player.player_id} className={override === undefined ? "" : "has-minute-override"}>
                   <th scope="row"><span className="win-projections-player-name"><span className="win-projections-player-number">{index + 1}</span><a href={`#player/${player.player_id}`}>{player.player_name}</a><button className={`rotation-pin ${isPinned ? "is-pinned" : ""}`} type="button" aria-label={`${isPinned ? "Unpin" : "Pin"} ${player.player_name} ${isPinned ? "from" : "in"} the rotation`} aria-pressed={isPinned} title={isPinned ? "Unpin from the rotation" : "Keep in the rotation"} onClick={() => toggleRotationPin(player)}><Pin size={14} aria-hidden="true" /></button></span><small>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</small></th>
-                  <td className={inputs.nailRating < 0 ? "negative" : "positive"}><input className={inputs.nailRating < 0 ? "negative" : "positive"} aria-label={`Plus minus rating for ${player.player_name}`} type="number" step="0.1" value={inputs.nailRating.toFixed(1)} onChange={(event) => updateOverride(player, "nailRating", event.target.value)} /></td>
-                  <td><input aria-label={`Projected available games for ${player.player_name}`} type="number" min="0" max={SEASON_GAMES} step="1" value={Math.round((override?.availabilityProbability ?? player.availability_probability) * SEASON_GAMES)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /></td>
-                  <td><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={inputs.conditionalMinutesPerGame.toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></td>
+                  <td className={displayInputs.nailRating < 0 ? "negative" : "positive"}><input className={displayInputs.nailRating < 0 ? "negative" : "positive"} aria-label={`Plus minus rating for ${player.player_name}`} type="number" step="0.1" value={displayInputs.nailRating.toFixed(1)} onChange={(event) => updateOverride(player, "nailRating", event.target.value)} /></td>
+                  <td><input aria-label={`Projected available games for ${player.player_name}`} type="number" min="0" max={SEASON_GAMES} step="1" value={Math.round(displayInputs.availabilityProbability * SEASON_GAMES)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /></td>
+                  <td><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={displayInputs.conditionalMinutesPerGame.toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></td>
                   <td className="projected-minutes">{projected.toFixed(1)}</td>
                 </tr>;
               })}
@@ -1010,18 +1023,23 @@ export function WinProjectionsPage() {
             const key = overrideKey(player.team, player.player_id);
             const override = overrides[key];
             const isPinned = override?.rotationPinned === true;
-            const inputs = allocation.inputs.get(player.player_id) ?? directPlayerInputs(player, overrides);
+            const inputs = allocation.inputs.get(player.player_id) ?? directPlayerInputs(player, appliedOverrides);
+            const displayInputs = {
+              availabilityProbability: override?.availabilityProbability ?? inputs.availabilityProbability,
+              conditionalMinutesPerGame: override?.conditionalMinutesPerGame ?? inputs.conditionalMinutesPerGame,
+              nailRating: override?.nailRating ?? inputs.nailRating,
+            };
             const projected = minutes.get(player.player_id) ?? player.baseline_minutes_per_game;
             return <li key={player.player_id} className={override === undefined ? "" : "has-minute-override"}>
               <div className="win-projections-mobile-heading">
                 <span className="win-projections-player-name"><span className="win-projections-player-number">{index + 1}</span><a href={`#player/${player.player_id}`}>{player.player_name}</a></span>
-                <span className="win-projections-mobile-actions"><span className={inputs.nailRating < 0 ? "negative" : "positive"}>{formatRating(inputs.nailRating)}</span><button className={`rotation-pin ${isPinned ? "is-pinned" : ""}`} type="button" aria-label={`${isPinned ? "Unpin" : "Pin"} ${player.player_name} ${isPinned ? "from" : "in"} the rotation`} aria-pressed={isPinned} title={isPinned ? "Unpin from the rotation" : "Keep in the rotation"} onClick={() => toggleRotationPin(player)}><Pin size={14} aria-hidden="true" /></button></span>
+                <span className="win-projections-mobile-actions"><span className={displayInputs.nailRating < 0 ? "negative" : "positive"}>{formatRating(displayInputs.nailRating)}</span><button className={`rotation-pin ${isPinned ? "is-pinned" : ""}`} type="button" aria-label={`${isPinned ? "Unpin" : "Pin"} ${player.player_name} ${isPinned ? "from" : "in"} the rotation`} aria-pressed={isPinned} title={isPinned ? "Unpin from the rotation" : "Keep in the rotation"} onClick={() => toggleRotationPin(player)}><Pin size={14} aria-hidden="true" /></button></span>
               </div>
               <p>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</p>
               <dl>
-                <div><dt>+/-</dt><dd><input className={inputs.nailRating < 0 ? "negative" : "positive"} aria-label={`Plus minus rating for ${player.player_name}`} type="number" step="0.1" value={inputs.nailRating.toFixed(1)} onChange={(event) => updateOverride(player, "nailRating", event.target.value)} /></dd></div>
-                <div><dt><i>G</i><sub>available</sub></dt><dd><input aria-label={`Projected available games for ${player.player_name}`} type="number" min="0" max={SEASON_GAMES} step="1" value={Math.round((override?.availabilityProbability ?? player.availability_probability) * SEASON_GAMES)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /></dd></div>
-                <div><dt>E[MPG | available]</dt><dd><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={inputs.conditionalMinutesPerGame.toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></dd></div>
+                <div><dt>+/-</dt><dd><input className={displayInputs.nailRating < 0 ? "negative" : "positive"} aria-label={`Plus minus rating for ${player.player_name}`} type="number" step="0.1" value={displayInputs.nailRating.toFixed(1)} onChange={(event) => updateOverride(player, "nailRating", event.target.value)} /></dd></div>
+                <div><dt><i>G</i><sub>available</sub></dt><dd><input aria-label={`Projected available games for ${player.player_name}`} type="number" min="0" max={SEASON_GAMES} step="1" value={Math.round(displayInputs.availabilityProbability * SEASON_GAMES)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /></dd></div>
+                <div><dt>E[MPG | available]</dt><dd><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={displayInputs.conditionalMinutesPerGame.toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></dd></div>
                 <div><dt>Squashed MPG</dt><dd className="projected-minutes">{projected.toFixed(1)}</dd></div>
               </dl>
             </li>;
