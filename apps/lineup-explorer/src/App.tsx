@@ -185,6 +185,11 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
   const hasAdditiveProfileInputs = additiveProfileInputs.every((value) => value !== null);
   const historyRows = completePlayerHistory(player);
   const isPreseasonPreview = player.rating_season === "2026-27";
+  const preseasonRotationForecast = player.rotation_history?.find((point) => point.is_preseason_forecast);
+  const preseasonAvailableGames = preseasonRotationForecast?.predicted_available_share === null || preseasonRotationForecast?.predicted_available_share === undefined
+    ? null
+    : preseasonRotationForecast.predicted_available_share * (preseasonRotationForecast.known_roster_games ?? 82);
+  const preseasonConditionalMinutes = preseasonRotationForecast?.predicted_minutes_per_available_game ?? null;
   const ratingSeasonLabel = isPreseasonPreview
     ? "2026-27 preseason preview"
     : `${player.rating_season ?? "Latest"} ${MODEL_LABEL}`;
@@ -249,6 +254,14 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
           <div className="player-forecast-total">
             <dt>{MODEL_LABEL} forecast</dt>
             <dd><Rating value={player.rapm} /></dd>
+          </div>
+          <div>
+            <dt>G available</dt>
+            <dd>{preseasonAvailableGames === null ? "-" : number.format(preseasonAvailableGames)}</dd>
+          </div>
+          <div>
+            <dt>MPG when available</dt>
+            <dd>{preseasonConditionalMinutes === null ? "-" : number.format(preseasonConditionalMinutes)}</dd>
           </div>
         </dl>
         <p className="player-rating-path-note">The prior is a forward value-conditioned aging estimate. The additive profile uses lagged 2025-26 per-100 possession traits under frozen coefficients, not 2026-27 production.</p>
@@ -319,6 +332,47 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
           </table>
         </div>
       </section>}
+
+      {(player.rotation_history?.length ?? 0) > 0 && <section className="player-profile-section" aria-labelledby="rotation-history-title">
+        <div className="player-profile-heading">
+          <div>
+            <p className="section-kicker">Availability and rotation</p>
+            <h2 id="rotation-history-title">Rotation history.</h2>
+          </div>
+        </div>
+        <PlayerRotationHistoryChart player={player} />
+        <p className="player-rating-path-note">
+          Solid marks are observed regular-season outcomes. Dashed traces are forecasts made before each season: available games are modeled separately from minutes per available game.
+        </p>
+        <div className="player-history-table-wrap">
+          <table className="player-history-table player-rotation-history-table">
+            <thead><tr><th>Season</th><th>Available G</th><th>Availability forecast</th><th>Observed MPG when available</th><th>FCM forecast</th><th>Total minutes</th></tr></thead>
+            <tbody>{[...(player.rotation_history ?? [])].reverse().map((row) => {
+              const availableGames = row.actual_available_games === null
+                ? "-"
+                : `${wholeNumber.format(row.actual_available_games)} / ${wholeNumber.format(row.known_roster_games ?? 82)}`;
+              const availabilityForecast = row.predicted_available_share === null
+                ? "-"
+                : `${number.format(row.predicted_available_share * 82)} G`;
+              const observedMinutes = row.actual_minutes_per_available_game === null
+                ? "-"
+                : number.format(row.actual_minutes_per_available_game);
+              const forecastMinutes = row.predicted_minutes_per_available_game === null
+                ? "-"
+                : number.format(row.predicted_minutes_per_available_game);
+              const totalMinutes = row.actual_total_minutes ?? row.projected_total_minutes;
+              return <tr key={row.season} className={row.is_preseason_forecast ? "rotation-history-forecast-row" : undefined}>
+                <td>{row.season}</td>
+                <td className="quantity-cell">{availableGames}</td>
+                <td className="rotation-forecast-cell">{availabilityForecast}</td>
+                <td className="quantity-cell">{observedMinutes}</td>
+                <td className="rotation-forecast-cell">{forecastMinutes}</td>
+                <td className="quantity-cell">{totalMinutes === null ? "-" : wholeNumber.format(totalMinutes)}</td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>
+      </section>}
     </article>
   );
 }
@@ -383,6 +437,155 @@ function TeamSplits({ point }: { point: Player["rating_history"][number] }) {
         </span>
       ))}
     </div>
+  );
+}
+
+type RotationHistoryPoint = NonNullable<Player["rotation_history"]>[number];
+
+function PlayerRotationHistoryChart({ player }: { player: Player }) {
+  const points = (player.rotation_history ?? [])
+    .filter((point) => Number.isFinite(point.season_start_year))
+    .sort((left, right) => left.season_start_year - right.season_start_year);
+  if (!points.length) return null;
+
+  const width = 760;
+  const height = 322;
+  const left = 48;
+  const right = 18;
+  const availabilityTop = 30;
+  const panelHeight = 92;
+  const minutesTop = 183;
+  const plotWidth = width - left - right;
+  const minimumXGap = Math.max(46, plotWidth / Math.max(points.length - 1, 1));
+  const chartWidth = Math.max(width, left + right + minimumXGap * Math.max(points.length - 1, 1));
+  const x = (index: number) => left + (index * (chartWidth - left - right)) / Math.max(points.length - 1, 1);
+  const maxMinutes = Math.max(
+    20,
+    ...points.flatMap((point) => [
+      point.actual_minutes_per_available_game ?? 0,
+      point.predicted_minutes_per_available_game ?? 0,
+    ]),
+  );
+  const minutesCeiling = Math.ceil(maxMinutes / 5) * 5;
+  const availabilityY = (availableGames: number) => availabilityTop + panelHeight - (availableGames / 82) * panelHeight;
+  const minutesY = (minutes: number) => minutesTop + panelHeight - (minutes / minutesCeiling) * panelHeight;
+  const linePath = (selector: (point: RotationHistoryPoint) => number | null, y: (value: number) => number) => {
+    const segments: string[] = [];
+    let current: string[] = [];
+    points.forEach((point, index) => {
+      const value = selector(point);
+      if (value === null || !Number.isFinite(value)) {
+        if (current.length) segments.push(current.join(" "));
+        current = [];
+        return;
+      }
+      current.push(`${current.length ? "L" : "M"}${x(index)},${y(value)}`);
+    });
+    if (current.length) segments.push(current.join(" "));
+    return segments.join(" ");
+  };
+  const availabilityForecast = linePath(
+    (point) => point.predicted_available_share === null ? null : point.predicted_available_share * 82,
+    availabilityY,
+  );
+  const fcmForecast = linePath(
+    (point) => point.predicted_minutes_per_available_game,
+    minutesY,
+  );
+
+  return (
+    <figure className="player-rotation-history-chart">
+      <div className="rotation-history-legend" aria-label="Rotation history legend">
+        <span><i className="rotation-history-swatch observed" />Observed</span>
+        <span><i className="rotation-history-swatch forecast" />Preseason forecast</span>
+      </div>
+      <svg viewBox={`0 0 ${chartWidth} ${height}`} role="img" aria-label={`${player.player_name} availability and forward conditional minutes history`}>
+        <title>{player.player_name} rotation history</title>
+        {[availabilityTop, availabilityTop + panelHeight, minutesTop, minutesTop + panelHeight].map((value) => (
+          <line key={value} className="rotation-history-grid" x1={left} x2={chartWidth - right} y1={value} y2={value} />
+        ))}
+        <text className="rotation-history-panel-title" x={left} y={16}>Available games</text>
+        <text className="rotation-history-panel-title" x={left} y={169}>MPG when available</text>
+        <text className="rotation-history-axis-label" x={left - 8} y={availabilityTop + 4} textAnchor="end">82</text>
+        <text className="rotation-history-axis-label" x={left - 8} y={availabilityTop + panelHeight + 4} textAnchor="end">0</text>
+        <text className="rotation-history-axis-label" x={left - 8} y={minutesTop + 4} textAnchor="end">{minutesCeiling}</text>
+        <text className="rotation-history-axis-label" x={left - 8} y={minutesTop + panelHeight + 4} textAnchor="end">0</text>
+        {points.map((point, index) => point.actual_available_games === null ? null : (
+          <g key={`available-${point.season}`}>
+            <rect
+              className="rotation-history-availability-bar"
+              x={x(index) - 7}
+              y={availabilityY(point.actual_available_games)}
+              width="14"
+              height={availabilityTop + panelHeight - availabilityY(point.actual_available_games)}
+              rx="1"
+            >
+              <title>{`${point.season}: ${wholeNumber.format(point.actual_available_games)} available games observed`}</title>
+            </rect>
+            <text
+              className="rotation-history-value observed"
+              x={x(index)}
+              y={Math.max(availabilityTop + 10, availabilityY(point.actual_available_games) - 8)}
+              textAnchor="middle"
+            >
+              {wholeNumber.format(point.actual_available_games)}
+            </text>
+          </g>
+        ))}
+        {availabilityForecast && <path className="rotation-history-forecast-line" d={availabilityForecast} />}
+        {fcmForecast && <path className="rotation-history-forecast-line" d={fcmForecast} />}
+        {points.map((point, index) => point.predicted_available_share === null ? null : (
+          <text
+            key={`available-forecast-${point.season}`}
+            className="rotation-history-value forecast"
+            x={x(index)}
+            y={Math.min(
+              availabilityTop + panelHeight - 5,
+              availabilityY(point.predicted_available_share * 82) + 16,
+            )}
+            textAnchor="middle"
+          >
+            {number.format(point.predicted_available_share * 82)}
+          </text>
+        ))}
+        {points.map((point, index) => point.actual_minutes_per_available_game === null ? null : (
+          <g key={`minutes-${point.season}`}>
+            <circle className="rotation-history-observed-point" cx={x(index)} cy={minutesY(point.actual_minutes_per_available_game)} r="4">
+              <title>{`${point.season}: ${number.format(point.actual_minutes_per_available_game)} observed MPG when available`}</title>
+            </circle>
+            <text
+              className="rotation-history-value observed"
+              x={x(index)}
+              y={Math.max(minutesTop + 12, minutesY(point.actual_minutes_per_available_game) - 10)}
+              textAnchor="middle"
+            >
+              {number.format(point.actual_minutes_per_available_game)}
+            </text>
+          </g>
+        ))}
+        {points.map((point, index) => point.predicted_minutes_per_available_game === null ? null : (
+          <text
+            key={`minutes-forecast-${point.season}`}
+            className="rotation-history-value forecast"
+            x={x(index)}
+            y={Math.min(
+              minutesTop + panelHeight - 7,
+              minutesY(point.predicted_minutes_per_available_game) + 16,
+            )}
+            textAnchor="middle"
+          >
+            {number.format(point.predicted_minutes_per_available_game)}
+          </text>
+        ))}
+        {points.map((point, index) => (
+          <g key={`labels-${point.season}`}>
+            <line className="rotation-history-tick" x1={x(index)} x2={x(index)} y1={minutesTop + panelHeight} y2={minutesTop + panelHeight + 4} />
+            <text className="rotation-history-x-label" x={x(index)} y={minutesTop + panelHeight + 21} textAnchor="middle">{point.season.slice(-2)}</text>
+          </g>
+        ))}
+      </svg>
+      <figcaption>Observed availability counts rostered games with a known status. FCM is expected minutes per game conditional on being available.</figcaption>
+    </figure>
   );
 }
 

@@ -27,6 +27,7 @@ from nba_lineup_model.web_api.inference import (
     historical_realized_profiles_path,
     lineup_rankings_path,
     player_context_exposure_path,
+    player_rotation_history_path,
     player_team_splits_path,
     preseason_rankings_path,
     published_player_ratings_path,
@@ -203,6 +204,9 @@ def validate_release_bundle(
     win_cache_path = win_projection_cache_path(MODEL_ARTIFACT, selected_run_id)
     win_cache = json.loads(_require_file(win_cache_path).read_text())
     _validate_win_projection_cache(win_cache)
+    rotation_history_path = player_rotation_history_path(MODEL_ARTIFACT, selected_run_id)
+    rotation_history = _read_parquet(rotation_history_path, row_counts=row_counts)
+    _validate_player_rotation_history(rotation_history, win_cache=win_cache)
 
     model_files = sorted(path for path in run_dir.rglob("*") if path.is_file())
     numerical_files = [
@@ -216,6 +220,7 @@ def validate_release_bundle(
         preseason_path,
         preseason_metadata_path,
         win_cache_path,
+        rotation_history_path,
     ]
     manifest = {
         "schema_version": 1,
@@ -301,6 +306,101 @@ def _validate_win_projection_cache(payload: Any) -> None:
         raise ReleaseValidationError("Win projection cache lacks projected players")
     if not isinstance(teams, list) or not teams:
         raise ReleaseValidationError("Win projection cache lacks projected teams")
+
+
+def _validate_player_rotation_history(frame: pd.DataFrame, *, win_cache: dict[str, Any]) -> None:
+    """Require a complete player-bio rotation history aligned to the live FCM cache."""
+
+    required = {
+        "season",
+        "season_start_year",
+        "player_id",
+        "player_name",
+        "age",
+        "actual_available_games",
+        "known_roster_games",
+        "actual_availability_share",
+        "injury_or_illness_games",
+        "rest_games",
+        "actual_minutes_per_available_game",
+        "actual_total_minutes",
+        "predicted_available_share",
+        "predicted_minutes_per_available_game",
+        "projected_total_minutes",
+        "is_preseason_forecast",
+    }
+    missing = sorted(required - set(frame))
+    if missing:
+        raise ReleaseValidationError("Player rotation history lacks " + ", ".join(missing))
+    if frame.empty or frame.duplicated(["season", "player_id"]).any():
+        raise ReleaseValidationError("Player rotation history is empty or has duplicate rows")
+    forecast = frame.loc[frame["is_preseason_forecast"].astype(bool)].copy()
+    observed = frame.loc[~frame["is_preseason_forecast"].astype(bool)].copy()
+    if forecast.empty or observed.empty:
+        raise ReleaseValidationError(
+            "Player rotation history must include observed and forecast rows"
+        )
+    _require_finite(
+        observed,
+        (
+            "actual_available_games",
+            "known_roster_games",
+            "actual_availability_share",
+            "actual_minutes_per_available_game",
+            "actual_total_minutes",
+        ),
+        label="observed player rotation history",
+    )
+    if not observed["actual_availability_share"].between(0.0, 1.0).all():
+        raise ReleaseValidationError("Observed player availability is outside [0, 1]")
+    _require_finite(
+        forecast,
+        (
+            "predicted_available_share",
+            "predicted_minutes_per_available_game",
+            "projected_total_minutes",
+        ),
+        label="forecast player rotation history",
+    )
+    if not forecast["predicted_available_share"].between(0.0, 1.0).all():
+        raise ReleaseValidationError("Forecast player availability is outside [0, 1]")
+
+    minutes = win_cache.get("minutes")
+    if not isinstance(minutes, dict):
+        raise ReleaseValidationError("Win projection cache lacks a minutes payload")
+    live = pd.DataFrame(minutes.get("players", []))
+    required_live = {
+        "player_id",
+        "availability_probability",
+        "conditional_minutes_per_game",
+        "baseline_minutes_per_game",
+    }
+    if required_live - set(live):
+        raise ReleaseValidationError("Win projection player payload is incomplete")
+    forecast_ids = set(pd.to_numeric(forecast["player_id"], errors="raise").astype(int))
+    live_ids = set(pd.to_numeric(live["player_id"], errors="raise").astype(int))
+    if forecast_ids != live_ids:
+        raise ReleaseValidationError(
+            "Rotation-history forecast player pool differs from Win Projections"
+        )
+    joined = forecast.merge(
+        live.loc[:, list(required_live)], on="player_id", how="inner", validate="one_to_one"
+    )
+    _require_close(
+        joined["predicted_available_share"],
+        joined["availability_probability"],
+        label="Rotation-history forecast availability",
+    )
+    _require_close(
+        joined["predicted_minutes_per_available_game"],
+        joined["conditional_minutes_per_game"],
+        label="Rotation-history FCM forecast",
+    )
+    _require_close(
+        joined["projected_total_minutes"],
+        82.0 * joined["baseline_minutes_per_game"],
+        label="Rotation-history projected total minutes",
+    )
 
 
 def _validate_lineup_rankings(

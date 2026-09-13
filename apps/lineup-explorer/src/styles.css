@@ -327,7 +327,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-additive-profile-grid dd { display: flex; align-items: baseline; gap: 8px; }
 .player-additive-profile-grid .additive-profile-effect { color: #68716a; font-size: 12px; }
 .player-additive-profile-grid .additive-profile-effect.negative { color: #b33b25; }
-.player-forecast-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 760px; }
+.player-forecast-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); max-width: 960px; }
 .player-forecast-total { padding-left: 16px !important; border-left: 2px solid #17201c; }
 .player-stat-grid div { padding: 15px 14px 12px 0; border-bottom: 1px solid #e2dfd7; }
 .player-stat-grid dt { color: #68716a; font-size: 10px; font-weight: 700; text-transform: uppercase; }
@@ -365,6 +365,26 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .aging-chart-tick { stroke: #737a73; stroke-width: 1; }
 .aging-chart-value { fill: #187052; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
 .aging-chart-value.negative { fill: #b33b25; }
+.player-rotation-history-chart { max-width: 760px; margin: 0 0 18px; padding: 18px 0 14px; overflow-x: auto; border-top: 1px solid #d9d6ce; border-bottom: 1px solid #d9d6ce; }
+.player-rotation-history-chart svg { display: block; width: 760px; height: auto; overflow: visible; }
+.rotation-history-legend { display: flex; align-items: center; gap: 16px; margin: 0 0 10px; color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.rotation-history-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.rotation-history-swatch { display: inline-block; width: 16px; height: 3px; background: #245a47; }
+.rotation-history-swatch.forecast { background: repeating-linear-gradient(to right, #2f6f8d 0 5px, transparent 5px 8px); }
+.rotation-history-availability-bar { fill: #245a47; opacity: 0.72; }
+.rotation-history-grid { stroke: #d9d6ce; stroke-width: 1; }
+.rotation-history-panel-title { fill: #17201c; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 800; }
+.rotation-history-axis-label, .rotation-history-x-label { fill: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
+.rotation-history-tick { stroke: #737a73; stroke-width: 1; }
+.rotation-history-forecast-line { fill: none; stroke: #2f6f8d; stroke-width: 2.2; stroke-dasharray: 5 4; stroke-linecap: round; stroke-linejoin: round; }
+.rotation-history-observed-point { fill: #245a47; stroke: #fffefa; stroke-width: 1.5; }
+.rotation-history-value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; font-weight: 700; }
+.rotation-history-value.observed { fill: #245a47; }
+.rotation-history-value.forecast { fill: #2f6f8d; }
+.player-rotation-history-chart figcaption { margin-top: 10px; color: #68716a; font-size: 12px; line-height: 1.45; }
+.player-rotation-history-table { max-width: 900px; }
+.player-rotation-history-table .rotation-forecast-cell { color: #2f6f8d; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
+.player-rotation-history-table .rotation-history-forecast-row td { background: #f1f5f6; }
 .player-history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .player-history-table th, .player-history-table td { padding: 10px 8px; border-bottom: 1px solid #e2dfd7; text-align: left; }
 .player-history-table th { color: #68716a; font-size: 10px; text-transform: uppercase; }

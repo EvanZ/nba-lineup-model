@@ -66,6 +66,24 @@ export type Player = {
       is_latest_team: boolean;
     }>;
   }>;
+  rotation_history?: Array<{
+    season: string;
+    season_start_year: number;
+    player_id: number;
+    player_name: string;
+    age: number | null;
+    actual_available_games: number | null;
+    known_roster_games: number | null;
+    actual_availability_share: number | null;
+    injury_or_illness_games: number | null;
+    rest_games: number | null;
+    actual_minutes_per_available_game: number | null;
+    actual_total_minutes: number | null;
+    predicted_available_share: number | null;
+    predicted_minutes_per_available_game: number | null;
+    projected_total_minutes: number | null;
+    is_preseason_forecast: boolean;
+  }>;
   league_leader_history?: Array<{
     season: string;
     rating: number;

@@ -289,6 +289,37 @@ def test_search_and_matchup_endpoints() -> None:
     )
 
 
+def test_player_profile_includes_rotation_history_when_published() -> None:
+    rotation_history = {
+        1: [
+            {
+                "season": "2025-26",
+                "season_start_year": 2025,
+                "player_id": 1,
+                "player_name": "Nikola Jokić",
+                "age": 26.0,
+                "actual_available_games": 70,
+                "known_roster_games": 82,
+                "actual_availability_share": 70 / 82,
+                "injury_or_illness_games": 8,
+                "rest_games": 1,
+                "actual_minutes_per_available_game": 31.0,
+                "actual_total_minutes": 2170.0,
+                "predicted_available_share": 0.82,
+                "predicted_minutes_per_available_game": 30.0,
+                "projected_total_minutes": None,
+                "is_preseason_forecast": False,
+            }
+        ]
+    }
+    evaluator = replace(_evaluator(), player_rotation_histories=rotation_history)
+
+    response = TestClient(create_app(evaluator)).get("/api/players/1")
+
+    assert response.status_code == 200
+    assert response.json()["rotation_history"] == rotation_history[1]
+
+
 def test_descriptive_od_edges_reconstruct_the_scalar_player_edge() -> None:
     evaluator = _evaluator(compiled_linear=True)
     players = evaluator.players.copy()

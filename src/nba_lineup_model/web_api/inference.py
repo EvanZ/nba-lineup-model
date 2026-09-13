@@ -44,6 +44,7 @@ DEFAULT_HISTORICAL_PROFILE_CACHE_DIR = Path("artifacts/web/historical_profiles")
 DEFAULT_HISTORICAL_REALIZED_PROFILE_CACHE_DIR = Path("artifacts/web/historical_realized_profiles")
 DEFAULT_PRESEASON_RANKINGS_CACHE_DIR = Path("artifacts/web/preseason_rankings")
 DEFAULT_PRESEASON_PROFILES_CACHE_DIR = Path("artifacts/web/preseason_profiles")
+DEFAULT_PLAYER_ROTATION_HISTORY_CACHE_DIR = Path("artifacts/web/player_rotation_history")
 DEFAULT_TEAM_ROSTERS_DIR = Path("data/curated/team_rosters")
 DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path("artifacts/models/forward_draft_history_cold_start")
 # Keep the artifact identifier distinct from the public release name.
@@ -325,6 +326,7 @@ class LineupEvaluator:
     use_last_observed_profile: bool = False
     lineup_rankings_root: Path | None = None
     player_rating_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    player_rotation_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     player_league_leader_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     player_team_splits: dict[tuple[str, int], list[dict[str, Any]]] = field(default_factory=dict)
     player_latest_teams: dict[tuple[str, int], dict[str, Any]] = field(default_factory=dict)
@@ -474,6 +476,12 @@ class LineupEvaluator:
             player_team_splits=player_team_splits,
             player_latest_teams=player_latest_teams,
         )
+        rotation_history_cache_path = player_rotation_history_path(MODEL_ARTIFACT, run_id)
+        player_rotation_histories = (
+            _player_rotation_histories(pd.read_parquet(rotation_history_cache_path))
+            if rotation_history_cache_path.is_file()
+            else {}
+        )
         _attach_constrained_split_rating_history(
             player_rating_histories,
             constrained_split_ratings,
@@ -600,6 +608,7 @@ class LineupEvaluator:
             use_last_observed_profile=use_last_observed_profile,
             lineup_rankings_root=DEFAULT_LINEUP_RANKINGS_CACHE_DIR / MODEL_ARTIFACT / run_id,
             player_rating_histories=player_rating_histories,
+            player_rotation_histories=player_rotation_histories,
             player_league_leader_histories=player_league_leader_histories,
             player_team_splits=player_team_splits,
             player_latest_teams=player_latest_teams,
@@ -718,6 +727,7 @@ class LineupEvaluator:
             player["league_leader_history"] = self.player_league_leader_histories.get(
                 player_id, player.get("league_leader_history", [])
             )
+            player["rotation_history"] = self.player_rotation_histories.get(player_id, [])
             return player
 
         history = self.player_rating_histories.get(player_id, [])
@@ -748,6 +758,7 @@ class LineupEvaluator:
                 "offense_rating": None,
                 "defense_rating": None,
                 "rating_history": [],
+                "rotation_history": self.player_rotation_histories.get(player_id, []),
                 "league_leader_history": [],
             }
         latest = historical_rows.sort_values("season", ascending=False, kind="stable").iloc[0]
@@ -782,6 +793,7 @@ class LineupEvaluator:
             "defense_rating": _optional_float(latest.get("defense_rating")),
             "rookie_season": history[0]["season"] if history else None,
             "rating_history": history,
+            "rotation_history": self.player_rotation_histories.get(player_id, []),
             "league_leader_history": self.player_league_leader_histories.get(player_id, []),
         }
 
@@ -2468,6 +2480,47 @@ def _player_league_leader_histories(
     return histories
 
 
+def _player_rotation_histories(cache: pd.DataFrame) -> dict[int, list[dict[str, Any]]]:
+    """Package the compact availability/FCM cache for player-profile responses."""
+
+    required = {
+        "season",
+        "season_start_year",
+        "player_id",
+        "player_name",
+        "age",
+        "actual_available_games",
+        "known_roster_games",
+        "actual_availability_share",
+        "injury_or_illness_games",
+        "rest_games",
+        "actual_minutes_per_available_game",
+        "actual_total_minutes",
+        "predicted_available_share",
+        "predicted_minutes_per_available_game",
+        "projected_total_minutes",
+        "is_preseason_forecast",
+    }
+    missing = sorted(required - set(cache))
+    if missing:
+        raise LineupEvaluationError(
+            "Player rotation-history cache lacks required columns: " + ", ".join(missing)
+        )
+    if cache.empty or cache.duplicated(["season", "player_id"]).any():
+        raise LineupEvaluationError("Player rotation-history cache is empty or has duplicate rows")
+    ordered = cache.loc[:, sorted(required)].copy()
+    ordered["player_id"] = pd.to_numeric(ordered["player_id"], errors="raise").astype(int)
+    ordered["season_start_year"] = pd.to_numeric(
+        ordered["season_start_year"], errors="raise"
+    ).astype(int)
+    output: dict[int, list[dict[str, Any]]] = {}
+    for player_id, group in ordered.groupby("player_id", sort=False):
+        output[int(player_id)] = _records(
+            group.sort_values("season_start_year", kind="stable").reset_index(drop=True)
+        )
+    return output
+
+
 def _player_active_through_years(panel_path: Path) -> dict[int, int]:
     """Return the final season-start year implied by each player's catalog endpoint."""
 
@@ -3383,6 +3436,12 @@ def preseason_profiles_path(model_artifact: str, run_id: str, season: str) -> Pa
     """Return cached preseason-safe profiles used to score forecast lineups."""
 
     return DEFAULT_PRESEASON_PROFILES_CACHE_DIR / model_artifact / run_id / f"{season}.parquet"
+
+
+def player_rotation_history_path(model_artifact: str, run_id: str) -> Path:
+    """Return the compact observed-and-forward rotation history for player bios."""
+
+    return DEFAULT_PLAYER_ROTATION_HISTORY_CACHE_DIR / model_artifact / f"{run_id}.parquet"
 
 
 def team_roster_path(season: str) -> Path:
