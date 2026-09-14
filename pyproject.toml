@@ -269,6 +269,7 @@ nba-build-gestalt-team-strength-preview = "nba_lineup_model.web_api.team_strengt
 nba-build-gestalt-team-strength-win-projections = "nba_lineup_model.web_api.team_strength_preview:main_release"
 nba-validate-gestalt-release = "nba_lineup_model.web_api.release_validation:main"
 nba-build-win-total-benchmark = "nba_lineup_model.rotation.win_total_benchmark:main"
+nba-evaluate-forward-conditional-role-gate-roster-squash = "nba_lineup_model.rotation.forward_conditional_role_gate_roster_squash:main"
 
 [dependency-groups]
 dev = [

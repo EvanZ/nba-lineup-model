@@ -664,6 +664,63 @@ class LineupEvaluator:
             matches = matches.loc[matches["team"].eq(team)]
         return _records(matches.head(max(1, min(limit, 25))))
 
+    def search_comparison_players(
+        self, query: str, *, limit: int = 12
+    ) -> list[dict[str, Any]]:
+        """Search the completed-fit player archive for trajectory comparison.
+
+        The Lineup Lab's normal search intentionally uses one season's active
+        player pool. The comparison view needs the wider historical catalog so
+        retired players remain selectable alongside active players.
+        """
+
+        normalized = _normalize_search_text(query)
+        if not normalized:
+            return []
+        catalog = self.historical_rankings
+        if catalog.empty:
+            catalog = self.players.assign(season=self.season)
+        required = {"player_id", "player_name", "season", "team"}
+        missing = required - set(catalog.columns)
+        if missing:
+            raise LineupEvaluationError(
+                "Player comparison catalog is missing required columns: "
+                + ", ".join(sorted(missing))
+            )
+        histories = self.player_rating_histories or {
+            int(row.player_id): list(row.rating_history)
+            for row in self.players.itertuples(index=False)
+            if isinstance(getattr(row, "rating_history", None), list)
+        }
+        candidates = catalog.loc[:, ["player_id", "player_name", "season", "team"]].copy()
+        candidates = candidates.loc[candidates["player_name"].notna()].copy()
+        candidates["player_name"] = candidates["player_name"].astype(str)
+        candidates["player_id"] = candidates["player_id"].astype(int)
+        candidates = candidates.loc[
+            candidates["player_id"].isin(histories)
+        ]
+        candidates = candidates.sort_values(
+            ["player_id", "season"], ascending=[True, False], kind="stable"
+        ).drop_duplicates("player_id", keep="first")
+        names = candidates["player_name"].map(_normalize_search_text)
+        matches = candidates.loc[names.str.contains(normalized, regex=False)].copy()
+        matches["history_seasons"] = matches["player_id"].map(
+            lambda player_id: len(histories.get(int(player_id), []))
+        )
+        matches = matches.sort_values(
+            ["player_name", "player_id"], kind="stable"
+        ).head(max(1, min(limit, 25)))
+        return [
+            {
+                "player_id": int(row.player_id),
+                "player_name": str(row.player_name),
+                "latest_season": str(row.season),
+                "latest_team": str(row.team),
+                "history_seasons": int(row.history_seasons),
+            }
+            for row in matches.itertuples(index=False)
+        ]
+
     def teams(self, *, season: str | None = None) -> list[str]:
         """Return the current player-pool teams for one completed season."""
 

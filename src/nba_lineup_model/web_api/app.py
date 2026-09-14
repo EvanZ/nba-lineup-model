@@ -163,6 +163,16 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         except LineupEvaluationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
+    @app.get("/api/compare/players")
+    def search_comparison_players(
+        q: str = Query(min_length=1),
+        limit: int = Query(default=12, ge=1, le=25),
+    ) -> dict[str, object]:
+        try:
+            return {"players": get_evaluator().search_comparison_players(q, limit=limit)}
+        except LineupEvaluationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
     @app.get("/api/teams")
     def teams(season: str | None = None) -> dict[str, object]:
         state = get_evaluator()

@@ -144,21 +144,46 @@ def apply_production_roster_squash(
     raw_predictions: pd.DataFrame,
     *,
     initial_rotation_size: int = DEFAULT_INITIAL_ROTATION_SIZE,
+    selection_score_column: str = "raw_expected_total_minutes",
 ) -> pd.DataFrame:
-    """Apply the unchanged production top-15 gate and team normalization input."""
+    """Apply a top-15 gate while retaining raw expected minutes for allocation.
 
-    required = {"team_id", "player_id", "player_name", "raw_expected_total_minutes"}
+    Production uses raw expected season minutes for both selection and the
+    subsequent 240-minute normalization. Candidate post-processing rules can
+    instead rank the active-15 pool by another already-forecast score without
+    changing the availability-adjusted allocation weights.
+    """
+
+    required = {
+        "team_id",
+        "player_id",
+        "player_name",
+        "raw_expected_total_minutes",
+        selection_score_column,
+    }
     missing = sorted(required - set(raw_predictions))
     if missing:
         raise ValueError("Raw predictions lack required columns: " + ", ".join(missing))
     if initial_rotation_size <= 0:
         raise ValueError("Initial rotation size must be positive")
     output = raw_predictions.copy()
+    output["raw_expected_total_minutes"] = pd.to_numeric(
+        output["raw_expected_total_minutes"], errors="raise"
+    )
+    selection_score = pd.to_numeric(output[selection_score_column], errors="raise")
+    if selection_score.isna().any():
+        raise ValueError(f"Raw predictions contain missing {selection_score_column}")
+    # A player projected for no available minutes cannot occupy an active slot,
+    # even when a conditional-role score is requested.
+    output["rotation_selection_score"] = selection_score.clip(lower=0.0).where(
+        output["raw_expected_total_minutes"].gt(0.0), 0.0
+    )
+    output["rotation_selection_score_column"] = selection_score_column
     selected_ids: set[int] = set()
     for _, team in output.groupby("team_id", sort=False):
         selected_ids.update(
             team.sort_values(
-                ["raw_expected_total_minutes", "player_name", "player_id"],
+                ["rotation_selection_score", "player_name", "player_id"],
                 ascending=[False, True, True],
                 kind="stable",
             )
@@ -177,6 +202,7 @@ def evaluate_team_strength_roster_squash(
     availability_summary: pd.DataFrame,
     cold_start_config: ColdStartConditionalMinutesConfig,
     initial_rotation_size: int = DEFAULT_INITIAL_ROTATION_SIZE,
+    selection_score_column: str = "raw_expected_total_minutes",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Score an all-season opening-roster allocation using the selected FCM branch."""
 
@@ -187,7 +213,9 @@ def evaluate_team_strength_roster_squash(
         cold_start_config=cold_start_config,
     )
     squashed = apply_production_roster_squash(
-        raw, initial_rotation_size=initial_rotation_size
+        raw,
+        initial_rotation_size=initial_rotation_size,
+        selection_score_column=selection_score_column,
     )
     opening = inputs.opening_roster.loc[:, ["team_id", "team", "player_id", "player_name"]]
     normalized = normalize_opening_roster_minutes(squashed, opening_roster=opening)
@@ -282,6 +310,16 @@ def evaluate_team_strength_roster_squash(
                         float(source["raw_expected_total_minutes"])
                         if source is not None
                         else 0.0
+                    ),
+                    "rotation_selection_score": (
+                        float(source["rotation_selection_score"])
+                        if source is not None
+                        else 0.0
+                    ),
+                    "rotation_selection_score_column": (
+                        str(source["rotation_selection_score_column"])
+                        if source is not None
+                        else selection_score_column
                     ),
                     TEAM_STRENGTH_COLUMN: (
                         float(source[TEAM_STRENGTH_COLUMN])
@@ -402,10 +440,10 @@ def run_forward_conditional_team_strength_roster_squash(
     paired_team_bootstrap(comparison).to_parquet(
         output_dir / "paired_team_bootstrap.parquet", index=False
     )
-    _summarize_metrics(candidate_metrics, frozen_seasons=frozen_seasons).to_parquet(
+    summarize_roster_squash_metrics(candidate_metrics, frozen_seasons=frozen_seasons).to_parquet(
         output_dir / "frozen_summary.parquet", index=False
     )
-    _summarize_metrics(control_metrics, frozen_seasons=frozen_seasons).to_parquet(
+    summarize_roster_squash_metrics(control_metrics, frozen_seasons=frozen_seasons).to_parquet(
         output_dir / "frozen_control_summary.parquet", index=False
     )
     (output_dir / "metadata.json").write_text(
@@ -508,7 +546,7 @@ def paired_team_bootstrap(
     return pd.DataFrame(rows)
 
 
-def _summarize_metrics(
+def summarize_roster_squash_metrics(
     metrics: pd.DataFrame,
     *,
     frozen_seasons: tuple[str, ...],

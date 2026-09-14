@@ -3,6 +3,7 @@ import { BlockMath } from "react-katex";
 import { trackPageView } from "./analytics";
 import { RosterMovesPage } from "./RosterMovesPage";
 import { WinProjectionsPage } from "./WinProjectionsPage";
+import { ComparePage } from "./ComparePage";
 import {
   ArrowLeft,
   ArrowRight,
@@ -25,7 +26,7 @@ import {
 import type { ContextFeature, FeatureResponseCurve, Matchup, Player, RankedLineup, RankedPlayer } from "./types";
 
 type Side = "unit" | "opponent";
-type AppView = "lab" | "rankings" | "lineups" | "moves" | "wins" | "about" | "player";
+type AppView = "lab" | "rankings" | "compare" | "lineups" | "moves" | "wins" | "about" | "player";
 type AppRoute = { view: AppView; playerId?: number };
 type Environment = "unit" | "neutral" | "opponent";
 type Court = "neutral" | "unit_home" | "opponent_home";
@@ -112,6 +113,7 @@ function useAppView(): AppRoute {
     if (playerMatch) return { view: "player", playerId: Number(playerMatch[1]) };
     if (window.location.hash === "#about") return { view: "about" };
     if (window.location.hash === "#rankings") return { view: "rankings" };
+    if (window.location.hash === "#compare" || window.location.hash.startsWith("#compare?")) return { view: "compare" };
     if (window.location.hash === "#lineups") return { view: "lineups" };
     if (window.location.hash === "#moves" || window.location.hash.startsWith("#moves?")) return { view: "moves" };
     if (window.location.hash === "#wins") return { view: "wins" };
@@ -1120,6 +1122,7 @@ function App() {
           <nav className="header-navigation" aria-label="Primary navigation">
             <a className={view === "lab" ? "active" : ""} href="#lab">Lab</a>
             <a className={view === "rankings" ? "active" : ""} href="#rankings">Rankings</a>
+            <a className={view === "compare" ? "active" : ""} href="#compare">Compare</a>
             <a className={view === "lineups" ? "active" : ""} href="#lineups">Lineups</a>
             <a className={view === "moves" ? "active" : ""} href="#moves">Moves</a>
             <a className={view === "wins" ? "active" : ""} href="#wins">Wins</a>
@@ -1151,7 +1154,7 @@ function App() {
         </div>
       </header>
 
-      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
+      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "compare" ? <ComparePage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
         <section className="intro" aria-labelledby="page-title">
           <div className="gestalt-entry" aria-label="Definition of gestalt">
             <div className="gestalt-entry-heading">

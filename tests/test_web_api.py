@@ -184,6 +184,17 @@ def test_search_and_matchup_endpoints() -> None:
     filtered_search = client.get("/api/players", params={"q": "Jokic", "team": "TST"})
     assert filtered_search.status_code == 200
     assert filtered_search.json()["players"][0]["team"] == "TST"
+    comparison_search = client.get("/api/compare/players", params={"q": "Jokic"})
+    assert comparison_search.status_code == 200
+    assert comparison_search.json()["players"] == [
+        {
+            "player_id": 1,
+            "player_name": "Nikola Jokić",
+            "latest_season": "2025-26",
+            "latest_team": "TST",
+            "history_seasons": 3,
+        }
+    ]
     teams = client.get("/api/teams", params={"season": "2025-26"})
     assert teams.status_code == 200
     assert teams.json()["teams"] == ["TST"]

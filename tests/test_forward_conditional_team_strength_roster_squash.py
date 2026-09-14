@@ -62,6 +62,28 @@ def test_production_roster_squash_only_gates_raw_weights() -> None:
     assert squashed["is_rotation_candidate"].tolist() == [True, True, False]
 
 
+def test_conditional_role_gate_keeps_low_availability_rotation_player() -> None:
+    raw = pd.DataFrame(
+        {
+            "team_id": [1, 1, 1],
+            "player_id": [1, 2, 3],
+            "player_name": ["Always Available", "Late Return", "Deep Bench"],
+            "raw_expected_total_minutes": [1_600.0, 600.0, 700.0],
+            "predicted_minutes_per_available_game": [20.0, 30.0, 12.0],
+        }
+    )
+
+    squashed = apply_production_roster_squash(
+        raw,
+        initial_rotation_size=2,
+        selection_score_column="predicted_minutes_per_available_game",
+    )
+
+    assert squashed["is_rotation_candidate"].tolist() == [True, True, False]
+    assert squashed["raw_expected_total_minutes"].tolist() == [1_600.0, 600.0, 0.0]
+    assert squashed["rotation_selection_score"].tolist() == [20.0, 30.0, 12.0]
+
+
 def test_raw_weight_merge_retains_the_opening_roster_player_name(monkeypatch) -> None:
     inputs = TeamStrengthRosterInputs(
         season="2025-26",
