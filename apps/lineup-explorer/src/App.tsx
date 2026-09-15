@@ -1688,19 +1688,23 @@ function RankingsPage() {
 
   useEffect(() => {
     const controller = new AbortController();
+    setError(null);
+    setPlayers([]);
     void (async () => {
       try {
         setIsLoading(true);
         const response = await fetch(`/api/rankings?season=${encodeURIComponent(selectedSeason)}`, { signal: controller.signal });
-        if (!response.ok) throw new Error(`${MODEL_LABEL} rankings are unavailable.`);
+        if (!response.ok) throw new Error(`${MODEL_LABEL} rankings are unavailable (${response.status}).`);
         const payload = (await response.json()) as {
           available_seasons: string[];
           players: RankedPlayer[];
         };
-        setPlayers(payload.players);
-        setAvailableSeasons(payload.available_seasons);
+        if (!controller.signal.aborted) {
+          setPlayers(payload.players);
+          setAvailableSeasons(payload.available_seasons);
+        }
       } catch (rankingError) {
-        if ((rankingError as Error).name !== "AbortError") setError((rankingError as Error).message);
+        if (!controller.signal.aborted) setError((rankingError as Error).message);
       } finally {
         if (!controller.signal.aborted) setIsLoading(false);
       }
@@ -1883,6 +1887,7 @@ function RankingsPage() {
               ))}
               <input
                 value={query}
+                disabled={isLoading || error !== null}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && playerSuggestions[0]) {
