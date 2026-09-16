@@ -1081,7 +1081,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 
 @container win-team-panel (max-width: 680px) {
   .win-projections-table-wrap { display: none; }
-  .win-projections-mobile-list { display: grid; gap: 10px; margin: 0; padding: 12px 0 0; list-style: none; }
-  .win-projections-mobile-list li { box-sizing: border-box; width: 100%; padding: 13px; border: 1px solid #d9d6ce; border-radius: 4px; background: #fffefa; }
+  .win-projections-mobile-list { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 10px; margin: 0; padding: 12px 0 0; list-style: none; }
+  .win-projections-mobile-list li { box-sizing: border-box; min-width: 0; width: 100%; padding: 13px; border: 1px solid #d9d6ce; border-radius: 4px; background: #fffefa; }
   .win-projections-mobile-list li.has-minute-override { margin: 0; padding: 13px; background: #edf2e9; }
 }
