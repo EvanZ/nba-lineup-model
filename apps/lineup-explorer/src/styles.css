@@ -1007,7 +1007,10 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .roster-moves-canvas { height: 400px; }
   .roster-moves-list { grid-template-columns: 1fr; }
   .win-projections-toolbar { display: grid; grid-template-columns: auto 1fr; gap: 14px; }
-  .win-forecast-table th, .win-forecast-table td { padding-right: 7px; padding-left: 7px; }
+  .win-forecast-table th, .win-forecast-table td { padding-right: 4px; padding-left: 4px; font-size: 10px; }
+  .win-forecast-table thead th { font-size: 8px; }
+  .win-forecast-wins { font-size: 12px !important; }
+  .win-forecast-interval { font-size: 9px !important; }
   .win-projections-reset { grid-column: 2; grid-row: 1; justify-self: end; margin: 0; }
   .win-projections-calculate { grid-column: 1 / -1; grid-row: 2; justify-self: start; margin: 0; }
   .win-projections-table th, .win-projections-table td { padding-right: 7px; padding-left: 7px; }
