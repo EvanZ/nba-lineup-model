@@ -117,6 +117,7 @@ nba-build-gestalt-player-rotation-history = "nba_lineup_model.web_api.player_rot
 nba-backtest-nail-v1212-back-to-back = "nba_lineup_model.modeling.nail_v1212_back_to_back_frozen_backtest:main"
 nba-bootstrap-nail-v1212-back-to-back = "nba_lineup_model.modeling.nail_v1212_back_to_back_bootstrap:main"
 nba-audit-nail-v1212-back-to-back-weights = "nba_lineup_model.modeling.nail_v1212_back_to_back_weight_audit:main"
+nba-study-team-change-events = "nba_lineup_model.modeling.team_change_event_study:main"
 nba-screen-frozen-feature = "nba_lineup_model.modeling.frozen_feature_screen:main"
 nba-train-nail-v1213-kalman-player-state = "nba_lineup_model.modeling.forward_nail_v1213_kalman_player_state:main"
 nba-backtest-nail-v1213-kalman-player-state = "nba_lineup_model.modeling.nail_v1213_kalman_player_state_frozen_backtest:main"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -65,17 +66,24 @@ def _headshot_png(player_id: int) -> bytes:
 def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     """Create the API, loading the published model state only once per process."""
 
-    app = FastAPI(title="NBA GESTALT API", version="0.1.0")
+    @lru_cache(maxsize=1)
+    def get_evaluator() -> LineupEvaluator:
+        return evaluator or LineupEvaluator.from_latest_artifact()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        """Load the immutable release before an interactive request needs it."""
+
+        get_evaluator()
+        yield
+
+    app = FastAPI(title="NBA GESTALT API", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5174", "http://127.0.0.1:5174"],
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
-
-    @lru_cache(maxsize=1)
-    def get_evaluator() -> LineupEvaluator:
-        return evaluator or LineupEvaluator.from_latest_artifact()
 
     @lru_cache(maxsize=1)
     def get_win_projection_payload() -> dict[str, object]:
@@ -173,6 +181,22 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         except LineupEvaluationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
+    @app.get("/api/search")
+    async def global_search(
+        q: str = Query(min_length=1),
+        limit: int = Query(default=8, ge=1, le=25),
+    ) -> dict[str, object]:
+        """Search the full published player archive without queuing behind avatar fetches."""
+
+        try:
+            state = get_evaluator()
+            return {
+                "players": state.search_comparison_players(q, limit=limit),
+                "teams": state.search_teams(q, limit=limit),
+            }
+        except LineupEvaluationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
     @app.get("/api/teams")
     def teams(season: str | None = None) -> dict[str, object]:
         state = get_evaluator()
@@ -181,6 +205,23 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 "season": season or state.season,
                 "teams": state.teams(season=season),
             }
+        except LineupEvaluationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/api/teams/{team}")
+    def team_season(
+        team: str,
+        season: str | None = None,
+        minimum_possessions: float = Query(default=50.0, ge=0.0),
+    ) -> dict[str, object]:
+        """Serve a team-season roster plus its top observed five-man units by net rating."""
+
+        try:
+            return get_evaluator().team_season(
+                team,
+                season=season,
+                minimum_possessions=minimum_possessions,
+            )
         except LineupEvaluationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 

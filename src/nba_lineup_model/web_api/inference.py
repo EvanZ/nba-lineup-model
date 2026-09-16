@@ -30,6 +30,7 @@ from nba_lineup_model.modeling.matchup_contextual import (
     isolated_feature_component,
 )
 from nba_lineup_model.modeling.stints import read_rapm_stints
+from nba_lineup_model.season.schedule import SeasonScheduleCache
 
 if TYPE_CHECKING:
     from nba_lineup_model.modeling.contextual_profiles import ProfilePaddingContract
@@ -60,6 +61,47 @@ WARM_RESPONSE_CURVE_POINTS = RESPONSE_CURVE_POINTS
 LINEUP_REFERENCE_SAMPLE_SIZE = 512
 WIN_PCT_INTERCEPT = 0.499583
 WIN_PCT_PER_NET_RATING = 0.030250
+
+# The ratings archive uses NBA tricodes, including several historical franchise
+# identities. Keep their display/search names next to the web-facing catalog so
+# a search for a city or nickname remains useful across eras.
+TEAM_DISPLAY_NAMES: dict[str, str] = {
+    "ATL": "Atlanta Hawks",
+    "BKN": "Brooklyn Nets",
+    "BOS": "Boston Celtics",
+    "CHA": "Charlotte Hornets",
+    "CHI": "Chicago Bulls",
+    "CLE": "Cleveland Cavaliers",
+    "DAL": "Dallas Mavericks",
+    "DEN": "Denver Nuggets",
+    "DET": "Detroit Pistons",
+    "GSW": "Golden State Warriors",
+    "HOU": "Houston Rockets",
+    "IND": "Indiana Pacers",
+    "LAC": "Los Angeles Clippers",
+    "LAL": "Los Angeles Lakers",
+    "MEM": "Memphis Grizzlies",
+    "MIA": "Miami Heat",
+    "MIL": "Milwaukee Bucks",
+    "MIN": "Minnesota Timberwolves",
+    "NJN": "New Jersey Nets",
+    "NOH": "New Orleans Hornets",
+    "NOK": "New Orleans/Oklahoma City Hornets",
+    "NOP": "New Orleans Pelicans",
+    "NYK": "New York Knicks",
+    "OKC": "Oklahoma City Thunder",
+    "ORL": "Orlando Magic",
+    "PHI": "Philadelphia 76ers",
+    "PHX": "Phoenix Suns",
+    "POR": "Portland Trail Blazers",
+    "SAC": "Sacramento Kings",
+    "SAS": "San Antonio Spurs",
+    "SEA": "Seattle SuperSonics",
+    "TOR": "Toronto Raptors",
+    "UTA": "Utah Jazz",
+    "VAN": "Vancouver Grizzlies",
+    "WAS": "Washington Wizards",
+}
 
 
 def build_contextual_player_profiles(*args: Any, **kwargs: Any) -> pd.DataFrame:
@@ -331,6 +373,7 @@ class LineupEvaluator:
     player_team_splits: dict[tuple[str, int], list[dict[str, Any]]] = field(default_factory=dict)
     player_latest_teams: dict[tuple[str, int], dict[str, Any]] = field(default_factory=dict)
     historical_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
+    team_win_histories: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     constrained_split_ratings: pd.DataFrame = field(default_factory=pd.DataFrame)
     constrained_split_context_allocations: pd.DataFrame = field(default_factory=pd.DataFrame)
     preseason_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -577,6 +620,10 @@ class LineupEvaluator:
             season=season,
             players=players,
         )
+        team_win_histories = _build_team_gestalt_win_histories(
+            historical_rankings,
+            team_splits_frame,
+        )
         players["rating_history"] = (
             players["player_id"].map(player_rating_histories).map(lambda history: history or [])
         )
@@ -613,6 +660,7 @@ class LineupEvaluator:
             player_team_splits=player_team_splits,
             player_latest_teams=player_latest_teams,
             historical_rankings=historical_rankings,
+            team_win_histories=team_win_histories,
             constrained_split_ratings=constrained_split_ratings,
             constrained_split_context_allocations=constrained_split_context_allocations,
             preseason_rankings=preseason_rankings,
@@ -720,6 +768,117 @@ class LineupEvaluator:
             }
             for row in matches.itertuples(index=False)
         ]
+
+    def search_teams(self, query: str, *, limit: int = 12) -> list[dict[str, Any]]:
+        """Return historical franchise identities matching a city, nickname, or tricode."""
+
+        normalized = _normalize_search_text(query)
+        if not normalized:
+            return []
+        catalog = self._ranking_catalog()
+        completed_seasons = set(self.available_lineup_seasons())
+        catalog = catalog.loc[catalog["season"].astype(str).isin(completed_seasons)].copy()
+        if catalog.empty or "team" not in catalog:
+            return []
+        grouped = (
+            catalog.loc[catalog["team"].notna(), ["team", "season"]]
+            .assign(team=lambda frame: frame["team"].astype(str).str.upper())
+            .groupby("team", as_index=False)["season"]
+            .agg(lambda seasons: sorted({str(season) for season in seasons}, reverse=True))
+        )
+        records: list[dict[str, Any]] = []
+        for row in grouped.itertuples(index=False):
+            team = str(row.team)
+            display_name = _team_display_name(team)
+            searchable = _normalize_search_text(f"{team} {display_name}")
+            if normalized not in searchable:
+                continue
+            seasons = list(row.season)
+            records.append(
+                {
+                    "team": team,
+                    "display_name": display_name,
+                    "latest_season": seasons[0],
+                    "season_count": len(seasons),
+                    "seasons": seasons,
+                }
+            )
+        return sorted(
+            records,
+            key=lambda record: (
+                not _normalize_search_text(record["team"]).startswith(normalized),
+                not _normalize_search_text(record["display_name"]).startswith(normalized),
+                record["display_name"],
+            ),
+        )[: max(1, min(limit, 25))]
+
+    def team_season(
+        self,
+        team: str,
+        *,
+        season: str | None = None,
+        minimum_possessions: float = 50.0,
+    ) -> dict[str, Any]:
+        """Return a team-season roster and top observed five-man units by net rating."""
+
+        normalized_team = team.strip().upper()
+        catalog = self._ranking_catalog()
+        completed_seasons = set(self.available_lineup_seasons())
+        catalog = catalog.loc[catalog["season"].astype(str).isin(completed_seasons)].copy()
+        if catalog.empty:
+            raise LineupEvaluationError("Team-season rankings are unavailable")
+        team_rows = catalog.loc[catalog["team"].astype(str).str.upper().eq(normalized_team)].copy()
+        if team_rows.empty:
+            raise LineupEvaluationError(f"Team-season rankings are unavailable for {normalized_team}")
+        available_seasons = sorted(team_rows["season"].astype(str).unique().tolist(), reverse=True)
+        selected_season = season or available_seasons[0]
+        if selected_season not in available_seasons:
+            raise LineupEvaluationError(
+                f"{_team_display_name(normalized_team)} has no published roster for {selected_season}"
+            )
+        players = [
+            player
+            for player in self.rankings(selected_season)
+            if str(player.get("team", "")).upper() == normalized_team
+        ]
+        try:
+            lineups = [
+                lineup
+                for lineup in self.lineups(
+                    season=selected_season,
+                    minimum_possessions=minimum_possessions,
+                )
+                if str(lineup.get("team", "")).upper() == normalized_team
+            ]
+        except LineupEvaluationError:
+            lineups = []
+        lineups.sort(
+            key=lambda lineup: (
+                -float(lineup["actual_net_rating"]),
+                -float(lineup["possessions"]),
+                str(lineup["lineup_label"]),
+            )
+        )
+        for rank, lineup in enumerate(lineups, start=1):
+            lineup["rank"] = rank
+        return {
+            "team": normalized_team,
+            "display_name": _team_display_name(normalized_team),
+            "season": selected_season,
+            "available_seasons": available_seasons,
+            "players": players,
+            "minimum_possessions": minimum_possessions,
+            "win_history": self.team_win_histories.get(normalized_team, []),
+            "lineups": lineups,
+        }
+
+    def _ranking_catalog(self) -> pd.DataFrame:
+        """Return every published player-season ranking, including the preseason preview."""
+
+        sources = [frame for frame in (self.historical_rankings, self.preseason_rankings) if not frame.empty]
+        if sources:
+            return pd.concat(sources, ignore_index=True)
+        return self.players.assign(season=self.season)
 
     def teams(self, *, season: str | None = None) -> list[str]:
         """Return the current player-pool teams for one completed season."""
@@ -3545,6 +3704,10 @@ def build_observed_lineup_rankings(
         "away_team_tricode",
         "home_player_ids",
         "away_player_ids",
+        "points_home",
+        "points_away",
+        "home_offensive_possessions",
+        "away_offensive_possessions",
         "possessions",
         "target_home_net_rating",
     }
@@ -3755,6 +3918,10 @@ def build_observed_lineup_rankings(
     )
     possessions = stints["possessions"].to_numpy(dtype=float)
     actual_home = stints["target_home_net_rating"].to_numpy(dtype=float)
+    points_home = stints["points_home"].to_numpy(dtype=float)
+    points_away = stints["points_away"].to_numpy(dtype=float)
+    home_offensive_possessions = stints["home_offensive_possessions"].to_numpy(dtype=float)
+    away_offensive_possessions = stints["away_offensive_possessions"].to_numpy(dtype=float)
 
     home = _observed_lineup_side_rows(
         team_ids=stints["home_team_id"].to_numpy(),
@@ -3790,6 +3957,10 @@ def build_observed_lineup_rankings(
         opponent_composition_rating=away_scores,
         matchup_bonus=matchup_bonus,
         actual_net_rating=actual_home,
+        actual_offensive_points=points_home,
+        actual_defensive_points=points_away,
+        actual_offensive_possessions=home_offensive_possessions,
+        actual_defensive_possessions=away_offensive_possessions,
     )
     away = _observed_lineup_side_rows(
         team_ids=stints["away_team_id"].to_numpy(),
@@ -3825,6 +3996,10 @@ def build_observed_lineup_rankings(
         opponent_composition_rating=home_scores,
         matchup_bonus=-matchup_bonus,
         actual_net_rating=-actual_home,
+        actual_offensive_points=points_away,
+        actual_defensive_points=points_home,
+        actual_offensive_possessions=away_offensive_possessions,
+        actual_defensive_possessions=home_offensive_possessions,
     )
     names = dict(
         zip(players["player_id"].astype(int), players["player_name"].astype(str), strict=True)
@@ -3847,6 +4022,10 @@ def _observed_lineup_side_rows(
     opponent_composition_rating: np.ndarray,
     matchup_bonus: np.ndarray,
     actual_net_rating: np.ndarray,
+    actual_offensive_points: np.ndarray,
+    actual_defensive_points: np.ndarray,
+    actual_offensive_possessions: np.ndarray,
+    actual_defensive_possessions: np.ndarray,
 ) -> pd.DataFrame:
     """Return one orientation's observed-unit contributions in the unit frame."""
 
@@ -3878,6 +4057,10 @@ def _observed_lineup_side_rows(
         "context_edge": context_edge,
         "gestalt_score": player_edge + context_edge,
         "actual_net_rating": actual_net_rating,
+        "actual_offensive_points": actual_offensive_points,
+        "actual_defensive_points": actual_defensive_points,
+        "actual_offensive_possessions": actual_offensive_possessions,
+        "actual_defensive_possessions": actual_defensive_possessions,
     }
     if offensive_edge is not None and defensive_edge is not None:
         output["offensive_edge"] = offensive_edge
@@ -3903,6 +4086,12 @@ def _aggregate_observed_lineups(rows: pd.DataFrame, names: dict[int, str]) -> pd
         for column in ("offensive_edge", "defensive_edge")
         if column in rows
     )
+    actual_totals = [
+        "actual_offensive_points",
+        "actual_defensive_points",
+        "actual_offensive_possessions",
+        "actual_defensive_possessions",
+    ]
     weighted = rows.copy()
     for metric in metrics:
         values = weighted[metric].to_numpy(dtype=float)
@@ -3913,11 +4102,21 @@ def _aggregate_observed_lineups(rows: pd.DataFrame, names: dict[int, str]) -> pd
             possessions=("possessions", "sum"),
             games=("game_id", "nunique"),
             **{metric: (metric, "sum") for metric in metrics},
+            **{metric: (metric, "sum") for metric in actual_totals},
         )
         .reset_index(drop=True)
     )
     for metric in metrics:
         aggregated[metric] /= aggregated["possessions"]
+    offensive_possessions = aggregated["actual_offensive_possessions"].replace(0.0, np.nan)
+    defensive_possessions = aggregated["actual_defensive_possessions"].replace(0.0, np.nan)
+    aggregated["actual_offensive_rating"] = (
+        100.0 * aggregated["actual_offensive_points"] / offensive_possessions
+    )
+    aggregated["actual_defensive_rating"] = (
+        100.0 * aggregated["actual_defensive_points"] / defensive_possessions
+    )
+    aggregated = aggregated.drop(columns=actual_totals)
     if {"offensive_edge", "defensive_edge"}.issubset(aggregated.columns):
         if not np.allclose(
             aggregated["offensive_edge"] + aggregated["defensive_edge"],
@@ -4271,6 +4470,122 @@ def _normalize_search_text(value: str) -> str:
         for character in unicodedata.normalize("NFKD", value.casefold())
         if not unicodedata.combining(character)
     )
+
+
+def _team_display_name(team: str) -> str:
+    """Return a stable display name while retaining an unknown source tricode."""
+
+    normalized = team.strip().upper()
+    return TEAM_DISPLAY_NAMES.get(normalized, normalized)
+
+
+def _build_team_gestalt_win_histories(
+    rankings: pd.DataFrame,
+    team_splits: pd.DataFrame,
+) -> dict[str, list[dict[str, Any]]]:
+    """Materialize completed team wins beside exposure-weighted Gestalt PyWins."""
+
+    rating_columns = {"season", "player_id", "rapm"}
+    split_columns = {"season", "player_id", "team", "possessions"}
+    if not rating_columns.issubset(rankings) or not split_columns.issubset(team_splits):
+        return {}
+    ratings = (
+        rankings.loc[:, ["season", "player_id", "rapm"]]
+        .dropna(subset=["season", "player_id", "rapm"])
+        .drop_duplicates(["season", "player_id"], keep="last")
+        .copy()
+    )
+    splits = team_splits.loc[:, ["season", "player_id", "team", "possessions"]].copy()
+    weighted = splits.merge(
+        ratings,
+        on=["season", "player_id"],
+        how="inner",
+        validate="many_to_one",
+    )
+    if weighted.empty:
+        return {}
+    weighted["season"] = weighted["season"].astype(str)
+    weighted["team"] = weighted["team"].astype(str).str.upper()
+    weighted = weighted.loc[
+        weighted["possessions"].gt(0) & np.isfinite(weighted["rapm"])
+    ].copy()
+    weighted["rating_possessions"] = weighted["rapm"] * weighted["possessions"]
+    team_strength = (
+        weighted.groupby(["season", "team"], as_index=False, sort=False)
+        .agg(
+            player_possessions=("possessions", "sum"),
+            rating_possessions=("rating_possessions", "sum"),
+        )
+        .assign(
+            gestalt_rating=lambda frame: (
+                5.0 * frame["rating_possessions"] / frame["player_possessions"]
+            )
+        )
+    )
+    actual_wins = [
+        _published_actual_regular_season_wins(season)
+        for season in sorted(team_strength["season"].unique())
+    ]
+    actual_wins = [frame for frame in actual_wins if not frame.empty]
+    if not actual_wins:
+        return {}
+    completed = team_strength.merge(
+        pd.concat(actual_wins, ignore_index=True),
+        on=["season", "team"],
+        how="inner",
+        validate="one_to_one",
+    )
+    completed["gestalt_pywins"] = completed.apply(
+        lambda row: float(row.games) * projected_win_pct(float(row.gestalt_rating)),
+        axis=1,
+    )
+    histories: dict[str, list[dict[str, Any]]] = {}
+    for team, rows in completed.groupby("team", sort=False):
+        ordered = rows.sort_values("season", kind="stable")
+        histories[str(team)] = _records(
+            ordered.loc[:, ["season", "games", "actual_wins", "gestalt_pywins", "gestalt_rating"]]
+        )
+    return histories
+
+
+def _published_actual_regular_season_wins(season: str) -> pd.DataFrame:
+    """Read completed team wins from one cached official schedule without 82-game assumptions."""
+
+    response = SeasonScheduleCache().read(season)
+    if response is None:
+        return pd.DataFrame(columns=["season", "team", "games", "actual_wins"])
+    records: list[dict[str, object]] = []
+    game_dates = response.payload.get("leagueSchedule", {}).get("gameDates", [])
+    for game_date in game_dates:
+        for game in game_date.get("games", []):
+            if not str(game.get("gameId", "")).startswith("002"):
+                continue
+            if int(game.get("gameStatus", 0)) != 3:
+                continue
+            home = game.get("homeTeam", {})
+            away = game.get("awayTeam", {})
+            home_score = home.get("score")
+            away_score = away.get("score")
+            home_team = home.get("teamTricode")
+            away_team = away.get("teamTricode")
+            if (
+                home_score is None
+                or away_score is None
+                or not home_team
+                or not away_team
+            ):
+                continue
+            records.extend(
+                (
+                    {"season": season, "team": str(home_team).upper(), "actual_wins": int(home_score > away_score)},
+                    {"season": season, "team": str(away_team).upper(), "actual_wins": int(away_score > home_score)},
+                )
+            )
+    if not records:
+        return pd.DataFrame(columns=["season", "team", "games", "actual_wins"])
+    return pd.DataFrame.from_records(records).groupby(
+        ["season", "team"], as_index=False, sort=False
+    ).agg(games=("actual_wins", "size"), actual_wins=("actual_wins", "sum"))
 
 
 def _validate_lineup(name: str, player_ids: list[int]) -> None:

@@ -74,6 +74,20 @@ const TEAM_LOGO_SLUGS: Record<string, string> = {
   UTA: "utah",
 };
 
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(query);
+    const update = () => setMatches(mediaQuery.matches);
+    update();
+    mediaQuery.addEventListener("change", update);
+    return () => mediaQuery.removeEventListener("change", update);
+  }, [query]);
+
+  return matches;
+}
+
 function readCompareRoute() {
   const queryIndex = window.location.hash.indexOf("?");
   const parameters = new URLSearchParams(queryIndex >= 0 ? window.location.hash.slice(queryIndex + 1) : "");
@@ -343,6 +357,7 @@ function ComparisonTrajectoryChart({
   svgRef,
   showLegend = false,
   compact = false,
+  showTeamLogos = true,
 }: {
   players: Player[];
   alignment: Alignment;
@@ -354,6 +369,7 @@ function ComparisonTrajectoryChart({
   svgRef?: ChartRef;
   showLegend?: boolean;
   compact?: boolean;
+  showTeamLogos?: boolean;
 }) {
   const localChartRef = useRef<SVGSVGElement>(null);
   const chartRef = svgRef ?? localChartRef;
@@ -491,6 +507,7 @@ function ComparisonTrajectoryChart({
                 const logoSize = compact ? 11 : 16;
                 const logoRingRadius = compact ? 7.25 : 9;
                 const fallbackRadius = compact ? 3.25 : 4.5;
+                const plainPointRadius = compact ? 4.25 : 5.5;
                 const isLinked = hoveredPoint?.playerId === player.player_id && hoveredPoint.season === point.season;
                 return <g
                   key={point.season}
@@ -499,19 +516,21 @@ function ComparisonTrajectoryChart({
                   onPointerLeave={() => setHoveredPoint(null)}
                 >
                   <title>{`${player.player_name}, ${point.season}: ${formatRating(point.rating)}`}</title>
-                  <circle className="compare-chart-team-ring" cx={pointX} cy={pointY} r={logoRingRadius} />
-                  <circle className="compare-chart-team-fallback" cx={pointX} cy={pointY} r={fallbackRadius} fill={color} />
-                  {point.team !== "-" && <image
-                    className="compare-chart-team-logo"
-                    href={teamLogoUrl(point.team)}
-                    x={pointX - logoSize / 2}
-                    y={pointY - logoSize / 2}
-                    width={logoSize}
-                    height={logoSize}
-                    preserveAspectRatio="xMidYMid meet"
-                    crossOrigin="anonymous"
-                    onError={(event) => { event.currentTarget.style.display = "none"; }}
-                  />}
+                  {showTeamLogos ? <>
+                    <circle className="compare-chart-team-ring" cx={pointX} cy={pointY} r={logoRingRadius} />
+                    <circle className="compare-chart-team-fallback" cx={pointX} cy={pointY} r={fallbackRadius} fill={color} />
+                    {point.team !== "-" && <image
+                      className="compare-chart-team-logo"
+                      href={teamLogoUrl(point.team)}
+                      x={pointX - logoSize / 2}
+                      y={pointY - logoSize / 2}
+                      width={logoSize}
+                      height={logoSize}
+                      preserveAspectRatio="xMidYMid meet"
+                      crossOrigin="anonymous"
+                      onError={(event) => { event.currentTarget.style.display = "none"; }}
+                    />}
+                  </> : <circle className="compare-chart-plain-point" cx={pointX} cy={pointY} r={plainPointRadius} fill={color} />}
                 </g>;
               })}
             </g>
@@ -567,6 +586,7 @@ async function inlineSvgImages(svg: SVGSVGElement) {
 }
 
 export function ComparePage() {
+  const isMobile = useMediaQuery("(max-width: 580px)");
   const [selectedPlayerIds, setSelectedPlayerIds] = useState(() => readCompareRoute().playerIds);
   const [players, setPlayers] = useState<Player[]>([]);
   const [query, setQuery] = useState("");
@@ -781,6 +801,8 @@ export function ComparePage() {
               setHoveredPoint={setHoveredPoint}
               svgRef={totalChartRef}
               showLegend
+              compact={isMobile}
+              showTeamLogos={!isMobile}
             />
           </div>
           <div className="compare-split-charts">
@@ -800,6 +822,7 @@ export function ComparePage() {
                   setHoveredPoint={setHoveredPoint}
                   svgRef={view === "offense" ? offenseChartRef : defenseChartRef}
                   compact
+                  showTeamLogos={!isMobile}
                 />
               </section>
             ))}

@@ -118,6 +118,41 @@ export type RankedLineup = {
   context_edge: number;
   gestalt_score: number;
   actual_net_rating: number;
+  actual_offensive_rating: number | null;
+  actual_defensive_rating: number | null;
+};
+
+export type GlobalSearchPlayer = {
+  player_id: number;
+  player_name: string;
+  latest_season: string;
+  latest_team: string;
+  history_seasons: number;
+};
+
+export type GlobalSearchTeam = {
+  team: string;
+  display_name: string;
+  latest_season: string;
+  season_count: number;
+  seasons: string[];
+};
+
+export type TeamSeasonPayload = {
+  team: string;
+  display_name: string;
+  season: string;
+  available_seasons: string[];
+  players: RankedPlayer[];
+  minimum_possessions: number;
+  win_history: Array<{
+    season: string;
+    games: number;
+    actual_wins: number;
+    gestalt_pywins: number;
+    gestalt_rating: number;
+  }>;
+  lineups: RankedLineup[];
 };
 
 export type RosterMove = {

@@ -86,6 +86,10 @@ function teamLogoUrl(team: string) {
   return `https://a.espncdn.com/i/teamlogos/nba/500/${slug}.png`;
 }
 
+function playerHeadshotUrl(playerId: number) {
+  return `/api/headshots/${playerId}.png`;
+}
+
 function escapeSvg(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
@@ -962,7 +966,7 @@ export function WinProjectionsPage() {
                 intervalPosition === "above" ? "market-above-range" : "",
               ].filter(Boolean).join(" ");
               return <tr key={item.team} className={rowClassName}>
-                <th><button className="win-forecast-team-link" type="button" aria-controls="team-minutes" aria-pressed={item.team === team} onClick={() => selectForecastTeam(item.team)}>{item.team}</button></th>
+                <th><button className="win-forecast-team-link" type="button" aria-controls="team-minutes" aria-pressed={item.team === team} onClick={() => selectForecastTeam(item.team)} aria-label={`Select ${item.team}`} title={`Select ${item.team}`}><span className="lineup-team-mark"><img src={teamLogoUrl(item.team)} alt="" aria-hidden="true" loading="lazy" /><small>{item.team}</small></span></button></th>
                 <td className={item.team_strength < 0 ? "negative" : "positive"}>{formatRating(item.team_strength)}</td>
                 <td title={marketIntervalDescription(item)}>{item.betmgm_win_total?.toFixed(1) ?? "-"}</td>
                 <td className="win-forecast-wins">{item.projected_wins.toFixed(1)}</td>
@@ -1008,7 +1012,7 @@ export function WinProjectionsPage() {
                 };
                 const projected = minutes.get(player.player_id) ?? player.baseline_minutes_per_game;
                 return <tr key={player.player_id} className={override === undefined ? "" : "has-minute-override"}>
-                  <th scope="row"><span className="win-projections-player-name"><span className="win-projections-player-number">{index + 1}</span><a href={`#player/${player.player_id}`}>{player.player_name}</a><button className={`rotation-pin ${isPinned ? "is-pinned" : ""}`} type="button" aria-label={`${isPinned ? "Unpin" : "Pin"} ${player.player_name} ${isPinned ? "from" : "in"} the rotation`} aria-pressed={isPinned} title={isPinned ? "Unpin from the rotation" : "Keep in the rotation"} onClick={() => toggleRotationPin(player)}><Pin size={14} aria-hidden="true" /></button></span><small>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</small></th>
+                  <th scope="row"><span className="win-projections-player-name"><span className="win-projections-player-number">{index + 1}</span><a className="win-projections-player-link" href={`#player/${player.player_id}`}><img className="win-projections-player-avatar" src={playerHeadshotUrl(player.player_id)} alt="" aria-hidden="true" loading="lazy" /><span>{player.player_name}</span></a><button className={`rotation-pin ${isPinned ? "is-pinned" : ""}`} type="button" aria-label={`${isPinned ? "Unpin" : "Pin"} ${player.player_name} ${isPinned ? "from" : "in"} the rotation`} aria-pressed={isPinned} title={isPinned ? "Unpin from the rotation" : "Keep in the rotation"} onClick={() => toggleRotationPin(player)}><Pin size={14} aria-hidden="true" /></button></span><small>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</small></th>
                   <td className={displayInputs.nailRating < 0 ? "negative" : "positive"}><input className={displayInputs.nailRating < 0 ? "negative" : "positive"} aria-label={`Plus minus rating for ${player.player_name}`} type="number" step="0.1" value={displayInputs.nailRating.toFixed(1)} onChange={(event) => updateOverride(player, "nailRating", event.target.value)} /></td>
                   <td><input aria-label={`Projected available games for ${player.player_name}`} type="number" min="0" max={SEASON_GAMES} step="1" value={Math.round(displayInputs.availabilityProbability * SEASON_GAMES)} onChange={(event) => updateOverride(player, "availabilityProbability", event.target.value)} /></td>
                   <td><input className="conditional-minutes-input" aria-label={`Conditional minutes for ${player.player_name}`} type="number" min="0" max="48" step="0.5" value={displayInputs.conditionalMinutesPerGame.toFixed(1)} onChange={(event) => updateOverride(player, "conditionalMinutesPerGame", event.target.value)} /></td>
@@ -1032,7 +1036,7 @@ export function WinProjectionsPage() {
             const projected = minutes.get(player.player_id) ?? player.baseline_minutes_per_game;
             return <li key={player.player_id} className={override === undefined ? "" : "has-minute-override"}>
               <div className="win-projections-mobile-heading">
-                <span className="win-projections-player-name"><span className="win-projections-player-number">{index + 1}</span><a href={`#player/${player.player_id}`}>{player.player_name}</a></span>
+                <span className="win-projections-player-name"><span className="win-projections-player-number">{index + 1}</span><a className="win-projections-player-link" href={`#player/${player.player_id}`}><img className="win-projections-player-avatar" src={playerHeadshotUrl(player.player_id)} alt="" aria-hidden="true" loading="lazy" /><span>{player.player_name}</span></a></span>
                 <span className="win-projections-mobile-actions"><span className={displayInputs.nailRating < 0 ? "negative" : "positive"}>{formatRating(displayInputs.nailRating)}</span><button className={`rotation-pin ${isPinned ? "is-pinned" : ""}`} type="button" aria-label={`${isPinned ? "Unpin" : "Pin"} ${player.player_name} ${isPinned ? "from" : "in"} the rotation`} aria-pressed={isPinned} title={isPinned ? "Unpin from the rotation" : "Keep in the rotation"} onClick={() => toggleRotationPin(player)}><Pin size={14} aria-hidden="true" /></button></span>
               </div>
               <p>{player.position} · Age {player.age?.toFixed(0) ?? "-"}{allocation.rotationPlayerIds.has(player.player_id) ? "" : " · Outside rotation"}{player.is_rating_fallback ? " · NAIL fallback" : ""}</p>

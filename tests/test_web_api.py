@@ -28,6 +28,7 @@ from nba_lineup_model.web_api.inference import (
     MeanRevertedScheduleControls,
     SeasonLineupState,
     _aggregate_observed_lineups,
+    _build_team_gestalt_win_histories,
     _historical_ranking_catalog,
     _observed_lineup_side_rows,
     _player_latest_teams_by_season,
@@ -39,6 +40,49 @@ from nba_lineup_model.web_api.inference import (
     build_player_team_splits,
     build_published_player_ratings,
 )
+
+
+def test_team_gestalt_win_history_weights_player_ratings_by_team_exposure(monkeypatch) -> None:
+    rankings = pd.DataFrame(
+        {
+            "season": ["2024-25", "2024-25", "2024-25", "2024-25"],
+            "player_id": [1, 2, 3, 4],
+            "rapm": [2.0, 0.0, 1.0, -1.0],
+        }
+    )
+    splits = pd.DataFrame(
+        {
+            "season": ["2024-25", "2024-25", "2024-25", "2024-25"],
+            "player_id": [1, 2, 3, 4],
+            "team": ["TST", "TST", "OTH", "OTH"],
+            "possessions": [300.0, 100.0, 200.0, 200.0],
+        }
+    )
+    monkeypatch.setattr(
+        web_inference,
+        "_published_actual_regular_season_wins",
+        lambda season: pd.DataFrame(
+            {
+                "season": [season, season],
+                "team": ["TST", "OTH"],
+                "games": [82, 82],
+                "actual_wins": [50, 32],
+            }
+        ),
+    )
+
+    histories = _build_team_gestalt_win_histories(rankings, splits)
+
+    assert histories["TST"] == [
+        {
+            "season": "2024-25",
+            "games": 82,
+            "actual_wins": 50,
+            "gestalt_pywins": pytest.approx(59.569556),
+            "gestalt_rating": pytest.approx(7.5),
+        }
+    ]
+    assert histories["OTH"][0]["gestalt_rating"] == pytest.approx(0.0)
 
 
 def test_win_projection_preview_cache_overrides_the_published_cache(
@@ -300,6 +344,75 @@ def test_search_and_matchup_endpoints() -> None:
     )
 
 
+def test_global_search_and_team_season_endpoints_cover_historical_team_navigation() -> None:
+    evaluator = _evaluator()
+    players = evaluator.players.assign(team="DEN")
+    observed_lineups = pd.DataFrame(
+        {
+            "team_id": [1610612743, 1610612743, 1610612743],
+            "team": ["DEN", "DEN", "DEN"],
+            "lineup_key": ["1|2|3|4|5", "1|2|3|4|6", "1|2|3|4|7"],
+            "player_ids": [[1, 2, 3, 4, 5], [1, 2, 3, 4, 6], [1, 2, 3, 4, 7]],
+            "player_names": [
+                ["Nikola Jokić", "Player 2", "Player 3", "Player 4", "Player 5"],
+                ["Nikola Jokić", "Player 2", "Player 3", "Player 4", "Player 6"],
+                ["Nikola Jokić", "Player 2", "Player 3", "Player 4", "Player 7"],
+            ],
+            "lineup_label": [
+                "Nikola Jokić, Player 2, Player 3, Player 4, Player 5",
+                "Nikola Jokić, Player 2, Player 3, Player 4, Player 6",
+                "Nikola Jokić, Player 2, Player 3, Player 4, Player 7",
+            ],
+            "possessions": [650.0, 700.0, 400.0],
+            "games": [24, 26, 12],
+            "player_rating": [1.5, 1.5, 1.5],
+            "player_edge": [0.3, 0.3, 0.3],
+            "offensive_edge": [0.8, 0.8, 0.8],
+            "defensive_edge": [0.2, 0.2, 0.2],
+            "composition_rating": [0.4, 0.4, 0.4],
+            "composition_edge": [0.5, 0.5, 0.5],
+            "matchup_bonus": [0.2, 0.2, 0.2],
+            "context_edge": [0.7, 1.2, 1.5],
+            "gestalt_score": [1.0, 1.0, 1.0],
+            "actual_net_rating": [4.2, 8.1, 12.0],
+            "actual_offensive_rating": [112.4, 117.1, 120.2],
+            "actual_defensive_rating": [108.2, 109.0, 108.2],
+        }
+    )
+    client = TestClient(create_app(replace(evaluator, players=players, observed_lineups=observed_lineups)))
+
+    player_search = client.get("/api/search", params={"q": "Jokic"})
+    assert player_search.status_code == 200
+    assert player_search.json()["players"][0]["player_name"] == "Nikola Jokić"
+
+    team_search = client.get("/api/search", params={"q": "nuggets"})
+    assert team_search.status_code == 200
+    assert team_search.json()["teams"] == [
+        {
+            "team": "DEN",
+            "display_name": "Denver Nuggets",
+            "latest_season": "2025-26",
+            "season_count": 1,
+            "seasons": ["2025-26"],
+        }
+    ]
+
+    team_page = client.get(
+        "/api/teams/den",
+        params={"season": "2025-26", "minimum_possessions": 500},
+    )
+    assert team_page.status_code == 200
+    payload = team_page.json()
+    assert payload["display_name"] == "Denver Nuggets"
+    assert payload["available_seasons"] == ["2025-26"]
+    assert len(payload["players"]) == 10
+    assert payload["minimum_possessions"] == 500
+    assert len(payload["lineups"]) == 2
+    assert payload["lineups"][0]["rank"] == 1
+    assert payload["lineups"][0]["team"] == "DEN"
+    assert payload["lineups"][0]["actual_net_rating"] == 8.1
+
+
 def test_player_profile_includes_rotation_history_when_published() -> None:
     rotation_history = {
         1: [
@@ -549,8 +662,10 @@ def test_lineup_rankings_endpoint_filters_by_possessions_and_players() -> None:
                 "composition_edge": [0.5, -0.1],
                 "matchup_bonus": [0.2, 0.3],
                 "context_edge": [0.7, 0.2],
-                "gestalt_score": [1.0, 0.3],
-                "actual_net_rating": [4.2, -1.1],
+            "gestalt_score": [1.0, 0.3],
+            "actual_net_rating": [4.2, -1.1],
+            "actual_offensive_rating": [112.4, 106.3],
+            "actual_defensive_rating": [108.2, 107.4],
             }
         ),
     )
@@ -567,6 +682,8 @@ def test_lineup_rankings_endpoint_filters_by_possessions_and_players() -> None:
     assert payload["lineups"][0]["context_edge"] == 0.7
     assert payload["lineups"][0]["offensive_edge"] == 0.8
     assert payload["lineups"][0]["defensive_edge"] == 0.2
+    assert payload["lineups"][0]["actual_offensive_rating"] == 112.4
+    assert payload["lineups"][0]["actual_defensive_rating"] == 108.2
 
 
 def test_observed_lineup_od_edges_reconstruct_scalar_edge_after_aggregation() -> None:
@@ -584,6 +701,10 @@ def test_observed_lineup_od_edges_reconstruct_scalar_edge_after_aggregation() ->
         opponent_composition_rating=np.asarray([0.0, 0.0]),
         matchup_bonus=np.asarray([0.0, 0.0]),
         actual_net_rating=np.asarray([2.0, -2.0]),
+        actual_offensive_points=np.asarray([120.0, 40.0]),
+        actual_defensive_points=np.asarray([100.0, 60.0]),
+        actual_offensive_possessions=np.asarray([100.0, 40.0]),
+        actual_defensive_possessions=np.asarray([100.0, 60.0]),
     )
 
     aggregated = _aggregate_observed_lineups(
@@ -597,6 +718,8 @@ def test_observed_lineup_od_edges_reconstruct_scalar_edge_after_aggregation() ->
         aggregated.loc[0, "offensive_edge"] + aggregated.loc[0, "defensive_edge"],
         aggregated.loc[0, "gestalt_score"],
     )
+    assert np.isclose(aggregated.loc[0, "actual_offensive_rating"], 16000.0 / 140.0)
+    assert np.isclose(aggregated.loc[0, "actual_defensive_rating"], 100.0)
 
 
 def test_player_rating_histories_include_seasonal_team_tricode(tmp_path) -> None:
@@ -950,12 +1073,25 @@ def test_preseason_rankings_include_returners_and_cold_starts(tmp_path) -> None:
     assert by_player.loc[100, "is_undrafted"] is True
     assert by_player.loc[100, "draft_class_year"] == 2026
 
-    evaluator = replace(_evaluator(), preseason_rankings=preview)
+    evaluator = _evaluator()
+    evaluator = replace(
+        evaluator,
+        historical_rankings=evaluator.players.assign(season="2025-26"),
+        preseason_rankings=preview,
+        observed_lineups=pd.DataFrame({"placeholder": [1]}),
+    )
     client = TestClient(create_app(evaluator))
     rankings = client.get("/api/rankings", params={"season": "2026-27"})
     assert rankings.status_code == 200
     assert rankings.json()["available_seasons"] == ["2026-27", "2025-26"]
     assert rankings.json()["players"][0]["player_id"] == 1
+
+    team_search = client.get("/api/search", params={"q": "TST"})
+    assert team_search.status_code == 200
+    assert team_search.json()["teams"][0]["latest_season"] == "2025-26"
+    preseason_team_page = client.get("/api/teams/TST", params={"season": "2026-27"})
+    assert preseason_team_page.status_code == 404
+
     rookie = client.get("/api/players/99")
     assert rookie.status_code == 200
     assert rookie.json()["rating_season"] == "2026-27"

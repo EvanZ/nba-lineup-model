@@ -7,6 +7,8 @@ import { ComparePage } from "./ComparePage";
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowDown,
+  ArrowUp,
   ArrowUpRight,
   BookOpen,
   ChevronDown,
@@ -23,11 +25,21 @@ import {
   X,
 } from "lucide-react";
 
-import type { ContextFeature, FeatureResponseCurve, Matchup, Player, RankedLineup, RankedPlayer } from "./types";
+import type {
+  ContextFeature,
+  FeatureResponseCurve,
+  GlobalSearchPlayer,
+  GlobalSearchTeam,
+  Matchup,
+  Player,
+  RankedLineup,
+  RankedPlayer,
+  TeamSeasonPayload,
+} from "./types";
 
 type Side = "unit" | "opponent";
-type AppView = "lab" | "rankings" | "compare" | "lineups" | "moves" | "wins" | "about" | "player";
-type AppRoute = { view: AppView; playerId?: number };
+type AppView = "lab" | "rankings" | "compare" | "lineups" | "moves" | "wins" | "about" | "player" | "team";
+type AppRoute = { view: AppView; playerId?: number; team?: string; season?: string };
 type Environment = "unit" | "neutral" | "opponent";
 type Court = "neutral" | "unit_home" | "opponent_home";
 type AgingContributionKey = "prior" | "seasonUpdate" | "additiveProfile";
@@ -72,6 +84,10 @@ function formatOptionalRating(value: number | null | undefined) {
   return value === null || value === undefined ? "-" : formatRating(value);
 }
 
+function formatOptionalActualRating(value: number | null | undefined) {
+  return value === null || value === undefined ? "-" : value.toFixed(1);
+}
+
 function optionalRatingClass(value: number | null | undefined) {
   if (value === null || value === undefined) return "numeric rating-cell";
   return value < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell";
@@ -99,6 +115,26 @@ function playerHeadshotUrl(playerId: number) {
   return `/api/headshots/${playerId}.png`;
 }
 
+type PlayerIdentity = Pick<Player, "player_id" | "player_name">;
+
+function LineupAvatarStrip({ players }: { players: PlayerIdentity[] }) {
+  return (
+    <span className="lineup-avatar-strip" aria-label={`Lineup: ${players.map((player) => player.player_name).join(", ")}`}>
+      {players.map((player) => (
+        <a
+          className="lineup-avatar-link"
+          href={playerProfileHref(player.player_id)}
+          key={player.player_id}
+          title={player.player_name}
+          aria-label={player.player_name}
+        >
+          <PlayerHeadshot player={player} />
+        </a>
+      ))}
+    </span>
+  );
+}
+
 function Rating({ value, className }: { value: number; className?: string }) {
   return (
     <span className={["rating-value", value < 0 ? "negative" : "", className].filter(Boolean).join(" ")}>
@@ -109,14 +145,24 @@ function Rating({ value, className }: { value: number; className?: string }) {
 
 function useAppView(): AppRoute {
   const getView = (): AppRoute => {
-    const playerMatch = window.location.hash.match(/^#player\/(\d+)$/);
+    const [pathname, queryString = ""] = window.location.hash.slice(1).split("?", 2);
+    const parameters = new URLSearchParams(queryString);
+    const playerMatch = pathname.match(/^player\/(\d+)$/);
     if (playerMatch) return { view: "player", playerId: Number(playerMatch[1]) };
-    if (window.location.hash === "#about") return { view: "about" };
-    if (window.location.hash === "#rankings") return { view: "rankings" };
-    if (window.location.hash === "#compare" || window.location.hash.startsWith("#compare?")) return { view: "compare" };
-    if (window.location.hash === "#lineups") return { view: "lineups" };
-    if (window.location.hash === "#moves" || window.location.hash.startsWith("#moves?")) return { view: "moves" };
-    if (window.location.hash === "#wins") return { view: "wins" };
+    const teamMatch = pathname.match(/^team\/([a-z0-9]{2,4})$/i);
+    if (teamMatch) {
+      return {
+        view: "team",
+        team: teamMatch[1].toUpperCase(),
+        season: parameters.get("season") ?? undefined,
+      };
+    }
+    if (pathname === "about") return { view: "about" };
+    if (pathname === "rankings") return { view: "rankings" };
+    if (pathname === "compare") return { view: "compare" };
+    if (pathname === "lineups") return { view: "lineups" };
+    if (pathname === "moves") return { view: "moves" };
+    if (pathname === "wins") return { view: "wins" };
     return { view: "lab" };
   };
   const [view, setView] = useState<AppRoute>(getView);
@@ -152,7 +198,156 @@ function playerProfileHref(playerId: number) {
   return `#player/${playerId}`;
 }
 
+function teamSeasonHref(team: string, season: string) {
+  return `#team/${team}?${new URLSearchParams({ season }).toString()}`;
+}
+
+function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
+  const [players, setPlayers] = useState<GlobalSearchPlayer[]>([]);
+  const [teams, setTeams] = useState<GlobalSearchTeam[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) return;
+    setQuery("");
+    setPlayers([]);
+    setTeams([]);
+    setError(null);
+    setIsLoading(false);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!isOpen || !trimmed) {
+      setPlayers([]);
+      setTeams([]);
+      setError(null);
+      setIsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setIsLoading(true);
+          setError(null);
+          const response = await fetch(`/api/search?${new URLSearchParams({ q: trimmed }).toString()}`, {
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new Error("Search is unavailable.");
+          const payload = (await response.json()) as {
+            players: GlobalSearchPlayer[];
+            teams: GlobalSearchTeam[];
+          };
+          setPlayers(payload.players);
+          setTeams(payload.teams);
+        } catch (searchError) {
+          if ((searchError as Error).name !== "AbortError") {
+            setPlayers([]);
+            setTeams([]);
+            setError((searchError as Error).message);
+          }
+        } finally {
+          if (!controller.signal.aborted) setIsLoading(false);
+        }
+      })();
+    }, 160);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [isOpen, query]);
+
+  if (!isOpen) return null;
+  const hasResults = players.length > 0 || teams.length > 0;
+
+  return (
+    <div
+      className="global-search-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="global-search-dialog" role="dialog" aria-modal="true" aria-labelledby="global-search-title">
+        <header className="global-search-dialog-header">
+          <div>
+            <p className="section-kicker">NBA GESTALT archive</p>
+            <h2 id="global-search-title">Find a player or team.</h2>
+          </div>
+          <button className="global-search-close" type="button" onClick={onClose} aria-label="Close search" title="Close search">
+            <X size={19} aria-hidden="true" />
+          </button>
+        </header>
+        <label className="global-search-input">
+          <Search size={19} aria-hidden="true" />
+          <span className="sr-only">Search the player and team archive</span>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Player, city, team, or tricode"
+          />
+          {isLoading && <LoaderCircle className="spin" size={17} aria-label="Searching" />}
+        </label>
+        {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
+        {!error && query.trim() && !isLoading && !hasResults && <p className="global-search-empty">No published player or team matches that search.</p>}
+        {teams.length > 0 && <section className="global-search-group" aria-labelledby="global-search-teams">
+          <h3 id="global-search-teams">Teams</h3>
+          <div className="global-search-results">
+            {teams.map((team) => (
+              <a key={team.team} href={teamSeasonHref(team.team, team.latest_season)} onClick={onClose}>
+                <span className="global-search-team-code">{team.team}</span>
+                <span>
+                  <strong>{team.display_name}</strong>
+                  <small>{team.season_count} published seasons · latest {team.latest_season}</small>
+                </span>
+                <ArrowUpRight size={16} aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        </section>}
+        {players.length > 0 && <section className="global-search-group" aria-labelledby="global-search-players">
+          <h3 id="global-search-players">Players</h3>
+          <div className="global-search-results">
+            {players.map((player) => (
+              <a key={player.player_id} href={playerProfileHref(player.player_id)} onClick={onClose}>
+                <img src={playerHeadshotUrl(player.player_id)} alt="" />
+                <span>
+                  <strong>{player.player_name}</strong>
+                  <small>{player.latest_team} · latest {player.latest_season} · {player.history_seasons} seasons</small>
+                </span>
+                <ArrowUpRight size={16} aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        </section>}
+        <p className="global-search-hint"><kbd>Esc</kbd> closes search</p>
+      </section>
+    </div>
+  );
+}
+
 function PlayerProfilePage({ playerId }: { playerId: number }) {
+  const isCompact = useMediaQuery("(max-width: 720px)");
   const [player, setPlayer] = useState<Player | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -308,7 +503,7 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
         </div>
         <PlayerAgingChart player={player} />
         <p className="player-rating-path-note">Offense and defense are a constrained descriptive allocation: they sum exactly to {MODEL_LABEL} but do not replace the scalar prediction rating. Non-Additive Lineup Edge is the possession-weighted residual non-additive edge of a player’s regular-season units, not individual causal credit.</p>
-        <div className="player-history-table-wrap">
+        {isCompact ? <PlayerRatingHistoryCards rows={historyRows} /> : <div className="player-history-table-wrap">
           <table className="player-history-table">
             <thead><tr><th>Season</th><th>Team split</th><th>Age</th><th>GP</th><th>GS</th><th>Possessions</th><th className="nail-history-column">{MODEL_LABEL}</th><th>Offense</th><th>Defense</th><th>NAIL rank</th><th>Prior</th><th>Season update</th><th>Additive profile</th><th>Non-Additive Lineup Edge</th></tr></thead>
             <tbody>{[...historyRows].reverse().map((row) => row.kind === "dnp" ? (
@@ -332,7 +527,7 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
               </tr>
             ))}</tbody>
           </table>
-        </div>
+        </div>}
       </section>}
 
       {(player.rotation_history?.length ?? 0) > 0 && <section className="player-profile-section" aria-labelledby="rotation-history-title">
@@ -346,7 +541,7 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
         <p className="player-rating-path-note">
           Solid marks are observed regular-season outcomes. Dashed traces are forecasts made before each season: available games are modeled separately from minutes per available game.
         </p>
-        <div className="player-history-table-wrap">
+        {isCompact ? <PlayerRotationHistoryCards rows={player.rotation_history ?? []} /> : <div className="player-history-table-wrap">
           <table className="player-history-table player-rotation-history-table">
             <thead><tr><th>Season</th><th>Available G</th><th>Availability forecast</th><th>Observed MPG when available</th><th>FCM forecast</th><th>Total minutes</th></tr></thead>
             <tbody>{[...(player.rotation_history ?? [])].reverse().map((row) => {
@@ -373,7 +568,7 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
               </tr>;
             })}</tbody>
           </table>
-        </div>
+        </div>}
       </section>}
     </article>
   );
@@ -428,14 +623,25 @@ function completePlayerHistory(player: Player): PlayerHistoryRow[] {
   });
 }
 
+function TeamHistoryMark({ team, season }: { team: string; season: string }) {
+  return (
+    <a className="lineup-team-mark" href={teamSeasonHref(team, season)} aria-label={`View ${team} in ${season}`} title={`View ${team} team page`}>
+      <img src={teamLogoUrl(team)} alt="" aria-hidden="true" loading="lazy" />
+      <small>{team}</small>
+    </a>
+  );
+}
+
 function TeamSplits({ point }: { point: Player["rating_history"][number] }) {
-  if (!point.team_splits || point.team_splits.length <= 1) return <>{point.team}</>;
+  if (!point.team_splits || point.team_splits.length <= 1) return <TeamHistoryMark team={point.team} season={point.season} />;
   return (
     <div className="player-team-splits">
       {point.team_splits.map((split) => (
-        <span key={split.team_id} className={split.is_latest_team ? "latest" : ""}>
-          <strong>{split.team}</strong> {wholeNumber.format(split.possessions)} poss. · {wholeNumber.format(split.games)} GP
-          {split.is_latest_team && <em>latest</em>}
+        <span key={split.team_id} className={split.is_latest_team ? "player-team-split latest" : "player-team-split"}>
+          <TeamHistoryMark team={split.team} season={point.season} />
+          <span>
+            {wholeNumber.format(split.possessions)} poss. · {wholeNumber.format(split.games)} GP
+          </span>
         </span>
       ))}
     </div>
@@ -443,6 +649,85 @@ function TeamSplits({ point }: { point: Player["rating_history"][number] }) {
 }
 
 type RotationHistoryPoint = NonNullable<Player["rotation_history"]>[number];
+
+function PlayerRatingHistoryCards({ rows }: { rows: PlayerHistoryRow[] }) {
+  return (
+    <ol className="player-history-mobile-list" aria-label={`${MODEL_LABEL} history`}>
+      {[...rows].reverse().map((row) => row.kind === "dnp" ? (
+        <li className="player-history-mobile-card dnp" key={row.season}>
+          <header className="player-history-mobile-header">
+            <div>
+              <strong>{row.season}</strong>
+              <small>Age {row.age === null ? "-" : number.format(row.age)}</small>
+            </div>
+            <span className="dnp-label">DNP</span>
+          </header>
+          <p>No completed-fit rating.</p>
+        </li>
+      ) : (
+        <li className="player-history-mobile-card" key={row.point.season}>
+          <header className="player-history-mobile-header">
+            <div>
+              <strong>{row.point.season}</strong>
+              <small>Age {row.point.age === null ? "-" : number.format(row.point.age)}</small>
+            </div>
+            <span className="player-history-mobile-rating">
+              <small>NAIL-RAPM</small>
+              <Rating value={row.point.rating} />
+            </span>
+          </header>
+          <div className="player-history-mobile-team"><TeamSplits point={row.point} /></div>
+          <p className="player-history-mobile-meta">
+            {wholeNumber.format(row.point.games)} GP · {wholeNumber.format(row.point.games_started)} GS · {wholeNumber.format(row.point.possessions)} possessions · #{wholeNumber.format(row.point.nail_rank)}
+          </p>
+          <dl className="player-history-mobile-metrics">
+            <div><dt>Offense</dt><dd>{row.point.offense_rating === null || row.point.offense_rating === undefined ? "-" : <Rating value={row.point.offense_rating} />}</dd></div>
+            <div><dt>Defense</dt><dd>{row.point.defense_rating === null || row.point.defense_rating === undefined ? "-" : <Rating value={row.point.defense_rating} />}</dd></div>
+            <div><dt>Prior</dt><dd>{row.point.prior_rating === null ? "-" : <Rating value={row.point.prior_rating} />}</dd></div>
+            <div><dt>Season update</dt><dd>{row.point.season_update === null ? "-" : <Rating value={row.point.season_update} />}</dd></div>
+            <div><dt>Additive profile</dt><dd>{row.point.additive_profile_adjustment === null ? "-" : <Rating value={row.point.additive_profile_adjustment} />}</dd></div>
+            <div><dt>Lineup edge</dt><dd>{row.point.observed_context_exposure === null ? "-" : <Rating value={row.point.observed_context_exposure} />}</dd></div>
+          </dl>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function PlayerRotationHistoryCards({ rows }: { rows: RotationHistoryPoint[] }) {
+  return (
+    <ol className="player-history-mobile-list player-rotation-mobile-list" aria-label="Availability and rotation history">
+      {[...rows].reverse().map((row) => {
+        const availableGames = row.actual_available_games === null
+          ? "-"
+          : `${wholeNumber.format(row.actual_available_games)} / ${wholeNumber.format(row.known_roster_games ?? 82)}`;
+        const availabilityForecast = row.predicted_available_share === null
+          ? "-"
+          : `${number.format(row.predicted_available_share * 82)} G`;
+        const observedMinutes = row.actual_minutes_per_available_game === null
+          ? "-"
+          : number.format(row.actual_minutes_per_available_game);
+        const forecastMinutes = row.predicted_minutes_per_available_game === null
+          ? "-"
+          : number.format(row.predicted_minutes_per_available_game);
+        const totalMinutes = row.actual_total_minutes ?? row.projected_total_minutes;
+        return <li className={row.is_preseason_forecast ? "player-history-mobile-card forecast" : "player-history-mobile-card"} key={row.season}>
+          <header className="player-history-mobile-header">
+            <strong>{row.season}</strong>
+            {row.is_preseason_forecast && <span className="player-history-mobile-forecast-label">Forecast</span>}
+          </header>
+          <dl className="player-history-mobile-metrics">
+            <div><dt>Available G</dt><dd>{availableGames}</dd></div>
+            <div className="forecast"><dt>Availability forecast</dt><dd>{availabilityForecast}</dd></div>
+            <div><dt>MPG when available</dt><dd>{observedMinutes}</dd></div>
+            <div className="forecast"><dt>FCM forecast</dt><dd>{forecastMinutes}</dd></div>
+            <div className="player-history-mobile-total-minutes"><dt>Total minutes</dt><dd>{totalMinutes === null ? "-" : wholeNumber.format(totalMinutes)}</dd></div>
+          </dl>
+        </li>;
+      })}
+    </ol>
+  );
+}
 
 function PlayerRotationHistoryChart({ player }: { player: Player }) {
   const points = (player.rotation_history ?? [])
@@ -969,6 +1254,7 @@ async function inlineSvgImages(svg: SVGSVGElement) {
 function App() {
   const route = useAppView();
   const view = route.view;
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [unit, setUnit] = useState<Player[]>([]);
   const [opponent, setOpponent] = useState<Player[]>([]);
   const [unitSeason, setUnitSeason] = useState("2025-26");
@@ -987,6 +1273,16 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   const canEvaluate = unit.length === 5 && opponent.length === 5;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setIsGlobalSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     void (async () => {
@@ -1129,6 +1425,16 @@ function App() {
             <a className={view === "about" ? "active" : ""} href="#about">About</a>
           </nav>
           <span className="header-links">
+            <button
+              className="header-link header-search-button"
+              type="button"
+              onClick={() => setIsGlobalSearchOpen(true)}
+              aria-label="Search players and teams"
+              title="Search players and teams"
+            >
+              <Search size={16} aria-hidden="true" />
+              <span>Search</span>
+            </button>
             <a
               className="header-link"
               href="https://github.com/EvanZ/nba-lineup-model"
@@ -1154,7 +1460,9 @@ function App() {
         </div>
       </header>
 
-      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "compare" ? <ComparePage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
+      <GlobalSearch isOpen={isGlobalSearchOpen} onClose={() => setIsGlobalSearchOpen(false)} />
+
+      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "compare" ? <ComparePage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "team" && route.team ? <TeamSeasonPage team={route.team} season={route.season} onLoadInLab={loadObservedLineup} /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
         <section className="intro" aria-labelledby="page-title">
           <div className="gestalt-entry" aria-label="Definition of gestalt">
             <div className="gestalt-entry-heading">
@@ -1678,7 +1986,7 @@ function RankingsPage() {
   const [availableSeasons, setAvailableSeasons] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([]);
-  const [minimumPossessions, setMinimumPossessions] = useState(500);
+  const [minimumPossessions, setMinimumPossessions] = useState(50);
   const [teamFilter, setTeamFilter] = useState("all");
   const [draftClassFilter, setDraftClassFilter] = useState("all");
   const [sortColumn, setSortColumn] = useState<RankingColumn>("rank");
@@ -1850,7 +2158,7 @@ function RankingsPage() {
               <input
                 type="number"
                 min="0"
-                step="100"
+                step="50"
                 value={minimumPossessions}
                 onChange={(event) => setMinimumPossessions(Math.max(0, Number(event.target.value) || 0))}
               />
@@ -1961,7 +2269,17 @@ function RankingsPage() {
               {visiblePlayers.map((player) => <tr key={player.player_id}>
                 <td className="rank-number">{player.rank}</td>
                 <th scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>
-                <td>{player.team}</td>
+                <td>{isPreseasonPreview ? (
+                  <span className="lineup-team-mark">
+                    <img src={teamLogoUrl(player.team)} alt="" aria-hidden="true" loading="lazy" />
+                    <small>{player.team}</small>
+                  </span>
+                ) : (
+                  <a className="lineup-team-mark" href={teamSeasonHref(player.team, selectedSeason)} aria-label={`View ${player.team} in ${selectedSeason}`} title={`View ${player.team} team page`}>
+                    <img src={teamLogoUrl(player.team)} alt="" aria-hidden="true" loading="lazy" />
+                    <small>{player.team}</small>
+                  </a>
+                )}</td>
                 <td>{player.position}</td>
                 <td className="numeric quantity-cell">{formatDraftPick(player)}</td>
                 <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
@@ -2006,6 +2324,400 @@ function RankingsPage() {
         </ol>}
       </section>
     </article>
+  );
+}
+
+type TeamLineupSort =
+  | "actual_net_rating"
+  | "possessions"
+  | "games"
+  | "gestalt_score"
+  | "actual_offensive_rating"
+  | "actual_defensive_rating"
+  | "offensive_edge"
+  | "defensive_edge";
+
+const TEAM_LINEUP_METRICS: Array<{
+  key: TeamLineupSort;
+  label: string;
+  compactLabel: string;
+  description: string;
+}> = [
+  { key: "actual_net_rating", label: "Net rating", compactLabel: "Net", description: "Observed net rating per 100 possessions." },
+  { key: "possessions", label: "Possessions", compactLabel: "Poss", description: "Observed possessions played together." },
+  { key: "games", label: "Games", compactLabel: "Games", description: "Games in which the five-man unit appeared." },
+  { key: "gestalt_score", label: "Gestalt", compactLabel: "Gestalt", description: "Model edge against the opponents this unit actually faced." },
+  { key: "actual_offensive_rating", label: "Actual offense", compactLabel: "Actual O", description: "Observed points scored per 100 possessions." },
+  { key: "actual_defensive_rating", label: "Actual defense", compactLabel: "Actual D", description: "Observed points allowed per 100 possessions. Lower is better." },
+  { key: "offensive_edge", label: "Gestalt offense", compactLabel: "Gestalt O", description: "Offensive allocation of Gestalt Edge, including non-additive context." },
+  { key: "defensive_edge", label: "Gestalt defense", compactLabel: "Gestalt D", description: "Defensive allocation of Gestalt Edge, including non-additive context." },
+];
+
+function TeamSeasonPage({
+  team,
+  season,
+  onLoadInLab,
+}: {
+  team: string;
+  season?: string;
+  onLoadInLab: (side: Side, lineup: RankedLineup, season: string) => void;
+}) {
+  const [payload, setPayload] = useState<TeamSeasonPayload | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [minimumPossessions, setMinimumPossessions] = useState(50);
+  const [lineupQuery, setLineupQuery] = useState("");
+  const [lineupSort, setLineupSort] = useState<TeamLineupSort>("actual_net_rating");
+  const [lineupSortDirection, setLineupSortDirection] = useState<"ascending" | "descending">("descending");
+  const selectedSeason = season ?? payload?.season ?? "2025-26";
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        // Keep the existing sections in place while only the lineup threshold changes.
+        if (!payload) setIsLoading(true);
+        setError(null);
+        const parameters = new URLSearchParams({
+          season: selectedSeason,
+          minimum_possessions: String(minimumPossessions),
+        });
+        const response = await fetch(`/api/teams/${encodeURIComponent(team)}?${parameters.toString()}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("This team-season page is unavailable.");
+        setPayload((await response.json()) as TeamSeasonPayload);
+      } catch (teamError) {
+        if ((teamError as Error).name !== "AbortError") setError((teamError as Error).message);
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [minimumPossessions, selectedSeason, team]);
+
+  useEffect(() => {
+    setLineupQuery("");
+  }, [selectedSeason, team]);
+
+  const displayName = payload?.display_name ?? team;
+  const players = payload?.players ?? [];
+  const lineups = payload?.lineups ?? [];
+  const winHistory = payload?.win_history ?? [];
+  const visibleLineups = useMemo(() => {
+    const tokens = lineupQuery.split(",").map((token) => token.trim().toLocaleLowerCase()).filter(Boolean);
+    const matchingLineups = tokens.length
+      ? lineups.filter((lineup) => tokens.every((token) =>
+        lineup.player_names.some((name) => name.toLocaleLowerCase().includes(token)),
+      ))
+      : lineups;
+    const direction = lineupSortDirection === "descending" ? -1 : 1;
+    return [...matchingLineups].sort((left, right) => {
+      const leftValue = left[lineupSort];
+      const rightValue = right[lineupSort];
+      const leftIsMissing = leftValue === null || leftValue === undefined || !Number.isFinite(leftValue);
+      const rightIsMissing = rightValue === null || rightValue === undefined || !Number.isFinite(rightValue);
+
+      if (leftIsMissing || rightIsMissing) {
+        if (leftIsMissing && rightIsMissing) return left.rank - right.rank;
+        return leftIsMissing ? 1 : -1;
+      }
+
+      return direction * (leftValue - rightValue) || left.rank - right.rank;
+    });
+  }, [lineupQuery, lineups, lineupSort, lineupSortDirection]);
+
+  function selectLineupSort(nextSort: TeamLineupSort) {
+    if (nextSort === lineupSort) {
+      setLineupSortDirection((direction) => direction === "descending" ? "ascending" : "descending");
+      return;
+    }
+    setLineupSort(nextSort);
+    setLineupSortDirection("descending");
+  }
+
+  function formatLineupMetric(lineup: RankedLineup, metric: TeamLineupSort) {
+    const value = lineup[metric];
+    if (metric === "possessions" || metric === "games") return wholeNumber.format(value as number);
+    if (metric === "actual_offensive_rating" || metric === "actual_defensive_rating") {
+      return formatOptionalActualRating(value);
+    }
+    return formatOptionalRating(value);
+  }
+
+  return (
+    <article className="rankings-page team-page" aria-labelledby="team-page-title">
+      <section className="rankings-hero team-page-hero">
+          <div className="team-page-hero-content">
+            <div className="team-page-branding">
+              <p className="eyebrow">{selectedSeason} team season</p>
+              <div className="team-page-title-row">
+                <img className="team-page-watermark" src={teamLogoUrl(team)} alt="" aria-hidden="true" />
+                <span aria-hidden="true">{team}</span>
+                <h1 id="team-page-title">{displayName}.</h1>
+              </div>
+            <p>
+              Season-end roster assignment, completed-fit player ratings, and observed five-man units ranked by actual net rating.
+            </p>
+          </div>
+          <TeamWinHistoryChart team={team} history={winHistory} />
+        </div>
+      </section>
+
+      {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
+      {!error && <>
+        <section className="team-page-toolbar" aria-label="Team-season controls">
+          <p>{isLoading ? "Loading team season" : `${players.length} rated players · ${visibleLineups.length}${lineupQuery.trim() ? " matching" : ""} observed units`}</p>
+          <div className="team-page-controls">
+            <label className="rankings-season">
+              <span>Season</span>
+              <select
+                value={selectedSeason}
+                onChange={(event) => {
+                  window.location.hash = teamSeasonHref(team, event.target.value);
+                }}
+              >
+                {(payload?.available_seasons ?? [selectedSeason]).map((availableSeason) => (
+                  <option key={availableSeason} value={availableSeason}>{availableSeason}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </section>
+
+        {!isLoading && <section className="team-roster-section" aria-labelledby="team-roster-title">
+          <div className="team-section-heading">
+            <div>
+              <p className="section-kicker">Roster</p>
+              <h2 id="team-roster-title">Player ratings.</h2>
+            </div>
+            <a href="#rankings">All player rankings <ArrowUpRight size={15} aria-hidden="true" /></a>
+          </div>
+          <div className="rankings-table-wrap">
+            <table className="rankings-table team-roster-table">
+              <thead>
+                <tr>
+                  <th scope="col" className="numeric">Rank</th>
+                  <th scope="col">Player</th>
+                  <th scope="col">Pos</th>
+                  <th scope="col" className="numeric">NAIL</th>
+                  <th scope="col" className="numeric">Off</th>
+                  <th scope="col" className="numeric">Def</th>
+                  <th scope="col" className="numeric">Poss</th>
+                  <th scope="col" className="numeric">Games</th>
+                </tr>
+              </thead>
+              <tbody>
+                {players.map((player) => <tr key={player.player_id}>
+                  <td className="rank-number">{player.rank}</td>
+                  <th scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>
+                  <td>{player.position}</td>
+                  <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
+                  <td className={optionalRatingClass(player.offense_rating)}>{formatOptionalRating(player.offense_rating)}</td>
+                  <td className={optionalRatingClass(player.defense_rating)}>{formatOptionalRating(player.defense_rating)}</td>
+                  <td className="numeric quantity-cell">{wholeNumber.format(player.possessions)}</td>
+                  <td className="numeric quantity-cell">{player.games}</td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+        </section>}
+
+        {!isLoading && <section className="team-lineups-section" aria-labelledby="team-lineups-title">
+          <div className="team-section-heading">
+            <div>
+              <p className="section-kicker">Observed five-man units</p>
+              <h2 id="team-lineups-title">Net ratings.</h2>
+            </div>
+            <div className="team-lineup-heading-actions">
+              <div className="team-lineup-filter-controls">
+                <label className="rankings-minimum-possessions">
+                  <span>Min. possessions</span>
+                  <input
+                    type="number"
+                    min="50"
+                    step="50"
+                    value={minimumPossessions}
+                    onChange={(event) => setMinimumPossessions(Math.max(50, Number(event.target.value) || 50))}
+                  />
+                </label>
+                <div className="rankings-search lineup-player-search team-lineup-search">
+                  <Search size={17} aria-hidden="true" />
+                  <input
+                    aria-label="Search this team's lineups"
+                    value={lineupQuery}
+                    onChange={(event) => setLineupQuery(event.target.value)}
+                    placeholder="Contains players, comma-separated"
+                  />
+                  {lineupQuery && <button
+                    className="rankings-search-clear"
+                    type="button"
+                    onClick={() => setLineupQuery("")}
+                    aria-label="Clear lineup search"
+                    title="Clear lineup search"
+                  ><X size={14} aria-hidden="true" /></button>}
+                </div>
+              </div>
+              <a href="#lineups">All lineups <ArrowUpRight size={15} aria-hidden="true" /></a>
+            </div>
+          </div>
+          {visibleLineups.length ? <ol className="team-lineup-list">
+            {visibleLineups.map((lineup, index) => <li key={`${lineup.team_id}-${lineup.player_ids.join("-")}`}>
+              <span className="team-lineup-rank">#{index + 1}</span>
+              <div className="team-lineup-details">
+                <LineupAvatarStrip players={lineup.player_ids.map((player_id, index) => ({ player_id, player_name: lineup.player_names[index] }))} />
+                <p>{lineup.player_names.map((name, index) => <a key={lineup.player_ids[index]} href={playerProfileHref(lineup.player_ids[index])}>{name}</a>)}</p>
+                <div className="team-lineup-metrics">
+                  {TEAM_LINEUP_METRICS.map((metric) => {
+                    const isActive = lineupSort === metric.key;
+                    const directionLabel = lineupSortDirection === "descending" ? "descending" : "ascending";
+                    return <button
+                      className={isActive ? "team-lineup-metric active" : "team-lineup-metric"}
+                      key={metric.key}
+                      type="button"
+                      onClick={() => selectLineupSort(metric.key)}
+                      title={`${metric.description} Sort by ${metric.label} ${isActive ? directionLabel : "descending"}.`}
+                      aria-label={`Sort by ${metric.label} ${isActive ? directionLabel : "descending"}`}
+                    >
+                      <strong>
+                        {formatLineupMetric(lineup, metric.key)}
+                        {isActive && (lineupSortDirection === "descending"
+                          ? <ArrowDown size={10} strokeWidth={2.8} aria-hidden="true" />
+                          : <ArrowUp size={10} strokeWidth={2.8} aria-hidden="true" />)}
+                      </strong>
+                      <small>{metric.compactLabel}</small>
+                    </button>;
+                  })}
+                </div>
+                <span className="lineup-lab-actions">
+                  <button type="button" onClick={() => onLoadInLab("unit", lineup, selectedSeason)} title="Load as your unit">
+                    <ArrowLeft size={13} aria-hidden="true" /> Your
+                  </button>
+                  <button type="button" onClick={() => onLoadInLab("opponent", lineup, selectedSeason)} title="Load as opponent">
+                    Opponent <ArrowRight size={13} aria-hidden="true" />
+                  </button>
+                </span>
+              </div>
+            </li>)}
+          </ol> : <p className="team-empty-state">{lineups.length ? "No observed units contain every searched player." : "Observed lineup rankings are unavailable for this preseason roster."}</p>}
+        </section>}
+      </>}
+    </article>
+  );
+}
+
+function TeamWinHistoryChart({
+  team,
+  history,
+}: {
+  team: string;
+  history: TeamSeasonPayload["win_history"];
+}) {
+  const [hoveredPoint, setHoveredPoint] = useState<{
+    point: TeamSeasonPayload["win_history"][number];
+    x: number;
+    y: number;
+  } | null>(null);
+  if (!history.length) return null;
+  const width = 420;
+  const height = 205;
+  const margin = { top: 22, right: 10, bottom: 29, left: 34 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+  const data = [...history].sort((left, right) => left.season.localeCompare(right.season));
+  const x = (index: number) => margin.left + (data.length === 1 ? innerWidth / 2 : index * innerWidth / (data.length - 1));
+  const y = (wins: number) => margin.top + innerHeight * (1 - wins / 82);
+  const pyWinsPath = data
+    .map((point, index) => `${index === 0 ? "M" : "L"}${x(index).toFixed(2)},${y(point.gestalt_pywins).toFixed(2)}`)
+    .join(" ");
+  const barWidth = Math.min(10, Math.max(3, innerWidth / data.length * 0.62));
+  const hoverWidth = Math.min(
+    data.length === 1 ? innerWidth : innerWidth / (data.length - 1),
+    Math.max(barWidth + 4, 14),
+  );
+  const ticks = [0, 20, 40, 60, 80];
+  const labeledIndices = data.length <= 6
+    ? data.map((_, index) => index)
+    : data.flatMap((_, index) => index === 0 || index === data.length - 1 || index % 5 === 0 ? [index] : []);
+  const latest = data.at(-1)!;
+
+  return (
+    <section className="team-win-history" aria-labelledby="team-win-history-title">
+      <div className="team-win-history-heading">
+        <div>
+          <p className="section-kicker">Completed seasons</p>
+          <h2 id="team-win-history-title">Wins vs. Gestalt PyWins.</h2>
+        </div>
+        <div className="team-win-history-legend" aria-label="Chart legend">
+          <span><i className="team-win-history-actual" />Wins</span>
+          <span><i className="team-win-history-pywins" />PyWins</span>
+        </div>
+      </div>
+      <svg className="team-win-history-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Actual regular-season wins and Gestalt PyWins by season">
+        {ticks.map((tick) => <g key={tick}>
+          <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} className="team-win-history-grid" />
+          <text x={margin.left - 7} y={y(tick) + 4} textAnchor="end" className="team-win-history-axis-label">{tick}</text>
+        </g>)}
+        {labeledIndices.map((index) => <g key={data[index].season}>
+          <line x1={x(index)} x2={x(index)} y1={height - margin.bottom} y2={height - margin.bottom + 4} className="team-win-history-axis" />
+          <text x={x(index)} y={height - 7} textAnchor="middle" className="team-win-history-axis-label">{data[index].season.slice(2, 4)}</text>
+        </g>)}
+        {data.map((point, index) => <g key={point.season}>
+          <rect
+            x={x(index) - barWidth / 2}
+            y={y(point.actual_wins)}
+            width={barWidth}
+            height={height - margin.bottom - y(point.actual_wins)}
+            className="team-win-history-bar-actual"
+          >
+            <title>{`${point.season}: ${point.actual_wins} wins`}</title>
+          </rect>
+        </g>)}
+        <path d={pyWinsPath} className="team-win-history-line team-win-history-line-pywins" />
+        {data.map((point, index) => <g key={point.season}>
+          <circle cx={x(index)} cy={y(point.gestalt_pywins)} r="2.7" className="team-win-history-point team-win-history-point-pywins">
+            <title>{`${point.season}: ${point.gestalt_pywins.toFixed(1)} Gestalt PyWins`}</title>
+          </circle>
+        </g>)}
+        {data.map((point, index) => {
+          const pointX = x(index);
+          const pointY = Math.min(y(point.actual_wins), y(point.gestalt_pywins));
+          const showTooltip = () => setHoveredPoint({ point, x: pointX, y: pointY });
+          return <a
+            key={`target-${point.season}`}
+            href={teamSeasonHref(team, point.season)}
+            aria-label={`Open ${team} ${point.season}: ${point.actual_wins} wins, ${point.gestalt_pywins.toFixed(1)} Gestalt PyWins, ${formatRating(point.gestalt_rating)} Gestalt rating`}
+          >
+            <title>Open {team} {point.season}</title>
+            <rect
+              className="team-win-history-hover-target"
+              x={pointX - hoverWidth / 2}
+              y={margin.top}
+              width={hoverWidth}
+              height={innerHeight}
+              onMouseEnter={showTooltip}
+              onMouseLeave={() => setHoveredPoint(null)}
+              onFocus={showTooltip}
+              onBlur={() => setHoveredPoint(null)}
+            />
+          </a>;
+        })}
+        {hoveredPoint && (
+          <g
+            className="team-win-history-tooltip"
+            data-export-exclude="true"
+            pointerEvents="none"
+            transform={`translate(${Math.min(width - 158, Math.max(margin.left, hoveredPoint.x + 10))}, ${Math.max(margin.top + 3, Math.min(height - margin.bottom - 47, hoveredPoint.y - 52))})`}
+          >
+            <rect width="154" height="43" rx="3" />
+            <text x="7" y="12">{hoveredPoint.point.season} · {hoveredPoint.point.games} games</text>
+            <text x="7" y="24">Wins {hoveredPoint.point.actual_wins} · PyWins {hoveredPoint.point.gestalt_pywins.toFixed(1)}</text>
+            <text x="7" y="36">Gestalt {formatRating(hoveredPoint.point.gestalt_rating)} / 100</text>
+          </g>
+        )}
+      </svg>
+      <p className="team-win-history-note"><strong>{latest.actual_wins}</strong> wins · <strong>{latest.gestalt_pywins.toFixed(1)}</strong> PyWins in {latest.season}</p>
+    </section>
   );
 }
 
@@ -2077,6 +2789,7 @@ function LineupRankingsPage({
 
   useEffect(() => {
     setTeamFilter("all");
+    setQuery("");
   }, [selectedSeason]);
 
   const teams = useMemo(() => [...new Set(lineups.map((lineup) => lineup.team))].sort(), [lineups]);
@@ -2167,10 +2880,17 @@ function LineupRankingsPage({
                 {teams.map((team) => <option key={team} value={team}>{team}</option>)}
               </select>
             </label>
-            <label className="rankings-search lineup-player-search">
+            <div className="rankings-search lineup-player-search">
               <Search size={17} aria-hidden="true" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Contains players, comma-separated" />
-            </label>
+              <input aria-label="Search observed lineups" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Contains players, comma-separated" />
+              {query && <button
+                className="rankings-search-clear"
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label="Clear lineup search"
+                title="Clear lineup search"
+              ><X size={14} aria-hidden="true" /></button>}
+            </div>
             <div className="mobile-sort-controls" aria-label="Lineup ranking sort controls">
               <label>
                 <span>Sort by</span>
@@ -2235,8 +2955,14 @@ function LineupRankingsPage({
             <tbody>
               {visibleLineups.map((lineup) => <tr key={`${lineup.team_id}-${lineup.player_ids.join("-")}`}>
                 <td className="rank-number">{lineup.rank}</td>
-                <td>{lineup.team}</td>
+                <td>
+                  <a className="lineup-team-mark" href={teamSeasonHref(lineup.team, selectedSeason)} aria-label={`View ${lineup.team} in ${selectedSeason}`} title={`View ${lineup.team} team page`}>
+                    <img src={teamLogoUrl(lineup.team)} alt="" aria-hidden="true" loading="lazy" />
+                    <small>{lineup.team}</small>
+                  </a>
+                </td>
                 <th className="lineup-roster" scope="row">
+                  <LineupAvatarStrip players={lineup.player_ids.map((player_id, index) => ({ player_id, player_name: lineup.player_names[index] }))} />
                   <span className="lineup-roster-names">
                     {lineup.player_names.map((name, index) => <a key={lineup.player_ids[index]} className="player-name-link" href={playerProfileHref(lineup.player_ids[index])}>{name}</a>)}
                   </span>
@@ -2275,13 +3001,17 @@ function LineupRankingsPage({
           {visibleLineups.map((lineup) => <li className="mobile-lineup-card" key={`${lineup.team_id}-${lineup.player_ids.join("-")}`}>
             <div className="mobile-card-heading lineup-card-heading">
               <span className="mobile-card-rank">#{lineup.rank}</span>
-              <strong className="mobile-lineup-team">{lineup.team}</strong>
+              <a className="lineup-team-mark" href={teamSeasonHref(lineup.team, selectedSeason)} aria-label={`View ${lineup.team} in ${selectedSeason}`} title={`View ${lineup.team} team page`}>
+                <img src={teamLogoUrl(lineup.team)} alt="" aria-hidden="true" loading="lazy" />
+                <small>{lineup.team}</small>
+              </a>
               <span className="mobile-primary-rating">
                 <small>Edge</small>
                 <Rating value={lineup.gestalt_score} />
               </span>
             </div>
             <div className="mobile-lineup-roster">
+              <LineupAvatarStrip players={lineup.player_ids.map((player_id, index) => ({ player_id, player_name: lineup.player_names[index] }))} />
               {lineup.player_names.map((name, index) => <a key={lineup.player_ids[index]} className="player-name-link" href={playerProfileHref(lineup.player_ids[index])}>{name}</a>)}
             </div>
             <dl className="mobile-metric-grid mobile-lineup-metrics">
@@ -2555,7 +3285,7 @@ function PlayerRatingSparkline({ player }: { player: Player }) {
   );
 }
 
-function PlayerHeadshot({ player }: { player: Player }) {
+function PlayerHeadshot({ player }: { player: PlayerIdentity }) {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => setFailed(false), [player.player_id]);
