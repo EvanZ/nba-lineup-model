@@ -2362,6 +2362,7 @@ function TeamSeasonPage({
   season?: string;
   onLoadInLab: (side: Side, lineup: RankedLineup, season: string) => void;
 }) {
+  const isCompact = useMediaQuery("(max-width: 720px)");
   const [payload, setPayload] = useState<TeamSeasonPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2493,7 +2494,7 @@ function TeamSeasonPage({
             </div>
             <a href="#rankings">All player rankings <ArrowUpRight size={15} aria-hidden="true" /></a>
           </div>
-          <div className="rankings-table-wrap">
+          {!isCompact && <div className="rankings-table-wrap">
             <table className="rankings-table team-roster-table">
               <thead>
                 <tr>
@@ -2520,7 +2521,31 @@ function TeamSeasonPage({
                 </tr>)}
               </tbody>
             </table>
-          </div>
+          </div>}
+          {isCompact && <ol className="mobile-card-list team-roster-mobile-list" aria-label={`${displayName} player ratings`}>
+            {players.map((player) => <li className="mobile-player-card" key={player.player_id}>
+              <div className="mobile-card-heading">
+                <span className="mobile-card-rank">#{player.rank}</span>
+                <a className="mobile-player-identity" href={playerProfileHref(player.player_id)}>
+                  <PlayerHeadshot player={player} />
+                  <span>
+                    <strong>{player.player_name}</strong>
+                    <small>{player.position}</small>
+                  </span>
+                </a>
+                <span className="mobile-primary-rating">
+                  <small>NAIL</small>
+                  <Rating value={player.rapm} />
+                </span>
+              </div>
+              <dl className="mobile-metric-grid team-roster-mobile-metrics">
+                <div><dt>Offense</dt><dd>{formatOptionalRating(player.offense_rating)}</dd></div>
+                <div><dt>Defense</dt><dd>{formatOptionalRating(player.defense_rating)}</dd></div>
+                <div><dt>Possessions</dt><dd>{wholeNumber.format(player.possessions)}</dd></div>
+                <div><dt>Games</dt><dd>{player.games}</dd></div>
+              </dl>
+            </li>)}
+          </ol>}
         </section>}
 
         {!isLoading && <section className="team-lineups-section" aria-labelledby="team-lineups-title">

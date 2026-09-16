@@ -946,7 +946,6 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .rankings-table-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rankings-player-picker, .mobile-sort-controls { grid-column: 1 / -1; width: 100%; }
   .rankings-table-wrap { display: none; }
-  .team-roster-section .rankings-table-wrap { display: block; }
   .team-page-toolbar { align-items: stretch; flex-direction: column; }
   .team-page-controls { align-items: stretch; flex-direction: column; }
   .team-page-toolbar .rankings-season, .team-lineup-heading-actions .rankings-minimum-possessions { justify-content: space-between; }
@@ -955,7 +954,12 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .team-lineup-heading-actions .team-lineup-search { width: 100%; }
   .team-page-hero-content { grid-template-columns: 1fr; gap: 28px; }
   .team-win-history { padding: 24px 0 0; border-top: 1px solid #d9d6ce; border-left: 0; }
-  .team-lineup-list { grid-template-columns: 1fr; }
+  .team-lineup-list { grid-template-columns: 1fr; gap: 10px; border-top: 0; }
+  .team-lineup-list > li { grid-template-columns: 28px minmax(0, 1fr); column-gap: 9px; padding: 14px; border: 1px solid #d9d6ce; border-radius: 4px; background: #fffefa; }
+  .team-lineup-rank { padding-top: 3px; }
+  .team-lineup-list .lineup-avatar-strip { margin-bottom: 8px; }
+  .team-lineup-metrics { gap: 5px 7px; margin-top: 10px; }
+  .team-lineup-list .lineup-lab-actions { margin-top: 12px; }
   .global-search-backdrop { padding: 36px 14px 14px; }
   .global-search-dialog { padding: 18px; box-shadow: 5px 5px 0 #17201c; }
   .global-search-dialog-header h2 { font-size: 27px; }
