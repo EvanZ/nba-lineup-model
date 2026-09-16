@@ -137,9 +137,9 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .win-projections-doc-link { display: inline-flex; align-items: center; gap: 5px; margin-top: 18px; color: #245a47; font-size: 14px; font-weight: 800; text-decoration-color: #e8502f; text-decoration-thickness: 1px; text-underline-offset: 4px; }
 .win-projections-doc-link:hover { color: #17201c; }
 .win-projections-doc-link:focus-visible { outline: 2px solid #e8502f; outline-offset: 4px; }
-.win-projections-workspace { display: grid; grid-template-columns: minmax(430px, 0.9fr) minmax(520px, 1.1fr); align-items: start; gap: 32px; padding: 20px 0 32px; border-top: 2px solid #17201c; border-bottom: 1px solid #d9d6ce; }
+.win-projections-workspace { display: grid; grid-template-columns: minmax(360px, 0.75fr) minmax(0, 1.25fr); align-items: start; gap: 32px; padding: 20px 0 32px; border-top: 2px solid #17201c; border-bottom: 1px solid #d9d6ce; }
 .win-forecast { min-width: 0; padding: 0 32px 0 0; border-right: 1px solid #d9d6ce; }
-.win-team-panel { min-width: 0; }
+.win-team-panel { container-name: win-team-panel; container-type: inline-size; min-width: 0; }
 .win-forecast-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
 .win-forecast-heading .eyebrow { margin: 0 0 7px; }
 .win-forecast h2 { margin: 0; color: #17201c; font-size: 25px; line-height: 1; }
@@ -1074,4 +1074,11 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .model-identity > p:last-child { grid-column: auto; }
   .about-equation h2, .about-section-heading h2 { font-size: 27px; }
   .model-formula { font-size: 13px; }
+}
+
+@container win-team-panel (max-width: 680px) {
+  .win-projections-table-wrap { display: none; }
+  .win-projections-mobile-list { display: grid; gap: 10px; margin: 0; padding: 12px 0 0; list-style: none; }
+  .win-projections-mobile-list li { padding: 13px; border: 1px solid #d9d6ce; border-radius: 4px; background: #fffefa; }
+  .win-projections-mobile-list li.has-minute-override { margin: 0; padding: 13px; background: #edf2e9; }
 }
