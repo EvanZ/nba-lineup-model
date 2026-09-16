@@ -46,6 +46,7 @@ DEFAULT_HISTORICAL_REALIZED_PROFILE_CACHE_DIR = Path("artifacts/web/historical_r
 DEFAULT_PRESEASON_RANKINGS_CACHE_DIR = Path("artifacts/web/preseason_rankings")
 DEFAULT_PRESEASON_PROFILES_CACHE_DIR = Path("artifacts/web/preseason_profiles")
 DEFAULT_PLAYER_ROTATION_HISTORY_CACHE_DIR = Path("artifacts/web/player_rotation_history")
+DEFAULT_TEAM_WIN_HISTORY_CACHE_DIR = Path("artifacts/web/team_win_history")
 DEFAULT_TEAM_ROSTERS_DIR = Path("data/curated/team_rosters")
 DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path("artifacts/models/forward_draft_history_cold_start")
 # Keep the artifact identifier distinct from the public release name.
@@ -620,9 +621,14 @@ class LineupEvaluator:
             season=season,
             players=players,
         )
-        team_win_histories = _build_team_gestalt_win_histories(
-            historical_rankings,
-            team_splits_frame,
+        team_win_history_cache_path = team_win_history_path(MODEL_ARTIFACT, run_id)
+        team_win_histories = (
+            _load_team_gestalt_win_history_cache(team_win_history_cache_path)
+            if team_win_history_cache_path.is_file()
+            else _build_team_gestalt_win_histories(
+                historical_rankings,
+                team_splits_frame,
+            )
         )
         players["rating_history"] = (
             players["player_id"].map(player_rating_histories).map(lambda history: history or [])
@@ -3658,6 +3664,54 @@ def player_rotation_history_path(model_artifact: str, run_id: str) -> Path:
     """Return the compact observed-and-forward rotation history for player bios."""
 
     return DEFAULT_PLAYER_ROTATION_HISTORY_CACHE_DIR / model_artifact / f"{run_id}.parquet"
+
+
+def team_win_history_path(model_artifact: str, run_id: str) -> Path:
+    """Return the compact historical team-wins cache for one web release."""
+
+    return DEFAULT_TEAM_WIN_HISTORY_CACHE_DIR / model_artifact / f"{run_id}.parquet"
+
+
+def _load_team_gestalt_win_history_cache(path: Path) -> dict[str, list[dict[str, Any]]]:
+    """Load completed actual wins and Gestalt PyWins without raw schedules."""
+
+    frame = pd.read_parquet(path)
+    required = {
+        "team",
+        "season",
+        "games",
+        "actual_wins",
+        "gestalt_pywins",
+        "gestalt_rating",
+    }
+    missing = sorted(required - set(frame))
+    if missing or frame.empty:
+        detail = ", ".join(missing) if missing else "no rows"
+        raise LineupEvaluationError(f"Team win-history cache is invalid: {detail}")
+    output = frame.loc[:, sorted(required)].copy()
+    output["team"] = output["team"].astype(str).str.upper()
+    output["season"] = output["season"].astype(str)
+    for column in ("games", "actual_wins", "gestalt_pywins", "gestalt_rating"):
+        output[column] = pd.to_numeric(output[column], errors="coerce")
+    if (
+        output.duplicated(["team", "season"]).any()
+        or not np.isfinite(
+            output.loc[:, ["games", "actual_wins", "gestalt_pywins", "gestalt_rating"]]
+        ).to_numpy().all()
+        or output["games"].le(0).any()
+        or output["actual_wins"].lt(0).any()
+        or output["actual_wins"].gt(output["games"]).any()
+    ):
+        raise LineupEvaluationError("Team win-history cache has invalid team-season rows")
+    histories: dict[str, list[dict[str, Any]]] = {}
+    for team, rows in output.groupby("team", sort=False):
+        ordered = rows.sort_values("season", kind="stable")
+        histories[str(team)] = _records(
+            ordered.loc[
+                :, ["season", "games", "actual_wins", "gestalt_pywins", "gestalt_rating"]
+            ]
+        )
+    return histories
 
 
 def team_roster_path(season: str) -> Path:

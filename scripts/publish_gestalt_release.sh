@@ -25,6 +25,7 @@ PRESEASON_PROFILE_CACHE="artifacts/web/preseason_profiles/${MODEL_ARTIFACT}/${RU
 CONSTRAINED_SPLIT_CACHE="artifacts/web/constrained_split_ratings/${MODEL_ARTIFACT}/${RUN_ID}"
 WIN_PROJECTION_CACHE="artifacts/web/win_projections/${MODEL_ARTIFACT}/${RUN_ID}.json"
 PLAYER_ROTATION_HISTORY_CACHE="artifacts/web/player_rotation_history/${MODEL_ARTIFACT}/${RUN_ID}.parquet"
+TEAM_WIN_HISTORY_CACHE="artifacts/web/team_win_history/${MODEL_ARTIFACT}/${RUN_ID}.parquet"
 RELEASE_MANIFEST="artifacts/web/releases/${MODEL_ARTIFACT}/${RUN_ID}/bundle_manifest.json"
 PANEL="data/analytical/player_season_panel"
 CURRENT_ROSTERS="data/curated/team_rosters/2026-27"
@@ -35,6 +36,7 @@ cd "$ROOT_DIR"
 uv run nba-build-gestalt-win-projections
 uv run nba-build-gestalt-team-strength-win-projections
 uv run nba-build-gestalt-player-rotation-history
+uv run nba-build-gestalt-team-win-history
 uv run nba-validate-gestalt-release --season "$DISPLAY_SEASON" --run-id "$RUN_ID"
 
 required_paths=(
@@ -51,6 +53,7 @@ required_paths=(
   "$CONSTRAINED_SPLIT_CACHE"
   "$WIN_PROJECTION_CACHE"
   "$PLAYER_ROTATION_HISTORY_CACHE"
+  "$TEAM_WIN_HISTORY_CACHE"
   "$RELEASE_MANIFEST"
   "$PANEL"
   "$CURRENT_ROSTERS"
@@ -79,6 +82,7 @@ mkdir -p "$(dirname "$STAGING_DIR/$PRESEASON_PROFILE_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$CONSTRAINED_SPLIT_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$WIN_PROJECTION_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$PLAYER_ROTATION_HISTORY_CACHE")"
+mkdir -p "$(dirname "$STAGING_DIR/$TEAM_WIN_HISTORY_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$RELEASE_MANIFEST")"
 mkdir -p "$STAGING_DIR/$CURRENT_ROSTERS"
 mkdir -p "$(dirname "$STAGING_DIR/$PRIOR_ROSTER_SNAPSHOT")"
@@ -102,6 +106,7 @@ rsync -a "$PRESEASON_PROFILE_CACHE/" "$STAGING_DIR/$PRESEASON_PROFILE_CACHE/"
 rsync -a "$CONSTRAINED_SPLIT_CACHE/" "$STAGING_DIR/$CONSTRAINED_SPLIT_CACHE/"
 rsync -a "$WIN_PROJECTION_CACHE" "$STAGING_DIR/$WIN_PROJECTION_CACHE"
 rsync -a "$PLAYER_ROTATION_HISTORY_CACHE" "$STAGING_DIR/$PLAYER_ROTATION_HISTORY_CACHE"
+rsync -a "$TEAM_WIN_HISTORY_CACHE" "$STAGING_DIR/$TEAM_WIN_HISTORY_CACHE"
 rsync -a "$RELEASE_MANIFEST" "$STAGING_DIR/$RELEASE_MANIFEST"
 rsync -a "$PANEL/" "$STAGING_DIR/$PANEL/"
 rsync -a "$CURRENT_ROSTERS/" "$STAGING_DIR/$CURRENT_ROSTERS/"
@@ -122,6 +127,7 @@ cat > "$STAGING_DIR/release.json" <<EOF
   "constrained_split_cache": "${CONSTRAINED_SPLIT_CACHE}",
   "win_projection_cache": "${WIN_PROJECTION_CACHE}",
   "player_rotation_history_cache": "${PLAYER_ROTATION_HISTORY_CACHE}",
+  "team_win_history_cache": "${TEAM_WIN_HISTORY_CACHE}",
   "bundle_manifest": "${RELEASE_MANIFEST}"
 }
 EOF

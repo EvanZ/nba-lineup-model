@@ -31,6 +31,7 @@ from nba_lineup_model.web_api.inference import (
     player_team_splits_path,
     preseason_rankings_path,
     published_player_ratings_path,
+    team_win_history_path,
 )
 from nba_lineup_model.web_api.win_projections import win_projection_cache_path
 
@@ -207,6 +208,9 @@ def validate_release_bundle(
     rotation_history_path = player_rotation_history_path(MODEL_ARTIFACT, selected_run_id)
     rotation_history = _read_parquet(rotation_history_path, row_counts=row_counts)
     _validate_player_rotation_history(rotation_history, win_cache=win_cache)
+    team_win_history_path_ = team_win_history_path(MODEL_ARTIFACT, selected_run_id)
+    team_win_history = _read_parquet(team_win_history_path_, row_counts=row_counts)
+    _validate_team_win_history(team_win_history, required_seasons=model_seasons)
 
     model_files = sorted(path for path in run_dir.rglob("*") if path.is_file())
     numerical_files = [
@@ -221,6 +225,7 @@ def validate_release_bundle(
         preseason_metadata_path,
         win_cache_path,
         rotation_history_path,
+        team_win_history_path_,
     ]
     manifest = {
         "schema_version": 1,
@@ -401,6 +406,38 @@ def _validate_player_rotation_history(frame: pd.DataFrame, *, win_cache: dict[st
         82.0 * joined["baseline_minutes_per_game"],
         label="Rotation-history projected total minutes",
     )
+
+
+def _validate_team_win_history(frame: pd.DataFrame, *, required_seasons: list[str]) -> None:
+    """Require the Team page's schedule-independent historical chart cache."""
+
+    required = {
+        "team",
+        "season",
+        "games",
+        "actual_wins",
+        "gestalt_pywins",
+        "gestalt_rating",
+    }
+    missing = sorted(required - set(frame))
+    if missing:
+        raise ReleaseValidationError("Team win history lacks " + ", ".join(missing))
+    if frame.empty or frame.duplicated(["team", "season"]).any():
+        raise ReleaseValidationError("Team win history is empty or has duplicate team-season rows")
+    _require_finite(
+        frame,
+        ("games", "actual_wins", "gestalt_pywins", "gestalt_rating"),
+        label="team win history",
+    )
+    games = pd.to_numeric(frame["games"], errors="raise")
+    actual_wins = pd.to_numeric(frame["actual_wins"], errors="raise")
+    if games.le(0).any() or actual_wins.lt(0).any() or actual_wins.gt(games).any():
+        raise ReleaseValidationError("Team win history has invalid completed records")
+    missing_seasons = sorted(set(required_seasons) - set(frame["season"].astype(str)))
+    if missing_seasons:
+        raise ReleaseValidationError(
+            "Team win history lacks completed model seasons " + ", ".join(missing_seasons)
+        )
 
 
 def _validate_lineup_rankings(

@@ -30,6 +30,7 @@ from nba_lineup_model.web_api.inference import (
     _aggregate_observed_lineups,
     _build_team_gestalt_win_histories,
     _historical_ranking_catalog,
+    _load_team_gestalt_win_history_cache,
     _observed_lineup_side_rows,
     _player_latest_teams_by_season,
     _player_league_leader_histories,
@@ -39,6 +40,7 @@ from nba_lineup_model.web_api.inference import (
     _warm_response_cache,
     build_player_team_splits,
     build_published_player_ratings,
+    team_win_history_path,
 )
 
 
@@ -83,6 +85,30 @@ def test_team_gestalt_win_history_weights_player_ratings_by_team_exposure(monkey
         }
     ]
     assert histories["OTH"][0]["gestalt_rating"] == pytest.approx(0.0)
+
+
+def test_team_gestalt_win_history_cache_round_trips_without_raw_schedules(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(web_inference, "DEFAULT_TEAM_WIN_HISTORY_CACHE_DIR", tmp_path)
+    path = team_win_history_path("test-model", "test-run")
+    path.parent.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "team": ["TST", "TST", "OTH"],
+            "season": ["2023-24", "2024-25", "2024-25"],
+            "games": [82, 82, 82],
+            "actual_wins": [42, 50, 32],
+            "gestalt_pywins": [43.2, 59.569556, 22.430444],
+            "gestalt_rating": [0.1, 7.5, -7.5],
+        }
+    ).to_parquet(path, index=False)
+
+    histories = _load_team_gestalt_win_history_cache(path)
+
+    assert [row["season"] for row in histories["TST"]] == ["2023-24", "2024-25"]
+    assert histories["TST"][1]["actual_wins"] == 50
+    assert histories["OTH"][0]["gestalt_rating"] == pytest.approx(-7.5)
 
 
 def test_win_projection_preview_cache_overrides_the_published_cache(
@@ -379,7 +405,27 @@ def test_global_search_and_team_season_endpoints_cover_historical_team_navigatio
             "actual_defensive_rating": [108.2, 109.0, 108.2],
         }
     )
-    client = TestClient(create_app(replace(evaluator, players=players, observed_lineups=observed_lineups)))
+    team_win_histories = {
+        "DEN": [
+            {
+                "season": "2025-26",
+                "games": 82,
+                "actual_wins": 50,
+                "gestalt_pywins": 54.2,
+                "gestalt_rating": 2.1,
+            }
+        ]
+    }
+    client = TestClient(
+        create_app(
+            replace(
+                evaluator,
+                players=players,
+                observed_lineups=observed_lineups,
+                team_win_histories=team_win_histories,
+            )
+        )
+    )
 
     player_search = client.get("/api/search", params={"q": "Jokic"})
     assert player_search.status_code == 200
@@ -411,6 +457,7 @@ def test_global_search_and_team_season_endpoints_cover_historical_team_navigatio
     assert payload["lineups"][0]["rank"] == 1
     assert payload["lineups"][0]["team"] == "DEN"
     assert payload["lineups"][0]["actual_net_rating"] == 8.1
+    assert payload["win_history"] == team_win_histories["DEN"]
 
 
 def test_player_profile_includes_rotation_history_when_published() -> None:
