@@ -484,6 +484,9 @@ def build_incumbent_team_strength_minutes_payload(
         / cold_start_model.feature_scale[strength_index]
     )
     candidate = baseline_players.copy()
+    # The promoted payload can already carry this diagnostic. The candidate
+    # cold-start prediction is authoritative for the team-strength variant.
+    candidate = candidate.drop(columns="uses_draft_cold_start_prior", errors="ignore")
     candidate["player_id"] = pd.to_numeric(candidate["player_id"], errors="raise").astype(
         "int64"
     )
