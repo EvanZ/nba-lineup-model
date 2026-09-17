@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 import joblib
 import numpy as np
 import pandas as pd
+from scipy.cluster.hierarchy import linkage
+from scipy.spatial.distance import squareform
 
 from nba_lineup_model.modeling.contextual_features import (
     CONTEXT_FEATURE_SET_NAIL_V121_PRUNED_NONADDITIVE,
@@ -877,6 +879,62 @@ class LineupEvaluator:
             "win_history": self.team_win_histories.get(normalized_team, []),
             "lineups": lineups,
         }
+
+    def team_rotation(
+        self,
+        team: str,
+        *,
+        season: str | None = None,
+        max_players: int = 30,
+        ordering: str = "hclust",
+        order_metric: str = "floor",
+    ) -> dict[str, Any]:
+        """Return a clustered team rotation map from regular-season stints.
+
+        The map intentionally has no rating inputs. Shared-court exposure and
+        all-league floor-time correlation are observed rotation facts, so it
+        can help separate a player-value question from a recurring usage or
+        substitution pattern.
+        """
+
+        normalized_team = team.strip().upper()
+        selected_season = season or self.season
+        if max_players < 2 or max_players > 30:
+            raise LineupEvaluationError("Rotation maps require between two and 30 players")
+        if ordering not in {"aoe", "fpc", "hclust"}:
+            raise LineupEvaluationError("Rotation map ordering must be AOE, FPC, or hclust")
+        if order_metric not in {"overlap", "floor"}:
+            raise LineupEvaluationError(
+                "Rotation map ordering must use on-court similarity or floor correlation"
+            )
+        if selected_season == PRESEASON_PREVIEW_SEASON:
+            raise LineupEvaluationError("Observed rotation data is unavailable for preseason rosters")
+
+        # Rotation structure is an observed-data view. Do not require the
+        # selected season's scoring state (or its optional O/D sidecar) just
+        # to resolve player names for a historical heatmap.
+        catalog = self._ranking_catalog()
+        season_catalog = catalog.loc[
+            catalog["season"].astype(str).eq(selected_season),
+            ["player_id", "player_name"],
+        ].drop_duplicates("player_id", keep="first")
+        names = dict(
+            zip(
+                season_catalog["player_id"].astype(int),
+                season_catalog["player_name"].astype(str),
+                strict=True,
+            )
+        )
+        stints = read_rapm_stints(selected_season)
+        return _build_team_rotation_map(
+            stints,
+            team=normalized_team,
+            season=selected_season,
+            player_names=names,
+            max_players=max_players,
+            ordering=ordering,
+            order_metric=order_metric,
+        )
 
     def _ranking_catalog(self) -> pd.DataFrame:
         """Return every published player-season ranking, including the preseason preview."""
@@ -4120,6 +4178,248 @@ def _observed_lineup_side_rows(
         output["offensive_edge"] = offensive_edge
         output["defensive_edge"] = defensive_edge
     return pd.DataFrame(output)
+
+
+def _build_team_rotation_map(
+    stints: pd.DataFrame,
+    *,
+    team: str,
+    season: str,
+    player_names: dict[int, str],
+    max_players: int,
+    ordering: str,
+    order_metric: str,
+) -> dict[str, Any]:
+    """Summarize one club's observed rotation with shared-floor and correlation views."""
+
+    home = stints.loc[stints["home_team_tricode"].astype(str).eq(team)].copy()
+    away = stints.loc[stints["away_team_tricode"].astype(str).eq(team)].copy()
+    if home.empty and away.empty:
+        raise LineupEvaluationError(
+            f"Observed rotation data is unavailable for {_team_display_name(team)} in {season}"
+        )
+
+    rows = pd.concat(
+        [
+            home.loc[:, ["game_id", "home_player_ids", "possessions", "duration_seconds"]].rename(
+                columns={"home_player_ids": "player_ids"}
+            ),
+            away.loc[:, ["game_id", "away_player_ids", "possessions", "duration_seconds"]].rename(
+                columns={"away_player_ids": "player_ids"}
+            ),
+        ],
+        ignore_index=True,
+    )
+    rows["player_ids"] = rows["player_ids"].map(
+        lambda values: tuple(int(player_id) for player_id in values)
+    )
+    possession_by_player: dict[int, float] = {}
+    minutes_by_game: dict[tuple[str, int], float] = {}
+    shared_possessions_by_pair: dict[tuple[int, int], float] = {}
+    for row in rows.itertuples(index=False):
+        player_ids = tuple(row.player_ids)
+        possessions = float(row.possessions)
+        minutes = float(row.duration_seconds) / 60.0
+        for player_id in player_ids:
+            possession_by_player[player_id] = possession_by_player.get(player_id, 0.0) + possessions
+            key = (str(row.game_id), player_id)
+            minutes_by_game[key] = minutes_by_game.get(key, 0.0) + minutes
+        for left_index, left_player_id in enumerate(player_ids):
+            for right_player_id in player_ids[left_index:]:
+                key = tuple(sorted((left_player_id, right_player_id)))
+                shared_possessions_by_pair[key] = shared_possessions_by_pair.get(key, 0.0) + possessions
+
+    player_ids = sorted(
+        possession_by_player,
+        key=lambda player_id: (-possession_by_player[player_id], player_names.get(player_id, ""), player_id),
+    )[:max_players]
+    if len(player_ids) < 2:
+        raise LineupEvaluationError(
+            f"Observed rotation data is unavailable for {_team_display_name(team)} in {season}"
+        )
+
+    game_ids = sorted(rows["game_id"].astype(str).unique().tolist())
+    player_count = len(player_ids)
+    shared_possessions = np.zeros((player_count, player_count), dtype=float)
+    for left_index, left_player_id in enumerate(player_ids):
+        for right_index, right_player_id in enumerate(player_ids):
+            shared_possessions[left_index, right_index] = shared_possessions_by_pair.get(
+                tuple(sorted((left_player_id, right_player_id))),
+                0.0,
+            )
+    exposure = np.asarray([possession_by_player[player_id] for player_id in player_ids], dtype=float)
+    # Possession-weighted Jaccard similarity measures the share of the two
+    # players' combined on-court exposure that they actually shared. Unlike a
+    # lower-exposure denominator, it cannot make a limited player appear to
+    # belong to a starter group merely by sharing much of their own floor time
+    # with one high-minute player.
+    shared_court_similarity = shared_possessions / (
+        exposure[:, np.newaxis] + exposure[np.newaxis, :] - shared_possessions
+    )
+    np.fill_diagonal(shared_court_similarity, 1.0)
+
+    minute_matrix = np.asarray(
+        [
+            [minutes_by_game.get((game_id, player_id), 0.0) for player_id in player_ids]
+            for game_id in game_ids
+        ],
+        dtype=float,
+    )
+
+    # This follows the original corrplot construction. Each NBA stint is a
+    # floor-time observation; an active player's entry is that stint's
+    # possession count and every other entry is zero. Although the original
+    # description called these player dummies, its source matrix encoded
+    # possession-weighted floor time in the active cells. The population is
+    # league-wide rather than team-only, just as in the historical charts.
+    floor_correlation = _floor_time_correlation(stints, player_ids)
+
+    ordering_matrix = shared_court_similarity if order_metric == "overlap" else floor_correlation
+    ordering_matrix = (ordering_matrix + ordering_matrix.T) / 2.0
+    np.fill_diagonal(ordering_matrix, 1.0)
+
+    # Match corrplot's three principal ordering strategies. Its hclust path
+    # applies complete linkage to as.dist(1 - corr); apply that same rule to
+    # the selected symmetric rotation matrix.
+    branches: list[dict[str, list[float]]] = []
+    if player_count > 2:
+        if ordering == "hclust":
+            distance = 1.0 - ordering_matrix
+            np.fill_diagonal(distance, 0.0)
+            hierarchy = linkage(
+                squareform(distance, checks=False),
+                method="complete",
+            )
+            # A linkage tree is unchanged when either child is drawn first.
+            # Orient those arbitrary left-right choices by on-court exposure,
+            # which keeps the primary rotation in the upper-left corner while
+            # preserving corrplot's complete-linkage clustering exactly.
+            order, branches = _exposure_oriented_hclust_dendrogram(hierarchy, exposure)
+        else:
+            eigenvalues, eigenvectors = np.linalg.eigh(ordering_matrix)
+            principal = np.argsort(eigenvalues)[::-1]
+            first = eigenvectors[:, principal[0]]
+            if ordering == "fpc":
+                order = np.argsort(first)
+            else:
+                second = eigenvectors[:, principal[1]]
+                ratio = np.divide(second, first, out=np.zeros_like(first), where=first != 0.0)
+                angles = np.where(
+                    first > 0.0,
+                    np.arctan(ratio),
+                    np.arctan(ratio) + np.pi,
+                )
+                # Eigenvector signs are arbitrary. Use the opposite circular
+                # direction so the rendered AOE order follows the map's
+                # established top-to-bottom presentation.
+                order = np.argsort(angles)[::-1]
+    else:
+        order = np.arange(player_count, dtype=int)
+    player_ids = [player_ids[index] for index in order]
+    shared_possessions = shared_possessions[np.ix_(order, order)]
+    shared_court_similarity = shared_court_similarity[np.ix_(order, order)]
+    floor_correlation = floor_correlation[np.ix_(order, order)]
+    minute_matrix = minute_matrix[:, order]
+
+    return {
+        "team": team,
+        "season": season,
+        "game_count": len(game_ids),
+        "players": [
+            {
+                "player_id": player_id,
+                "player_name": player_names.get(player_id, f"Player {player_id}"),
+                "on_court_possessions": float(possession_by_player[player_id]),
+                "on_court_minutes": float(minute_matrix[:, index].sum()),
+                "games": int(np.count_nonzero(minute_matrix[:, index])),
+            }
+            for index, player_id in enumerate(player_ids)
+        ],
+        "shared_possessions": shared_possessions.round(6).tolist(),
+        "shared_court_similarity": shared_court_similarity.round(6).tolist(),
+        "floor_correlation": floor_correlation.round(6).tolist(),
+        "dendrogram": {"branches": branches},
+        "ordering": ordering,
+        "order_metric": order_metric,
+    }
+
+
+def _floor_time_correlation(stints: pd.DataFrame, player_ids: list[int]) -> np.ndarray:
+    """Calculate Pearson correlation of possession-weighted player floor time."""
+
+    player_positions = {player_id: index for index, player_id in enumerate(player_ids)}
+    floor_time = np.zeros((len(stints), len(player_ids)), dtype=float)
+    if len(floor_time) < 2:
+        return np.eye(len(player_ids), dtype=float)
+    possessions = stints["possessions"].to_numpy(dtype=float)
+    lineup_rows = stints[["home_player_ids", "away_player_ids"]].itertuples(index=False)
+    for row_index, row in enumerate(lineup_rows):
+        for lineup in (row.home_player_ids, row.away_player_ids):
+            for player_id in lineup:
+                position = player_positions.get(int(player_id))
+                if position is not None:
+                    floor_time[row_index, position] = possessions[row_index]
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        correlation = np.corrcoef(floor_time, rowvar=False)
+    correlation = np.nan_to_num(correlation, nan=0.0, posinf=0.0, neginf=0.0)
+    correlation = (correlation + correlation.T) / 2.0
+    np.fill_diagonal(correlation, 1.0)
+    return correlation
+
+
+def _exposure_oriented_hclust_dendrogram(
+    hierarchy: np.ndarray,
+    exposure: np.ndarray,
+) -> tuple[np.ndarray, list[dict[str, list[float]]]]:
+    """Render an unchanged linkage tree with its most-used branches first."""
+
+    player_count = len(exposure)
+    root = 2 * player_count - 2
+
+    def leaves_and_exposure(node: int) -> tuple[list[int], float]:
+        if node < player_count:
+            return [node], float(exposure[node])
+        left_node, right_node = hierarchy[node - player_count, :2].astype(int)
+        left_leaves, left_exposure = leaves_and_exposure(int(left_node))
+        right_leaves, right_exposure = leaves_and_exposure(int(right_node))
+        if right_exposure > left_exposure:
+            return right_leaves + left_leaves, right_exposure + left_exposure
+        return left_leaves + right_leaves, left_exposure + right_exposure
+
+    ordered_leaves, _ = leaves_and_exposure(root)
+    positions = {leaf: 5.0 + 10.0 * index for index, leaf in enumerate(ordered_leaves)}
+    maximum_height = float(hierarchy[-1, 2]) if len(hierarchy) else 0.0
+    leaf_span = 10.0 * max(player_count - 1, 1)
+    branches: list[dict[str, list[float]]] = []
+
+    def branch_geometry(node: int) -> tuple[float, float]:
+        if node < player_count:
+            return positions[node], 0.0
+        left_node, right_node = hierarchy[node - player_count, :2].astype(int)
+        left_x, left_height = branch_geometry(int(left_node))
+        right_x, right_height = branch_geometry(int(right_node))
+        height = float(hierarchy[node - player_count, 2])
+        branches.append(
+            {
+                "x": [
+                    (left_x - 5.0) / leaf_span,
+                    (left_x - 5.0) / leaf_span,
+                    (right_x - 5.0) / leaf_span,
+                    (right_x - 5.0) / leaf_span,
+                ],
+                "height": [
+                    left_height / maximum_height if maximum_height else 0.0,
+                    height / maximum_height if maximum_height else 0.0,
+                    height / maximum_height if maximum_height else 0.0,
+                    right_height / maximum_height if maximum_height else 0.0,
+                ],
+            }
+        )
+        return (left_x + right_x) / 2.0, height
+
+    branch_geometry(root)
+    return np.asarray(ordered_leaves, dtype=int), branches
 
 
 def _aggregate_observed_lineups(rows: pd.DataFrame, names: dict[int, str]) -> pd.DataFrame:

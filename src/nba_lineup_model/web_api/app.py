@@ -225,6 +225,27 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         except LineupEvaluationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
+    @app.get("/api/teams/{team}/rotation")
+    def team_rotation(
+        team: str,
+        season: str | None = None,
+        max_players: int = Query(default=30, ge=2, le=30),
+        ordering: str = Query(default="hclust", pattern="^(aoe|fpc|hclust)$"),
+        order_metric: str = Query(default="floor", pattern="^(overlap|floor)$"),
+    ) -> dict[str, object]:
+        """Serve observed on-court overlap and floor-time rotation structure."""
+
+        try:
+            return get_evaluator().team_rotation(
+                team,
+                season=season,
+                max_players=max_players,
+                ordering=ordering,
+                order_metric=order_metric,
+            )
+        except LineupEvaluationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
     @app.get("/api/players/by-id")
     def players_by_id(
         player_id: Annotated[tuple[int, ...], Query()] = (),

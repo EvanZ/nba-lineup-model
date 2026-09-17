@@ -155,6 +155,30 @@ export type TeamSeasonPayload = {
   lineups: RankedLineup[];
 };
 
+export type TeamRotationPayload = {
+  team: string;
+  season: string;
+  game_count: number;
+  players: Array<{
+    player_id: number;
+    player_name: string;
+    on_court_possessions: number;
+    on_court_minutes: number;
+    games: number;
+  }>;
+  shared_possessions: number[][];
+  shared_court_similarity: number[][];
+  floor_correlation: number[][];
+  dendrogram: {
+    branches: Array<{
+      x: number[];
+      height: number[];
+    }>;
+  };
+  ordering: "aoe" | "fpc" | "hclust";
+  order_metric: "overlap" | "floor";
+};
+
 export type RosterMove = {
   player_id: number;
   player_name: string;

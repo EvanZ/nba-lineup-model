@@ -460,6 +460,135 @@ def test_global_search_and_team_season_endpoints_cover_historical_team_navigatio
     assert payload["win_history"] == team_win_histories["DEN"]
 
 
+def test_team_rotation_endpoint_returns_clustered_shared_floor_and_correlation_views(
+    monkeypatch,
+) -> None:
+    stints = pd.DataFrame(
+        {
+            "game_id": ["game-1", "game-1", "game-2", "game-2"],
+            "home_team_tricode": ["TST", "TST", "TST", "TST"],
+            "away_team_tricode": ["OTH", "OTH", "OTH", "OTH"],
+            "home_player_ids": [
+                [1, 2, 3, 4, 5],
+                [1, 2, 3, 4, 5],
+                [1, 2, 3, 4, 6],
+                [1, 2, 3, 4, 6],
+            ],
+            "away_player_ids": [[6, 7, 8, 9, 10]] * 4,
+            "possessions": [10.0, 5.0, 15.0, 10.0],
+            "duration_seconds": [300.0, 120.0, 480.0, 180.0],
+        }
+    )
+    monkeypatch.setattr(web_inference, "read_rapm_stints", lambda _: stints)
+
+    response = TestClient(create_app(_evaluator())).get(
+        "/api/teams/tst/rotation",
+        params={"season": "2025-26", "max_players": 6},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["team"] == "TST"
+    assert payload["season"] == "2025-26"
+    assert payload["game_count"] == 2
+    assert len(payload["players"]) == 6
+    assert {player["player_id"] for player in payload["players"]} == {1, 2, 3, 4, 5, 6}
+    assert all(player["player_name"] for player in payload["players"])
+
+    positions = {player["player_id"]: index for index, player in enumerate(payload["players"])}
+    first = positions[1]
+    fifth = positions[5]
+    sixth = positions[6]
+    assert payload["shared_possessions"][first][fifth] == pytest.approx(15.0)
+    assert payload["shared_possessions"][first][sixth] == pytest.approx(25.0)
+    assert payload["shared_court_similarity"][first][fifth] == pytest.approx(0.375)
+    assert payload["floor_correlation"][first][first] == pytest.approx(1.0)
+    assert np.allclose(
+        payload["shared_court_similarity"],
+        np.asarray(payload["shared_court_similarity"]).T,
+    )
+    assert np.allclose(payload["floor_correlation"], np.asarray(payload["floor_correlation"]).T)
+    assert len(payload["dendrogram"]["branches"]) == 5
+    assert all(
+        len(branch["x"]) == 4 and len(branch["height"]) == 4
+        for branch in payload["dendrogram"]["branches"]
+    )
+
+    for ordering in ("aoe", "fpc", "hclust"):
+        ordered_response = TestClient(create_app(_evaluator())).get(
+            "/api/teams/tst/rotation",
+            params={
+                "season": "2025-26",
+                "max_players": 6,
+                "ordering": ordering,
+                "order_metric": "floor",
+            },
+        )
+        assert ordered_response.status_code == 200
+        ordered_payload = ordered_response.json()
+        assert ordered_payload["ordering"] == ordering
+        assert ordered_payload["order_metric"] == "floor"
+        assert {player["player_id"] for player in ordered_payload["players"]} == {1, 2, 3, 4, 5, 6}
+        if ordering == "hclust":
+            assert len(ordered_payload["dendrogram"]["branches"]) == 5
+        else:
+            assert ordered_payload["dendrogram"]["branches"] == []
+
+
+def test_floor_correlation_uses_league_wide_possession_weighted_floor_time() -> None:
+    stints = pd.DataFrame(
+        {
+            "home_player_ids": [[1], [1], [7], [10]],
+            "away_player_ids": [[2], [8], [2], [9]],
+            "possessions": [2.0, 5.0, 3.0, 7.0],
+        }
+    )
+
+    correlation = web_inference._floor_time_correlation(stints, [1, 2])
+
+    # The original chart's active cells hold stint possessions, not a literal
+    # 1. The league-wide vectors are [2, 5, 0, 0] and [2, 0, 3, 0]. This guards
+    # against restricting the matrix to team games or reverting to a binary or
+    # game-minute correlation.
+    expected = np.corrcoef([2.0, 5.0, 0.0, 0.0], [2.0, 0.0, 3.0, 0.0])[0, 1]
+    assert correlation[0, 1] == pytest.approx(expected)
+    assert np.allclose(correlation, correlation.T)
+    assert np.allclose(np.diag(correlation), 1.0)
+
+
+def test_team_rotation_does_not_require_a_historical_scoring_state(monkeypatch) -> None:
+    stints = pd.DataFrame(
+        {
+            "game_id": ["game-1"],
+            "home_team_tricode": ["TST"],
+            "away_team_tricode": ["OTH"],
+            "home_player_ids": [[1, 2, 3, 4, 5]],
+            "away_player_ids": [[6, 7, 8, 9, 10]],
+            "possessions": [10.0],
+            "duration_seconds": [300.0],
+        }
+    )
+    evaluator = _evaluator()
+    object.__setattr__(
+        evaluator,
+        "historical_rankings",
+        evaluator.players.assign(season="2024-25"),
+    )
+    monkeypatch.setattr(web_inference, "read_rapm_stints", lambda _: stints)
+
+    response = TestClient(create_app(evaluator)).get(
+        "/api/teams/tst/rotation",
+        params={"season": "2024-25"},
+    )
+
+    assert response.status_code == 200
+    players_by_id = {
+        player["player_id"]: player["player_name"] for player in response.json()["players"]
+    }
+    assert set(players_by_id) == {1, 2, 3, 4, 5}
+    assert players_by_id[1] == "Nikola Jokić"
+
+
 def test_player_profile_includes_rotation_history_when_published() -> None:
     rotation_history = {
         1: [
