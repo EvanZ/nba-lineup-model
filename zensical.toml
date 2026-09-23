@@ -180,6 +180,7 @@ nav = [
     {"RAPM Aging Model" = "models/aging-model.md"},
     {"Prior-Centered RAPM" = "models/prior-rapm.md"},
     {"Offense/Defense RAPM" = "models/offense-defense-rapm.md"},
+    {"Four Factors RAPM" = "models/four-factors.md"},
     {"Box-Score RAPM Prior" = "models/box-score-prior.md"},
     {"Draft-Informed Cold Starts" = "models/draft-prior.md"},
     {"Replacement-Level Exposure Study" = "models/replacement-level.md"},

@@ -71,6 +71,7 @@ metrics, and malformed metric values.
 | Frozen lagged RAPM | Preseason 2024-25 player values scored on all 2025-26 oracle lineups |
 | Frozen aging prior | Preseason age, experience, prior RAPM, draft, and physical-profile values scored on the same oracle lineups |
 | Frozen O/D RAPM | Forward offense and defense player values scored on the same oracle lineups |
+| Four Factors RAPM | Completed-season player attribution for eFG%, turnover avoidance, ORB%, and FTA/FGA; descriptive only |
 | Box-score RAPM prior | Returning-player forecast from lagged RAPM and possession-native box profile |
 | Draft-informed cold starts | First-NBA-season RAPM diagnostic using draft profile fields only |
 | Replacement-level exposure study | Rejected coefficient-average diagnostic for the low-exposure player pool |
