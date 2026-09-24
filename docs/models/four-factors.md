@@ -58,6 +58,33 @@ completed-season descriptive attribution. Separate offensive and defensive
 factor components, stability charts, and any test as a NAIL prior remain
 pending Issue #18.
 
+## Forward Factor-State Plan
+
+The descriptive net fit is not the intended final player layer. The next
+contract uses the same forward, prior-centered player-state architecture as
+NAIL, but it does **not** reuse a total NAIL rating or a NAIL context term.
+Instead, it carries eight factor-side player states:
+
+- eFG offense and eFG defense;
+- turnover avoidance offense and forced-turnover defense;
+- ORB offense and ORB defense; and
+- FTR offense and FTR defense.
+
+For a component \(k\), a season-\(t\) coefficient is centered on a strictly
+available preseason state \(\mu_{i,k,t}\). Returning players receive a
+component-specific aging forecast from their prior completed factor state.
+Unseen players receive an exposure-aware cold-start prior based on preseason
+information such as draft capital, age, and position. Player states are
+league-zero-centered; factor league levels remain in the intercepts and
+factor-specific home-court/back-to-back controls.
+
+The completed-season fit updates each forward state through a prior-centered
+ridge. It does not include NAIL's additive profile or non-additive lineup
+context terms: the Four Factors are the target mechanisms, not another context
+residual layer. The aging and cold-start parameters will be selected and
+tested per factor-side component rather than copied mechanically from total
+NAIL.
+
 ## First Completed-Season Fit
 
 The initial 2025-26 fit selected independent ridge values of `0.03` for eFG%,
