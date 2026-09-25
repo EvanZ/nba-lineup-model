@@ -495,6 +495,30 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-history-table .nail-history-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 900; }
 .player-history-table .nail-rank-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
 .player-history-table td:has(.lineup-team-mark) { vertical-align: middle; }
+.four-factor-attribution { max-width: 620px; border-top: 2px solid #17201c; border-bottom: 1px solid #d9d6ce; }
+.four-factor-attribution-row { display: grid; grid-template-columns: minmax(150px, 1.7fr) repeat(2, minmax(100px, 1fr)); align-items: center; min-height: 44px; border-top: 1px solid #e2dfd7; }
+.four-factor-attribution-row:first-child { border-top: 0; }
+.four-factor-attribution-row > * { padding: 8px 10px; }
+.four-factor-attribution-row > *:not(:first-child) { border-left: 1px solid #e2dfd7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; }
+.four-factor-attribution-heading { min-height: 30px; color: #68716a; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.four-factor-attribution-row strong { color: #17201c; font-size: 13px; }
+.four-factor-attribution-row small { color: #68716a; font-family: inherit; font-size: 9px; font-weight: 700; }
+.four-factor-totals { display: flex; align-items: end; justify-content: end; gap: 16px; }
+.four-factor-total, .four-factor-split-total { display: grid; justify-items: end; gap: 2px; color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 800; line-height: 1; text-transform: uppercase; }
+.four-factor-total-rank { color: #8b928c; font-size: 8px; }
+.four-factor-total .rating-value { color: #245a47; font-family: Georgia, "Times New Roman", serif; font-size: 34px; font-weight: 400; line-height: 0.88; }
+.four-factor-total small { color: #68716a; font-family: inherit; font-size: 8px; font-weight: 800; }
+.four-factor-split-total > span > span { color: #8b928c; font-size: 8px; }
+.four-factor-split-total .rating-value { font-size: 18px; line-height: 0.95; }
+.four-factor-effect { display: grid; gap: 2px; min-width: 0; }
+.four-factor-effect-top { display: flex; align-items: center; gap: 3px; min-width: 0; white-space: nowrap; }
+.four-factor-rank { color: #8b928c !important; flex: 0 0 auto; font-size: 8px !important; }
+.four-factor-component { display: flex; align-items: baseline; gap: 3px; color: #68716a; font-size: 8px !important; text-transform: uppercase; }
+.four-factor-component .rating-value { font-size: 10px; }
+.four-factor-sparkline { width: 58px; height: 20px; flex: 0 1 58px; min-width: 0; overflow: visible; }
+.four-factor-sparkline-zero { stroke: #b8b8af; stroke-width: 0.8; stroke-dasharray: 2 2; }
+.four-factor-sparkline-line { fill: none; stroke: #245a47; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.four-factor-sparkline-point { fill: #e8502f; }
 .player-history-mobile-list { display: none; }
 .player-team-splits { display: grid; gap: 4px; min-width: 176px; color: #68716a; font-size: 11px; line-height: 1.25; white-space: nowrap; }
 .player-team-split { display: flex; align-items: center; gap: 7px; }
@@ -946,6 +970,14 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .player-forecast-grid { grid-template-columns: 1fr; }
   .player-forecast-total { padding-left: 0 !important; border-left: 0; border-top: 2px solid #17201c; }
   .player-history-mobile-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+  .four-factor-attribution { max-width: none; }
+  .four-factor-attribution-row { grid-template-columns: minmax(0, 1.45fr) repeat(2, minmax(0, 1fr)); min-height: 40px; }
+  .four-factor-attribution-row > * { padding: 7px 6px; }
+  .four-factor-total .rating-value { font-size: 29px; }
+  .four-factor-totals { gap: 10px; }
+  .four-factor-split-total .rating-value { font-size: 16px; }
+  .four-factor-effect { gap: 2px; }
+  .four-factor-sparkline { width: 38px; height: 18px; flex-basis: 38px; }
   .player-history-mobile-card { min-width: 0; padding: 14px; border: 1px solid #d9d6ce; border-radius: 4px; background: #fffefa; }
   .player-history-mobile-card.dnp { background: #faf8f3; color: #8e968f; }
   .player-history-mobile-card.forecast { background: #f1f5f6; }

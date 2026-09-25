@@ -26,6 +26,7 @@ CONSTRAINED_SPLIT_CACHE="artifacts/web/constrained_split_ratings/${MODEL_ARTIFAC
 WIN_PROJECTION_CACHE="artifacts/web/win_projections/${MODEL_ARTIFACT}/${RUN_ID}.json"
 PLAYER_ROTATION_HISTORY_CACHE="artifacts/web/player_rotation_history/${MODEL_ARTIFACT}/${RUN_ID}.parquet"
 TEAM_WIN_HISTORY_CACHE="artifacts/web/team_win_history/${MODEL_ARTIFACT}/${RUN_ID}.parquet"
+FOUR_FACTOR_EFFECTS="artifacts/models/analysis/forward_four_factor_offense_defense/2025-26/forward-four-factor-od-2025-26-20260924T062408Z-11a10c95/season_factor_side_effects.parquet"
 RELEASE_MANIFEST="artifacts/web/releases/${MODEL_ARTIFACT}/${RUN_ID}/bundle_manifest.json"
 PANEL="data/analytical/player_season_panel"
 RAPM_STINTS="data/analytical/rapm_stints"
@@ -55,6 +56,7 @@ required_paths=(
   "$WIN_PROJECTION_CACHE"
   "$PLAYER_ROTATION_HISTORY_CACHE"
   "$TEAM_WIN_HISTORY_CACHE"
+  "$FOUR_FACTOR_EFFECTS"
   "$RELEASE_MANIFEST"
   "$PANEL"
   "$RAPM_STINTS"
@@ -85,6 +87,7 @@ mkdir -p "$(dirname "$STAGING_DIR/$CONSTRAINED_SPLIT_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$WIN_PROJECTION_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$PLAYER_ROTATION_HISTORY_CACHE")"
 mkdir -p "$(dirname "$STAGING_DIR/$TEAM_WIN_HISTORY_CACHE")"
+mkdir -p "$(dirname "$STAGING_DIR/$FOUR_FACTOR_EFFECTS")"
 mkdir -p "$(dirname "$STAGING_DIR/$RELEASE_MANIFEST")"
 mkdir -p "$STAGING_DIR/$CURRENT_ROSTERS"
 mkdir -p "$(dirname "$STAGING_DIR/$PRIOR_ROSTER_SNAPSHOT")"
@@ -109,6 +112,7 @@ rsync -a "$CONSTRAINED_SPLIT_CACHE/" "$STAGING_DIR/$CONSTRAINED_SPLIT_CACHE/"
 rsync -a "$WIN_PROJECTION_CACHE" "$STAGING_DIR/$WIN_PROJECTION_CACHE"
 rsync -a "$PLAYER_ROTATION_HISTORY_CACHE" "$STAGING_DIR/$PLAYER_ROTATION_HISTORY_CACHE"
 rsync -a "$TEAM_WIN_HISTORY_CACHE" "$STAGING_DIR/$TEAM_WIN_HISTORY_CACHE"
+rsync -a "$FOUR_FACTOR_EFFECTS" "$STAGING_DIR/$FOUR_FACTOR_EFFECTS"
 rsync -a "$RELEASE_MANIFEST" "$STAGING_DIR/$RELEASE_MANIFEST"
 rsync -a "$PANEL/" "$STAGING_DIR/$PANEL/"
 # Observed rotation maps use the versioned RAPM stint partitions directly.
@@ -132,6 +136,7 @@ cat > "$STAGING_DIR/release.json" <<EOF
   "win_projection_cache": "${WIN_PROJECTION_CACHE}",
   "player_rotation_history_cache": "${PLAYER_ROTATION_HISTORY_CACHE}",
   "team_win_history_cache": "${TEAM_WIN_HISTORY_CACHE}",
+  "four_factor_effects": "${FOUR_FACTOR_EFFECTS}",
   "bundle_manifest": "${RELEASE_MANIFEST}"
 }
 EOF

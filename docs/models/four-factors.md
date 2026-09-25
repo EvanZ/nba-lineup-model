@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-09-23"
+last_updated: "2026-09-24"
 ---
 
 # Four Factors RAPM
@@ -54,9 +54,9 @@ NAIL lambda, player prior, or context coefficient is reused.
 
 Effects are published in percentage points of the factor rate. A positive
 eFG%, turnover-avoidance, ORB%, or FTR effect is favorable. This stage is
-completed-season descriptive attribution. Separate offensive and defensive
-factor components, stability charts, and any test as a NAIL prior remain
-pending Issue #18.
+completed-season descriptive attribution. The separate offensive and defensive
+factor components, stability charts, and a frozen NAIL-prior test are recorded
+below.
 
 ## Forward Factor-State Plan
 
@@ -164,6 +164,70 @@ artifact is
 `artifacts/models/analysis/four_factor_reconciliation/2025-26/four-factor-reconciliation-2025-26-20260924T062734Z-7983212d`.
 The unexplained term is retained explicitly; it is not distributed across the
 Four Factors player coefficients or imported into NAIL.
+
+## Four Factors Attributed Player Rating
+
+The web presentation translates each completed player factor-side effect into a
+common points-per-100 scale using the pooled reconciliation weights. The
+**Four Factors Attributed Player Rating (FFAPR)** is the descriptive total:
+
+\[
+\operatorname{FFAPR}_{i,t} = \sum_f w_f
+\left(\theta^{O}_{i,f,t} + \theta^{D}_{i,f,t}\right),
+\]
+
+where the factor effects \(\theta\) are percentage points in their native
+rates, defense is already oriented so positive is favorable, and \(w_f\) is
+the corresponding joint game-reconciliation weight. Each player bio shows the
+native percentage-point state, its translated component rating, and the summed
+FFAPR.
+
+FFAPR is comparable in units to completed NAIL, but it is **not a replacement
+for NAIL**. It excludes the direct residual player signal and the NAIL
+non-additive context model; the difference `NAIL - FFAPR` is therefore a
+diagnostic of coverage by these four rate families, not a causal or exhaustive
+value decomposition.
+
+## Frozen NAIL Prior Test
+
+We tested whether the eight forward factor-side player states could improve the
+existing production NAIL player prior. This was deliberately a narrow test:
+the NAIL player fit, residualized-target lambda selection, additive profiles,
+two-feature non-additive context, and home-court/B2B treatment all remained
+unchanged. Only the player prior received a possible adjustment.
+
+For a completed NAIL season (s), the bridge learns the residual
+(R_{i,s}-\mu_{i,s}) from the **previous** season's eight Four Factors O/D
+states. Before target season (t), it trains only on completed seasons through
+(t-1), then applies the (t-1) factor state to the already-established NAIL
+prior \(\mu_{i,t}\). The bridge is a no-intercept Ridge on RMS-scaled factor
+states, so a player without a completed source state receives exactly zero
+adjustment. Its alpha is selected from `0.003` through `10` using three
+expanding chronological completed-season validation folds.
+
+The zero-weight implementation was run through all 30 seasons before scoring.
+It reproduced production exactly: all 13,813 player-season priors, all 14,572
+completed player coefficients, and every frozen possession and game prediction
+had maximum absolute difference `0.0`.
+
+| Metric, 2023-24 through 2025-26 | Production NAIL | Four Factors bridge |
+| --- | ---: | ---: |
+| Possession RMSE | **1.198147** | 1.198151 |
+| Possession MAE | **1.141455** | 1.141457 |
+| Eligible-game RMSE | **14.0051** | 14.0135 |
+| Full-game RMSE | **14.2166** | 14.2268 |
+| Winner accuracy | **68.30%** | 68.19% |
+| Team net-rating RMSE | **3.2351** | 3.2636 |
+| Pythagorean-win RMSE | **6.9423** | 6.9809 |
+
+The candidate is **not promoted** and is not added to the public frozen
+leaderboard. The factor-state effects remain useful as an explainability layer,
+but this direct residual-bridge formulation adds no predictive value beyond
+the production NAIL prior. The immutable candidate and paired frozen artifacts
+are:
+
+- `artifacts/models/forward_nail_four_factor_prior_bridge/2025-26/forward-nail-four-factor-prior-bridge-2025-26-20260924T072826Z-85f086cd`
+- `artifacts/models/analysis/nail_four_factor_prior_bridge_frozen_backtest/frozen_multiseason_backtest/2023-24_to_2025-26/frozen_multiseason_backtest-2023-24-to-2025-26-20260924T073341Z-510daee0`
 
 ## Audited Source
 

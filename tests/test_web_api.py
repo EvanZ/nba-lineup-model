@@ -33,6 +33,7 @@ from nba_lineup_model.web_api.inference import (
     _load_team_gestalt_win_history_cache,
     _observed_lineup_side_rows,
     _player_latest_teams_by_season,
+    _player_four_factor_histories,
     _player_league_leader_histories,
     _player_rating_histories,
     _player_team_splits_by_season,
@@ -42,6 +43,34 @@ from nba_lineup_model.web_api.inference import (
     build_published_player_ratings,
     team_win_history_path,
 )
+
+
+def test_player_four_factor_histories_rank_estimated_effects_by_factor_side(tmp_path) -> None:
+    path = tmp_path / "effects.parquet"
+    pd.DataFrame(
+        {
+            "season": ["2025-26"] * 8,
+            "factor": ["efg_pct", "efg_pct", "tov_pct", "tov_pct", "orb_pct", "orb_pct", "ftr", "ftr"],
+            "player_id": [1, 2, 1, 2, 1, 2, 1, 2],
+            "offense_effect_percentage_points": [3.0, 1.0, 0.5, 1.5, 1.0, 0.5, 0.5, 1.0],
+            "defense_effect_percentage_points": [1.0, 2.0, 1.5, 0.5, 0.5, 1.0, 1.0, 0.5],
+        }
+    ).to_parquet(path, index=False)
+
+    histories = _player_four_factor_histories(path)
+
+    assert histories[1][0]["efg_offense_rank"] == 1
+    assert histories[2][0]["efg_offense_rank"] == 2
+    assert histories[1][0]["efg_defense_rank"] == 2
+    assert histories[2][0]["efg_defense_rank"] == 1
+    assert histories[1][0]["tov_offense_rank"] == 2
+    assert histories[2][0]["tov_offense_rank"] == 1
+    assert histories[1][0]["ffapr_rank"] == 1
+    assert histories[2][0]["ffapr_rank"] == 2
+    assert histories[1][0]["ffapr_offense_rank"] == 1
+    assert histories[2][0]["ffapr_defense_rank"] == 1
+    assert histories[1][0]["ffapr_offense"] > histories[2][0]["ffapr_offense"]
+    assert histories[1][0]["ffapr_defense"] < histories[2][0]["ffapr_defense"]
 
 
 def test_team_gestalt_win_history_weights_player_ratings_by_team_exposure(monkeypatch) -> None:
@@ -1283,7 +1312,7 @@ def test_preseason_projection_state_is_available_to_the_matchup_lab() -> None:
     ]
     preseason_rankings = evaluator.players.loc[:, ranking_columns].copy()
     preseason_rankings.insert(0, "season", "2026-27")
-    preseason_profiles = evaluator.profiles.copy()
+    preseason_profiles = evaluator.profiles.assign(usage_pct=20.0)
     preseason_profiles.insert(0, "season", "2026-27")
     evaluator = replace(
         evaluator,

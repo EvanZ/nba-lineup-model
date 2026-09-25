@@ -49,6 +49,11 @@ DEFAULT_PRESEASON_RANKINGS_CACHE_DIR = Path("artifacts/web/preseason_rankings")
 DEFAULT_PRESEASON_PROFILES_CACHE_DIR = Path("artifacts/web/preseason_profiles")
 DEFAULT_PLAYER_ROTATION_HISTORY_CACHE_DIR = Path("artifacts/web/player_rotation_history")
 DEFAULT_TEAM_WIN_HISTORY_CACHE_DIR = Path("artifacts/web/team_win_history")
+DEFAULT_FOUR_FACTOR_EFFECTS_PATH = Path(
+    "artifacts/models/analysis/forward_four_factor_offense_defense/2025-26/"
+    "forward-four-factor-od-2025-26-20260924T062408Z-11a10c95/"
+    "season_factor_side_effects.parquet"
+)
 DEFAULT_TEAM_ROSTERS_DIR = Path("data/curated/team_rosters")
 DEFAULT_FORWARD_DRAFT_COLD_START_DIR = Path("artifacts/models/forward_draft_history_cold_start")
 # Keep the artifact identifier distinct from the public release name.
@@ -372,6 +377,7 @@ class LineupEvaluator:
     lineup_rankings_root: Path | None = None
     player_rating_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     player_rotation_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    player_four_factor_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     player_league_leader_histories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     player_team_splits: dict[tuple[str, int], list[dict[str, Any]]] = field(default_factory=dict)
     player_latest_teams: dict[tuple[str, int], dict[str, Any]] = field(default_factory=dict)
@@ -537,6 +543,11 @@ class LineupEvaluator:
             player_rating_histories,
             active_through_years=_player_active_through_years(Path(panel_path)),
         )
+        four_factor_histories = _player_four_factor_histories(DEFAULT_FOUR_FACTOR_EFFECTS_PATH)
+        historical_rankings = _attach_four_factor_attribution(
+            historical_rankings,
+            four_factor_histories,
+        )
         cache_path = response_cache_path(MODEL_ARTIFACT, run_id)
         response_cache = joblib.load(cache_path) if cache_path.is_file() else {}
         player_season_panel = pd.read_parquet(panel_path)
@@ -664,6 +675,7 @@ class LineupEvaluator:
             lineup_rankings_root=DEFAULT_LINEUP_RANKINGS_CACHE_DIR / MODEL_ARTIFACT / run_id,
             player_rating_histories=player_rating_histories,
             player_rotation_histories=player_rotation_histories,
+            player_four_factor_histories=four_factor_histories,
             player_league_leader_histories=player_league_leader_histories,
             player_team_splits=player_team_splits,
             player_latest_teams=player_latest_teams,
@@ -1008,6 +1020,7 @@ class LineupEvaluator:
                 player_id, player.get("league_leader_history", [])
             )
             player["rotation_history"] = self.player_rotation_histories.get(player_id, [])
+            player["four_factor_history"] = self.player_four_factor_histories.get(player_id, [])
             return player
 
         history = self.player_rating_histories.get(player_id, [])
@@ -1032,6 +1045,7 @@ class LineupEvaluator:
                 "assists_per_100": None,
                 "turnovers_per_100": None,
                 "usage_per_100": None,
+                "usage_pct": None,
                 "steals_per_100": None,
                 "blocks_per_100": None,
                 "offensive_rebound_pct": None,
@@ -1039,6 +1053,7 @@ class LineupEvaluator:
                 "defense_rating": None,
                 "rating_history": [],
                 "rotation_history": self.player_rotation_histories.get(player_id, []),
+                "four_factor_history": self.player_four_factor_histories.get(player_id, []),
                 "league_leader_history": [],
             }
         latest = historical_rows.sort_values("season", ascending=False, kind="stable").iloc[0]
@@ -1066,6 +1081,7 @@ class LineupEvaluator:
             "assists_per_100": None,
             "turnovers_per_100": None,
             "usage_per_100": None,
+            "usage_pct": None,
             "steals_per_100": None,
             "blocks_per_100": None,
             "offensive_rebound_pct": None,
@@ -1074,6 +1090,7 @@ class LineupEvaluator:
             "rookie_season": history[0]["season"] if history else None,
             "rating_history": history,
             "rotation_history": self.player_rotation_histories.get(player_id, []),
+            "four_factor_history": self.player_four_factor_histories.get(player_id, []),
             "league_leader_history": self.player_league_leader_histories.get(player_id, []),
         }
 
@@ -1777,6 +1794,7 @@ class LineupEvaluator:
             "assists_per_100",
             "turnovers_per_100",
             "usage_per_100",
+            "usage_pct",
             "steals_per_100",
             "blocks_per_100",
             "offensive_rebound_pct",
@@ -2003,6 +2021,7 @@ def _player_catalog(
         "assists_per_100",
         "turnovers_per_100",
         "usage_per_100",
+        "usage_pct",
         "steals_per_100",
         "blocks_per_100",
         "offensive_rebound_pct",
@@ -2051,6 +2070,7 @@ def _player_catalog(
             "assists_per_100",
             "turnovers_per_100",
             "usage_per_100",
+            "usage_pct",
             "steals_per_100",
             "blocks_per_100",
             "offensive_rebound_pct",
@@ -2525,6 +2545,172 @@ def _preseason_ranking_catalog(
     _normalize_draft_metadata(preview)
     _assign_draft_class_year(preview)
     return preview
+
+
+def _player_four_factor_histories(path: Path) -> dict[int, list[dict[str, Any]]]:
+    """Package completed O/D Four Factors states for player-bio explanation."""
+
+    if not path.is_file():
+        return {}
+    effects = pd.read_parquet(path)
+    required = {
+        "season",
+        "factor",
+        "player_id",
+        "offense_effect_percentage_points",
+        "defense_effect_percentage_points",
+    }
+    missing = sorted(required - set(effects))
+    if missing:
+        raise LineupEvaluationError(
+            "Four Factors effect artifact lacks required columns: " + ", ".join(missing)
+        )
+    effects = effects.copy()
+    for side in ("offense", "defense"):
+        value_column = f"{side}_effect_percentage_points"
+        rank_column = f"{side}_rank"
+        effects[rank_column] = (
+            effects.groupby(["season", "factor"], sort=False)[value_column]
+            .rank(method="min", ascending=False)
+            .astype(int)
+        )
+    wide = effects.pivot(
+        index=["season", "player_id"],
+        columns="factor",
+        values=[
+            "offense_effect_percentage_points",
+            "defense_effect_percentage_points",
+            "offense_rank",
+            "defense_rank",
+        ],
+    )
+    wide.columns = [f"{side}_{factor}" for side, factor in wide.columns]
+    wide = wide.reset_index().sort_values(["player_id", "season"], kind="stable")
+    factor_columns = {
+        "efg_offense": "offense_effect_percentage_points_efg_pct",
+        "efg_defense": "defense_effect_percentage_points_efg_pct",
+        "tov_offense": "offense_effect_percentage_points_tov_pct",
+        "tov_defense": "defense_effect_percentage_points_tov_pct",
+        "orb_offense": "offense_effect_percentage_points_orb_pct",
+        "orb_defense": "defense_effect_percentage_points_orb_pct",
+        "ftr_offense": "offense_effect_percentage_points_ftr",
+        "ftr_defense": "defense_effect_percentage_points_ftr",
+    }
+    factor_weights = {
+        "efg_pct": 1.5111,
+        "tov_pct": 1.3621,
+        "orb_pct": 0.4322,
+        "ftr": 0.1113,
+    }
+    ffapr_offense_components = []
+    ffapr_defense_components = []
+    for factor, weight in factor_weights.items():
+        for side, components in (
+            ("offense", ffapr_offense_components),
+            ("defense", ffapr_defense_components),
+        ):
+            component_column = f"ffapr_{side}_{factor}"
+            wide[component_column] = (
+                weight * wide[f"{side}_effect_percentage_points_{factor}"]
+            )
+            components.append(component_column)
+    wide["ffapr_offense"] = wide.loc[:, ffapr_offense_components].sum(
+        axis=1, min_count=len(ffapr_offense_components)
+    )
+    wide["ffapr_defense"] = wide.loc[:, ffapr_defense_components].sum(
+        axis=1, min_count=len(ffapr_defense_components)
+    )
+    wide["ffapr"] = wide["ffapr_offense"] + wide["ffapr_defense"]
+    for value_column in ("ffapr", "ffapr_offense", "ffapr_defense"):
+        wide[f"{value_column}_rank"] = (
+            wide.groupby("season", sort=False)[value_column]
+            .rank(method="min", ascending=False)
+        )
+    rank_columns = {
+        "efg_offense_rank": "offense_rank_efg_pct",
+        "efg_defense_rank": "defense_rank_efg_pct",
+        "tov_offense_rank": "offense_rank_tov_pct",
+        "tov_defense_rank": "defense_rank_tov_pct",
+        "orb_offense_rank": "offense_rank_orb_pct",
+        "orb_defense_rank": "defense_rank_orb_pct",
+        "ftr_offense_rank": "offense_rank_ftr",
+        "ftr_defense_rank": "defense_rank_ftr",
+    }
+    records: dict[int, list[dict[str, Any]]] = {}
+    for player_id, group in wide.groupby("player_id", sort=False):
+        history: list[dict[str, Any]] = []
+        for row in group.itertuples(index=False):
+            values = {
+                destination: getattr(row, source)
+                for destination, source in {
+                    **factor_columns,
+                    **rank_columns,
+                    "ffapr_rank": "ffapr_rank",
+                    "ffapr_offense": "ffapr_offense",
+                    "ffapr_defense": "ffapr_defense",
+                    "ffapr_offense_rank": "ffapr_offense_rank",
+                    "ffapr_defense_rank": "ffapr_defense_rank",
+                }.items()
+            }
+            # A handful of historical player-seasons have incomplete factor coverage.
+            # Omit those partial observations rather than presenting a false rank.
+            if any(pd.isna(value) for value in values.values()):
+                continue
+            history.append(
+                {
+                    "season": str(row.season),
+                    **{
+                        destination: float(values[destination])
+                        for destination in factor_columns
+                    },
+                    **{
+                        destination: int(values[destination])
+                        for destination in rank_columns
+                    },
+                    "ffapr_offense": float(values["ffapr_offense"]),
+                    "ffapr_defense": float(values["ffapr_defense"]),
+                    "ffapr_rank": int(values["ffapr_rank"]),
+                    "ffapr_offense_rank": int(values["ffapr_offense_rank"]),
+                    "ffapr_defense_rank": int(values["ffapr_defense_rank"]),
+                }
+            )
+        if history:
+            records[int(player_id)] = history
+    return records
+
+
+def _attach_four_factor_attribution(
+    rankings: pd.DataFrame,
+    histories: dict[int, list[dict[str, Any]]],
+) -> pd.DataFrame:
+    """Attach completed Four Factors totals and ranks to matching ranking rows."""
+
+    if rankings.empty or not histories:
+        return rankings
+    attribution = pd.DataFrame(
+        [
+            {
+                "season": row["season"],
+                "player_id": player_id,
+                "ffapr": row["ffapr_offense"] + row["ffapr_defense"],
+                "ffapr_offense": row["ffapr_offense"],
+                "ffapr_defense": row["ffapr_defense"],
+                "ffapr_rank": row["ffapr_rank"],
+                "ffapr_offense_rank": row["ffapr_offense_rank"],
+                "ffapr_defense_rank": row["ffapr_defense_rank"],
+            }
+            for player_id, history in histories.items()
+            for row in history
+        ]
+    )
+    if attribution.empty:
+        return rankings
+    return rankings.merge(
+        attribution,
+        on=["season", "player_id"],
+        how="left",
+        validate="one_to_one",
+    )
 
 
 def _player_rating_histories(

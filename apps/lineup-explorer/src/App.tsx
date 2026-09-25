@@ -44,12 +44,33 @@ type AppRoute = { view: AppView; playerId?: number; team?: string; season?: stri
 type Environment = "unit" | "neutral" | "opponent";
 type Court = "neutral" | "unit_home" | "opponent_home";
 type AgingContributionKey = "prior" | "seasonUpdate" | "additiveProfile";
+type FourFactorHistoryPoint = NonNullable<Player["four_factor_history"]>[number];
+type FourFactorComponentKey =
+  | "efg_offense" | "efg_defense"
+  | "tov_offense" | "tov_defense"
+  | "orb_offense" | "orb_defense"
+  | "ftr_offense" | "ftr_defense";
+type FourFactorRankKey = `${FourFactorComponentKey}_rank`;
+type FourFactorRow = {
+  label: string;
+  offenseKey: FourFactorComponentKey;
+  defenseKey: FourFactorComponentKey;
+  offenseRankKey: FourFactorRankKey;
+  defenseRankKey: FourFactorRankKey;
+  pointsPerHundredPerPoint: number;
+};
 
 const SIDE_LABELS: Record<Side, string> = { unit: "Your unit", opponent: "Opponent" };
 const MATERIAL_COMPONENT_CONTRIBUTION = 0.05;
 const MODEL_LABEL = "NAIL-RAPM v1.2.1.3";
 const V1213_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/models/nail-rapm-v1213-residualized-lambda/";
 const CONSTRAINED_SPLIT_DOCUMENTATION_URL = "https://evanz.github.io/nba-lineup-model/models/constrained-split-nail/";
+const FOUR_FACTOR_ROWS: readonly FourFactorRow[] = [
+  { label: "eFG%", offenseKey: "efg_offense", defenseKey: "efg_defense", offenseRankKey: "efg_offense_rank", defenseRankKey: "efg_defense_rank", pointsPerHundredPerPoint: 1.5111 },
+  { label: "Turnover avoidance", offenseKey: "tov_offense", defenseKey: "tov_defense", offenseRankKey: "tov_offense_rank", defenseRankKey: "tov_defense_rank", pointsPerHundredPerPoint: 1.3621 },
+  { label: "ORB%", offenseKey: "orb_offense", defenseKey: "orb_defense", offenseRankKey: "orb_offense_rank", defenseRankKey: "orb_defense_rank", pointsPerHundredPerPoint: 0.4322 },
+  { label: "FTR", offenseKey: "ftr_offense", defenseKey: "ftr_defense", offenseRankKey: "ftr_offense_rank", defenseRankKey: "ftr_defense_rank", pointsPerHundredPerPoint: 0.1113 },
+];
 const FEATURE_DESCRIPTIONS: Record<string, string> = {
   home_minus_away_three_pa_per_100: "Sum of the five players' prior-season three-point attempts per 100 possessions.",
   home_minus_away_three_pm_per_100: "Sum of the five players' prior-season made three-pointers per 100 possessions.",
@@ -375,7 +396,7 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
     player.three_pm_per_100,
     player.assists_per_100,
     player.turnovers_per_100,
-    player.usage_per_100,
+    player.usage_pct,
     player.steals_per_100,
     player.blocks_per_100,
     player.offensive_rebound_pct,
@@ -409,11 +430,27 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
     ["three_pm_per_100", "3PM / 100", player.three_pm_per_100],
     ["assists_per_100", "Assists / 100", player.assists_per_100],
     ["turnovers_per_100", "Turnovers / 100", player.turnovers_per_100],
-    ["usage_per_100", "Usage / 100", player.usage_per_100],
+    ["usage_pct", "USG%", player.usage_pct],
     ["steals_per_100", "Steals / 100", player.steals_per_100],
     ["blocks_per_100", "Blocks / 100", player.blocks_per_100],
     ["offensive_rebound_claim_total", "OREB claim %", player.offensive_rebound_pct],
   ] as const;
+  const fourFactorState = player.four_factor_history?.at(-1);
+  const fourFactorAttribution = fourFactorState
+    ? FOUR_FACTOR_ROWS.map((row) => ({
+      ...row,
+      offense: fourFactorState[row.offenseKey],
+      defense: fourFactorState[row.defenseKey],
+      offenseRank: fourFactorState[row.offenseRankKey],
+      defenseRank: fourFactorState[row.defenseRankKey],
+      offenseRating: fourFactorState[row.offenseKey] * row.pointsPerHundredPerPoint,
+      defenseRating: fourFactorState[row.defenseKey] * row.pointsPerHundredPerPoint,
+    }))
+    : [];
+  const ffapr = fourFactorAttribution.reduce(
+    (total, row) => total + row.offenseRating + row.defenseRating,
+    0,
+  );
 
   return (
     <article className="player-profile-page" aria-labelledby="player-profile-title">
@@ -487,6 +524,47 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
             Smaller signed values are each input&apos;s additive contribution relative to the shared possession-weighted 2025-26 forecast-pool reference.
           </p>
         }
+      </section>}
+
+      {fourFactorState && <section className="player-profile-section" aria-labelledby="four-factors-title">
+        <div className="player-profile-heading">
+          <div>
+            <p className="section-kicker">Completed factor fit · {fourFactorState.season}</p>
+            <h2 id="four-factors-title">Four Factors attribution.</h2>
+          </div>
+          <div className="four-factor-totals" aria-label={`Four Factors Attributed Player Rating ${formatRating(ffapr)} points per 100 possessions; league rank ${fourFactorState.ffapr_rank}`}>
+            <div className="four-factor-total">
+              <span>FFAPR <span className="four-factor-total-rank" title={`League rank #${fourFactorState.ffapr_rank}`}>#{fourFactorState.ffapr_rank}</span></span>
+              <Rating value={ffapr} />
+              <small>PTS / 100</small>
+            </div>
+            <div className="four-factor-split-total">
+              <span>OFF <span title={`League rank #${fourFactorState.ffapr_offense_rank}`}>#{fourFactorState.ffapr_offense_rank}</span></span>
+              <Rating value={fourFactorState.ffapr_offense} />
+            </div>
+            <div className="four-factor-split-total">
+              <span>DEF <span title={`League rank #${fourFactorState.ffapr_defense_rank}`}>#{fourFactorState.ffapr_defense_rank}</span></span>
+              <Rating value={fourFactorState.ffapr_defense} />
+            </div>
+          </div>
+        </div>
+        <div className="four-factor-attribution" role="table" aria-label={`Four Factors attribution for ${player.player_name} in ${fourFactorState.season}`}>
+          <div className="four-factor-attribution-row four-factor-attribution-heading" role="row">
+            <span role="columnheader">Factor</span><span role="columnheader">Offense</span><span role="columnheader">Defense</span>
+          </div>
+          {fourFactorAttribution.map((row) => <div className="four-factor-attribution-row" role="row" key={row.label}>
+            <strong role="cell">{row.label}</strong>
+            <span className="four-factor-effect" role="cell">
+              <span className="four-factor-effect-top"><Rating value={row.offense} /> <small>pp</small><small className="four-factor-rank" title={`League rank #${row.offenseRank}`}>#{row.offenseRank}</small><FourFactorSparkline history={player.four_factor_history ?? []} component={row.offenseKey} counterpart={row.defenseKey} label={`${row.label} offense`} /></span>
+              <small className="four-factor-component"><Rating value={row.offenseRating} /> pts / 100</small>
+            </span>
+            <span className="four-factor-effect" role="cell">
+              <span className="four-factor-effect-top"><Rating value={row.defense} /> <small>pp</small><small className="four-factor-rank" title={`League rank #${row.defenseRank}`}>#{row.defenseRank}</small><FourFactorSparkline history={player.four_factor_history ?? []} component={row.defenseKey} counterpart={row.offenseKey} label={`${row.label} defense`} /></span>
+              <small className="four-factor-component"><Rating value={row.defenseRating} /> pts / 100</small>
+            </span>
+          </div>)}
+        </div>
+        <p className="player-rating-path-note">Positive values are favorable: shooting, ball security, offensive rebounding, and free-throw generation on offense; suppressing those outcomes or forcing turnovers on defense. Component ratings apply the pooled Four Factors reconciliation weights; FFAPR sums all eight components. They are descriptive rate effects, not components of NAIL.</p>
       </section>}
 
       {historyRows.length === 0 ? (
@@ -1981,7 +2059,7 @@ function AboutPage() {
   );
 }
 
-type RankingColumn = "rank" | "player_name" | "team" | "position" | "draft_number" | "rapm" | "offense_rating" | "defense_rating" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games";
+type RankingColumn = "player_name" | "team" | "position" | "draft_number" | "rapm" | "offense_rating" | "defense_rating" | "ffapr" | "ffapr_offense" | "ffapr_defense" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games";
 
 function RankingsPage() {
   const isCompact = useMediaQuery("(max-width: 720px)");
@@ -1993,8 +2071,8 @@ function RankingsPage() {
   const [minimumPossessions, setMinimumPossessions] = useState(50);
   const [teamFilter, setTeamFilter] = useState("all");
   const [draftClassFilter, setDraftClassFilter] = useState("all");
-  const [sortColumn, setSortColumn] = useState<RankingColumn>("rank");
-  const [sortDirection, setSortDirection] = useState<"ascending" | "descending">("ascending");
+  const [sortColumn, setSortColumn] = useState<RankingColumn>("rapm");
+  const [sortDirection, setSortDirection] = useState<"ascending" | "descending">("descending");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -2091,6 +2169,42 @@ function RankingsPage() {
     });
   }, [draftClassFilter, minimumPossessions, players, query, selectedPlayerIds, sortColumn, sortDirection, teamFilter]);
 
+  const rankByPlayerId = useMemo(() => {
+    const publishedRankColumns: Partial<Record<RankingColumn, keyof RankedPlayer>> = {
+      rapm: "rank",
+      ffapr: "ffapr_rank",
+      ffapr_offense: "ffapr_offense_rank",
+      ffapr_defense: "ffapr_defense_rank",
+    };
+    const publishedColumn = publishedRankColumns[sortColumn];
+    if (publishedColumn) {
+      return new Map(players.flatMap((player) => {
+        const rank = player[publishedColumn];
+        return typeof rank === "number" ? [[player.player_id, rank] as const] : [];
+      }));
+    }
+    const rankableColumns = new Set<RankingColumn>([
+      "draft_number", "offense_rating", "defense_rating", "prior_rating", "season_update",
+      "additive_profile_adjustment", "observed_context_exposure", "possessions", "games",
+    ]);
+    if (!rankableColumns.has(sortColumn)) {
+      return new Map(players.map((player) => [player.player_id, player.rank]));
+    }
+    const ascendingIsBetter = sortColumn === "draft_number";
+    const ranked = players.flatMap((player) => {
+      const value = player[sortColumn];
+      return typeof value === "number" && Number.isFinite(value)
+        ? [{ player, value }]
+        : [];
+    }).sort((left, right) => {
+      const comparison = ascendingIsBetter
+        ? left.value - right.value
+        : right.value - left.value;
+      return comparison || left.player.rank - right.player.rank;
+    });
+    return new Map(ranked.map(({ player }, index) => [player.player_id, index + 1]));
+  }, [players, sortColumn]);
+
   function addPlayerFilter(player: RankedPlayer) {
     setSelectedPlayerIds((current) => current.includes(player.player_id) ? current : [...current, player.player_id]);
     setQuery("");
@@ -2110,7 +2224,6 @@ function RankingsPage() {
   }
 
   const columns: Array<{ key: RankingColumn; label: string; numeric?: boolean }> = [
-    { key: "rank", label: "Rank", numeric: true },
     { key: "player_name", label: "Player" },
     { key: "team", label: "Team" },
     { key: "position", label: "Pos" },
@@ -2118,6 +2231,9 @@ function RankingsPage() {
     { key: "rapm", label: MODEL_LABEL, numeric: true },
     { key: "offense_rating", label: "Offense", numeric: true },
     { key: "defense_rating", label: "Defense", numeric: true },
+    { key: "ffapr", label: "FFAPR", numeric: true },
+    { key: "ffapr_offense", label: "FF Off", numeric: true },
+    { key: "ffapr_defense", label: "FF Def", numeric: true },
     { key: "prior_rating", label: "Prior", numeric: true },
     { key: "season_update", label: "Season update", numeric: true },
     { key: "additive_profile_adjustment", label: "Additive profile", numeric: true },
@@ -2239,7 +2355,7 @@ function RankingsPage() {
                   onChange={(event) => {
                     const column = event.target.value as RankingColumn;
                     setSortColumn(column);
-                    setSortDirection(column === "rank" || column === "player_name" || column === "team" || column === "position" ? "ascending" : "descending");
+                    setSortDirection(column === "player_name" || column === "team" || column === "position" ? "ascending" : "descending");
                   }}
                 >
                   {columns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
@@ -2261,6 +2377,7 @@ function RankingsPage() {
           <table className="rankings-table">
             <thead>
               <tr>
+                <th className="numeric" scope="col">Rank</th>
                 {columns.map((column) => <th className={`${column.numeric ? "numeric " : ""}${column.key === "rapm" ? "nail-rating-column" : ""}`} scope="col" key={column.key}>
                   <button type="button" onClick={() => changeSort(column.key)}>
                     {column.label}
@@ -2271,7 +2388,7 @@ function RankingsPage() {
             </thead>
             <tbody>
               {visiblePlayers.map((player) => <tr key={player.player_id}>
-                <td className="rank-number">{player.rank}</td>
+                <td className="rank-number">{rankByPlayerId.get(player.player_id) ?? "-"}</td>
                 <th scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>
                 <td>{isPreseasonPreview ? (
                   <span className="lineup-team-mark">
@@ -2289,6 +2406,9 @@ function RankingsPage() {
                 <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
                 <td className={player.offense_rating === null || player.offense_rating === undefined ? "numeric" : player.offense_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.offense_rating === null || player.offense_rating === undefined ? "-" : formatRating(player.offense_rating)}</td>
                 <td className={player.defense_rating === null || player.defense_rating === undefined ? "numeric" : player.defense_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.defense_rating === null || player.defense_rating === undefined ? "-" : formatRating(player.defense_rating)}</td>
+                <td className={player.ffapr === null || player.ffapr === undefined ? "numeric" : player.ffapr < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.ffapr === null || player.ffapr === undefined ? "-" : formatRating(player.ffapr)}</td>
+                <td className={player.ffapr_offense === null || player.ffapr_offense === undefined ? "numeric" : player.ffapr_offense < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.ffapr_offense === null || player.ffapr_offense === undefined ? "-" : formatRating(player.ffapr_offense)}</td>
+                <td className={player.ffapr_defense === null || player.ffapr_defense === undefined ? "numeric" : player.ffapr_defense < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.ffapr_defense === null || player.ffapr_defense === undefined ? "-" : formatRating(player.ffapr_defense)}</td>
                 <td className={player.prior_rating === null ? "numeric" : player.prior_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.prior_rating === null ? "-" : formatRating(player.prior_rating)}</td>
                 <td className={player.season_update === null ? "numeric" : player.season_update < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.season_update === null ? "-" : formatRating(player.season_update)}</td>
                 <td className={player.additive_profile_adjustment === null ? "numeric" : player.additive_profile_adjustment < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.additive_profile_adjustment === null ? "-" : formatRating(player.additive_profile_adjustment)}</td>
@@ -2302,7 +2422,7 @@ function RankingsPage() {
         {!error && isCompact && <ol className="mobile-card-list mobile-player-rankings" aria-label={`${MODEL_LABEL} player rankings`}>
           {visiblePlayers.map((player) => <li className="mobile-player-card" key={player.player_id}>
             <div className="mobile-card-heading">
-              <span className="mobile-card-rank">#{player.rank}</span>
+              <span className="mobile-card-rank">#{rankByPlayerId.get(player.player_id) ?? "-"}</span>
               <a className="mobile-player-identity" href={playerProfileHref(player.player_id)}>
                 <PlayerHeadshot player={player} />
                 <span>
@@ -2318,6 +2438,7 @@ function RankingsPage() {
             <dl className="mobile-metric-grid mobile-player-metrics">
               <div><dt>Offense</dt><dd>{player.offense_rating === null || player.offense_rating === undefined ? "-" : <Rating value={player.offense_rating} />}</dd></div>
               <div><dt>Defense</dt><dd>{player.defense_rating === null || player.defense_rating === undefined ? "-" : <Rating value={player.defense_rating} />}</dd></div>
+              <div className="mobile-player-four-factor-ranks"><dt>Four Factors</dt><dd>{player.ffapr === null || player.ffapr === undefined ? "-" : `All ${formatRating(player.ffapr)} · Off ${formatOptionalRating(player.ffapr_offense)} · Def ${formatOptionalRating(player.ffapr_defense)}`}</dd></div>
               <div><dt>Prior</dt><dd>{player.prior_rating === null ? "-" : <Rating value={player.prior_rating} />}</dd></div>
               <div><dt>Season update</dt><dd>{player.season_update === null ? "-" : <Rating value={player.season_update} />}</dd></div>
               <div><dt>Additive profile</dt><dd>{player.additive_profile_adjustment === null ? "-" : <Rating value={player.additive_profile_adjustment} />}</dd></div>
@@ -3737,6 +3858,44 @@ function PlayerRatingSparkline({ player }: { player: Player }) {
       <line className="player-rating-zero" x1={labelWidth} x2={width} y1={height / 2} y2={height / 2} />
       <path className="player-rating-line" d={path} />
       <circle className={latest.rating < 0 ? "player-rating-point negative-point" : "player-rating-point"} cx={x(points.length - 1)} cy={y(latest.rating)} r="2.5" />
+    </svg>
+  );
+}
+
+function FourFactorSparkline({
+  history,
+  component,
+  counterpart,
+  label,
+}: {
+  history: FourFactorHistoryPoint[];
+  component: FourFactorComponentKey;
+  counterpart: FourFactorComponentKey;
+  label: string;
+}) {
+  if (history.length < 2) return null;
+  const width = 58;
+  const height = 20;
+  const padding = 2;
+  const extent = Math.max(
+    0.5,
+    ...history.flatMap((point) => [Math.abs(point[component]), Math.abs(point[counterpart])]),
+  );
+  const x = (index: number) => padding + (index * (width - padding * 2)) / (history.length - 1);
+  const y = (value: number) => height / 2 - (value / extent) * (height / 2 - padding);
+  const path = history.map((point, index) => `${index === 0 ? "M" : "L"}${x(index)},${y(point[component])}`).join(" ");
+  const latest = history.at(-1)!;
+  return (
+    <svg
+      className="four-factor-sparkline"
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label={`${label} factor effect from ${history[0].season} through ${latest.season}`}
+    >
+      <title>{label}: {history[0].season} to {latest.season}</title>
+      <line className="four-factor-sparkline-zero" x1={padding} x2={width - padding} y1={height / 2} y2={height / 2} />
+      <path className="four-factor-sparkline-line" d={path} />
+      <circle className="four-factor-sparkline-point" cx={x(history.length - 1)} cy={y(latest[component])} r="2" />
     </svg>
   );
 }

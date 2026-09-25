@@ -11,6 +11,12 @@ from nba_lineup_model.modeling.four_factor_offense_defense import (
 from nba_lineup_model.modeling.forward_four_factor_offense_defense import (
     _component_exposure_history,
 )
+from nba_lineup_model.modeling.four_factor_prior_bridge import (
+    FACTOR_SIDE_FEATURE_COLUMNS,
+    _training_frame,
+    apply_four_factor_prior_bridge,
+)
+from nba_lineup_model.modeling.prior_rapm import PRIOR_MEAN_COLUMN, ForwardLaggedRapmSeason
 
 
 def test_od_factor_design_has_two_side_rows_and_favorable_turnover_sign() -> None:
@@ -109,3 +115,61 @@ def test_component_exposure_keeps_factor_reliability_and_rookie_gate_inputs() ->
     assert result["on_court_possessions"].item() == 321.0
     assert result["is_rookie"].item() is True
     assert result["exposure_share"].item() == 0.25
+
+
+def test_four_factor_bridge_zero_weight_is_an_exact_prior_identity() -> None:
+    priors = pd.DataFrame({"player_id": [1, 2], PRIOR_MEAN_COLUMN: [1.25, -0.75]})
+    effects = pd.DataFrame(
+        {
+            "season": ["2024-25"],
+            "player_id": [1],
+            **{column: [0.1] for column in FACTOR_SIDE_FEATURE_COLUMNS},
+        }
+    )
+
+    adjusted, metadata = apply_four_factor_prior_bridge(
+        priors=priors,
+        target_season="2025-26",
+        effects=effects,
+        bridge=None,
+        weight=0.0,
+    )
+
+    pd.testing.assert_frame_equal(adjusted, priors)
+    assert metadata["four_factor_prior_bridge_reason"] == "zero_weight"
+
+
+def test_four_factor_bridge_uses_only_prior_season_factor_state() -> None:
+    effects = pd.DataFrame(
+        {
+            "season": ["2021-22", "2022-23", "2023-24"],
+            "player_id": [1, 1, 1],
+            **{
+                column: [0.1, 0.2, 99.0]
+                for column in FACTOR_SIDE_FEATURE_COLUMNS
+            },
+        }
+    )
+    result = ForwardLaggedRapmSeason(
+        season="2023-24",
+        selected_lambda=0.1,
+        cv_results=pd.DataFrame(),
+        player_estimates=pd.DataFrame(
+            {
+                "player_id": [1],
+                "rapm": [1.0],
+                "prior_rapm": [0.0],
+                "on_court_possessions": [100.0],
+            }
+        ),
+        player_priors=pd.DataFrame(),
+    )
+
+    training = _training_frame(
+        [result],
+        effects,
+        exposure_history=[pd.DataFrame({"player_id": [1], "on_court_possessions": [100.0]})],
+    )
+
+    # 2023-24 may use 2022-23's completed state, not 2023-24's 99.0 state.
+    assert training.loc[0, "efg_pct_offense"] == 0.2

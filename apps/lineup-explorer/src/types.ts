@@ -33,6 +33,7 @@ export type Player = {
   assists_per_100: number | null;
   turnovers_per_100: number | null;
   usage_per_100: number | null;
+  usage_pct: number | null;
   steals_per_100: number | null;
   blocks_per_100: number | null;
   offensive_rebound_pct: number | null;
@@ -84,6 +85,36 @@ export type Player = {
     projected_total_minutes: number | null;
     is_preseason_forecast: boolean;
   }>;
+  four_factor_history?: Array<{
+    season: string;
+    efg_offense: number;
+    efg_defense: number;
+    tov_offense: number;
+    tov_defense: number;
+    orb_offense: number;
+    orb_defense: number;
+    ftr_offense: number;
+    ftr_defense: number;
+    efg_offense_rank: number;
+    efg_defense_rank: number;
+    tov_offense_rank: number;
+    tov_defense_rank: number;
+    orb_offense_rank: number;
+    orb_defense_rank: number;
+    ftr_offense_rank: number;
+    ftr_defense_rank: number;
+    ffapr_offense: number;
+    ffapr_defense: number;
+    ffapr_rank: number;
+    ffapr_offense_rank: number;
+    ffapr_defense_rank: number;
+  }>;
+  ffapr?: number | null;
+  ffapr_offense?: number | null;
+  ffapr_defense?: number | null;
+  ffapr_rank?: number | null;
+  ffapr_offense_rank?: number | null;
+  ffapr_defense_rank?: number | null;
   league_leader_history?: Array<{
     season: string;
     rating: number;
