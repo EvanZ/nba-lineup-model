@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>What Happens Next? Possession Start States</title>
+    <style>
+      :root {
+        --paper: #f8f5ee;
+        --ink: #182320;
+        --muted: #68736e;
+        --rule: #d7d3c9;
+        --orange: #d86a37;
+        --blue: #397eaf;
+        --gray: #a0aaa4;
+      }
+
+      * { box-sizing: border-box; }
+
+      html,
+      body {
+        width: 1080px;
+        height: 1080px;
+        margin: 0;
+        overflow: hidden;
+        background: var(--paper);
+      }
+
+      .card {
+        position: relative;
+        isolation: isolate;
+        width: 1080px;
+        height: 1080px;
+        overflow: hidden;
+        padding: 42px 56px 32px;
+        background: var(--paper);
+        font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .eyebrow {
+        margin: 0 0 11px;
+        color: var(--muted);
+        font: 800 17px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 1.4px;
+      }
+
+      h1 {
+        max-width: 710px;
+        margin: 0;
+        color: var(--ink);
+        font: 700 50px/1 Georgia, "Times New Roman", serif;
+        letter-spacing: 0;
+      }
+
+      .dek {
+        max-width: 650px;
+        margin: 13px 0 17px;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.3;
+      }
+
+      .rule { height: 2px; margin-right: 28px; background: var(--rule); }
+
+      .scale {
+        display: grid;
+        grid-template-columns: 330px 310px 1fr;
+        align-items: end;
+        height: 52px;
+        padding-bottom: 7px;
+        color: var(--muted);
+        font: 800 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: .55px;
+      }
+
+      .scale .zero { text-align: center; }
+      .scale .plus { color: #b7502c; text-align: left; }
+
+      .rows { margin-top: 2px; }
+
+      .row {
+        display: grid;
+        grid-template-columns: 330px 310px 1fr;
+        align-items: center;
+        min-height: 80px;
+        border-top: 1px solid rgba(215, 211, 201, .82);
+      }
+
+      .name {
+        color: var(--ink);
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.05;
+      }
+
+      .note {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 1.2;
+      }
+
+      .metric {
+        position: relative;
+        height: 31px;
+      }
+
+      .zero-line {
+        position: absolute;
+        top: -12px;
+        bottom: -12px;
+        left: 155px;
+        border-left: 2px dashed #77817c;
+      }
+
+      .bar {
+        position: absolute;
+        top: 2px;
+        height: 27px;
+        border-radius: 4px;
+      }
+
+      .pos { left: 155px; background: var(--orange); }
+      .neg { right: 155px; background: var(--blue); }
+      .neutral { left: 145px; width: 20px; background: var(--gray); border-radius: 50%; }
+      .sparse { opacity: .48; }
+
+      .value {
+        position: absolute;
+        top: 4px;
+        color: var(--ink);
+        font: 800 19px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .value.pos { left: auto; background: none; }
+      .value.neg { right: auto; background: none; }
+      .value.neutral { left: 182px; width: auto; height: auto; background: none; border-radius: 0; }
+
+      .scene {
+        width: 78px;
+        height: 78px;
+        justify-self: center;
+        background-image: url("offense-state-cartoon-grid.png");
+        background-repeat: no-repeat;
+        background-size: 234px 234px;
+      }
+
+      .scene-live-steal { background-position: 0 0; }
+      .scene-live-turnover { background-position: -78px 0; }
+      .scene-rebound { background-position: -156px 0; }
+      .scene-dead-turnover { background-position: 0 -78px; }
+      .scene-free-throw { background-position: -78px -78px; }
+      .scene-made-2 { background-position: -156px -78px; }
+      .scene-made-3 { background-position: 0 -156px; }
+      .scene-period { background-position: -78px -156px; }
+      .scene-held-ball { background-position: -156px -156px; }
+
+      .foot {
+        display: none;
+        position: absolute;
+        right: 56px;
+        bottom: 26px;
+        left: 56px;
+        padding-top: 13px;
+        border-top: 2px solid var(--rule);
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.35;
+        margin: 0;
+      }
+
+      .foot strong { color: var(--ink); }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <p class="eyebrow">NBA GESTALT · POSSESSION-STATE CONTROLS</p>
+      <h1>What happens next?</h1>
+      <p class="dek">Offensive efficiency changes dramatically based on how a possession begins. Effects are points per 100 possessions, measured against an after-made-2PT start.</p>
+      <div class="rule"></div>
+      <div class="scale">
+        <span>LESS FAVORABLE FOR OFFENSE</span>
+        <span class="zero">0.00 · MADE 2PT</span>
+        <span class="plus">MORE FAVORABLE FOR OFFENSE</span>
+      </div>
+      <section class="rows" aria-label="Offensive effects by possession state">
+        <article class="row">
+          <div><div class="name">Live-ball steal</div><span class="note">Offense takes the ball in transition</span></div>
+          <div class="metric"><i class="zero-line"></i><i class="bar pos" style="width: 151px"></i><strong class="value pos" style="left: 182px; color: #fff">+19.01</strong></div><i class="scene scene-live-steal" aria-hidden="true"></i>
+        </article>
+        <article class="row">
+          <div><div class="name">Other live-ball turnover</div><span class="note">Sparse: directional only</span></div>
+          <div class="metric"><i class="zero-line"></i><i class="bar pos sparse" style="width: 46px"></i><strong class="value pos" style="left: 216px">+5.75</strong></div><i class="scene scene-live-turnover" aria-hidden="true"></i>
+        </article>
+        <article class="row">
+          <div><div class="name">Defensive rebound</div><span class="note">New offense begins after a board</span></div>
+          <div class="metric"><i class="zero-line"></i><i class="bar pos" style="width: 29px"></i><strong class="value pos" style="left: 198px">+3.58</strong></div><i class="scene scene-rebound" aria-hidden="true"></i>
+        </article>
+        <article class="row">
+          <div><div class="name">Dead-ball turnover</div><span class="note">Possession changes after a whistle</span></div>
+          <div class="metric"><i class="zero-line"></i><i class="bar pos" style="width: 7px"></i><strong class="value pos" style="left: 177px">+0.69</strong></div><i class="scene scene-dead-turnover" aria-hidden="true"></i>
+        </article>
+        <article class="row">
+          <div><div class="name">Final free throw</div><span class="note">Possession changes after the last attempt</span></div>
+          <div class="metric"><i class="zero-line"></i><i class="bar pos" style="width: 3px"></i><strong class="value pos" style="left: 173px">+0.18</strong></div><i class="scene scene-free-throw" aria-hidden="true"></i>
+        </article>
+        <article class="row">
+          <div><div class="name">Made 2PT</div><span class="note">Reference state</span></div>
+          <div class="metric"><i class="zero-line"></i><i class="bar neutral"></i><strong class="value neutral">0.00</strong></div><i class="scene scene-made-2" aria-hidden="true"></i>
+        </article>
+        <article class="row">
+          <div><div class="name">Made 3PT</div><span class="note">A marginally more favorable set defense</span></div>
+          <div class="metric"><i class="zero-line"></i><i class="bar neg" style="width: 4px"></i><strong class="value neg" style="left: 82px">-0.40</strong></div><i class="scene scene-made-3" aria-hidden="true"></i>
+        </article>
+        <article class="row">
+          <div><div class="name">Period start</div><span class="note">A newly set possession</span></div>
+          <div class="metric"><i class="zero-line"></i><i class="bar neg" style="width: 5px"></i><strong class="value neg" style="left: 82px">-0.46</strong></div><i class="scene scene-period" aria-hidden="true"></i>
+        </article>
+        <article class="row">
+          <div><div class="name">Held ball</div><span class="note">Sparse: do not interpret</span></div>
+          <div class="metric"><i class="zero-line"></i><i class="bar neg sparse" style="width: 155px"></i><strong class="value neg" style="left: 13px">-22.57</strong></div><i class="scene scene-held-ball" aria-hidden="true"></i>
+        </article>
+      </section>
+      <p class="foot"><strong>Interpretation:</strong> These are shared possession-state controls, not player ratings. A positive offensive effect is the same magnitude as a negative defensive effect.</p>
+    </main>
+  </body>
+</html>

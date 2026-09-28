@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1320" viewBox="0 0 1600 1320" role="img" aria-labelledby="title description">
+  <title id="title">Offensive possession-start state effects</title>
+  <desc id="description">Horizontal bar infographic of global offensive effects by possession start state, measured against an after-made-two-point-shot baseline.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f7f4ed; }
+      .ink { fill: #182320; }
+      .muted { fill: #67716d; }
+      .hair { stroke: #d9d5cc; stroke-width: 2; }
+      .baseline { stroke: #63716d; stroke-width: 3; stroke-dasharray: 10 10; }
+      .positive { fill: #d86a37; }
+      .negative { fill: #397eaf; }
+      .neutral { fill: #a9b0aa; }
+      .sparse { fill: #99a39d; opacity: .42; }
+      .cap { font: 700 19px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1.1px; }
+      .label { font: 700 27px ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif; }
+      .detail { font: 500 18px ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif; }
+      .value { font: 800 32px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .title { font: 700 58px Georgia, serif; }
+      .subtitle { font: 500 22px ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif; }
+      .illustration { stroke: #1b5c4a; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+      .ball { fill: #ef8d33; stroke: #1b5c4a; stroke-width: 4; }
+      .court { stroke: #cabd9e; stroke-width: 4; stroke-linecap: round; fill: none; }
+    </style>
+    <g id="ball">
+      <circle class="ball" cx="0" cy="0" r="14"/>
+      <path d="M-14 0h28M0-14v28M-10-10c7 4 13 10 20 20M10-10C3-6-3 0-10 10" stroke="#1b5c4a" stroke-width="2.5" fill="none"/>
+    </g>
+    <g id="made2">
+      <path class="illustration" d="M-57 30h88M28-44v74M28-44h27M55-44v74M28-17h27M33 7c4 16 14 21 22 0"/>
+      <path class="court" d="M-70 39h145"/>
+      <use href="#ball" x="14" y="-30"/>
+      <path class="illustration" d="M-39 22c10-20 19-26 36-30M-22 37l16-28M-53 35l17-12"/>
+    </g>
+    <g id="rebound">
+      <path class="court" d="M-67 40h140"/>
+      <circle class="illustration" cx="-8" cy="-30" r="12"/>
+      <path class="illustration" d="M-8-18v31M-8-8l-30-22M-8-8l28-25M-8 13l-20 25M-8 13l21 25"/>
+      <use href="#ball" x="17" y="-52"/>
+      <path class="illustration" d="M-50-37c-8 9-10 18-7 27"/>
+    </g>
+    <g id="steal">
+      <path class="court" d="M-72 40h144"/>
+      <circle class="illustration" cx="-38" cy="-23" r="11"/>
+      <path class="illustration" d="M-38-12v28M-38-3l22 8M-38 16l-17 20M-38 16l13 20M-15 5l21-17"/>
+      <use href="#ball" x="17" y="-5"/>
+      <path d="M33-14l20 9-17 14" stroke="#d86a37" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g id="loose">
+      <path class="court" d="M-72 40h144"/>
+      <circle class="illustration" cx="-30" cy="-23" r="11"/>
+      <path class="illustration" d="M-30-12v28M-30-2l24 11M-30 16l-19 20M-30 16l16 20"/>
+      <use href="#ball" x="32" y="24"/>
+      <path class="court" d="M7 20l9-7M8 33l11-1"/>
+    </g>
+    <g id="deadball">
+      <path class="court" d="M-72 40h144M35-42v82"/>
+      <circle class="illustration" cx="-24" cy="-20" r="11"/>
+      <path class="illustration" d="M-24-9v28M-24 1l25-8M-24 19l-16 18M-24 19l15 18"/>
+      <use href="#ball" x="21" y="8"/>
+      <path d="M45-9l17 0" stroke="#d86a37" stroke-width="6" stroke-linecap="round"/>
+    </g>
+    <g id="freethrow">
+      <path class="illustration" d="M28-44v74M28-44h27M55-44v74M28-17h27M33 7c4 16 14 21 22 0"/>
+      <path class="court" d="M-70 40h145"/>
+      <circle class="illustration" cx="-32" cy="-22" r="11"/>
+      <path class="illustration" d="M-32-11v29M-32-2l17-21M-32-2l25-21M-32 18l-14 19M-32 18l14 19"/>
+      <use href="#ball" x="-3" y="-45"/>
+    </g>
+    <g id="made3">
+      <path class="illustration" d="M31-44v74M31-44h27M58-44v74M31-17h27M36 7c4 16 14 21 22 0"/>
+      <path class="court" d="M-70 40h145M-47 25c20-37 53-47 76-47"/>
+      <circle class="illustration" cx="-38" cy="-20" r="11"/>
+      <path class="illustration" d="M-38-9v28M-38-1l20-18M-38-1l25-13M-38 19l-15 18M-38 19l16 18"/>
+      <use href="#ball" x="-3" y="-43"/>
+    </g>
+    <g id="period">
+      <path class="court" d="M-72 40h144"/>
+      <circle class="illustration" cx="-19" cy="-9" r="27"/>
+      <path class="illustration" d="M-19-9v-15M-19-9l13 9M-46-9h-8M8-9h8"/>
+      <use href="#ball" x="35" y="18"/>
+    </g>
+    <g id="held">
+      <path class="court" d="M-72 40h144"/>
+      <circle class="illustration" cx="-35" cy="-20" r="11"/>
+      <path class="illustration" d="M-35-9v28M-35 0l23 13M-35 19l-15 18M-35 19l13 18"/>
+      <circle class="illustration" cx="32" cy="-20" r="11"/>
+      <path class="illustration" d="M32-9v28M32 0L9 13M32 19l15 18M32 19L19 37"/>
+      <use href="#ball" x="-1" y="-47"/>
+    </g>
+  </defs>
+  <rect class="bg" width="1600" height="1220"/>
+  <text x="90" y="104" class="cap muted">POSSESSION-STATE CONTROLS</text>
+  <text x="90" y="174" class="title ink">What happens next?</text>
+  <text x="90" y="215" class="subtitle muted">Global offensive effect by possession start state, versus an after-made-2PT start. Points per 100 possessions.</text>
+  <line x1="90" y1="250" x2="1510" y2="250" class="hair"/>
+  <text x="735" y="291" class="cap muted" text-anchor="middle">0.0</text>
+  <text x="735" y="320" class="detail muted" text-anchor="middle">after made 2PT</text>
+  <text x="1045" y="291" class="cap" fill="#c2542f" text-anchor="middle">MORE FAVORABLE FOR OFFENSE</text>
+  <text x="430" y="291" class="cap" fill="#397eaf" text-anchor="middle">LESS FAVORABLE FOR OFFENSE</text>
+  <line x1="735" y1="340" x2="735" y2="1130" class="baseline"/>
+
+  <g transform="translate(0 0)">
+    <line x1="90" y1="390" x2="1510" y2="390" class="hair"/>
+    <text x="90" y="377" class="label ink">Live-ball steal</text><text x="90" y="404" class="detail muted">Offense takes the ball in transition</text>
+    <rect x="735" y="354" width="610" height="40" rx="6" class="positive"/>
+    <text x="1364" y="385" class="value" fill="#b94c2a">+19.01</text><use href="#steal" x="1460" y="373"/>
+  </g>
+  <g transform="translate(0 100)">
+    <line x1="90" y1="390" x2="1510" y2="390" class="hair"/>
+    <text x="90" y="377" class="label ink">Other live-ball turnover</text><text x="90" y="404" class="detail muted">Sparse: directional only</text>
+    <rect x="735" y="354" width="184" height="40" rx="6" class="sparse"/>
+    <text x="938" y="385" class="value" fill="#6e7872">+5.75</text><use href="#loose" x="1460" y="373"/>
+  </g>
+  <g transform="translate(0 200)">
+    <line x1="90" y1="390" x2="1510" y2="390" class="hair"/>
+    <text x="90" y="377" class="label ink">Defensive rebound</text><text x="90" y="404" class="detail muted">New offense begins after a board</text>
+    <rect x="735" y="354" width="115" height="40" rx="6" class="positive"/>
+    <text x="870" y="385" class="value" fill="#b94c2a">+3.58</text><use href="#rebound" x="1460" y="373"/>
+  </g>
+  <g transform="translate(0 300)">
+    <line x1="90" y1="390" x2="1510" y2="390" class="hair"/>
+    <text x="90" y="377" class="label ink">Dead-ball turnover</text><text x="90" y="404" class="detail muted">Possession changes after a whistle</text>
+    <rect x="735" y="354" width="22" height="40" rx="6" class="positive"/>
+    <text x="777" y="385" class="value" fill="#b94c2a">+0.69</text><use href="#deadball" x="1460" y="373"/>
+  </g>
+  <g transform="translate(0 400)">
+    <line x1="90" y1="390" x2="1510" y2="390" class="hair"/>
+    <text x="90" y="377" class="label ink">Final free throw</text><text x="90" y="404" class="detail muted">Possession changes after the last attempt</text>
+    <rect x="735" y="354" width="6" height="40" rx="3" class="positive"/>
+    <text x="762" y="385" class="value" fill="#b94c2a">+0.18</text><use href="#freethrow" x="1460" y="373"/>
+  </g>
+  <g transform="translate(0 500)">
+    <line x1="90" y1="390" x2="1510" y2="390" class="hair"/>
+    <text x="90" y="377" class="label ink">Made 2PT</text><text x="90" y="404" class="detail muted">Reference state</text>
+    <circle cx="735" cy="374" r="11" class="neutral"/>
+    <text x="762" y="385" class="value" fill="#66716d">0.00</text><use href="#made2" x="1460" y="373"/>
+  </g>
+  <g transform="translate(0 600)">
+    <line x1="90" y1="390" x2="1510" y2="390" class="hair"/>
+    <text x="90" y="377" class="label ink">Made 3PT</text><text x="90" y="404" class="detail muted">A marginally more favorable set defense</text>
+    <rect x="722" y="354" width="13" height="40" rx="5" class="negative"/>
+    <text x="618" y="385" class="value" fill="#28658f">-0.40</text><use href="#made3" x="1460" y="373"/>
+  </g>
+  <g transform="translate(0 700)">
+    <line x1="90" y1="390" x2="1510" y2="390" class="hair"/>
+    <text x="90" y="377" class="label ink">Period start</text><text x="90" y="404" class="detail muted">A newly set possession</text>
+    <rect x="720" y="354" width="15" height="40" rx="5" class="negative"/>
+    <text x="610" y="385" class="value" fill="#28658f">-0.46</text><use href="#period" x="1460" y="373"/>
+  </g>
+  <g transform="translate(0 800)">
+    <line x1="90" y1="390" x2="1510" y2="390" class="hair"/>
+    <text x="90" y="377" class="label ink">Held ball</text><text x="90" y="404" class="detail muted">Sparse: do not interpret</text>
+    <rect x="90" y="354" width="645" height="40" rx="6" class="sparse"/>
+    <text x="482" y="385" class="value" fill="#6e7872">-22.57</text><use href="#held" x="1460" y="373"/>
+  </g>
+  <line x1="90" y1="1260" x2="1510" y2="1260" class="hair"/>
+  <text x="90" y="1300" class="detail muted">Effects are shared possession-state controls, not player ratings. Positive offense is the same magnitude as negative defense.</text>
+</svg>
