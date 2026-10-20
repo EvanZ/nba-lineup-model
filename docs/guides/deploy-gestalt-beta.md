@@ -87,6 +87,8 @@ sudo certbot --nginx -d gestalt.toplines.app
 Nginx applies per-IP limits before proxying requests to FastAPI:
 
 - General `/api/` routes: 120 requests per minute, with a burst of 30.
+- `/api/headshots/` browser assets do not consume the general request budget;
+  they retain the 20-connection per-IP cap.
 - `POST /api/matchups`: 30 requests per minute, with a burst of 10.
 - Concurrent API connections: 20 per IP generally and 8 on matchup evaluation.
 

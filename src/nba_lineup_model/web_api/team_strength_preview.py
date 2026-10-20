@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from nba_lineup_model.web_api.current_injuries import apply_current_injury_availability
 from nba_lineup_model.web_api.inference import MODEL_ARTIFACT, LineupEvaluator
 from nba_lineup_model.web_api.preseason_minutes import (
     build_incumbent_team_strength_minutes_payload,
@@ -64,6 +65,7 @@ def materialize_team_strength_win_projection_cache(
         baseline_minutes_payload=minutes,
         team_strength_history=pd.read_parquet(history_path),
     )
+    candidate_minutes = apply_current_injury_availability(candidate_minutes)
     payload = {
         "minutes": candidate_minutes,
         "win_projection": build_win_projection_payload(

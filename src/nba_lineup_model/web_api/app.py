@@ -17,8 +17,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from nba_lineup_model.web_api.inference import (
-    MODEL_DISPLAY_NAME,
     MODEL_ARTIFACT,
+    MODEL_DISPLAY_NAME,
     MODEL_NAME,
     LineupEvaluationError,
     LineupEvaluator,
@@ -29,6 +29,7 @@ from nba_lineup_model.web_api.preseason_minutes import (
 from nba_lineup_model.web_api.roster_movements import build_roster_movement_payload
 from nba_lineup_model.web_api.win_projections import (
     build_win_projection_payload,
+    read_schedule_day,
     read_win_projection_cache,
 )
 
@@ -335,6 +336,20 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
 
         try:
             return get_win_projection_payload()
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/api/schedule")
+    def schedule(
+        date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ) -> dict[str, object]:
+        """Return the latest archived board plus immutable pregame snapshots."""
+
+        state_dir = Path(
+            os.environ.get("GESTALT_SCHEDULE_STATE_DIR", "/var/lib/nba-gestalt/schedule")
+        )
+        try:
+            return read_schedule_day(date, state_dir=state_dir)
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 

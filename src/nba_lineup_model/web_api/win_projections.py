@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import os
+import re
+import subprocess
+import time
+import unicodedata
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -32,6 +42,29 @@ UNASSIGNED_REGULAR_GAMES = 2
 WIN_TOTAL_INTERVAL_TRIALS = 10_000
 WIN_TOTAL_INTERVAL_SEED = 20_260_910
 DEFAULT_WIN_PROJECTION_CACHE_DIR = Path("artifacts/web/win_projections")
+DEFAULT_SCHEDULE_STATE_DIR = Path("/var/lib/nba-gestalt/schedule")
+DEFAULT_SCHEDULE_API_URL = "http://127.0.0.1:8010/api/win-projections"
+DEFAULT_SCHEDULE_S3_URI = "s3://nba-gestalt-data/nba-gestalt/schedule"
+DEFAULT_SCHEDULE_DAYS_AHEAD = 7
+ESPN_SCOREBOARD_URL = (
+    "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+)
+ESPN_TEAM_ALIASES = {
+    "GS": "GSW",
+    "NY": "NYK",
+    "NO": "NOP",
+    "SA": "SAS",
+    "UT": "UTA",
+    "UTAH": "UTA",
+    "WSH": "WAS",
+}
+INJURY_STATUS_PLAY_PROBABILITY = {
+    "Out": 0.0,
+    "Doubtful": 0.25,
+    "Questionable": 0.5,
+    "Probable": 0.75,
+    "Available": 1.0,
+}
 
 
 def build_win_projection_payload(
@@ -220,9 +253,13 @@ def simulate_baseline_win_total_intervals(
             raise ValueError(
                 f"Expected 82 modeled games for {team}; found {len(team_probabilities)}"
             )
-        team_seed = seed + sum((index + 1) * ord(character) for index, character in enumerate(team))
+        team_seed = seed + sum(
+            (index + 1) * ord(character) for index, character in enumerate(team)
+        )
         generator = np.random.default_rng(team_seed)
-        totals = (generator.random((trials, len(team_probabilities))) < team_probabilities).sum(axis=1)
+        totals = (
+            generator.random((trials, len(team_probabilities))) < team_probabilities
+        ).sum(axis=1)
         ordered = np.sort(totals)
         rows.append(
             {
@@ -632,6 +669,1189 @@ def _previous_season(season: str) -> str:
 def _sigmoid(values: np.ndarray) -> np.ndarray:
     clipped = np.clip(values, -35.0, 35.0)
     return 1.0 / (1.0 + np.exp(-clipped))
+
+
+def read_schedule_day(
+    game_date: str,
+    *,
+    state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+) -> dict[str, object]:
+    """Read the latest board with immutable pregame and final audit records."""
+
+    path = Path(state_dir) / "latest" / f"{game_date}.json"
+    if not path.is_file():
+        return {
+            "available": False,
+            "game_date": game_date,
+            "source": "ESPN",
+            "games": [],
+        }
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid schedule archive payload: {path}")
+    games = payload.get("games", [])
+    if not isinstance(games, list):
+        raise ValueError(f"Invalid schedule games payload: {path}")
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        frozen_path = Path(state_dir) / "frozen" / f"{game.get('espn_game_id')}.json"
+        if frozen_path.is_file():
+            frozen = json.loads(frozen_path.read_text())
+            if isinstance(frozen, dict):
+                game["pregame"] = frozen
+        final_path = (
+            Path(state_dir) / "final" / f"{game.get('espn_game_id')}.summary.json"
+        )
+        if final_path.is_file():
+            final_audit = json.loads(final_path.read_text())
+            if isinstance(final_audit, dict):
+                game["final_audit"] = final_audit
+    payload["available"] = True
+    return payload
+
+
+def refresh_schedule_archive(
+    *,
+    game_date: str,
+    state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    projection_url: str = DEFAULT_SCHEDULE_API_URL,
+    s3_uri: str | None = DEFAULT_SCHEDULE_S3_URI,
+    source_payload: dict[str, object] | None = None,
+    injury_report: dict[str, object] | None = None,
+    injury_pdf: bytes | None = None,
+    forecast_response: dict[str, object] | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Archive one ESPN board, normalize it, and freeze the final pregame view.
+
+    The half-hour collector freezes the first snapshot at or after T-30 minutes.
+    If a game turns live between runs, the preceding pregame snapshot is frozen.
+    """
+
+    collected_at = (now or datetime.now(UTC)).astimezone(UTC)
+    state_root = Path(state_dir)
+    latest_path = state_root / "latest" / f"{game_date}.json"
+    previous = None
+    if latest_path.is_file():
+        candidate = json.loads(latest_path.read_text())
+        if isinstance(candidate, dict):
+            previous = candidate
+
+    raw = source_payload or _fetch_json(f"{ESPN_SCOREBOARD_URL}?dates={game_date.replace('-', '')}")
+    forecast_response = forecast_response or _fetch_json(projection_url)
+    forecast = forecast_response.get("win_projection", forecast_response)
+    minutes_payload = forecast_response.get("minutes", forecast_response)
+    if not isinstance(forecast, dict):
+        raise ValueError("Win projection endpoint did not return an object")
+    if not isinstance(minutes_payload, dict):
+        raise ValueError("Win projection endpoint did not return player minutes")
+    if injury_report is None:
+        injury_report, injury_pdf = _fetch_latest_official_injury_report(
+            report_date=game_date,
+            now=collected_at,
+        )
+    payload = _normalize_espn_schedule(
+        raw,
+        forecast=forecast,
+        minutes=minutes_payload,
+        injury_report=injury_report,
+        game_date=game_date,
+        collected_at=collected_at,
+    )
+    previous_games = {
+        str(game.get("espn_game_id")): game
+        for game in (previous or {}).get("games", [])
+        if isinstance(game, dict)
+    }
+    for game in payload["games"]:
+        if not isinstance(game, dict):
+            continue
+        prior = previous_games.get(str(game.get("espn_game_id")))
+        if isinstance(prior, dict) and isinstance(prior.get("retrospective"), dict):
+            game["retrospective"] = prior["retrospective"]
+
+    timestamp = collected_at.strftime("%Y%m%dT%H%M%SZ")
+    archive_dir = state_root / "archive" / game_date
+    raw_path = archive_dir / f"{timestamp}.espn.json"
+    injury_path = archive_dir / f"{timestamp}.injury.pdf"
+    normalized_path = archive_dir / f"{timestamp}.json"
+    _write_json(raw_path, raw)
+    if injury_pdf is not None:
+        injury_path.parent.mkdir(parents=True, exist_ok=True)
+        injury_path.write_bytes(injury_pdf)
+    _write_json(normalized_path, payload)
+
+    frozen_count = 0
+    for game in payload["games"]:
+        if not isinstance(game, dict):
+            continue
+        frozen_path = state_root / "frozen" / f"{game['espn_game_id']}.json"
+        if frozen_path.exists():
+            continue
+        start = datetime.fromisoformat(str(game["start_time"]).replace("Z", "+00:00"))
+        state = str(game.get("status", {}).get("state", "pre"))
+        if collected_at < start - timedelta(minutes=30) and state == "pre":
+            continue
+        prior = previous_games.get(str(game["espn_game_id"]))
+        frozen_game = (
+            prior
+            if isinstance(prior, dict) and prior.get("status", {}).get("state") == "pre"
+            else game
+        )
+        frozen = {
+            **frozen_game,
+            "frozen_at": collected_at.isoformat().replace("+00:00", "Z"),
+            "freeze_policy": "last half-hour pregame capture",
+            "late_freeze": frozen_game is game and state != "pre",
+        }
+        _write_json_exclusive(frozen_path, frozen)
+        frozen_count += 1
+
+    _write_json(latest_path, payload)
+    if s3_uri:
+        prefix = f"{s3_uri.rstrip('/')}/season={PROJECTION_SEASON}/game_date={game_date}"
+        _aws_s3_cp_exclusive(raw_path, f"{prefix}/snapshots/{timestamp}.espn.json")
+        if injury_path.is_file():
+            _aws_s3_cp_exclusive(
+                injury_path,
+                f"{prefix}/snapshots/{timestamp}.injury.pdf",
+            )
+        _aws_s3_cp_exclusive(normalized_path, f"{prefix}/snapshots/{timestamp}.json")
+        _aws_s3_cp(latest_path, f"{prefix}/latest.json")
+        for game in payload["games"]:
+            if not isinstance(game, dict):
+                continue
+            frozen_path = state_root / "frozen" / f"{game['espn_game_id']}.json"
+            if frozen_path.is_file():
+                _aws_s3_cp_exclusive(
+                    frozen_path,
+                    f"{prefix}/frozen/{game['espn_game_id']}.json",
+                )
+            final_path = state_root / "final" / f"{game['espn_game_id']}.summary.json"
+            if final_path.is_file():
+                _aws_s3_cp_exclusive(
+                    final_path,
+                    f"{prefix}/final/{game['espn_game_id']}.summary.json",
+                )
+            final_espn_path = state_root / "final" / f"{game['espn_game_id']}.espn.json"
+            if final_espn_path.is_file():
+                _aws_s3_cp_exclusive(
+                    final_espn_path,
+                    f"{prefix}/final/{game['espn_game_id']}.espn.json",
+                )
+    return {**payload, "newly_frozen_game_count": frozen_count}
+
+
+def refresh_schedule_window(
+    *,
+    start_date: str,
+    days_ahead: int = DEFAULT_SCHEDULE_DAYS_AHEAD,
+    state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    projection_url: str = DEFAULT_SCHEDULE_API_URL,
+    s3_uri: str | None = DEFAULT_SCHEDULE_S3_URI,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Archive every available ESPN board in a rolling date window.
+
+    ESPN publishes future boards and market lines before game day, while the
+    NBA injury-report filename reflects its publication date rather than the
+    dates of every game listed in the document. Fetch the current report and
+    projection payload once, then apply that information to each available
+    board. Individual games still freeze only at the existing T-30 boundary.
+    """
+
+    if days_ahead < 0:
+        raise ValueError("Schedule days ahead must be non-negative")
+    collected_at = (now or datetime.now(UTC)).astimezone(UTC)
+    first_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+    eastern_date = collected_at.astimezone(ZoneInfo("America/New_York")).date()
+    report_date = min(first_date, eastern_date).isoformat()
+    injury_report, injury_pdf = _fetch_latest_official_injury_report(
+        report_date=report_date,
+        now=collected_at,
+    )
+    forecast_response = _fetch_json(projection_url)
+    archived_days: list[dict[str, object]] = []
+    total_games = 0
+    newly_frozen = 0
+    for offset in range(days_ahead + 1):
+        game_date = (first_date + timedelta(days=offset)).isoformat()
+        raw = _fetch_json(f"{ESPN_SCOREBOARD_URL}?dates={game_date.replace('-', '')}")
+        events = raw.get("events", [])
+        if not isinstance(events, list) or not events:
+            continue
+        payload = refresh_schedule_archive(
+            game_date=game_date,
+            state_dir=state_dir,
+            projection_url=projection_url,
+            s3_uri=s3_uri,
+            source_payload=raw,
+            injury_report=injury_report,
+            injury_pdf=injury_pdf,
+            forecast_response=forecast_response,
+            now=collected_at,
+        )
+        game_count = len(payload["games"])
+        frozen_count = int(payload["newly_frozen_game_count"])
+        total_games += game_count
+        newly_frozen += frozen_count
+        archived_days.append(
+            {
+                "game_date": game_date,
+                "game_count": game_count,
+                "newly_frozen_game_count": frozen_count,
+            }
+        )
+    return {
+        "start_date": start_date,
+        "days_ahead": days_ahead,
+        "report_date": report_date,
+        "archived_day_count": len(archived_days),
+        "game_count": total_games,
+        "newly_frozen_game_count": newly_frozen,
+        "days": archived_days,
+    }
+
+
+def _fetch_latest_official_injury_report(
+    *, report_date: str, now: datetime
+) -> tuple[dict[str, object], bytes]:
+    eastern = now.astimezone(ZoneInfo("America/New_York"))
+    requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
+    if requested_date > eastern.date():
+        raise ValueError(f"Official injury report is not available yet for {report_date}")
+    if requested_date == eastern.date():
+        cursor = eastern.replace(
+            minute=(eastern.minute // 15) * 15,
+            second=0,
+            microsecond=0,
+        )
+    else:
+        cursor = datetime.combine(
+            requested_date,
+            datetime.max.time().replace(hour=23, minute=45, second=0, microsecond=0),
+            tzinfo=ZoneInfo("America/New_York"),
+        )
+    for _ in range(96):
+        if cursor.date() != requested_date:
+            break
+        suffix = cursor.strftime("%I_%M%p")
+        url = (
+            "https://ak-static.cms.nba.com/referee/injury/"
+            f"Injury-Report_{report_date}_{suffix}.pdf"
+        )
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "nba-gestalt/1.0"})
+            with urllib.request.urlopen(request, timeout=20) as response:
+                pdf = response.read()
+            report = _parse_official_injury_report(pdf)
+            report.update(
+                {
+                    "source_url": url,
+                    "published_at": cursor.isoformat(),
+                }
+            )
+            return report, pdf
+        except urllib.error.HTTPError as error:
+            if error.code not in {403, 404}:
+                raise
+        cursor -= timedelta(minutes=15)
+    raise FileNotFoundError(f"No official NBA injury report found for {report_date}")
+
+
+def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
+    from pypdf import PdfReader
+
+    statuses: list[dict[str, object]] = []
+    team_reports: dict[str, dict[str, object]] = {}
+    current_matchup: tuple[str, str] | None = None
+    current_team_position = -1
+    for page in PdfReader(io.BytesIO(pdf)).pages:
+        chunks: list[tuple[float, float, str]] = []
+
+        def visitor(
+            text: str,
+            _cm: object,
+            text_matrix: list[float],
+            _font: object,
+            _size: float,
+            _chunks: list[tuple[float, float, str]] = chunks,
+        ) -> None:
+            clean = " ".join(text.split())
+            if clean:
+                _chunks.append(
+                    (round(float(text_matrix[5]), 1), float(text_matrix[4]), clean)
+                )
+
+        page.extract_text(visitor_text=visitor)
+        rows: dict[float, list[tuple[float, str]]] = {}
+        for y, x, text in chunks:
+            rows.setdefault(y, []).append((x, text))
+        for _y, parts in sorted(rows.items()):
+            ordered_parts = sorted(parts)
+            matchup_text = "".join(
+                text for x, text in ordered_parts if 190.0 <= x < 250.0
+            )
+            matchup = re.search(r"([A-Z]{2,4})@([A-Z]{2,4})", matchup_text)
+            if matchup is not None:
+                current_matchup = (
+                    ESPN_TEAM_ALIASES.get(matchup.group(1), matchup.group(1)),
+                    ESPN_TEAM_ALIASES.get(matchup.group(2), matchup.group(2)),
+                )
+                current_team_position = -1
+                for team in current_matchup:
+                    team_reports.setdefault(
+                        team,
+                        {
+                            "team": team,
+                            "matchup": "@".join(current_matchup),
+                            "status": "submitted",
+                        },
+                    )
+            team_tokens = [
+                text for x, text in ordered_parts if 250.0 <= x < 420.0
+            ]
+            has_player_or_reason = any(x >= 420.0 for x, _text in ordered_parts)
+            if current_matchup is not None and team_tokens and has_player_or_reason:
+                current_team_position += 1
+                if current_team_position < len(current_matchup):
+                    team = current_matchup[current_team_position]
+                    row_text = " ".join(text for _x, text in ordered_parts).upper()
+                    team_reports[team] = {
+                        "team": team,
+                        "matchup": "@".join(current_matchup),
+                        "status": (
+                            "not_yet_submitted"
+                            if "NOT YET SUBMITTED" in row_text
+                            else "submitted"
+                        ),
+                    }
+            status = next(
+                (
+                    text
+                    for x, text in ordered_parts
+                    if 580.0 <= x < 666.0 and text in INJURY_STATUS_PLAY_PROBABILITY
+                ),
+                None,
+            )
+            names = [text for x, text in ordered_parts if 420.0 <= x < 580.0]
+            if status is None or not names or "," not in names[0]:
+                continue
+            last_name = names[0].rstrip(",")
+            player_name = f"{' '.join(names[1:])} {last_name}".strip()
+            reason = " ".join(text for x, text in ordered_parts if x >= 666.0) or None
+            statuses.append(
+                {
+                    "player_name": player_name,
+                    "status": status,
+                    "reason": reason,
+                    "play_probability": INJURY_STATUS_PLAY_PROBABILITY[status],
+                }
+            )
+    if not statuses:
+        raise ValueError("Official NBA injury report contained no player statuses")
+    return {"players": statuses, "team_reports": team_reports}
+
+
+def _normalized_player_name(value: object) -> str:
+    ascii_name = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode()
+    ascii_name = re.sub(r"\s+(?:Jr\.?|Sr\.?|II|III|IV)$", "", ascii_name, flags=re.I)
+    return re.sub(r"[^a-z0-9]", "", ascii_name.lower())
+
+
+def _game_rotation(
+    team: str,
+    *,
+    players: list[dict[str, object]],
+    injury_report: dict[str, object],
+    rotation_size: int,
+) -> dict[str, object]:
+    team_players = [row for row in players if str(row.get("team")) == team]
+    if not team_players:
+        raise ValueError(f"Minutes payload is missing the {team} roster")
+    roster_by_name = {
+        _normalized_player_name(row.get("player_name")): row for row in team_players
+    }
+    official = {
+        _normalized_player_name(row.get("player_name")): row
+        for row in injury_report.get("players", [])
+        if isinstance(row, dict)
+    }
+    team_report = injury_report.get("team_reports", {}).get(team)
+    if isinstance(team_report, dict):
+        report_status = str(team_report.get("status", "not_in_report"))
+    else:
+        report_status = "not_in_report"
+    report_pending = report_status != "submitted"
+    allocations: list[dict[str, object]] = []
+    for player in team_players:
+        status_row = official.get(_normalized_player_name(player.get("player_name")))
+        if status_row:
+            status = str(status_row.get("status"))
+            public_play_probability: float | None = INJURY_STATUS_PLAY_PROBABILITY.get(
+                status, 1.0
+            )
+        elif report_pending:
+            status = "Report pending"
+            public_play_probability = None
+        else:
+            status = "Available"
+            public_play_probability = 1.0
+        allocation_probability = (
+            public_play_probability if public_play_probability is not None else 1.0
+        )
+        conditional_minutes = float(player.get("conditional_minutes_per_game", 0.0))
+        allocations.append(
+            {
+                "player_id": int(player["player_id"]),
+                "player_name": str(player["player_name"]),
+                "status": status,
+                "play_probability": public_play_probability,
+                "conditional_minutes": conditional_minutes,
+                "weight": allocation_probability * conditional_minutes,
+                "projected_nail": float(player.get("projected_nail", 0.0)),
+                "reason": status_row.get("reason") if status_row else None,
+            }
+        )
+    selected = sorted(
+        allocations,
+        key=lambda row: (-float(row["weight"]), str(row["player_name"])),
+    )[:rotation_size]
+    total_weight = sum(float(row["weight"]) for row in selected)
+    if total_weight <= 0.0:
+        raise ValueError(f"Injury assumptions produced no available minutes for {team}")
+    for row in allocations:
+        row["projected_minutes"] = (
+            240.0 * float(row["weight"]) / total_weight if row in selected else 0.0
+        )
+    team_strength = sum(
+        float(row["projected_minutes"]) / 48.0 * float(row["projected_nail"])
+        for row in allocations
+    )
+    assumptions = []
+    for normalized_name, status_row in official.items():
+        player = roster_by_name.get(normalized_name)
+        if player is None:
+            continue
+        assumptions.append(
+            {
+                "player_id": int(player["player_id"]),
+                "player_name": str(player["player_name"]),
+                "team": team,
+                "status": status_row.get("status"),
+                "reason": status_row.get("reason"),
+                "play_probability": status_row.get("play_probability"),
+                "projected_minutes": next(
+                    float(row["projected_minutes"])
+                    for row in allocations
+                    if row["player_id"] == int(player["player_id"])
+                ),
+            }
+        )
+    public_players = [
+        {key: value for key, value in row.items() if key not in {"weight", "projected_nail"}}
+        for row in sorted(
+            allocations,
+            key=lambda item: (-float(item["projected_minutes"]), str(item["player_name"])),
+        )
+        if float(row["projected_minutes"]) > 0.0
+        or row["status"] not in {"Available", "Report pending"}
+    ]
+    return {
+        "team_strength": team_strength,
+        "players": public_players,
+        "injury_assumptions": sorted(
+            assumptions, key=lambda row: (str(row["team"]), str(row["player_name"]))
+        ),
+        "report_status": report_status,
+    }
+
+
+def _normalize_espn_schedule(
+    raw: dict[str, object],
+    *,
+    forecast: dict[str, object],
+    minutes: dict[str, object],
+    injury_report: dict[str, object],
+    game_date: str,
+    collected_at: datetime,
+) -> dict[str, object]:
+    minute_players = [row for row in minutes.get("players", []) if isinstance(row, dict)]
+    schedule = {
+        (str(row.get("home_team")), str(row.get("away_team"))): row
+        for row in forecast.get("scheduled_games", [])
+        if isinstance(row, dict) and row.get("game_date") == game_date
+    }
+    beta = float(forecast["win_probability_scale"])
+    home_court = float(forecast["home_court"])
+    back_to_back = float(forecast["back_to_back"])
+    games: list[dict[str, object]] = []
+    for event in raw.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        competitions = event.get("competitions", [])
+        if not competitions or not isinstance(competitions[0], dict):
+            continue
+        competition = competitions[0]
+        competitors = {
+            str(row.get("homeAway")): row
+            for row in competition.get("competitors", [])
+            if isinstance(row, dict)
+        }
+        home = competitors.get("home", {})
+        away = competitors.get("away", {})
+        home_team = _espn_team(home)
+        away_team = _espn_team(away)
+        scheduled = schedule.get((home_team, away_team), {})
+        home_rotation = _game_rotation(
+            home_team,
+            players=minute_players,
+            injury_report=injury_report,
+            rotation_size=int(minutes.get("initial_rotation_size", 15)),
+        )
+        away_rotation = _game_rotation(
+            away_team,
+            players=minute_players,
+            injury_report=injury_report,
+            rotation_size=int(minutes.get("initial_rotation_size", 15)),
+        )
+        margin = (
+            float(home_rotation["team_strength"])
+            - float(away_rotation["team_strength"])
+            + home_court
+            + back_to_back
+            * (
+                float(scheduled.get("home_back_to_back", 0))
+                - float(scheduled.get("away_back_to_back", 0))
+            )
+        )
+        status = event.get("status", {}).get("type", {})
+        if not isinstance(status, dict):
+            status = {}
+        broadcasts = [
+            name
+            for broadcast in competition.get("broadcasts", [])
+            if isinstance(broadcast, dict)
+            for name in broadcast.get("names", [])
+        ]
+        odds = competition.get("odds", [])
+        games.append(
+            {
+                "game_id": scheduled.get("game_id"),
+                "espn_game_id": str(event.get("id", "")),
+                "start_time": event.get("date"),
+                "home_team": home_team,
+                "away_team": away_team,
+                "home_score": _integer_or_none(home.get("score")),
+                "away_score": _integer_or_none(away.get("score")),
+                "broadcasts": broadcasts,
+                "status": {
+                    "state": status.get("state", "pre"),
+                    "completed": bool(status.get("completed", False)),
+                    "description": status.get("description", "Scheduled"),
+                    "detail": status.get("detail"),
+                    "display_clock": event.get("status", {}).get("displayClock"),
+                    "period": event.get("status", {}).get("period"),
+                },
+                "projection": {
+                    "model": forecast.get("model"),
+                    "home_margin": margin,
+                    "home_win_probability": float(1.0 / (1.0 + np.exp(-beta * margin))),
+                },
+                "injury_report": {
+                    "source": "NBA official injury report",
+                    "source_url": injury_report.get("source_url"),
+                    "published_at": injury_report.get("published_at"),
+                    "status_probabilities": INJURY_STATUS_PLAY_PROBABILITY,
+                    "team_reports": {
+                        away_team: {"status": away_rotation["report_status"]},
+                        home_team: {"status": home_rotation["report_status"]},
+                    },
+                    "assumptions": [
+                        *away_rotation["injury_assumptions"],
+                        *home_rotation["injury_assumptions"],
+                    ],
+                },
+                "projected_minutes": {
+                    "away": away_rotation["players"],
+                    "home": home_rotation["players"],
+                },
+                "market": (
+                    _normalize_espn_odds(odds[0])
+                    if odds and isinstance(odds[0], dict)
+                    else None
+                ),
+            }
+        )
+    return {
+        "available": True,
+        "game_date": game_date,
+        "season": forecast.get("season", PROJECTION_SEASON),
+        "collected_at": collected_at.isoformat().replace("+00:00", "Z"),
+        "source": "ESPN scoreboard API",
+        "injury_report": {
+            "source": "NBA official injury report",
+            "source_url": injury_report.get("source_url"),
+            "published_at": injury_report.get("published_at"),
+            "status_probabilities": INJURY_STATUS_PLAY_PROBABILITY,
+            "team_reports": injury_report.get("team_reports", {}),
+        },
+        "games": games,
+    }
+
+
+def _normalize_espn_odds(odds: dict[str, object]) -> dict[str, object]:
+    provider = odds.get("provider", {})
+    spread = odds.get("pointSpread", {})
+    moneyline = odds.get("moneyline", {})
+    total = odds.get("total", {})
+    return {
+        "provider": provider.get("name", "Unknown") if isinstance(provider, dict) else "Unknown",
+        "home_spread": _line_value(spread, "home", "close"),
+        "away_spread": _line_value(spread, "away", "close"),
+        "home_spread_open": _line_value(spread, "home", "open"),
+        "away_spread_open": _line_value(spread, "away", "open"),
+        "home_moneyline": _odds_value(moneyline, "home", "close"),
+        "away_moneyline": _odds_value(moneyline, "away", "close"),
+        "home_moneyline_open": _odds_value(moneyline, "home", "open"),
+        "away_moneyline_open": _odds_value(moneyline, "away", "open"),
+        "total": _line_value(total, "over", "close"),
+        "total_open": _line_value(total, "over", "open"),
+    }
+
+
+def _espn_team(competitor: dict[str, object]) -> str:
+    team = competitor.get("team", {})
+    abbreviation = str(team.get("abbreviation", "")) if isinstance(team, dict) else ""
+    return ESPN_TEAM_ALIASES.get(abbreviation, abbreviation)
+
+
+def _nested(mapping: object, *keys: str) -> object:
+    value = mapping
+    for key in keys:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return value
+
+
+def _line_value(mapping: object, side: str, moment: str) -> float | None:
+    value = _nested(mapping, side, moment, "line")
+    if value is None:
+        return None
+    try:
+        return float(str(value).lower().lstrip("ou+"))
+    except ValueError:
+        return None
+
+
+def _odds_value(mapping: object, side: str, moment: str) -> int | None:
+    value = _nested(mapping, side, moment, "odds")
+    try:
+        return int(str(value)) if value is not None else None
+    except ValueError:
+        return None
+
+
+def _integer_or_none(value: object) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _fetch_json(url: str) -> dict[str, object]:
+    request = urllib.request.Request(url, headers={"User-Agent": "nba-gestalt/1.0"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = json.load(response)
+    if not isinstance(payload, dict):
+        raise ValueError(f"JSON endpoint did not return an object: {url}")
+    return payload
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+def _write_json_exclusive(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    except FileExistsError:
+        return
+
+
+def _aws_s3_cp(source: Path, destination: str) -> None:
+    subprocess.run(["aws", "s3", "cp", str(source), destination, "--only-show-errors"], check=True)
+
+
+def _aws_s3_cp_exclusive(source: Path, destination: str) -> None:
+    """Create an immutable S3 key, accepting only byte-identical retries."""
+
+    if not destination.startswith("s3://"):
+        raise ValueError(f"S3 destination is invalid: {destination}")
+    bucket, separator, key = destination.removeprefix("s3://").partition("/")
+    if not separator or not bucket or not key:
+        raise ValueError(f"S3 destination is invalid: {destination}")
+    subprocess.run(
+        [
+            "aws",
+            "s3",
+            "cp",
+            str(source),
+            destination,
+            "--no-overwrite",
+            "--only-show-errors",
+        ],
+        check=True,
+    )
+    existing = subprocess.run(
+        ["aws", "s3", "cp", destination, "-", "--only-show-errors"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    if existing != source.read_bytes():
+        raise RuntimeError(
+            f"Refusing to overwrite immutable S3 object with different bytes: {destination}"
+        )
+
+
+def refresh_live_score_state(
+    *,
+    game_date: str,
+    state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+) -> dict[str, object]:
+    """Update only volatile score, clock, period, and game-status fields."""
+
+    state_root = Path(state_dir)
+    latest_path = state_root / "latest" / f"{game_date}.json"
+    if not latest_path.is_file():
+        raise FileNotFoundError(f"No archived schedule state for {game_date}")
+    payload = json.loads(latest_path.read_text())
+    if not isinstance(payload, dict) or not isinstance(payload.get("games"), list):
+        raise ValueError(f"Invalid schedule state: {latest_path}")
+    raw = _fetch_json(f"{ESPN_SCOREBOARD_URL}?dates={game_date.replace('-', '')}")
+    events = {
+        str(event.get("id")): event
+        for event in raw.get("events", [])
+        if isinstance(event, dict)
+    }
+    newly_completed: list[dict[str, object]] = []
+    for game in payload["games"]:
+        if not isinstance(game, dict):
+            continue
+        event = events.get(str(game.get("espn_game_id")))
+        if event is None:
+            continue
+        competitions = event.get("competitions", [])
+        if not competitions or not isinstance(competitions[0], dict):
+            continue
+        competitors = {
+            str(row.get("homeAway")): row
+            for row in competitions[0].get("competitors", [])
+            if isinstance(row, dict)
+        }
+        status = event.get("status", {})
+        status_type = status.get("type", {}) if isinstance(status, dict) else {}
+        if not isinstance(status_type, dict):
+            status_type = {}
+        game["home_score"] = _integer_or_none(competitors.get("home", {}).get("score"))
+        game["away_score"] = _integer_or_none(competitors.get("away", {}).get("score"))
+        game["status"] = {
+            "state": status_type.get("state", "pre"),
+            "completed": bool(status_type.get("completed", False)),
+            "description": status_type.get("description", "Scheduled"),
+            "detail": status_type.get("detail"),
+            "display_clock": status.get("displayClock") if isinstance(status, dict) else None,
+            "period": status.get("period") if isinstance(status, dict) else None,
+        }
+        if game["status"]["completed"] and "retrospective" not in game:
+            newly_completed.append(game)
+    if newly_completed:
+        projection_payload = _fetch_json(DEFAULT_SCHEDULE_API_URL)
+        for game in newly_completed:
+            summary = _fetch_json(
+                "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
+                f"?event={game['espn_game_id']}"
+            )
+            retrospective = _build_actual_minutes_retrospective(
+                game,
+                summary=summary,
+                projection_payload=projection_payload,
+            )
+            game["retrospective"] = retrospective
+            frozen_path = state_root / "frozen" / f"{game['espn_game_id']}.json"
+            if not frozen_path.is_file():
+                raise FileNotFoundError(
+                    f"Cannot finalize {game['espn_game_id']} without its frozen pregame record"
+                )
+            pregame = json.loads(frozen_path.read_text())
+            if not isinstance(pregame, dict):
+                raise ValueError(f"Invalid frozen pregame record: {frozen_path}")
+            final_record = _build_final_game_archive(
+                game,
+                pregame=pregame,
+                retrospective=retrospective,
+            )
+            _write_json_exclusive(
+                state_root / "final" / f"{game['espn_game_id']}.summary.json",
+                final_record,
+            )
+            _write_json_exclusive(
+                state_root / "final" / f"{game['espn_game_id']}.espn.json",
+                summary,
+            )
+    collected_at = datetime.now(UTC)
+    payload["live_score_collected_at"] = collected_at.isoformat().replace("+00:00", "Z")
+    _write_json(latest_path, payload)
+    starts = [
+        datetime.fromisoformat(str(game["start_time"]).replace("Z", "+00:00"))
+        for game in payload["games"]
+        if isinstance(game, dict) and game.get("start_time")
+    ]
+    states = [
+        str(game.get("status", {}).get("state", "pre"))
+        for game in payload["games"]
+        if isinstance(game, dict)
+    ]
+    return {
+        "game_count": len(states),
+        "any_live": "in" in states,
+        "all_final": bool(states) and all(state == "post" for state in states),
+        "earliest_start": min(starts) if starts else None,
+        "latest_start": max(starts) if starts else None,
+    }
+
+
+def _build_final_game_archive(
+    game: dict[str, object],
+    *,
+    pregame: dict[str, object],
+    retrospective: dict[str, object],
+    archived_at: datetime | None = None,
+) -> dict[str, object]:
+    """Build the immutable record used to audit a pregame forecast."""
+
+    home_team = str(game["home_team"])
+    away_team = str(game["away_team"])
+    home_score = _integer_or_none(game.get("home_score"))
+    away_score = _integer_or_none(game.get("away_score"))
+    if home_score is None or away_score is None:
+        raise ValueError(f"Final game {game.get('espn_game_id')} is missing a score")
+    actual_home_margin = home_score - away_score
+
+    projection = pregame.get("projection", {})
+    if not isinstance(projection, dict) or projection.get("home_margin") is None:
+        raise ValueError(f"Frozen game {game.get('espn_game_id')} is missing its projection")
+    projected_home_margin = float(projection["home_margin"])
+    model_side = home_team if projected_home_margin > 0.0 else away_team
+    model_side_correct = (
+        actual_home_margin > 0.0 if model_side == home_team else actual_home_margin < 0.0
+    )
+
+    market = pregame.get("market")
+    market_grading: dict[str, object] | None = None
+    if isinstance(market, dict) and market.get("home_spread") is not None:
+        home_spread = float(market["home_spread"])
+        away_spread = (
+            float(market["away_spread"])
+            if market.get("away_spread") is not None
+            else -home_spread
+        )
+        market_implied_home_margin = -home_spread
+        model_edge = projected_home_margin - market_implied_home_margin
+        selection = home_team if model_edge > 0.0 else away_team
+        selection_spread = home_spread if selection == home_team else away_spread
+        cover_margin = (
+            actual_home_margin + home_spread
+            if selection == home_team
+            else -actual_home_margin + away_spread
+        )
+        outcome = (
+            "push"
+            if np.isclose(cover_margin, 0.0)
+            else ("win" if cover_margin > 0.0 else "loss")
+        )
+        market_side = home_team if market_implied_home_margin > 0.0 else away_team
+        market_side_correct = (
+            actual_home_margin > 0.0
+            if market_side == home_team
+            else actual_home_margin < 0.0
+        )
+        market_grading = {
+            "provider": market.get("provider"),
+            "captured_home_spread": home_spread,
+            "captured_away_spread": away_spread,
+            "captured_total": market.get("total"),
+            "captured_home_moneyline": market.get("home_moneyline"),
+            "captured_away_moneyline": market.get("away_moneyline"),
+            "market_implied_home_margin": market_implied_home_margin,
+            "market_favorite": market_side,
+            "market_favorite_won": bool(market_side_correct),
+            "model_edge_points": model_edge,
+            "model_ats_selection": selection,
+            "model_ats_selection_spread": selection_spread,
+            "model_ats_cover_margin": cover_margin,
+            "model_ats_result": outcome,
+        }
+
+    frozen_at = pregame.get("frozen_at")
+    return {
+        "schema_version": 1,
+        "record_type": "immutable_final_game_audit",
+        "archived_at": (archived_at or datetime.now(UTC)).isoformat().replace("+00:00", "Z"),
+        "season": PROJECTION_SEASON,
+        "game_date": str(game.get("start_time", ""))[:10],
+        "game_id": game.get("game_id"),
+        "espn_game_id": str(game.get("espn_game_id", "")),
+        "start_time": game.get("start_time"),
+        "away_team": away_team,
+        "home_team": home_team,
+        "final": {
+            "away_score": away_score,
+            "home_score": home_score,
+            "actual_home_margin": actual_home_margin,
+            "winner": home_team if actual_home_margin > 0.0 else away_team,
+            "status": game.get("status"),
+        },
+        "pregame": pregame,
+        "grading": {
+            "pregame_frozen_at": frozen_at,
+            "model": projection.get("model"),
+            "projected_home_margin": projected_home_margin,
+            "model_fair_home_spread": -projected_home_margin,
+            "model_fair_line_team": model_side,
+            "model_fair_line": -abs(projected_home_margin),
+            "projected_home_win_probability": projection.get("home_win_probability"),
+            "model_favorite": model_side,
+            "model_favorite_won": bool(model_side_correct),
+            "margin_absolute_error": abs(actual_home_margin - projected_home_margin),
+            "market": market_grading,
+        },
+        "retrospective": retrospective,
+    }
+
+
+def _build_actual_minutes_retrospective(
+    game: dict[str, object],
+    *,
+    summary: dict[str, object],
+    projection_payload: dict[str, object],
+) -> dict[str, object]:
+    players = [
+        row for row in projection_payload.get("players", []) if isinstance(row, dict)
+    ]
+    ratings = {
+        (str(row.get("team")), _normalized_player_name(row.get("player_name"))): row
+        for row in players
+    }
+    actual_by_team: dict[str, list[dict[str, object]]] = {}
+    boxscore = summary.get("boxscore", {})
+    player_groups = boxscore.get("players", []) if isinstance(boxscore, dict) else []
+    for team_group in player_groups:
+        if not isinstance(team_group, dict):
+            continue
+        team_data = team_group.get("team", {})
+        team = ESPN_TEAM_ALIASES.get(
+            str(team_data.get("abbreviation", "")) if isinstance(team_data, dict) else "",
+            str(team_data.get("abbreviation", "")) if isinstance(team_data, dict) else "",
+        )
+        rows: list[dict[str, object]] = []
+        for statistics in team_group.get("statistics", []):
+            if not isinstance(statistics, dict):
+                continue
+            labels = [str(label) for label in statistics.get("labels", [])]
+            if "MIN" not in labels:
+                continue
+            minutes_index = labels.index("MIN")
+            for athlete_row in statistics.get("athletes", []):
+                if not isinstance(athlete_row, dict):
+                    continue
+                athlete = athlete_row.get("athlete", {})
+                if not isinstance(athlete, dict):
+                    continue
+                name = str(athlete.get("displayName", ""))
+                stats = athlete_row.get("stats", [])
+                minutes = (
+                    _parse_boxscore_minutes(stats[minutes_index])
+                    if isinstance(stats, list) and len(stats) > minutes_index
+                    else 0.0
+                )
+                model_player = ratings.get((team, _normalized_player_name(name)))
+                rows.append(
+                    {
+                        "player_id": (
+                            int(model_player["player_id"]) if model_player is not None else None
+                        ),
+                        "player_name": (
+                            str(model_player["player_name"]) if model_player is not None else name
+                        ),
+                        "actual_minutes": minutes,
+                        "projected_nail": (
+                            float(model_player.get("projected_nail", 0.0))
+                            if model_player is not None
+                            else 0.0
+                        ),
+                        "rating_matched": model_player is not None,
+                    }
+                )
+        actual_by_team[team] = rows
+
+    home_team = str(game["home_team"])
+    away_team = str(game["away_team"])
+    home_strength = _actual_minutes_team_strength(actual_by_team.get(home_team, []), home_team)
+    away_strength = _actual_minutes_team_strength(actual_by_team.get(away_team, []), away_team)
+    forecast = projection_payload.get("win_projection", {})
+    if not isinstance(forecast, dict):
+        raise ValueError("Win projection payload is missing for retrospective")
+    scheduled = next(
+        (
+            row
+            for row in forecast.get("scheduled_games", [])
+            if isinstance(row, dict) and row.get("game_id") == game.get("game_id")
+        ),
+        {},
+    )
+    margin = (
+        home_strength
+        - away_strength
+        + float(forecast["home_court"])
+        + float(forecast["back_to_back"])
+        * (
+            float(scheduled.get("home_back_to_back", 0))
+            - float(scheduled.get("away_back_to_back", 0))
+        )
+    )
+    probability = float(
+        1.0 / (1.0 + np.exp(-float(forecast["win_probability_scale"]) * margin))
+    )
+    return {
+        "computed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "method": (
+            "NAIL strength reweighted by final actual minutes; "
+            "team minutes normalized to 240"
+        ),
+        "home_margin": margin,
+        "home_win_probability": probability,
+        "actual_minutes": {
+            "away": _public_actual_minutes(actual_by_team.get(away_team, [])),
+            "home": _public_actual_minutes(actual_by_team.get(home_team, [])),
+        },
+    }
+
+
+def _parse_boxscore_minutes(value: object) -> float:
+    text = str(value or "0").strip()
+    if ":" in text:
+        minutes, seconds = text.split(":", 1)
+        return float(minutes) + float(seconds) / 60.0
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def _actual_minutes_team_strength(rows: list[dict[str, object]], team: str) -> float:
+    total = sum(float(row["actual_minutes"]) for row in rows)
+    if total <= 0.0:
+        raise ValueError(f"Final ESPN box score has no actual minutes for {team}")
+    return sum(
+        5.0 * float(row["actual_minutes"]) / total * float(row["projected_nail"])
+        for row in rows
+    )
+
+
+def _public_actual_minutes(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [
+        {key: value for key, value in row.items() if key != "projected_nail"}
+        for row in sorted(
+            rows,
+            key=lambda row: (-float(row["actual_minutes"]), str(row["player_name"])),
+        )
+    ]
+
+
+def live_score_watcher_main() -> int:
+    """Poll ESPN only during the bounded daily live-game window."""
+
+    parser = argparse.ArgumentParser(description="Watch live NBA scores until the final game ends")
+    parser.add_argument(
+        "--date",
+        default=datetime.now(ZoneInfo("America/New_York")).date().isoformat(),
+    )
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=Path(os.environ.get("GESTALT_SCHEDULE_STATE_DIR", DEFAULT_SCHEDULE_STATE_DIR)),
+    )
+    parser.add_argument("--interval-seconds", type=int, default=75)
+    args = parser.parse_args()
+    if args.interval_seconds < 30:
+        parser.error("--interval-seconds must be at least 30")
+    while True:
+        state = refresh_live_score_state(game_date=args.date, state_dir=args.state_dir)
+        now = datetime.now(UTC)
+        earliest = state["earliest_start"]
+        latest = state["latest_start"]
+        if state["all_final"]:
+            print(f"All {state['game_count']} games are final for {args.date}")
+            return 0
+        if not isinstance(earliest, datetime) or not isinstance(latest, datetime):
+            print(f"No games to watch for {args.date}")
+            return 0
+        if now < earliest - timedelta(minutes=30):
+            print(f"Live window has not started for {args.date}")
+            return 0
+        if now > latest + timedelta(hours=6):
+            print(f"Live window expired for {args.date}")
+            return 0
+        time.sleep(args.interval_seconds)
+
+
+def refresh_schedule_main() -> int:
+    """Refresh the available ESPN schedule/odds window from cron."""
+
+    parser = argparse.ArgumentParser(description="Archive NBA schedule and odds from ESPN")
+    parser.add_argument(
+        "--date",
+        default=datetime.now(ZoneInfo("America/New_York")).date().isoformat(),
+    )
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=Path(os.environ.get("GESTALT_SCHEDULE_STATE_DIR", DEFAULT_SCHEDULE_STATE_DIR)),
+    )
+    parser.add_argument("--projection-url", default=DEFAULT_SCHEDULE_API_URL)
+    parser.add_argument("--s3-uri", default=DEFAULT_SCHEDULE_S3_URI)
+    parser.add_argument("--no-s3", action="store_true")
+    parser.add_argument(
+        "--days-ahead",
+        type=int,
+        default=DEFAULT_SCHEDULE_DAYS_AHEAD,
+        help="Number of future dates to inspect in addition to --date",
+    )
+    args = parser.parse_args()
+    if args.days_ahead < 0:
+        parser.error("--days-ahead must be non-negative")
+    payload = refresh_schedule_window(
+        start_date=args.date,
+        days_ahead=args.days_ahead,
+        state_dir=args.state_dir,
+        projection_url=args.projection_url,
+        s3_uri=None if args.no_s3 else args.s3_uri,
+    )
+    print(
+        f"Archived {payload['game_count']} games across "
+        f"{payload['archived_day_count']} available dates from {args.date}; "
+        f"newly frozen: {payload['newly_frozen_game_count']}"
+    )
+    return 0
 
 
 def main() -> int:

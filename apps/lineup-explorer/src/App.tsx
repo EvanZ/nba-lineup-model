@@ -4,6 +4,7 @@ import { trackPageView } from "./analytics";
 import { RosterMovesPage } from "./RosterMovesPage";
 import { WinProjectionsPage } from "./WinProjectionsPage";
 import { ComparePage } from "./ComparePage";
+import { SchedulePage } from "./SchedulePage";
 import {
   ArrowLeft,
   ArrowRight,
@@ -39,8 +40,8 @@ import type {
 } from "./types";
 
 type Side = "unit" | "opponent";
-type AppView = "lab" | "rankings" | "compare" | "lineups" | "moves" | "wins" | "about" | "player" | "team";
-type AppRoute = { view: AppView; playerId?: number; team?: string; season?: string };
+type AppView = "lab" | "rankings" | "compare" | "lineups" | "moves" | "wins" | "schedule" | "about" | "player" | "team";
+type AppRoute = { view: AppView; playerId?: number; team?: string; season?: string; date?: string };
 type Environment = "unit" | "neutral" | "opponent";
 type Court = "neutral" | "unit_home" | "opponent_home";
 type AgingContributionKey = "prior" | "seasonUpdate" | "additiveProfile";
@@ -185,6 +186,8 @@ function useAppView(): AppRoute {
     if (pathname === "lineups") return { view: "lineups" };
     if (pathname === "moves") return { view: "moves" };
     if (pathname === "wins") return { view: "wins" };
+    const scheduleMatch = pathname.match(/^schedule(?:\/(\d{4}-\d{2}-\d{2}))?$/);
+    if (scheduleMatch) return { view: "schedule", date: scheduleMatch[1] };
     return { view: "lab" };
   };
   const [view, setView] = useState<AppRoute>(getView);
@@ -1504,6 +1507,7 @@ function App() {
             <a className={view === "lineups" ? "active" : ""} href="#lineups">Lineups</a>
             <a className={view === "moves" ? "active" : ""} href="#moves">Moves</a>
             <a className={view === "wins" ? "active" : ""} href="#wins">Wins</a>
+            <a className={view === "schedule" ? "active" : ""} href="#schedule">Schedule</a>
             <a className={view === "about" ? "active" : ""} href="#about">About</a>
           </nav>
           <span className="header-links">
@@ -1544,7 +1548,7 @@ function App() {
 
       <GlobalSearch isOpen={isGlobalSearchOpen} onClose={() => setIsGlobalSearchOpen(false)} />
 
-      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "compare" ? <ComparePage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "team" && route.team ? <TeamSeasonPage team={route.team} season={route.season} onLoadInLab={loadObservedLineup} /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
+      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "compare" ? <ComparePage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "schedule" ? <SchedulePage initialDate={route.date} /> : view === "team" && route.team ? <TeamSeasonPage team={route.team} season={route.season} onLoadInLab={loadObservedLineup} /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
         <section className="intro" aria-labelledby="page-title">
           <div className="gestalt-entry" aria-label="Definition of gestalt">
             <div className="gestalt-entry-heading">

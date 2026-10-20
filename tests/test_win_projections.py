@@ -1,17 +1,284 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
 
+import nba_lineup_model.web_api.win_projections as win_projections
 from nba_lineup_model.web_api.market_win_totals import BETMGM_WIN_TOTALS_2026_27
 from nba_lineup_model.web_api.win_projections import (
+    _aws_s3_cp_exclusive,
+    _build_final_game_archive,
     _completed_team_win_totals,
+    _espn_team,
+    _game_rotation,
+    _parse_official_injury_report,
     _team_win_totals,
     fit_win_probability_scale,
+    read_schedule_day,
     score_season_win_forecasts,
     score_win_probabilities,
     simulate_baseline_win_total_intervals,
 )
+
+
+def test_schedule_day_attaches_immutable_final_audit(tmp_path) -> None:
+    latest = tmp_path / "latest" / "2026-10-20.json"
+    frozen = tmp_path / "frozen" / "401909088.json"
+    final = tmp_path / "final" / "401909088.summary.json"
+    for path in (latest, frozen, final):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    latest.write_text(
+        '{"games":[{"espn_game_id":"401909088","status":{"state":"post"}}]}'
+    )
+    frozen.write_text('{"projection":{"home_margin":4.5}}')
+    final.write_text(
+        '{"grading":{"model_favorite_won":true,'
+        '"market":{"model_ats_result":"win"}}}'
+    )
+
+    payload = read_schedule_day("2026-10-20", state_dir=tmp_path)
+
+    assert payload["games"][0]["pregame"]["projection"]["home_margin"] == 4.5
+    assert payload["games"][0]["final_audit"]["grading"]["model_favorite_won"] is True
+    assert (
+        payload["games"][0]["final_audit"]["grading"]["market"]["model_ats_result"]
+        == "win"
+    )
+
+
+def test_injury_pdf_preserves_team_reports_that_are_not_submitted(monkeypatch) -> None:
+    rows = [
+        [
+            (201.0, "GSW@LAL"),
+            (265.2, "Golden State Warriors"),
+            (667.1, "NOT"),
+            (687.3, "YET"),
+            (704.2, "SUBMITTED"),
+        ],
+        [
+            (265.2, "Los Angeles Lakers"),
+            (667.1, "NOT"),
+            (687.3, "YET"),
+            (704.2, "SUBMITTED"),
+        ],
+        [
+            (201.0, "ATL@ORL"),
+            (265.2, "Atlanta Hawks"),
+            (426.0, "Young,"),
+            (470.0, "Trae"),
+            (586.7, "Out"),
+            (667.1, "Injury/Illness"),
+        ],
+        [(265.2, "Orlando Magic"), (667.1, "No injuries to report")],
+    ]
+
+    class FakePage:
+        def extract_text(self, visitor_text):
+            for y, row in enumerate(rows, start=100):
+                for x, value in row:
+                    visitor_text(value, None, [1.0, 0.0, 0.0, 1.0, x, float(y)], None, 9.0)
+
+    monkeypatch.setattr("pypdf.PdfReader", lambda _source: SimpleNamespace(pages=[FakePage()]))
+
+    report = _parse_official_injury_report(b"fake pdf")
+
+    assert report["team_reports"]["GSW"]["status"] == "not_yet_submitted"
+    assert report["team_reports"]["LAL"]["status"] == "not_yet_submitted"
+    assert report["team_reports"]["ATL"]["status"] == "submitted"
+    assert report["team_reports"]["ORL"]["status"] == "submitted"
+    assert report["players"][0]["player_name"] == "Trae Young"
+
+
+def test_pending_team_report_does_not_claim_players_are_available() -> None:
+    rotation = _game_rotation(
+        "GSW",
+        players=[
+            {
+                "player_id": 1,
+                "player_name": "Jimmy Butler",
+                "team": "GSW",
+                "conditional_minutes_per_game": 36.0,
+                "projected_nail": 2.0,
+            },
+            {
+                "player_id": 2,
+                "player_name": "Stephen Curry",
+                "team": "GSW",
+                "conditional_minutes_per_game": 34.0,
+                "projected_nail": 3.0,
+            },
+        ],
+        injury_report={
+            "players": [],
+            "team_reports": {"GSW": {"status": "not_yet_submitted"}},
+        },
+        rotation_size=2,
+    )
+
+    assert rotation["report_status"] == "not_yet_submitted"
+    assert rotation["injury_assumptions"] == []
+    assert {player["status"] for player in rotation["players"]} == {"Report pending"}
+    assert all(player["play_probability"] is None for player in rotation["players"])
+    assert sum(player["projected_minutes"] for player in rotation["players"]) == pytest.approx(
+        240.0
+    )
+
+
+@pytest.mark.parametrize(
+    ("espn_code", "projection_code"),
+    [("WSH", "WAS"), ("UTAH", "UTA")],
+)
+def test_espn_team_alias_matches_projection_roster_code(
+    espn_code: str, projection_code: str
+) -> None:
+    assert _espn_team({"team": {"abbreviation": espn_code}}) == projection_code
+
+
+def test_schedule_window_ingests_available_future_boards_with_current_report(
+    tmp_path, monkeypatch
+) -> None:
+    now = datetime(2026, 10, 20, 22, 30, tzinfo=UTC)
+    injury_report = {
+        "players": [],
+        "published_at": "2026-10-20T18:15:00-04:00",
+    }
+    injury_pdf = b"injury report"
+    fetched_urls: list[str] = []
+    archived_calls: list[dict[str, object]] = []
+
+    def fake_injury_fetch(*, report_date, now):
+        assert report_date == "2026-10-20"
+        return injury_report, injury_pdf
+
+    def fake_fetch_json(url):
+        fetched_urls.append(url)
+        if url == "http://projections.test":
+            return {"win_projection": {"season": "2026-27"}, "minutes": {}}
+        if "20261021" in url:
+            return {"events": [{"id": "tomorrow"}]}
+        if "20261022" in url:
+            return {"events": [{"id": "following-day"}]}
+        return {"events": []}
+
+    def fake_refresh_schedule_archive(**kwargs):
+        archived_calls.append(kwargs)
+        return {"games": [{"id": kwargs["game_date"]}], "newly_frozen_game_count": 0}
+
+    monkeypatch.setattr(
+        win_projections,
+        "_fetch_latest_official_injury_report",
+        fake_injury_fetch,
+    )
+    monkeypatch.setattr(win_projections, "_fetch_json", fake_fetch_json)
+    monkeypatch.setattr(
+        win_projections,
+        "refresh_schedule_archive",
+        fake_refresh_schedule_archive,
+    )
+
+    result = win_projections.refresh_schedule_window(
+        start_date="2026-10-20",
+        days_ahead=2,
+        state_dir=tmp_path,
+        projection_url="http://projections.test",
+        s3_uri=None,
+        now=now,
+    )
+
+    assert result["archived_day_count"] == 2
+    assert result["game_count"] == 2
+    assert [call["game_date"] for call in archived_calls] == ["2026-10-21", "2026-10-22"]
+    assert all(call["injury_report"] is injury_report for call in archived_calls)
+    assert all(call["injury_pdf"] == injury_pdf for call in archived_calls)
+    assert all("forecast_response" in call for call in archived_calls)
+    assert any("dates=20261020" in url for url in fetched_urls)
+    assert any("dates=20261022" in url for url in fetched_urls)
+
+
+def test_immutable_s3_upload_accepts_only_byte_identical_retry(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "frozen.json"
+    source.write_bytes(b'{"projection": 4.5}\n')
+    calls: list[list[str]] = []
+
+    def identical_run(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=source.read_bytes())
+
+    monkeypatch.setattr(
+        "nba_lineup_model.web_api.win_projections.subprocess.run",
+        identical_run,
+    )
+    _aws_s3_cp_exclusive(source, "s3://archive/frozen/game.json")
+
+    assert "--no-overwrite" in calls[0]
+    assert calls[1][1:3] == ["s3", "cp"]
+
+    def changed_run(command, **_kwargs):
+        return SimpleNamespace(stdout=b'{"projection": -1.5}\n')
+
+    monkeypatch.setattr(
+        "nba_lineup_model.web_api.win_projections.subprocess.run",
+        changed_run,
+    )
+    with pytest.raises(RuntimeError, match="Refusing to overwrite immutable S3 object"):
+        _aws_s3_cp_exclusive(source, "s3://archive/frozen/game.json")
+
+
+def test_final_game_archive_preserves_pregame_projection_and_grades_market() -> None:
+    pregame = {
+        "frozen_at": "2026-10-20T18:30:04Z",
+        "projection": {
+            "model": "W0 minute-weighted NAIL",
+            "home_margin": 4.48,
+            "home_win_probability": 0.616,
+        },
+        "market": {
+            "provider": "Draft Kings",
+            "home_spread": 1.5,
+            "away_spread": -1.5,
+            "total": 220.5,
+            "home_moneyline": 100,
+            "away_moneyline": -120,
+        },
+    }
+    game = {
+        "game_id": "0022600001",
+        "espn_game_id": "401909088",
+        "start_time": "2026-10-20T19:00:00Z",
+        "away_team": "BOS",
+        "home_team": "DET",
+        "away_score": 101,
+        "home_score": 112,
+        "status": {"state": "post", "completed": True},
+    }
+
+    result = _build_final_game_archive(
+        game,
+        pregame=pregame,
+        retrospective={"home_margin": 3.25},
+        archived_at=datetime(2026, 10, 20, 21, 30, tzinfo=UTC),
+    )
+
+    assert result["pregame"] == pregame
+    assert result["final"]["actual_home_margin"] == 11
+    assert result["grading"]["model_favorite"] == "DET"
+    assert result["grading"]["model_fair_home_spread"] == pytest.approx(-4.48)
+    assert result["grading"]["model_fair_line_team"] == "DET"
+    assert result["grading"]["model_fair_line"] == pytest.approx(-4.48)
+    assert result["grading"]["model_favorite_won"] is True
+    market = result["grading"]["market"]
+    assert market["market_favorite"] == "BOS"
+    assert market["market_favorite_won"] is False
+    assert market["model_edge_points"] == pytest.approx(5.98)
+    assert market["model_ats_selection"] == "DET"
+    assert market["model_ats_selection_spread"] == pytest.approx(1.5)
+    assert market["model_ats_cover_margin"] == pytest.approx(12.5)
+    assert market["model_ats_result"] == "win"
 
 
 def test_betmgm_win_total_snapshot_covers_every_nba_team() -> None:

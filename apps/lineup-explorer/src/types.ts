@@ -257,6 +257,9 @@ export type MinutesProjectionPlayer = {
   has_prior_availability_state: boolean;
   has_prior_minutes_state: boolean;
   availability_probability: number;
+  model_availability_probability?: number;
+  injury_adjusted?: boolean;
+  injury_expected_games_missed?: number;
   conditional_minutes_per_game: number;
   raw_expected_total_minutes: number;
   baseline_minute_share: number;
@@ -288,6 +291,20 @@ export type MinutesProjectionPayload = {
   teams: string[];
   players: MinutesProjectionPlayer[];
   incumbent_team_strength?: IncumbentTeamStrength;
+  injury_availability?: {
+    as_of: string;
+    method: string;
+    player_count: number;
+    players: Array<{
+      player_id: number;
+      player_name: string;
+      low: number;
+      high: number;
+      midpoint: number;
+      availability_probability: number;
+      source_url: string;
+    }>;
+  };
   win_projection?: WinProjectionPayload;
 };
 
