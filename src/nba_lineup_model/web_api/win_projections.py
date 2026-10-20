@@ -49,6 +49,8 @@ DEFAULT_SCHEDULE_DAYS_AHEAD = 7
 ESPN_SCOREBOARD_URL = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 )
+POLYMARKET_EVENT_URL = "https://gamma-api.polymarket.com/events/slug"
+POLYMARKET_MIDPOINTS_URL = "https://clob.polymarket.com/midpoints"
 ESPN_TEAM_ALIASES = {
     "GS": "GSW",
     "NY": "NYK",
@@ -721,6 +723,7 @@ def refresh_schedule_archive(
     injury_report: dict[str, object] | None = None,
     injury_pdf: bytes | None = None,
     forecast_response: dict[str, object] | None = None,
+    prediction_market_snapshot: dict[str, object] | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Archive one ESPN board, normalize it, and freeze the final pregame view.
@@ -751,11 +754,18 @@ def refresh_schedule_archive(
             report_date=game_date,
             now=collected_at,
         )
+    if prediction_market_snapshot is None:
+        prediction_market_snapshot = _fetch_polymarket_moneyline_snapshot(
+            raw,
+            game_date=game_date,
+            collected_at=collected_at,
+        )
     payload = _normalize_espn_schedule(
         raw,
         forecast=forecast,
         minutes=minutes_payload,
         injury_report=injury_report,
+        prediction_markets=prediction_market_snapshot.get("games", {}),
         game_date=game_date,
         collected_at=collected_at,
     )
@@ -770,16 +780,27 @@ def refresh_schedule_archive(
         prior = previous_games.get(str(game.get("espn_game_id")))
         if isinstance(prior, dict) and isinstance(prior.get("retrospective"), dict):
             game["retrospective"] = prior["retrospective"]
+        if (
+            game.get("prediction_market") is None
+            and isinstance(prior, dict)
+            and isinstance(prior.get("prediction_market"), dict)
+        ):
+            game["prediction_market"] = {
+                **prior["prediction_market"],
+                "carried_forward": True,
+            }
 
     timestamp = collected_at.strftime("%Y%m%dT%H%M%SZ")
     archive_dir = state_root / "archive" / game_date
     raw_path = archive_dir / f"{timestamp}.espn.json"
     injury_path = archive_dir / f"{timestamp}.injury.pdf"
+    prediction_market_path = archive_dir / f"{timestamp}.polymarket.json"
     normalized_path = archive_dir / f"{timestamp}.json"
     _write_json(raw_path, raw)
     if injury_pdf is not None:
         injury_path.parent.mkdir(parents=True, exist_ok=True)
         injury_path.write_bytes(injury_pdf)
+    _write_json(prediction_market_path, prediction_market_snapshot)
     _write_json(normalized_path, payload)
 
     frozen_count = 0
@@ -817,6 +838,10 @@ def refresh_schedule_archive(
                 injury_path,
                 f"{prefix}/snapshots/{timestamp}.injury.pdf",
             )
+        _aws_s3_cp_exclusive(
+            prediction_market_path,
+            f"{prefix}/snapshots/{timestamp}.polymarket.json",
+        )
         _aws_s3_cp_exclusive(normalized_path, f"{prefix}/snapshots/{timestamp}.json")
         _aws_s3_cp(latest_path, f"{prefix}/latest.json")
         for game in payload["games"]:
@@ -881,6 +906,11 @@ def refresh_schedule_window(
         events = raw.get("events", [])
         if not isinstance(events, list) or not events:
             continue
+        prediction_market_snapshot = _fetch_polymarket_moneyline_snapshot(
+            raw,
+            game_date=game_date,
+            collected_at=collected_at,
+        )
         payload = refresh_schedule_archive(
             game_date=game_date,
             state_dir=state_dir,
@@ -890,6 +920,7 @@ def refresh_schedule_window(
             injury_report=injury_report,
             injury_pdf=injury_pdf,
             forecast_response=forecast_response,
+            prediction_market_snapshot=prediction_market_snapshot,
             now=collected_at,
         )
         game_count = len(payload["games"])
@@ -1174,9 +1205,11 @@ def _normalize_espn_schedule(
     forecast: dict[str, object],
     minutes: dict[str, object],
     injury_report: dict[str, object],
+    prediction_markets: object,
     game_date: str,
     collected_at: datetime,
 ) -> dict[str, object]:
+    prediction_markets = prediction_markets if isinstance(prediction_markets, dict) else {}
     minute_players = [row for row in minutes.get("players", []) if isinstance(row, dict)]
     schedule = {
         (str(row.get("home_team")), str(row.get("away_team"))): row
@@ -1282,6 +1315,9 @@ def _normalize_espn_schedule(
                     if odds and isinstance(odds[0], dict)
                     else None
                 ),
+                "prediction_market": prediction_markets.get(
+                    _prediction_market_game_key(away_team, home_team)
+                ),
             }
         )
     return {
@@ -1290,6 +1326,7 @@ def _normalize_espn_schedule(
         "season": forecast.get("season", PROJECTION_SEASON),
         "collected_at": collected_at.isoformat().replace("+00:00", "Z"),
         "source": "ESPN scoreboard API",
+        "prediction_market_source": "Polymarket public Gamma and CLOB APIs",
         "injury_report": {
             "source": "NBA official injury report",
             "source_url": injury_report.get("source_url"),
@@ -1361,13 +1398,244 @@ def _integer_or_none(value: object) -> int | None:
         return None
 
 
-def _fetch_json(url: str) -> dict[str, object]:
+def _fetch_polymarket_moneyline_snapshot(
+    espn_payload: dict[str, object],
+    *,
+    game_date: str,
+    collected_at: datetime,
+) -> dict[str, object]:
+    """Read each listed NBA moneyline and its current CLOB midpoint.
+
+    Polymarket's game-event slugs are deterministic from the NBA team codes and
+    Eastern game date. The event contains many props and alternate lines, so we
+    accept only the market whose slug exactly matches the event slug. Every
+    selected field and unavailable lookup is retained in the timestamped
+    snapshot written by the schedule collector.
+    """
+
+    captured_at = collected_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    specifications: list[dict[str, object]] = []
+    unavailable: list[dict[str, object]] = []
+    seen_games: set[str] = set()
+    for espn_event in espn_payload.get("events", []):
+        if not isinstance(espn_event, dict):
+            continue
+        competitions = espn_event.get("competitions", [])
+        if not competitions or not isinstance(competitions[0], dict):
+            continue
+        competitors = {
+            str(row.get("homeAway")): row
+            for row in competitions[0].get("competitors", [])
+            if isinstance(row, dict)
+        }
+        home_team = _espn_team(competitors.get("home", {}))
+        away_team = _espn_team(competitors.get("away", {}))
+        game_key = _prediction_market_game_key(away_team, home_team)
+        if not home_team or not away_team or game_key in seen_games:
+            continue
+        seen_games.add(game_key)
+        event_slug = f"nba-{away_team.lower()}-{home_team.lower()}-{game_date}"
+        try:
+            event = _fetch_json(f"{POLYMARKET_EVENT_URL}/{event_slug}", timeout=5)
+        except (OSError, TimeoutError, ValueError) as error:
+            unavailable.append(
+                {
+                    "game": game_key,
+                    "event_slug": event_slug,
+                    "reason": f"event lookup failed: {error}",
+                }
+            )
+            continue
+        market = _polymarket_moneyline_market(event, event_slug=event_slug)
+        if market is None:
+            unavailable.append(
+                {
+                    "game": game_key,
+                    "event_slug": event_slug,
+                    "reason": "moneyline market unavailable",
+                }
+            )
+            continue
+        outcomes = _json_string_list(market.get("outcomes"))
+        asset_ids = _polymarket_asset_ids(market)
+        fallback_prices = _json_float_list(market.get("outcomePrices"))
+        if len(outcomes) != 2 or len(asset_ids) != 2:
+            unavailable.append(
+                {
+                    "game": game_key,
+                    "event_slug": event_slug,
+                    "reason": "moneyline outcomes or asset IDs are invalid",
+                }
+            )
+            continue
+        specifications.append(
+            {
+                "game": game_key,
+                "away_team": away_team,
+                "home_team": home_team,
+                "event": event,
+                "event_slug": event_slug,
+                "market": market,
+                "outcomes": outcomes,
+                "asset_ids": asset_ids,
+                "fallback_prices": fallback_prices,
+            }
+        )
+
+    midpoint_requests = [
+        {"token_id": asset_id}
+        for specification in specifications
+        for asset_id in specification["asset_ids"]
+    ]
+    midpoint_error: str | None = None
+    midpoints: dict[str, object] = {}
+    if midpoint_requests:
+        try:
+            midpoints = _post_json(POLYMARKET_MIDPOINTS_URL, midpoint_requests)
+        except (OSError, TimeoutError, ValueError) as error:
+            midpoint_error = str(error)
+
+    games: dict[str, object] = {}
+    for specification in specifications:
+        asset_ids = specification["asset_ids"]
+        fallback_prices = specification["fallback_prices"]
+        midpoint_prices = [_float_or_none(midpoints.get(str(asset_id))) for asset_id in asset_ids]
+        if all(price is not None for price in midpoint_prices):
+            raw_prices = [float(price) for price in midpoint_prices]
+            pricing_method = "CLOB midpoint"
+        elif len(fallback_prices) == 2:
+            raw_prices = fallback_prices
+            pricing_method = "Gamma outcome price fallback"
+        else:
+            unavailable.append(
+                {
+                    "game": specification["game"],
+                    "event_slug": specification["event_slug"],
+                    "reason": "midpoint and fallback prices are unavailable",
+                }
+            )
+            continue
+        raw_sum = float(sum(raw_prices))
+        if raw_sum <= 0.0 or any(price < 0.0 or price > 1.0 for price in raw_prices):
+            unavailable.append(
+                {
+                    "game": specification["game"],
+                    "event_slug": specification["event_slug"],
+                    "reason": "moneyline prices are outside the probability range",
+                }
+            )
+            continue
+        market = specification["market"]
+        event = specification["event"]
+        outcomes = specification["outcomes"]
+        games[str(specification["game"])] = {
+            "provider": "Polymarket",
+            "event_id": str(event.get("id", "")),
+            "market_id": str(market.get("id", "")),
+            "event_slug": specification["event_slug"],
+            "market_slug": market.get("slug"),
+            "url": f"https://polymarket.com/event/{specification['event_slug']}",
+            "captured_at": captured_at,
+            "pricing_method": pricing_method,
+            "away_outcome": outcomes[0],
+            "home_outcome": outcomes[1],
+            "away_asset_id": asset_ids[0],
+            "home_asset_id": asset_ids[1],
+            "away_probability_raw": raw_prices[0],
+            "home_probability_raw": raw_prices[1],
+            "raw_probability_sum": raw_sum,
+            "away_probability": raw_prices[0] / raw_sum,
+            "home_probability": raw_prices[1] / raw_sum,
+            "volume": _float_or_none(market.get("volumeNum")),
+            "liquidity": _float_or_none(market.get("liquidityNum")),
+            "bid_ask_spread": _float_or_none(market.get("spread")),
+        }
+    return {
+        "provider": "Polymarket",
+        "captured_at": captured_at,
+        "pricing_method": "CLOB midpoint; Gamma outcome price fallback",
+        "requested_game_count": len(seen_games),
+        "available_game_count": len(games),
+        "midpoint_error": midpoint_error,
+        "games": games,
+        "unavailable": unavailable,
+    }
+
+
+def _prediction_market_game_key(away_team: str, home_team: str) -> str:
+    return f"{away_team}-{home_team}"
+
+
+def _polymarket_moneyline_market(
+    event: dict[str, object], *, event_slug: str
+) -> dict[str, object] | None:
+    for market in event.get("markets", []):
+        if not isinstance(market, dict):
+            continue
+        if market.get("slug") != event_slug:
+            continue
+        if market.get("closed") is True or market.get("active") is False:
+            continue
+        return market
+    return None
+
+
+def _polymarket_asset_ids(market: dict[str, object]) -> list[str]:
+    if str(market.get("version", "v1")) == "v2":
+        value = market.get("positionIds")
+        if isinstance(value, list):
+            return [str(item) for item in value]
+    return _json_string_list(market.get("clobTokenIds"))
+
+
+def _json_string_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _json_float_list(value: object) -> list[float]:
+    return [
+        parsed
+        for item in _json_string_list(value)
+        if (parsed := _float_or_none(item)) is not None
+    ]
+
+
+def _float_or_none(value: object) -> float | None:
+    try:
+        return float(str(value)) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _fetch_json(url: str, *, timeout: float = 20) -> dict[str, object]:
     request = urllib.request.Request(url, headers={"User-Agent": "nba-gestalt/1.0"})
-    with urllib.request.urlopen(request, timeout=20) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         payload = json.load(response)
     if not isinstance(payload, dict):
         raise ValueError(f"JSON endpoint did not return an object: {url}")
     return payload
+
+
+def _post_json(url: str, payload: object) -> dict[str, object]:
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json", "User-Agent": "nba-gestalt/1.0"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        result = json.load(response)
+    if not isinstance(result, dict):
+        raise ValueError(f"JSON endpoint did not return an object: {url}")
+    return result
 
 
 def _write_json(path: Path, payload: object) -> None:

@@ -12,6 +12,23 @@ type MarketLine = {
   home_moneyline: number | null;
 };
 
+type PredictionMarket = {
+  provider: string;
+  event_id: string;
+  market_id: string;
+  url: string;
+  captured_at: string;
+  pricing_method: string;
+  away_probability: number;
+  home_probability: number;
+  away_probability_raw: number;
+  home_probability_raw: number;
+  raw_probability_sum: number;
+  volume: number | null;
+  liquidity: number | null;
+  bid_ask_spread: number | null;
+};
+
 type InjuryAssumption = {
   player_id: number;
   player_name: string;
@@ -58,6 +75,7 @@ type ArchivedGame = {
   status: { state: string; completed: boolean; description: string; detail: string | null; display_clock?: string | null; period?: number | null };
   projection: { model: string; home_margin: number; home_win_probability: number };
   market: MarketLine | null;
+  prediction_market?: PredictionMarket | null;
   injury_report: {
     source: string;
     source_url: string;
@@ -244,6 +262,7 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
     ? { margin: pregame.projection.home_margin, winProbability: pregame.projection.home_win_probability }
     : liveProjection;
   const market = pregame?.market ?? archived?.market ?? null;
+  const predictionMarket = pregame?.prediction_market ?? archived?.prediction_market ?? null;
   const injuryReport = pregame?.injury_report ?? archived?.injury_report;
   const projectedMinutes = pregame?.projected_minutes ?? archived?.projected_minutes;
   const pendingReportTeams = [game.away_team, game.home_team].filter((team) => (
@@ -314,8 +333,17 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
             <div><span>{game.away_team}</span><strong>{market.away_spread == null ? "—" : formatSpread(market.away_spread)}</strong><small>{formatMoneyline(market.away_moneyline)}</small></div>
             <div><span>{game.home_team}</span><strong>{market.home_spread == null ? "—" : formatSpread(market.home_spread)}</strong><small>{formatMoneyline(market.home_moneyline)}</small></div>
           </div>
-          <div className="schedule-total"><span>Total</span><strong>{market.total == null ? "—" : `O/U ${market.total.toFixed(1)}`}</strong></div>
         </> : <p className="schedule-market-empty">No market line yet</p>}
+        <div className="schedule-polymarket">
+          <div>
+            {predictionMarket ? <a href={predictionMarket.url} target="_blank" rel="noreferrer">Polymarket</a> : <span>Polymarket</span>}
+            <small title={predictionMarket?.pricing_method}>{predictionMarket ? "Midpoint" : "Unavailable"}</small>
+          </div>
+          {predictionMarket && <div className="schedule-polymarket-prices" aria-label={`Polymarket probabilities: ${game.away_team} ${(predictionMarket.away_probability * 100).toFixed(1)} percent, ${game.home_team} ${(predictionMarket.home_probability * 100).toFixed(1)} percent`}>
+            <strong>{game.away_team} {(predictionMarket.away_probability * 100).toFixed(1)}%</strong>
+            <strong>{game.home_team} {(predictionMarket.home_probability * 100).toFixed(1)}%</strong>
+          </div>}
+        </div>
       </div>
 
       <div className={`schedule-edge ${modelEdge === null || Math.abs(modelEdge) < 1 ? "muted" : ""}`}>
@@ -339,7 +367,7 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
           </div>}
           {injuryReport.assumptions.length > 0 ? <div className="schedule-injury-list">
             {injuryReport.assumptions.map((assumption) => <div key={assumption.player_id}>
-              <span><a className="schedule-player-link" href={playerHref(assumption.player_id)}><strong>{assumption.player_name}</strong></a><small>{assumption.team}</small></span>
+              <span><a className="schedule-player-link" href={playerHref(assumption.player_id)}><strong>{assumption.player_name}</strong></a><small>{assumption.team}{assumption.reason ? ` · ${assumption.reason}` : ""}</small></span>
               <span className={`schedule-injury-status status-${assumption.status.toLowerCase()}`}>{assumption.status}</span>
               <span>{Math.round(assumption.play_probability * 100)}% play</span>
               <span>{assumption.projected_minutes.toFixed(1)} min</span>
@@ -485,7 +513,7 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
           <p className="eyebrow">Daily board</p>
           <h2>{longDate(selectedDate)}</h2>
         </div>
-        <div className="schedule-source-note"><span>Lines &amp; scores</span><strong>DraftKings via ESPN</strong><small>{archiveAge(scheduleDay?.live_score_collected_at ?? scheduleDay?.collected_at)}</small></div>
+        <div className="schedule-source-note"><span>Lines, scores &amp; crowd</span><strong>ESPN · DraftKings · Polymarket</strong><small>{archiveAge(scheduleDay?.live_score_collected_at ?? scheduleDay?.collected_at)}</small></div>
       </div>
 
       {error ? <p className="error schedule-error"><CircleAlert size={16} /> {error}</p> : !forecast ? <p className="schedule-loading">Loading the schedule…</p> : games.length ? <div className="schedule-games">

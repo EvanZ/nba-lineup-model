@@ -13,6 +13,7 @@ from nba_lineup_model.web_api.win_projections import (
     _build_final_game_archive,
     _completed_team_win_totals,
     _espn_team,
+    _fetch_polymarket_moneyline_snapshot,
     _game_rotation,
     _parse_official_injury_report,
     _team_win_totals,
@@ -22,6 +23,91 @@ from nba_lineup_model.web_api.win_projections import (
     score_win_probabilities,
     simulate_baseline_win_total_intervals,
 )
+
+
+def test_polymarket_moneyline_snapshot_uses_main_market_midpoints(monkeypatch) -> None:
+    token_ids = ["away-token", "home-token"]
+    event_slug = "nba-gsw-lal-2026-10-21"
+    requested_urls: list[str] = []
+    midpoint_requests: list[dict[str, str]] = []
+
+    def fake_fetch_json(url, *, timeout=20):
+        assert timeout == 5
+        requested_urls.append(url)
+        return {
+            "id": "event-1",
+            "slug": event_slug,
+            "markets": [
+                {
+                    "id": "prop-1",
+                    "slug": f"{event_slug}-team-to-score-first",
+                    "outcomes": '["Warriors", "Lakers"]',
+                    "clobTokenIds": '["wrong-1", "wrong-2"]',
+                    "active": True,
+                    "closed": False,
+                },
+                {
+                    "id": "moneyline-1",
+                    "slug": event_slug,
+                    "version": "v1",
+                    "outcomes": '["Warriors", "Lakers"]',
+                    "outcomePrices": '["0.35", "0.65"]',
+                    "clobTokenIds": '["away-token", "home-token"]',
+                    "volumeNum": 45978.94,
+                    "liquidityNum": 64259.13,
+                    "spread": 0.01,
+                    "active": True,
+                    "closed": False,
+                },
+            ],
+        }
+
+    def fake_post_json(url, payload):
+        assert url == win_projections.POLYMARKET_MIDPOINTS_URL
+        midpoint_requests.extend(payload)
+        return {"away-token": "0.345", "home-token": "0.655"}
+
+    monkeypatch.setattr(win_projections, "_fetch_json", fake_fetch_json)
+    monkeypatch.setattr(win_projections, "_post_json", fake_post_json)
+    espn_payload = {
+        "events": [
+            {
+                "competitions": [
+                    {
+                        "competitors": [
+                            {
+                                "homeAway": "away",
+                                "team": {"abbreviation": "GS"},
+                            },
+                            {
+                                "homeAway": "home",
+                                "team": {"abbreviation": "LAL"},
+                            },
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+    snapshot = _fetch_polymarket_moneyline_snapshot(
+        espn_payload,
+        game_date="2026-10-21",
+        collected_at=datetime(2026, 10, 20, 23, 0, tzinfo=UTC),
+    )
+
+    assert requested_urls == [
+        f"{win_projections.POLYMARKET_EVENT_URL}/{event_slug}"
+    ]
+    assert midpoint_requests == [{"token_id": token_id} for token_id in token_ids]
+    assert snapshot["available_game_count"] == 1
+    market = snapshot["games"]["GSW-LAL"]
+    assert market["market_id"] == "moneyline-1"
+    assert market["pricing_method"] == "CLOB midpoint"
+    assert market["away_probability"] == pytest.approx(0.345)
+    assert market["home_probability"] == pytest.approx(0.655)
+    assert market["raw_probability_sum"] == pytest.approx(1.0)
+    assert market["url"].endswith(event_slug)
 
 
 def test_schedule_day_attaches_immutable_final_audit(tmp_path) -> None:

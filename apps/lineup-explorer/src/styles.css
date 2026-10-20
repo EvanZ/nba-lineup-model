@@ -1224,9 +1224,9 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-probability-bar span:last-child { background: #245a47; }
 .schedule-probability-labels { display: flex; justify-content: space-between; gap: 8px; margin-top: 7px; }
 .schedule-probability-labels strong { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
-.schedule-model-line, .schedule-total { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 12px; padding-top: 9px; border-top: 1px solid #e2dfd7; }
-.schedule-model-line span, .schedule-total span { color: #8a918b; font-size: 8px; font-weight: 800; text-transform: uppercase; }
-.schedule-model-line strong, .schedule-total strong { color: #245a47; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.schedule-model-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 12px; padding-top: 9px; border-top: 1px solid #e2dfd7; }
+.schedule-model-line span { color: #8a918b; font-size: 8px; font-weight: 800; text-transform: uppercase; }
+.schedule-model-line strong { color: #245a47; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .schedule-market-heading { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
 .schedule-market-heading span { padding: 3px 5px; background: #f4dfd7; color: #a33e28; font-size: 7px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
 .schedule-market-teams { display: grid; gap: 6px; }
@@ -1235,6 +1235,13 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-market-teams strong { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .schedule-market-teams small { min-width: 34px; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; text-align: right; }
 .schedule-market-empty { margin: 18px 0 0; color: #8a918b; font-size: 11px; }
+.schedule-polymarket { display: grid; gap: 6px; margin-top: 12px; padding-top: 9px; border-top: 1px solid #e2dfd7; }
+.schedule-polymarket > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.schedule-polymarket a, .schedule-polymarket > div:first-child > span { color: #245a47; font-size: 8px; font-weight: 900; text-decoration: none; text-transform: uppercase; }
+.schedule-polymarket a:hover, .schedule-polymarket a:focus-visible { text-decoration: underline; text-decoration-color: #e8502f; text-underline-offset: 2px; }
+.schedule-polymarket small { color: #8a918b; font-size: 7px; font-weight: 800; text-transform: uppercase; }
+.schedule-polymarket-prices { display: flex; justify-content: space-between; gap: 8px; }
+.schedule-polymarket-prices strong { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
 .schedule-edge { display: grid; place-content: center; justify-items: center; gap: 5px; padding: 12px; background: #dce8db; color: #245a47; text-align: center; }
 .schedule-edge.muted { background: #f0eee8; color: #69716b; }
 .schedule-edge span { font-size: 8px; font-weight: 900; text-transform: uppercase; }
@@ -1248,7 +1255,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-assumption-policy { margin: 12px 0; color: #69716b; font-size: 10px; line-height: 1.5; }
 .schedule-injury-list { display: grid; border-top: 1px solid #d9d6ce; }
 .schedule-injury-list > div { min-height: 34px; display: grid; grid-template-columns: minmax(170px, 1fr) 100px 74px 64px; align-items: center; gap: 10px; border-bottom: 1px solid #e2dfd7; color: #4f5851; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; text-align: right; }
-.schedule-injury-list > div > span:first-child { display: flex; align-items: baseline; gap: 7px; text-align: left; }
+.schedule-injury-list > div > span:first-child { display: grid; gap: 2px; padding: 5px 0; text-align: left; }
 .schedule-injury-list strong { color: #17201c; font-size: 10px; }
 .schedule-injury-list small { color: #8a918b; font-size: 8px; }
 .schedule-player-link { color: #17201c; font-weight: 800; text-decoration: none; }
