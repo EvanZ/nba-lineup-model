@@ -25,6 +25,7 @@ from nba_lineup_model.season.schedule import SeasonScheduleCache
 from nba_lineup_model.web_api.inference import (
     DEFAULT_ARTIFACTS_DIR,
     MODEL_ARTIFACT,
+    TEAM_DISPLAY_NAMES,
     LineupEvaluator,
     _compiled_linear_x3_coefficients,
     _player_rating_center,
@@ -1121,33 +1122,39 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
                     ESPN_TEAM_ALIASES.get(matchup.group(2), matchup.group(2)),
                 )
                 current_team_position = -1
-                for team in current_matchup:
-                    team_reports.setdefault(
-                        team,
-                        {
-                            "team": team,
-                            "matchup": "@".join(current_matchup),
-                            "status": "submitted",
-                        },
-                    )
             team_tokens = [
                 text for x, text in ordered_parts if 250.0 <= x < 420.0
             ]
             has_player_or_reason = any(x >= 420.0 for x, _text in ordered_parts)
-            if current_matchup is not None and team_tokens and has_player_or_reason:
+            next_team_position = current_team_position + 1
+            is_expected_team_row = False
+            if (
+                current_matchup is not None
+                and next_team_position < len(current_matchup)
+                and team_tokens
+            ):
+                expected_team = current_matchup[next_team_position]
+                expected_name = TEAM_DISPLAY_NAMES.get(expected_team, expected_team)
+                normalized_team_tokens = re.sub(
+                    r"[^a-z0-9]", "", " ".join(team_tokens).lower()
+                )
+                normalized_expected_name = re.sub(
+                    r"[^a-z0-9]", "", expected_name.lower()
+                )
+                is_expected_team_row = normalized_team_tokens == normalized_expected_name
+            if is_expected_team_row and has_player_or_reason:
                 current_team_position += 1
-                if current_team_position < len(current_matchup):
-                    team = current_matchup[current_team_position]
-                    row_text = " ".join(text for _x, text in ordered_parts).upper()
-                    team_reports[team] = {
-                        "team": team,
-                        "matchup": "@".join(current_matchup),
-                        "status": (
-                            "not_yet_submitted"
-                            if "NOT YET SUBMITTED" in row_text
-                            else "submitted"
-                        ),
-                    }
+                team = current_matchup[current_team_position]
+                row_text = " ".join(text for _x, text in ordered_parts).upper()
+                team_reports[team] = {
+                    "team": team,
+                    "matchup": "@".join(current_matchup),
+                    "status": (
+                        "not_yet_submitted"
+                        if "NOT YET SUBMITTED" in row_text
+                        else "submitted"
+                    ),
+                }
             status = next(
                 (
                     text

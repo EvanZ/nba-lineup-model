@@ -187,6 +187,81 @@ def test_injury_pdf_preserves_team_reports_that_are_not_submitted(monkeypatch) -
     assert report["players"][0]["player_name"] == "Trae Young"
 
 
+def test_injury_pdf_parses_second_team_after_continuation_page_header(monkeypatch) -> None:
+    pages = [
+        [
+            (
+                100.0,
+                [
+                    (201.0, "ATL@ORL"),
+                    (265.2, "Atlanta Hawks"),
+                    (426.0, "Young,"),
+                    (470.0, "Trae"),
+                    (586.7, "Out"),
+                    (667.1, "Injury/Illness"),
+                ],
+            ),
+            (110.0, [(265.2, "Orlando Magic"), (667.1, "No injuries to report")]),
+            (
+                120.0,
+                [
+                    (201.0, "DEN@OKC"),
+                    (265.2, "Denver Nuggets"),
+                    (667.1, "NOT"),
+                    (687.3, "YET"),
+                    (704.2, "SUBMITTED"),
+                ],
+            ),
+        ],
+        [
+            (
+                62.0,
+                [
+                    (289.1, "Injury"),
+                    (355.6, "Report:"),
+                    (438.3, "10/21/26"),
+                ],
+            ),
+            (
+                90.9,
+                [
+                    (265.2, "Oklahoma"),
+                    (309.1, "City"),
+                    (326.8, "Thunder"),
+                    (667.1, "NOT"),
+                    (687.3, "YET"),
+                    (704.2, "SUBMITTED"),
+                ],
+            ),
+        ],
+    ]
+
+    class FakePage:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def extract_text(self, visitor_text):
+            for y, row in self.rows:
+                for x, value in row:
+                    visitor_text(
+                        value,
+                        None,
+                        [1.0, 0.0, 0.0, 1.0, x, y],
+                        None,
+                        9.0,
+                    )
+
+    monkeypatch.setattr(
+        "pypdf.PdfReader",
+        lambda _source: SimpleNamespace(pages=[FakePage(rows) for rows in pages]),
+    )
+
+    report = _parse_official_injury_report(b"fake pdf")
+
+    assert report["team_reports"]["DEN"]["status"] == "not_yet_submitted"
+    assert report["team_reports"]["OKC"]["status"] == "not_yet_submitted"
+
+
 def test_injury_pdf_parses_suffixes_before_name_delimiter(monkeypatch) -> None:
     names = [
         ("Hardaway", "Jr.,", "Tim", "Tim Hardaway Jr."),
