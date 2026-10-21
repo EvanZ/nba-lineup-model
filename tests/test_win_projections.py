@@ -165,9 +165,18 @@ def test_injury_pdf_preserves_team_reports_that_are_not_submitted(monkeypatch) -
         def extract_text(self, visitor_text):
             for y, row in enumerate(rows, start=100):
                 for x, value in row:
-                    visitor_text(value, None, [1.0, 0.0, 0.0, 1.0, x, float(y)], None, 9.0)
+                    visitor_text(
+                        value,
+                        None,
+                        [1.0, 0.0, 0.0, 1.0, x, float(y)],
+                        None,
+                        9.0,
+                    )
 
-    monkeypatch.setattr("pypdf.PdfReader", lambda _source: SimpleNamespace(pages=[FakePage()]))
+    monkeypatch.setattr(
+        "pypdf.PdfReader",
+        lambda _source: SimpleNamespace(pages=[FakePage()]),
+    )
 
     report = _parse_official_injury_report(b"fake pdf")
 
@@ -176,6 +185,85 @@ def test_injury_pdf_preserves_team_reports_that_are_not_submitted(monkeypatch) -
     assert report["team_reports"]["ATL"]["status"] == "submitted"
     assert report["team_reports"]["ORL"]["status"] == "submitted"
     assert report["players"][0]["player_name"] == "Trae Young"
+
+
+def test_injury_pdf_parses_suffixes_before_name_delimiter(monkeypatch) -> None:
+    names = [
+        ("Hardaway", "Jr.,", "Tim", "Tim Hardaway Jr."),
+        ("Nance", "Sr.,", "Larry", "Larry Nance Sr."),
+        ("Lively", "II,", "Dereck", "Dereck Lively II"),
+        ("Butler", "III,", "Jimmy", "Jimmy Butler III"),
+        ("Walker", "IV,", "Lonnie", "Lonnie Walker IV"),
+        ("Brown", "V,", "Charlie", "Charlie Brown V"),
+    ]
+    rows = [
+        [
+            (426.0, last_name),
+            (453.0, suffix),
+            (465.4, first_name),
+            (586.7, "Out"),
+            (667.1, "Injury/Illness"),
+            (721.8, "-"),
+            (727.1, "Surgery"),
+        ]
+        for last_name, suffix, first_name, _expected in names
+    ]
+
+    class FakePage:
+        def extract_text(self, visitor_text):
+            for y, row in enumerate(rows, start=100):
+                for x, value in row:
+                    visitor_text(value, None, [1.0, 0.0, 0.0, 1.0, x, float(y)], None, 9.0)
+
+    monkeypatch.setattr("pypdf.PdfReader", lambda _source: SimpleNamespace(pages=[FakePage()]))
+
+    report = _parse_official_injury_report(b"fake pdf")
+
+    assert [row["player_name"] for row in report["players"]] == [
+        expected for _last, _suffix, _first, expected in names
+    ]
+    assert all(row["status"] == "Out" for row in report["players"])
+
+
+def test_suffix_injury_status_matches_roster_player() -> None:
+    rotation = _game_rotation(
+        "GSW",
+        players=[
+            {
+                "player_id": 1,
+                "player_name": "Jimmy Butler III",
+                "team": "GSW",
+                "conditional_minutes_per_game": 36.0,
+                "projected_nail": 3.0,
+            },
+            {
+                "player_id": 2,
+                "player_name": "Stephen Curry",
+                "team": "GSW",
+                "conditional_minutes_per_game": 36.0,
+                "projected_nail": 4.0,
+            },
+        ],
+        injury_report={
+            "players": [
+                {
+                    "player_name": "Jimmy Butler III",
+                    "status": "Out",
+                    "reason": "Injury/Illness - Right ACL Repair / Surgery",
+                    "play_probability": 0.0,
+                }
+            ],
+            "team_reports": {"GSW": {"status": "submitted"}},
+        },
+        rotation_size=2,
+    )
+
+    butler = next(
+        player for player in rotation["players"] if player["player_name"] == "Jimmy Butler III"
+    )
+    assert butler["status"] == "Out"
+    assert butler["play_probability"] == 0.0
+    assert butler["projected_minutes"] == 0.0
 
 
 def test_pending_team_report_does_not_claim_players_are_available() -> None:

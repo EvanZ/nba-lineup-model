@@ -1067,10 +1067,11 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
                 None,
             )
             names = [text for x, text in ordered_parts if 420.0 <= x < 580.0]
-            if status is None or not names or "," not in names[0]:
+            raw_name = " ".join(names)
+            if status is None or not raw_name or "," not in raw_name:
                 continue
-            last_name = names[0].rstrip(",")
-            player_name = f"{' '.join(names[1:])} {last_name}".strip()
+            last_name, first_name = raw_name.split(",", maxsplit=1)
+            player_name = f"{first_name.strip()} {last_name.strip()}".strip()
             reason = " ".join(text for x, text in ordered_parts if x >= 666.0) or None
             statuses.append(
                 {
