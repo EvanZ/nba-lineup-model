@@ -456,15 +456,25 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
     forecast?.scheduled_games.forEach((game) => counts.set(game.game_date, (counts.get(game.game_date) ?? 0) + 1));
     return counts;
   }, [forecast]);
-  const games = useMemo(() => (forecast?.scheduled_games ?? []).filter((game) => (
-    game.game_date === selectedDate
-    && (teamFilter === "all" || game.home_team === teamFilter || game.away_team === teamFilter)
-  )), [forecast, selectedDate, teamFilter]);
-  const teams = forecast?.teams.map((team) => team.team).sort() ?? [];
   const archivedGames = useMemo(() => new Map((scheduleDay?.games ?? []).map((game) => [
     game.game_id ?? `${game.away_team}-${game.home_team}`,
     game,
   ])), [scheduleDay]);
+  const games = useMemo(() => {
+    const archivedGame = (game: WinProjectionScheduledGame) => (
+      archivedGames.get(game.game_id) ?? archivedGames.get(`${game.away_team}-${game.home_team}`)
+    );
+    return (forecast?.scheduled_games ?? []).filter((game) => (
+      game.game_date === selectedDate
+      && (teamFilter === "all" || game.home_team === teamFilter || game.away_team === teamFilter)
+    )).sort((left, right) => {
+      const leftTime = Date.parse(archivedGame(left)?.start_time ?? "") || Number.POSITIVE_INFINITY;
+      const rightTime = Date.parse(archivedGame(right)?.start_time ?? "") || Number.POSITIVE_INFINITY;
+      if (leftTime !== rightTime) return leftTime - rightTime;
+      return left.away_team.localeCompare(right.away_team) || left.home_team.localeCompare(right.home_team);
+    });
+  }, [archivedGames, forecast, selectedDate, teamFilter]);
+  const teams = forecast?.teams.map((team) => team.team).sort() ?? [];
 
   return (
     <section className="schedule-page">
