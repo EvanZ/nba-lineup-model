@@ -242,8 +242,11 @@ function RotationTable({ team, players, actualPlayers, reportStatus }: { team: s
       {rows.map((player) => {
         const actual = actualByPlayer.get(player.player_id) ?? actualByPlayer.get(player.player_name);
         const difference = actual ? actual.actual_minutes - player.projected_minutes : null;
+        const availability = reportPending
+          ? "Status unknown — team report pending"
+          : `${player.status}${player.reason ? ` · ${player.reason}` : ""}`;
         return <div key={player.player_id} className={player.status !== "Available" ? "injury-listed" : ""}>
-        <span>{player.player_id > 0 ? <a className="schedule-player-link" href={playerHref(player.player_id)}>{player.player_name}</a> : player.player_name}<small>{reportPending ? "Status unknown" : player.status}</small></span>
+        <span className="schedule-rotation-player">{player.player_id > 0 ? <a className="schedule-player-link" href={playerHref(player.player_id)}>{player.player_name}</a> : player.player_name}<small>{availability}</small></span>
         <strong>{player.projected_minutes.toFixed(1)}</strong>
         {actualPlayers && <><strong>{actual?.actual_minutes.toFixed(1) ?? "0.0"}</strong><strong className={difference !== null && difference < 0 ? "negative" : "positive"}>{difference === null ? "—" : `${difference > 0 ? "+" : ""}${difference.toFixed(1)}`}</strong></>}
       </div>;})}
@@ -365,14 +368,6 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
             <strong>{game.home_team} {formatSpread(-retrospective.home_margin)}</strong>
             <small>{game.home_team} {(retrospective.home_win_probability * 100).toFixed(0)}% · uses final minutes, not a pregame prediction</small>
           </div>}
-          {injuryReport.assumptions.length > 0 ? <div className="schedule-injury-list">
-            {injuryReport.assumptions.map((assumption) => <div key={assumption.player_id}>
-              <span><a className="schedule-player-link" href={playerHref(assumption.player_id)}><strong>{assumption.player_name}</strong></a><small>{assumption.team}{assumption.reason ? ` · ${assumption.reason}` : ""}</small></span>
-              <span className={`schedule-injury-status status-${assumption.status.toLowerCase()}`}>{assumption.status}</span>
-              <span>{Math.round(assumption.play_probability * 100)}% play</span>
-              <span>{assumption.projected_minutes.toFixed(1)} min</span>
-            </div>)}
-          </div> : <p className="schedule-no-injuries">No players listed on the official report.</p>}
           <div className="schedule-rotations">
             <RotationTable team={game.away_team} players={projectedMinutes.away} actualPlayers={retrospective?.actual_minutes.away} reportStatus={injuryReport.team_reports?.[game.away_team]?.status} />
             <RotationTable team={game.home_team} players={projectedMinutes.home} actualPlayers={retrospective?.actual_minutes.home} reportStatus={injuryReport.team_reports?.[game.home_team]?.status} />
