@@ -1019,8 +1019,98 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
         rows: dict[float, list[tuple[float, str]]] = {}
         for y, x, text in chunks:
             rows.setdefault(y, []).append((x, text))
-        for _y, parts in sorted(rows.items()):
-            ordered_parts = sorted(parts)
+        ordered_rows = [(y, sorted(parts)) for y, parts in sorted(rows.items())]
+        player_row_ys: list[float] = []
+        for y, ordered_parts in ordered_rows:
+            status = next(
+                (
+                    text
+                    for x, text in ordered_parts
+                    if 580.0 <= x < 666.0
+                    and text in INJURY_STATUS_PLAY_PROBABILITY
+                ),
+                None,
+            )
+            raw_name = " ".join(
+                text for x, text in ordered_parts if 420.0 <= x < 580.0
+            )
+            if status is not None and "," in raw_name:
+                player_row_ys.append(y)
+
+        reason_by_player_y: dict[float, str] = {}
+        first_reason_boundary: float | None = None
+        for index, player_y in enumerate(player_row_ys):
+            previous_y = player_row_ys[index - 1] if index > 0 else None
+            next_y = (
+                player_row_ys[index + 1]
+                if index + 1 < len(player_row_ys)
+                else None
+            )
+            before = (
+                (player_y - previous_y) / 2.0
+                if previous_y is not None
+                else (next_y - player_y) / 2.0
+                if next_y is not None
+                else 16.0
+            )
+            after = (
+                (next_y - player_y) / 2.0
+                if next_y is not None
+                else (player_y - previous_y) / 2.0
+                if previous_y is not None
+                else 16.0
+            )
+            lower = player_y - before
+            upper = player_y + after
+            if first_reason_boundary is None:
+                first_reason_boundary = lower
+            reason_parts: list[str] = []
+            for reason_y, reason_row in ordered_rows:
+                if not lower <= reason_y < upper:
+                    continue
+                row_text = " ".join(text for _x, text in reason_row)
+                upper_row_text = row_text.upper()
+                if (
+                    "NOT YET SUBMITTED" in upper_row_text
+                    or "NO INJURIES TO REPORT" in upper_row_text
+                ):
+                    continue
+                reason_parts.extend(
+                    text
+                    for x, text in reason_row
+                    if x >= 666.0 and text.upper() != "REASON"
+                )
+            if reason_parts:
+                reason_by_player_y[player_y] = " ".join(reason_parts)
+
+        if statuses and first_reason_boundary is not None:
+            leading_reason_parts: list[str] = []
+            for reason_y, reason_row in ordered_rows:
+                if reason_y >= first_reason_boundary:
+                    break
+                row_text = " ".join(text for _x, text in reason_row)
+                upper_row_text = row_text.upper()
+                if (
+                    "NOT YET SUBMITTED" in upper_row_text
+                    or "NO INJURIES TO REPORT" in upper_row_text
+                ):
+                    continue
+                leading_reason_parts.extend(
+                    text
+                    for x, text in reason_row
+                    if x >= 666.0 and text.upper() != "REASON"
+                )
+            if leading_reason_parts:
+                statuses[-1]["reason"] = " ".join(
+                    part
+                    for part in [
+                        statuses[-1].get("reason"),
+                        " ".join(leading_reason_parts),
+                    ]
+                    if part
+                )
+
+        for _y, ordered_parts in ordered_rows:
             matchup_text = "".join(
                 text for x, text in ordered_parts if 190.0 <= x < 250.0
             )
@@ -1072,7 +1162,7 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
                 continue
             last_name, first_name = raw_name.split(",", maxsplit=1)
             player_name = f"{first_name.strip()} {last_name.strip()}".strip()
-            reason = " ".join(text for x, text in ordered_parts if x >= 666.0) or None
+            reason = reason_by_player_y.get(_y)
             statuses.append(
                 {
                     "player_name": player_name,

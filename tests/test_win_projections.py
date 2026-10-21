@@ -225,6 +225,84 @@ def test_injury_pdf_parses_suffixes_before_name_delimiter(monkeypatch) -> None:
     assert all(row["status"] == "Out" for row in report["players"])
 
 
+def test_injury_pdf_groups_wrapped_and_page_continuation_reasons(monkeypatch) -> None:
+    pages = [
+        [
+            (
+                500.0,
+                [
+                    (426.0, "Bassey,"),
+                    (465.4, "Charles"),
+                    (586.7, "Questionable"),
+                    (667.1, "Injury/Illness"),
+                    (721.8, "-"),
+                    (727.1, "Right Patellar"),
+                ],
+            )
+        ],
+        [
+            (88.9, [(667.1, "Tendinopathy")]),
+            (
+                111.0,
+                [
+                    (667.1, "Injury/Illness"),
+                    (721.8, "-"),
+                    (727.1, "Right ACL Repair /"),
+                ],
+            ),
+            (
+                118.0,
+                [
+                    (426.0, "Butler"),
+                    (453.0, "III,"),
+                    (465.4, "Jimmy"),
+                    (586.7, "Out"),
+                ],
+            ),
+            (125.0, [(667.1, "Surgery")]),
+            (
+                147.0,
+                [
+                    (426.0, "Curry,"),
+                    (465.4, "Stephen"),
+                    (586.7, "Probable"),
+                    (667.1, "Injury/Illness"),
+                    (721.8, "-"),
+                    (727.1, "Right Ankle Soreness"),
+                ],
+            ),
+        ],
+    ]
+
+    class FakePage:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def extract_text(self, visitor_text):
+            for y, row in self.rows:
+                for x, value in row:
+                    visitor_text(
+                        value,
+                        None,
+                        [1.0, 0.0, 0.0, 1.0, x, y],
+                        None,
+                        9.0,
+                    )
+
+    monkeypatch.setattr(
+        "pypdf.PdfReader",
+        lambda _source: SimpleNamespace(pages=[FakePage(rows) for rows in pages]),
+    )
+
+    report = _parse_official_injury_report(b"fake pdf")
+
+    assert [row["reason"] for row in report["players"]] == [
+        "Injury/Illness - Right Patellar Tendinopathy",
+        "Injury/Illness - Right ACL Repair / Surgery",
+        "Injury/Illness - Right Ankle Soreness",
+    ]
+
+
 def test_suffix_injury_status_matches_roster_player() -> None:
     rotation = _game_rotation(
         "GSW",
