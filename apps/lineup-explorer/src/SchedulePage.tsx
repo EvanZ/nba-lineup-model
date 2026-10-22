@@ -105,6 +105,14 @@ type ScheduleDay = {
   games: ArchivedGame[];
 };
 
+type DailyRecord = {
+  wins: number;
+  losses: number;
+  atsWins: number;
+  atsLosses: number;
+  atsPushes: number;
+};
+
 const TEAM_LOGO_SLUGS: Record<string, string> = { NOP: "no", UTA: "utah" };
 
 function teamLogoUrl(team: string) {
@@ -196,6 +204,29 @@ function gameTime(value?: string) {
 function archiveAge(value?: string) {
   if (!value) return "Awaiting first archive";
   return `Updated ${new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(value))}`;
+}
+
+function dailyRecord(scheduleDay: ScheduleDay | null | undefined): DailyRecord | null {
+  const audits = (scheduleDay?.games ?? []).flatMap((game) => game.final_audit ? [game.final_audit] : []);
+  if (!audits.length) return null;
+  const record: DailyRecord = { wins: 0, losses: 0, atsWins: 0, atsLosses: 0, atsPushes: 0 };
+  audits.forEach((audit) => {
+    if (audit.grading.model_favorite_won) record.wins += 1;
+    else record.losses += 1;
+    const atsResult = audit.grading.market?.model_ats_result;
+    if (atsResult === "win") record.atsWins += 1;
+    if (atsResult === "loss") record.atsLosses += 1;
+    if (atsResult === "push") record.atsPushes += 1;
+  });
+  return record;
+}
+
+function dailyRecordLabel(record: DailyRecord) {
+  const atsGames = record.atsWins + record.atsLosses + record.atsPushes;
+  const ats = atsGames
+    ? `${record.atsWins}-${record.atsLosses}${record.atsPushes ? `-${record.atsPushes}` : ""}`
+    : "—";
+  return `W-L ${record.wins}-${record.losses} · ATS ${ats}`;
 }
 
 function reportTime(value?: string) {
@@ -382,6 +413,7 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
 export function SchedulePage({ initialDate }: { initialDate?: string }) {
   const [forecast, setForecast] = useState<WinProjectionPayload | null>(null);
   const [scheduleDay, setScheduleDay] = useState<ScheduleDay | null>(null);
+  const [dateRecords, setDateRecords] = useState<Record<string, DailyRecord>>({});
   const [selectedDate, setSelectedDate] = useState(
     isDateKey(initialDate) ? initialDate : dateKey(new Date()),
   );
@@ -451,6 +483,32 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
   }, [scheduleDay, selectedDate]);
 
   const dateRail = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(selectedDate, index - 3)), [selectedDate]);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(dateRail.map(async (date) => {
+      try {
+        const response = await fetch(`/api/schedule?date=${date}`);
+        if (!response.ok) return null;
+        const payload = await response.json() as ScheduleDay;
+        return [date, dailyRecord(payload)] as const;
+      } catch {
+        return null;
+      }
+    })).then((rows) => {
+      if (cancelled) return;
+      setDateRecords((current) => {
+        const next = { ...current };
+        rows.forEach((row) => {
+          if (!row) return;
+          const [date, record] = row;
+          if (record) next[date] = record;
+          else delete next[date];
+        });
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [dateRail]);
   const gamesByDate = useMemo(() => {
     const counts = new Map<string, number>();
     forecast?.scheduled_games.forEach((game) => counts.set(game.game_date, (counts.get(game.game_date) ?? 0) + 1));
@@ -505,10 +563,12 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
         {dateRail.map((date) => {
           const active = date === selectedDate;
           const today = date === dateKey(new Date());
+          const record = active ? dailyRecord(scheduleDay) ?? dateRecords[date] : dateRecords[date];
           return <button className={active ? "active" : ""} type="button" key={date} onClick={() => selectDate(date)} aria-current={active ? "date" : undefined}>
             <span>{today ? "Today" : shortDay(date)}</span>
             <strong>{parseDate(date).getDate()}</strong>
             <small>{shortMonth(date)} · {gameCountLabel(gamesByDate.get(date) ?? 0)}</small>
+            {record && <small className="schedule-date-record">{dailyRecordLabel(record)}</small>}
           </button>;
         })}
       </div>
