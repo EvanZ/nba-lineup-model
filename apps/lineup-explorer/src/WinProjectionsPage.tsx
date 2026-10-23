@@ -61,6 +61,9 @@ type WinLossEnvelopePoint = {
 type WinLossEnvelope = {
   points: WinLossEnvelopePoint[];
   gameCount: number;
+  histogram: Uint32Array;
+  binCount: number;
+  trials: number;
 };
 
 type WinLossEnvelopeGame = {
@@ -332,7 +335,27 @@ function simulateWinLossEnvelope(forecast: WinProjectionPayload, team: string): 
       p99: percentileFromHistogram(histogram, offset, binCount, ENVELOPE_TRIALS, 0.99),
     });
   }
-  return { points, gameCount: probabilities.length };
+  return {
+    points,
+    gameCount: probabilities.length,
+    histogram,
+    binCount,
+    trials: ENVELOPE_TRIALS,
+  };
+}
+
+function actualWinsUpperTail(
+  envelope: WinLossEnvelope,
+  record: CurrentSeasonTeamRecord | undefined,
+) {
+  if (!record || record.games < 1 || record.games > envelope.gameCount) return null;
+  if (record.wins < 0 || record.wins > record.games) return null;
+  const offset = (record.games - 1) * envelope.binCount;
+  let qualifyingTrials = 0;
+  for (let wins = record.wins; wins < envelope.binCount; wins += 1) {
+    qualifyingTrials += envelope.histogram[offset + wins];
+  }
+  return qualifyingTrials / envelope.trials;
 }
 
 function attachBrowserWinTotalIntervals(forecast: WinProjectionPayload): WinProjectionPayload {
@@ -398,6 +421,10 @@ function WinLossEnvelopeChart({
       .map((point) => point.game),
   );
   const final = envelope.points.at(-1)!;
+  const actualUpperTail = actualWinsUpperTail(envelope, currentRecord);
+  const actualDescription = currentRecord && actualUpperTail !== null
+    ? `${currentRecord.wins}-${currentRecord.losses} actual through ${currentRecord.last_game_date} · ${(actualUpperTail * 100).toFixed(1)}% of model paths had ≥${currentRecord.wins} wins`
+    : null;
   const actualPoint = currentRecord && currentRecord.games <= envelope.gameCount
     ? {
       x: x(currentRecord.games),
@@ -447,7 +474,7 @@ function WinLossEnvelopeChart({
         <rect width="1200" height="800" fill="#f8f6ef"/>
         <text class="export-brand" x="44" y="50">NBA GESTALT</text>
         <text class="export-title" x="44" y="87">${escapeSvg(team)} Win-Loss Envelope</text>
-        <text class="export-subtitle" x="44" y="114">${escapeSvg(forecast.season)} outlook · ${envelope.gameCount} modeled games · ${ENVELOPE_TRIALS.toLocaleString()} trials${currentRecord ? ` · Actual ${currentRecord.wins}-${currentRecord.losses} through ${currentRecord.last_game_date}` : ""}</text>
+        <text class="export-subtitle" x="44" y="114">${escapeSvg(forecast.season)} outlook · ${envelope.gameCount} modeled games · ${ENVELOPE_TRIALS.toLocaleString()} trials${actualDescription ? ` · ${escapeSvg(actualDescription)}` : ""}</text>
         <g class="export-legend" transform="translate(620 43)">
           <rect x="0" y="0" width="24" height="13" fill="#c9e0d4" opacity="0.32"/><text x="31" y="11" font-size="12">P1–P99</text>
           <rect x="132" y="0" width="24" height="13" fill="#c9e0d4" opacity="0.78"/><text x="163" y="11" font-size="12">P5–P95</text>
@@ -480,7 +507,7 @@ function WinLossEnvelopeChart({
     <div className="win-loss-envelope-heading">
       <div><p className="eyebrow">{team} outlook</p><h2 id="win-loss-envelope-title">Win-Loss Envelope.</h2></div>
       <div className="win-loss-envelope-meta">
-        <p>{currentRecord ? `${currentRecord.wins}-${currentRecord.losses} actual through ${currentRecord.last_game_date} · ` : ""}{envelope.gameCount} modeled games · {ENVELOPE_TRIALS.toLocaleString()} trials</p>
+        <p>{actualDescription ? `${actualDescription} · ` : ""}{envelope.gameCount} modeled games · {ENVELOPE_TRIALS.toLocaleString()} trials</p>
         <button type="button" className="win-loss-envelope-download" disabled={isExporting} onClick={() => void downloadPng()}>
           {isExporting ? <LoaderCircle className="spin" size={13} /> : <Download size={13} />}
           <span>{isExporting ? "Building PNG" : "Download PNG"}</span>
@@ -520,7 +547,7 @@ function WinLossEnvelopeChart({
       {actualPoint && currentRecord && <g className="win-loss-envelope-actual">
         <circle className="win-loss-envelope-actual-marker" cx={actualPoint.x} cy={actualPoint.y} r="5.5" />
         <text className="win-loss-envelope-actual-label" x={actualPoint.labelX} y={actualPoint.labelY}>{currentRecord.wins}-{currentRecord.losses}</text>
-        <title>{`Actual ${currentRecord.wins}-${currentRecord.losses} through ${currentRecord.last_game_date}`}</title>
+        <title>{actualDescription ?? `Actual ${currentRecord.wins}-${currentRecord.losses} through ${currentRecord.last_game_date}`}</title>
       </g>}
       {envelope.points.slice(1).filter((point) => toughestGames.has(point.game) && point.opponentTeam).map((point) => (
         <g key={`tough-opponent-${point.game}`} className="win-loss-envelope-tough-opponent">
