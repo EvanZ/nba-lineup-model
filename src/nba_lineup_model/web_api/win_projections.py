@@ -2143,13 +2143,50 @@ def _public_actual_minutes(rows: list[dict[str, object]]) -> list[dict[str, obje
     ]
 
 
+def _default_live_score_date(
+    *,
+    state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    now: datetime | None = None,
+) -> str:
+    """Prefer yesterday's unfinished slate while its live window is still open."""
+
+    current_time = (now or datetime.now(UTC)).astimezone(UTC)
+    eastern_date = current_time.astimezone(ZoneInfo("America/New_York")).date()
+    candidate_dates = [
+        (eastern_date - timedelta(days=1)).isoformat(),
+        eastern_date.isoformat(),
+    ]
+    for game_date in candidate_dates:
+        path = Path(state_dir) / "latest" / f"{game_date}.json"
+        if not path.is_file():
+            continue
+        payload = json.loads(path.read_text())
+        if not isinstance(payload, dict) or not isinstance(payload.get("games"), list):
+            continue
+        games = [game for game in payload["games"] if isinstance(game, dict)]
+        states = [str(game.get("status", {}).get("state", "pre")) for game in games]
+        starts = [
+            datetime.fromisoformat(str(game["start_time"]).replace("Z", "+00:00"))
+            for game in games
+            if game.get("start_time")
+        ]
+        if not states or not starts or all(state == "post" for state in states):
+            continue
+        if min(starts) - timedelta(minutes=30) <= current_time <= max(starts) + timedelta(
+            hours=6
+        ):
+            return game_date
+    return eastern_date.isoformat()
+
+
 def live_score_watcher_main() -> int:
     """Poll ESPN only during the bounded daily live-game window."""
 
     parser = argparse.ArgumentParser(description="Watch live NBA scores until the final game ends")
     parser.add_argument(
         "--date",
-        default=datetime.now(ZoneInfo("America/New_York")).date().isoformat(),
+        default=None,
+        help="Game date to watch; defaults to yesterday when its late slate is unfinished",
     )
     parser.add_argument(
         "--state-dir",
@@ -2160,22 +2197,23 @@ def live_score_watcher_main() -> int:
     args = parser.parse_args()
     if args.interval_seconds < 30:
         parser.error("--interval-seconds must be at least 30")
+    game_date = args.date or _default_live_score_date(state_dir=args.state_dir)
     while True:
-        state = refresh_live_score_state(game_date=args.date, state_dir=args.state_dir)
+        state = refresh_live_score_state(game_date=game_date, state_dir=args.state_dir)
         now = datetime.now(UTC)
         earliest = state["earliest_start"]
         latest = state["latest_start"]
         if state["all_final"]:
-            print(f"All {state['game_count']} games are final for {args.date}")
+            print(f"All {state['game_count']} games are final for {game_date}")
             return 0
         if not isinstance(earliest, datetime) or not isinstance(latest, datetime):
-            print(f"No games to watch for {args.date}")
+            print(f"No games to watch for {game_date}")
             return 0
         if now < earliest - timedelta(minutes=30):
-            print(f"Live window has not started for {args.date}")
+            print(f"Live window has not started for {game_date}")
             return 0
         if now > latest + timedelta(hours=6):
-            print(f"Live window expired for {args.date}")
+            print(f"Live window expired for {game_date}")
             return 0
         time.sleep(args.interval_seconds)
 

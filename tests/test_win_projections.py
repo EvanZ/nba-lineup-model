@@ -12,6 +12,7 @@ from nba_lineup_model.web_api.win_projections import (
     _aws_s3_cp_exclusive,
     _build_final_game_archive,
     _completed_team_win_totals,
+    _default_live_score_date,
     _espn_team,
     _fetch_polymarket_moneyline_snapshot,
     _game_rotation,
@@ -133,6 +134,46 @@ def test_schedule_day_attaches_immutable_final_audit(tmp_path) -> None:
         payload["games"][0]["final_audit"]["grading"]["market"]["model_ats_result"]
         == "win"
     )
+
+
+def test_live_score_default_keeps_watching_unfinished_previous_date(tmp_path) -> None:
+    latest = tmp_path / "latest"
+    latest.mkdir()
+    (latest / "2026-10-22.json").write_text(
+        '{"games":[{"start_time":"2026-10-23T01:30:00Z",'
+        '"status":{"state":"in"}}]}'
+    )
+    (latest / "2026-10-23.json").write_text(
+        '{"games":[{"start_time":"2026-10-23T23:00:00Z",'
+        '"status":{"state":"pre"}}]}'
+    )
+
+    game_date = _default_live_score_date(
+        state_dir=tmp_path,
+        now=datetime(2026, 10, 23, 4, 23, tzinfo=UTC),
+    )
+
+    assert game_date == "2026-10-22"
+
+
+def test_live_score_default_advances_after_previous_date_is_final(tmp_path) -> None:
+    latest = tmp_path / "latest"
+    latest.mkdir()
+    (latest / "2026-10-22.json").write_text(
+        '{"games":[{"start_time":"2026-10-23T01:30:00Z",'
+        '"status":{"state":"post"}}]}'
+    )
+    (latest / "2026-10-23.json").write_text(
+        '{"games":[{"start_time":"2026-10-23T23:00:00Z",'
+        '"status":{"state":"pre"}}]}'
+    )
+
+    game_date = _default_live_score_date(
+        state_dir=tmp_path,
+        now=datetime(2026, 10, 23, 4, 23, tzinfo=UTC),
+    )
+
+    assert game_date == "2026-10-23"
 
 
 def test_injury_pdf_preserves_team_reports_that_are_not_submitted(monkeypatch) -> None:
