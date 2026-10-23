@@ -1208,6 +1208,22 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
                 )
                 current_team_position = -1
                 current_team = None
+                if current_game_date is not None:
+                    game_key = f"{current_game_date}|{'@'.join(current_matchup)}"
+                    scoped_reports = game_team_reports.setdefault(game_key, {})
+                    for team in current_matchup:
+                        # The NBA PDF omits a team's row entirely when that team
+                        # has no players to list. A report is pending only when
+                        # the document explicitly says NOT YET SUBMITTED.
+                        scoped_reports.setdefault(
+                            team,
+                            {
+                                "team": team,
+                                "matchup": "@".join(current_matchup),
+                                "game_date": current_game_date,
+                                "status": "submitted",
+                            },
+                        )
             team_tokens = [
                 text for x, text in ordered_parts if 250.0 <= x < 420.0
             ]

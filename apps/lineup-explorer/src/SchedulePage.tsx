@@ -94,6 +94,7 @@ type ArchivedGame = {
   };
   final_audit?: FinalAudit;
   pregame?: ArchivedGame;
+  frozen_at?: string;
 };
 
 type ScheduleDay = {
@@ -249,6 +250,50 @@ function liveStatus(game: ArchivedGame | undefined) {
   return `${periodText} · ${game.status.display_clock ?? ""}`.replace(/ · $/, "");
 }
 
+function playersWithLatestStatuses(
+  players: ProjectedMinute[],
+  team: string,
+  injuryReport: ArchivedGame["injury_report"] | undefined,
+) {
+  if (!injuryReport) return players;
+  const teamStatus = injuryReport.team_reports?.[team]?.status;
+  const listedById = new Map(
+    injuryReport.assumptions
+      .filter((assumption) => assumption.team === team)
+      .map((assumption) => [assumption.player_id, assumption]),
+  );
+  const playerIds = new Set(players.map((player) => player.player_id));
+  const updated = players.map((player) => {
+    const listed = listedById.get(player.player_id);
+    if (listed) {
+      return {
+        ...player,
+        status: listed.status,
+        play_probability: listed.play_probability,
+        reason: listed.reason === "-" ? null : listed.reason,
+      };
+    }
+    if (teamStatus === "submitted") {
+      return { ...player, status: "Available", play_probability: 1, reason: null };
+    }
+    return player;
+  });
+  return [
+    ...updated,
+    ...injuryReport.assumptions
+      .filter((assumption) => assumption.team === team && !playerIds.has(assumption.player_id))
+      .map((assumption) => ({
+        player_id: assumption.player_id,
+        player_name: assumption.player_name,
+        status: assumption.status,
+        play_probability: assumption.play_probability,
+        conditional_minutes: 0,
+        projected_minutes: 0,
+        reason: assumption.reason === "-" ? null : assumption.reason,
+      })),
+  ];
+}
+
 function RotationTable({ team, players, actualPlayers, reportStatus }: { team: string; players: ProjectedMinute[]; actualPlayers?: ActualMinute[]; reportStatus?: string }) {
   const reportPending = reportStatus !== undefined && reportStatus !== "submitted";
   const hasUnknownPlayers = reportPending && players.some((player) => player.status === "Report pending");
@@ -298,8 +343,17 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
     : liveProjection;
   const market = pregame?.market ?? archived?.market ?? null;
   const predictionMarket = pregame?.prediction_market ?? archived?.prediction_market ?? null;
-  const injuryReport = pregame?.injury_report ?? archived?.injury_report;
+  const injuryReport = archived?.injury_report ?? pregame?.injury_report;
   const projectedMinutes = pregame?.projected_minutes ?? archived?.projected_minutes;
+  const reportUpdatedAfterFreeze = Boolean(
+    pregame
+    && injuryReport
+    && injuryReport.published_at !== pregame.injury_report.published_at,
+  );
+  const displayedMinutes = projectedMinutes && {
+    away: playersWithLatestStatuses(projectedMinutes.away, game.away_team, injuryReport),
+    home: playersWithLatestStatuses(projectedMinutes.home, game.home_team, injuryReport),
+  };
   const pendingReportTeams = [game.away_team, game.home_team].filter((team) => (
     injuryReport?.team_reports?.[team]?.status !== undefined
     && injuryReport.team_reports[team].status !== "submitted"
@@ -387,13 +441,14 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
         <strong>{modelEdge === null ? "—" : `${Math.abs(modelEdge).toFixed(1)} pts`}</strong>
       </div>
 
-      {injuryReport && projectedMinutes && <details className="schedule-assumptions">
+      {injuryReport && displayedMinutes && <details className="schedule-assumptions">
         <summary>
           <span>Rotation &amp; injury assumptions</span>
           <small>{pendingReportTeams.length ? `${pendingReportTeams.join(" & ")} pending · ${injuryReport.assumptions.length} listed` : `${injuryReport.assumptions.length} listed`} · NBA report {reportTime(injuryReport.published_at)}</small>
         </summary>
         <div className="schedule-assumptions-body">
           {pendingReportTeams.length > 0 && <p className="schedule-report-warning"><strong>{pendingReportTeams.join(" & ")} report coverage is incomplete.</strong> Filed player statuses are preserved below; players not listed in the report remain unknown and retain their frozen baseline estimates.</p>}
+          {reportUpdatedAfterFreeze && <p className="schedule-assumption-policy">Player statuses use the latest official report captured for this matchup. Predicted minutes and the model line remain the immutable pregame values.</p>}
           <p className="schedule-assumption-policy">Submitted reports: Out 0% · Doubtful 25% · Questionable 50% · Probable 75% · Unlisted 100%. Expected minutes are renormalized to 240 per team.</p>
           {retrospective && <div className="schedule-retrospective">
             <span>Retrospective actual-minute mix</span>
@@ -401,8 +456,8 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
             <small>{game.home_team} {(retrospective.home_win_probability * 100).toFixed(0)}% · uses final minutes, not a pregame prediction</small>
           </div>}
           <div className="schedule-rotations">
-            <RotationTable team={game.away_team} players={projectedMinutes.away} actualPlayers={retrospective?.actual_minutes.away} reportStatus={injuryReport.team_reports?.[game.away_team]?.status} />
-            <RotationTable team={game.home_team} players={projectedMinutes.home} actualPlayers={retrospective?.actual_minutes.home} reportStatus={injuryReport.team_reports?.[game.home_team]?.status} />
+            <RotationTable team={game.away_team} players={displayedMinutes.away} actualPlayers={retrospective?.actual_minutes.away} reportStatus={injuryReport.team_reports?.[game.away_team]?.status} />
+            <RotationTable team={game.home_team} players={displayedMinutes.home} actualPlayers={retrospective?.actual_minutes.home} reportStatus={injuryReport.team_reports?.[game.home_team]?.status} />
           </div>
           <a href={injuryReport.source_url} target="_blank" rel="noreferrer">Open official NBA injury report</a>
         </div>

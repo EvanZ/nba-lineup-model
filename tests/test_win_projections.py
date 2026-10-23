@@ -318,6 +318,51 @@ def test_injury_pdf_scopes_repeated_team_reports_by_date_and_matchup(monkeypatch
     assert report["players"][0]["team"] == "LAC"
 
 
+def test_injury_pdf_treats_omitted_zero_injury_team_as_submitted(monkeypatch) -> None:
+    rows = [
+        [
+            (24.1, "10/23/2026"),
+            (201.0, "CHI@MIL"),
+            (265.2, "Chicago Bulls"),
+            (426.0, "Claxton,"),
+            (470.0, "Nic"),
+            (586.7, "Out"),
+            (667.1, "Injury/Illness"),
+        ],
+        [
+            (201.0, "ATL@CHA"),
+            (265.2, "Atlanta Hawks"),
+            (426.0, "Young,"),
+            (470.0, "Trae"),
+            (586.7, "Available"),
+            (667.1, "-"),
+        ],
+    ]
+
+    class FakePage:
+        def extract_text(self, visitor_text):
+            for y, row in enumerate(rows, start=100):
+                for x, value in row:
+                    visitor_text(
+                        value,
+                        None,
+                        [1.0, 0.0, 0.0, 1.0, x, float(y)],
+                        None,
+                        9.0,
+                    )
+
+    monkeypatch.setattr(
+        "pypdf.PdfReader",
+        lambda _source: SimpleNamespace(pages=[FakePage()]),
+    )
+
+    report = _parse_official_injury_report(b"fake pdf")
+
+    game_reports = report["game_team_reports"]["2026-10-23|CHI@MIL"]
+    assert game_reports["CHI"]["status"] == "submitted"
+    assert game_reports["MIL"]["status"] == "submitted"
+
+
 def test_injury_pdf_parses_second_team_after_continuation_page_header(monkeypatch) -> None:
     pages = [
         [
