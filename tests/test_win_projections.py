@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -19,11 +20,50 @@ from nba_lineup_model.web_api.win_projections import (
     _parse_official_injury_report,
     _team_win_totals,
     fit_win_probability_scale,
+    read_current_season_records,
     read_schedule_day,
     score_season_win_forecasts,
     score_win_probabilities,
     simulate_baseline_win_total_intervals,
 )
+
+
+def test_current_season_records_use_immutable_regular_season_finals(tmp_path) -> None:
+    final_dir = tmp_path / "final"
+    final_dir.mkdir()
+    games = [
+        ("401", "0022600001", "2026-10-21T02:00:00Z", "BOS", "DET", 119, 121),
+        ("402", "0022600002", "2026-10-23T02:30:00Z", "DEN", "OKC", 84, 96),
+        ("403", "0012600001", "2026-10-10T02:00:00Z", "LAL", "GSW", 90, 100),
+    ]
+    for espn_id, game_id, start_time, away, home, away_score, home_score in games:
+        (final_dir / f"{espn_id}.summary.json").write_text(
+            json.dumps(
+                {
+                    "season": "2026-27",
+                    "game_id": game_id,
+                    "archived_at": "2026-10-23T05:00:00Z",
+                    "start_time": start_time,
+                    "away_team": away,
+                    "home_team": home,
+                    "final": {
+                        "away_score": away_score,
+                        "home_score": home_score,
+                        "status": {"completed": True},
+                    },
+                }
+            )
+        )
+
+    payload = read_current_season_records(state_dir=tmp_path)
+
+    assert payload["as_of"] == "2026-10-22"
+    assert payload["teams"] == [
+        {"team": "BOS", "games": 1, "wins": 0, "losses": 1, "last_game_date": "2026-10-20"},
+        {"team": "DEN", "games": 1, "wins": 0, "losses": 1, "last_game_date": "2026-10-22"},
+        {"team": "DET", "games": 1, "wins": 1, "losses": 0, "last_game_date": "2026-10-20"},
+        {"team": "OKC", "games": 1, "wins": 1, "losses": 0, "last_game_date": "2026-10-22"},
+    ]
 
 
 def test_polymarket_moneyline_snapshot_uses_main_market_midpoints(monkeypatch) -> None:

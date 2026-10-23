@@ -714,6 +714,80 @@ def read_schedule_day(
     return payload
 
 
+def read_current_season_records(
+    *,
+    state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    season: str = PROJECTION_SEASON,
+) -> dict[str, object]:
+    """Aggregate current regular-season records from immutable final audits."""
+
+    records: dict[str, dict[str, object]] = {}
+    latest_game_date: str | None = None
+    latest_archive_time: str | None = None
+    final_dir = Path(state_dir) / "final"
+    if final_dir.is_dir():
+        for path in sorted(final_dir.glob("*.summary.json")):
+            payload = json.loads(path.read_text())
+            if not isinstance(payload, dict) or payload.get("season") != season:
+                continue
+            game_id = str(payload.get("game_id", ""))
+            if not game_id.startswith("002"):
+                continue
+            final = payload.get("final")
+            if not isinstance(final, dict):
+                continue
+            status = final.get("status")
+            if isinstance(status, dict) and status.get("completed") is not True:
+                continue
+            home_score = _integer_or_none(final.get("home_score"))
+            away_score = _integer_or_none(final.get("away_score"))
+            if home_score is None or away_score is None or home_score == away_score:
+                continue
+            home_team = str(payload.get("home_team", ""))
+            away_team = str(payload.get("away_team", ""))
+            if not home_team or not away_team or home_team == away_team:
+                continue
+            start_time = str(payload.get("start_time", ""))
+            try:
+                game_date = (
+                    datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    .astimezone(ZoneInfo("America/New_York"))
+                    .date()
+                    .isoformat()
+                )
+            except ValueError:
+                continue
+            winner = home_team if home_score > away_score else away_team
+            for team in (away_team, home_team):
+                record = records.setdefault(
+                    team,
+                    {
+                        "team": team,
+                        "games": 0,
+                        "wins": 0,
+                        "losses": 0,
+                        "last_game_date": game_date,
+                    },
+                )
+                record["games"] = int(record["games"]) + 1
+                if team == winner:
+                    record["wins"] = int(record["wins"]) + 1
+                else:
+                    record["losses"] = int(record["losses"]) + 1
+                record["last_game_date"] = max(str(record["last_game_date"]), game_date)
+            latest_game_date = max(latest_game_date or game_date, game_date)
+            archived_at = payload.get("archived_at")
+            if isinstance(archived_at, str):
+                latest_archive_time = max(latest_archive_time or archived_at, archived_at)
+    return {
+        "season": season,
+        "as_of": latest_game_date,
+        "updated_at": latest_archive_time,
+        "source": "Immutable completed-game archive (ESPN scoreboard)",
+        "teams": sorted(records.values(), key=lambda item: str(item["team"])),
+    }
+
+
 def refresh_schedule_archive(
     *,
     game_date: str,

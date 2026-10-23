@@ -2,6 +2,8 @@ import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, Calculator, ChevronDown, ChevronUp, CircleAlert, Download, LoaderCircle, Pin, RotateCcw } from "lucide-react";
 
 import type {
+  CurrentSeasonRecordsPayload,
+  CurrentSeasonTeamRecord,
   MinutesProjectionPayload,
   MinutesProjectionPlayer,
   WinProjectionPayload,
@@ -163,6 +165,8 @@ const WIN_LOSS_ENVELOPE_EXPORT_STYLE = `
   .win-loss-envelope-outer-boundary { fill: none; stroke: #9aafa3; stroke-dasharray: 2 4; stroke-width: 1; }
   .win-loss-envelope-boundary { fill: none; stroke: #6e8d7d; stroke-dasharray: 4 4; stroke-width: 1.25; }
   .win-loss-envelope-median { fill: none; stroke: #245a47; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; }
+  .win-loss-envelope-actual-marker { fill: #17201c; stroke: #ffd84d; stroke-width: 3; }
+  .win-loss-envelope-actual-label { fill: #17201c; font-size: 11px; font-weight: 900; paint-order: stroke; stroke: #fffefa; stroke-width: 3px; }
   .win-loss-envelope-tough-opponent line { stroke: #e8502f; stroke-dasharray: 2 3; stroke-width: 1; opacity: 0.62; }
   .win-loss-envelope-tough-game { fill: #e8502f; stroke: #fffefa; stroke-width: 1.5; }
   .win-loss-envelope-hit-area { fill: transparent; }
@@ -354,7 +358,15 @@ function attachBrowserWinTotalIntervals(forecast: WinProjectionPayload): WinProj
   };
 }
 
-function WinLossEnvelopeChart({ forecast, team }: { forecast: WinProjectionPayload; team: string }) {
+function WinLossEnvelopeChart({
+  forecast,
+  team,
+  currentRecord,
+}: {
+  forecast: WinProjectionPayload;
+  team: string;
+  currentRecord?: CurrentSeasonTeamRecord;
+}) {
   const envelope = useMemo(() => simulateWinLossEnvelope(forecast, team), [forecast, team]);
   const chartRef = useRef<SVGSVGElement>(null);
   const [hoveredGame, setHoveredGame] = useState<number | null>(null);
@@ -386,6 +398,14 @@ function WinLossEnvelopeChart({ forecast, team }: { forecast: WinProjectionPaylo
       .map((point) => point.game),
   );
   const final = envelope.points.at(-1)!;
+  const actualPoint = currentRecord && currentRecord.games <= envelope.gameCount
+    ? {
+      x: x(currentRecord.games),
+      y: y(currentRecord.wins),
+      labelX: Math.min(x(currentRecord.games) + 9, width - margin.right - 23),
+      labelY: Math.max(y(currentRecord.wins) - 8, margin.top + 10),
+    }
+    : null;
   const hovered = hoveredGame === null ? null : envelope.points[hoveredGame];
   const tooltipWidth = 174;
   const tooltipHeight = 136;
@@ -427,12 +447,13 @@ function WinLossEnvelopeChart({ forecast, team }: { forecast: WinProjectionPaylo
         <rect width="1200" height="800" fill="#f8f6ef"/>
         <text class="export-brand" x="44" y="50">NBA GESTALT</text>
         <text class="export-title" x="44" y="87">${escapeSvg(team)} Win-Loss Envelope</text>
-        <text class="export-subtitle" x="44" y="114">${escapeSvg(forecast.season)} preseason outlook · ${envelope.gameCount} modeled games · ${ENVELOPE_TRIALS.toLocaleString()} trials</text>
+        <text class="export-subtitle" x="44" y="114">${escapeSvg(forecast.season)} outlook · ${envelope.gameCount} modeled games · ${ENVELOPE_TRIALS.toLocaleString()} trials${currentRecord ? ` · Actual ${currentRecord.wins}-${currentRecord.losses} through ${currentRecord.last_game_date}` : ""}</text>
         <g class="export-legend" transform="translate(620 43)">
           <rect x="0" y="0" width="24" height="13" fill="#c9e0d4" opacity="0.32"/><text x="31" y="11" font-size="12">P1–P99</text>
           <rect x="132" y="0" width="24" height="13" fill="#c9e0d4" opacity="0.78"/><text x="163" y="11" font-size="12">P5–P95</text>
           <line x1="0" x2="24" y1="31" y2="31" stroke="#245a47" stroke-width="3"/><text x="31" y="35" font-size="12">Median</text>
           <circle cx="144" cy="31" r="5" fill="#e8502f" stroke="#fffefa" stroke-width="1.5"/><text x="157" y="35" font-size="12">Five toughest games</text>
+          ${currentRecord ? '<circle cx="334" cy="31" r="5" fill="#17201c" stroke="#ffd84d" stroke-width="2"/><text x="347" y="35" font-size="12">Actual record</text>' : ""}
         </g>
         <g transform="translate(40 145) scale(2)">${chart.innerHTML}</g>
         <line x1="40" x2="1160" y1="754" y2="754" stroke="#d9d6ce" stroke-width="1"/>
@@ -459,7 +480,7 @@ function WinLossEnvelopeChart({ forecast, team }: { forecast: WinProjectionPaylo
     <div className="win-loss-envelope-heading">
       <div><p className="eyebrow">{team} outlook</p><h2 id="win-loss-envelope-title">Win-Loss Envelope.</h2></div>
       <div className="win-loss-envelope-meta">
-        <p>{envelope.gameCount} modeled games · {ENVELOPE_TRIALS.toLocaleString()} trials</p>
+        <p>{currentRecord ? `${currentRecord.wins}-${currentRecord.losses} actual through ${currentRecord.last_game_date} · ` : ""}{envelope.gameCount} modeled games · {ENVELOPE_TRIALS.toLocaleString()} trials</p>
         <button type="button" className="win-loss-envelope-download" disabled={isExporting} onClick={() => void downloadPng()}>
           {isExporting ? <LoaderCircle className="spin" size={13} /> : <Download size={13} />}
           <span>{isExporting ? "Building PNG" : "Download PNG"}</span>
@@ -496,6 +517,11 @@ function WinLossEnvelopeChart({ forecast, team }: { forecast: WinProjectionPaylo
       <polyline className="win-loss-envelope-boundary" points={line("p5")} />
       <polyline className="win-loss-envelope-boundary" points={line("p95")} />
       <polyline className="win-loss-envelope-median" points={line("median")} />
+      {actualPoint && currentRecord && <g className="win-loss-envelope-actual">
+        <circle className="win-loss-envelope-actual-marker" cx={actualPoint.x} cy={actualPoint.y} r="5.5" />
+        <text className="win-loss-envelope-actual-label" x={actualPoint.labelX} y={actualPoint.labelY}>{currentRecord.wins}-{currentRecord.losses}</text>
+        <title>{`Actual ${currentRecord.wins}-${currentRecord.losses} through ${currentRecord.last_game_date}`}</title>
+      </g>}
       {envelope.points.slice(1).filter((point) => toughestGames.has(point.game) && point.opponentTeam).map((point) => (
         <g key={`tough-opponent-${point.game}`} className="win-loss-envelope-tough-opponent">
           <line x1={x(point.game)} x2={x(point.game)} y1={margin.top + 30} y2={y(point.median) - 5} />
@@ -763,6 +789,7 @@ function calculateProjection(
 
 export function WinProjectionsPage() {
   const [payload, setPayload] = useState<MinutesProjectionPayload | null>(null);
+  const [currentRecords, setCurrentRecords] = useState<CurrentSeasonRecordsPayload | null>(null);
   const [team, setTeam] = useState("");
   const [overrides, setOverrides] = useState<Overrides>(readOverrides);
   const [appliedOverrides, setAppliedOverrides] = useState<Overrides>(readOverrides);
@@ -785,6 +812,19 @@ export function WinProjectionsPage() {
         if ((requestError as Error).name !== "AbortError") setError((requestError as Error).message);
       }
     })();
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/current-season-records", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return;
+        setCurrentRecords((await response.json()) as CurrentSeasonRecordsPayload);
+      })
+      .catch((requestError: Error) => {
+        if (requestError.name !== "AbortError") setCurrentRecords(null);
+      });
     return () => controller.abort();
   }, []);
 
@@ -978,7 +1018,11 @@ export function WinProjectionsPage() {
           <p className="win-projections-note">{forecast.contract} {forecast.market_win_totals && <><a href={forecast.market_win_totals.source_url} target="_blank" rel="noreferrer">{forecast.market_win_totals.provider} win totals</a> captured {forecast.market_win_totals.as_of}; O/U compares projected wins to that line. </>}Calibration: {forecast.calibration.calibration_season} only; {forecast.calibration.holdout_season} Brier {forecast.calibration.holdout_brier.toFixed(3)}, accuracy {(forecast.calibration.holdout_accuracy * 100).toFixed(1)}%.</p>
         </section>}
         <section className="win-team-panel" id="team-minutes" aria-label={`${team} minute projection`}>
-        {forecast && <WinLossEnvelopeChart forecast={forecast} team={team} />}
+        {forecast && <WinLossEnvelopeChart
+          forecast={forecast}
+          team={team}
+          currentRecord={currentRecords?.teams.find((record) => record.team === team)}
+        />}
         <div className="win-projections-toolbar">
           <label className="win-projections-team-filter">
             <span>Team</span>

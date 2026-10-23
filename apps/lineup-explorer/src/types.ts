@@ -333,6 +333,22 @@ export type WinProjectionScheduledGame = {
   away_back_to_back: number;
 };
 
+export type CurrentSeasonTeamRecord = {
+  team: string;
+  games: number;
+  wins: number;
+  losses: number;
+  last_game_date: string;
+};
+
+export type CurrentSeasonRecordsPayload = {
+  season: string;
+  as_of: string | null;
+  updated_at: string | null;
+  source: string;
+  teams: CurrentSeasonTeamRecord[];
+};
+
 export type WinProjectionPayload = {
   model: string;
   season: string;
