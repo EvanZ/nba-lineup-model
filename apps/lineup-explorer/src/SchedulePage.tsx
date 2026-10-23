@@ -251,6 +251,7 @@ function liveStatus(game: ArchivedGame | undefined) {
 
 function RotationTable({ team, players, actualPlayers, reportStatus }: { team: string; players: ProjectedMinute[]; actualPlayers?: ActualMinute[]; reportStatus?: string }) {
   const reportPending = reportStatus !== undefined && reportStatus !== "submitted";
+  const hasUnknownPlayers = reportPending && players.some((player) => player.status === "Report pending");
   const actualByPlayer = new Map((actualPlayers ?? []).map((player) => [player.player_id ?? player.player_name, player]));
   const predictedIds = new Set(players.map((player) => player.player_id));
   const rows = [
@@ -267,13 +268,13 @@ function RotationTable({ team, players, actualPlayers, reportStatus }: { team: s
   ];
   return <div className="schedule-rotation-team">
     <h4><a href={teamHref(team)}>{team}</a> projected minutes</h4>
-    {reportPending && <p className="schedule-report-pending">Availability unknown — team report pending. Minutes remain an unadjusted baseline.</p>}
+    {hasUnknownPlayers && <p className="schedule-report-pending">Unlisted availability remains unknown — team report coverage is incomplete. Listed statuses are shown below.</p>}
     <div className={`schedule-rotation-table ${actualPlayers ? "has-actual" : ""}`}>
       {actualPlayers && <div className="schedule-rotation-header"><span>Player</span><small>Pred.</small><small>Actual</small><small>Δ</small></div>}
       {rows.map((player) => {
         const actual = actualByPlayer.get(player.player_id) ?? actualByPlayer.get(player.player_name);
         const difference = actual ? actual.actual_minutes - player.projected_minutes : null;
-        const availability = reportPending
+        const availability = player.status === "Report pending"
           ? "Status unknown — team report pending"
           : `${player.status}${player.reason ? ` · ${player.reason}` : ""}`;
         return <div key={player.player_id} className={player.status !== "Available" ? "injury-listed" : ""}>
@@ -389,10 +390,10 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
       {injuryReport && projectedMinutes && <details className="schedule-assumptions">
         <summary>
           <span>Rotation &amp; injury assumptions</span>
-          <small>{pendingReportTeams.length ? `${pendingReportTeams.join(" & ")} pending` : `${injuryReport.assumptions.length} listed`} · NBA report {reportTime(injuryReport.published_at)}</small>
+          <small>{pendingReportTeams.length ? `${pendingReportTeams.join(" & ")} pending · ${injuryReport.assumptions.length} listed` : `${injuryReport.assumptions.length} listed`} · NBA report {reportTime(injuryReport.published_at)}</small>
         </summary>
         <div className="schedule-assumptions-body">
-          {pendingReportTeams.length > 0 && <p className="schedule-report-warning"><strong>{pendingReportTeams.join(" & ")} availability is unknown.</strong> The official team report has not been submitted or does not yet cover this game. Minutes remain unadjusted baseline estimates.</p>}
+          {pendingReportTeams.length > 0 && <p className="schedule-report-warning"><strong>{pendingReportTeams.join(" & ")} report coverage is incomplete.</strong> Filed player statuses are preserved below; players not listed in the report remain unknown and retain their frozen baseline estimates.</p>}
           <p className="schedule-assumption-policy">Submitted reports: Out 0% · Doubtful 25% · Questionable 50% · Probable 75% · Unlisted 100%. Expected minutes are renormalized to 240 per team.</p>
           {retrospective && <div className="schedule-retrospective">
             <span>Retrospective actual-minute mix</span>
