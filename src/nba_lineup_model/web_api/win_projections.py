@@ -1071,8 +1071,11 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
 
     statuses: list[dict[str, object]] = []
     team_reports: dict[str, dict[str, object]] = {}
+    game_team_reports: dict[str, dict[str, dict[str, object]]] = {}
+    current_game_date: str | None = None
     current_matchup: tuple[str, str] | None = None
     current_team_position = -1
+    current_team: str | None = None
     for page in PdfReader(io.BytesIO(pdf)).pages:
         chunks: list[tuple[float, float, str]] = []
 
@@ -1186,6 +1189,14 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
                 )
 
         for _y, ordered_parts in ordered_rows:
+            game_date_text = "".join(
+                text for x, text in ordered_parts if 20.0 <= x < 119.0
+            )
+            game_date_match = re.search(r"\b\d{1,2}/\d{1,2}/\d{4}\b", game_date_text)
+            if game_date_match is not None:
+                current_game_date = datetime.strptime(
+                    game_date_match.group(0), "%m/%d/%Y"
+                ).date().isoformat()
             matchup_text = "".join(
                 text for x, text in ordered_parts if 190.0 <= x < 250.0
             )
@@ -1196,6 +1207,7 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
                     ESPN_TEAM_ALIASES.get(matchup.group(2), matchup.group(2)),
                 )
                 current_team_position = -1
+                current_team = None
             team_tokens = [
                 text for x, text in ordered_parts if 250.0 <= x < 420.0
             ]
@@ -1215,20 +1227,34 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
                 normalized_expected_name = re.sub(
                     r"[^a-z0-9]", "", expected_name.lower()
                 )
+                normalized_team_tokens = normalized_team_tokens.replace(
+                    "losangeles", "la", 1
+                )
+                normalized_expected_name = normalized_expected_name.replace(
+                    "losangeles", "la", 1
+                )
                 is_expected_team_row = normalized_team_tokens == normalized_expected_name
             if is_expected_team_row and has_player_or_reason:
                 current_team_position += 1
                 team = current_matchup[current_team_position]
+                current_team = team
                 row_text = " ".join(text for _x, text in ordered_parts).upper()
-                team_reports[team] = {
+                team_report = {
                     "team": team,
                     "matchup": "@".join(current_matchup),
+                    "game_date": current_game_date,
                     "status": (
                         "not_yet_submitted"
                         if "NOT YET SUBMITTED" in row_text
                         else "submitted"
                     ),
                 }
+                # Preserve the earliest occurrence for backward-compatible
+                # consumers, but retain every date/matchup for game-scoped use.
+                team_reports.setdefault(team, team_report)
+                if current_game_date is not None:
+                    game_key = f"{current_game_date}|{'@'.join(current_matchup)}"
+                    game_team_reports.setdefault(game_key, {})[team] = team_report
             status = next(
                 (
                     text
@@ -1244,17 +1270,26 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
             last_name, first_name = raw_name.split(",", maxsplit=1)
             player_name = f"{first_name.strip()} {last_name.strip()}".strip()
             reason = reason_by_player_y.get(_y)
-            statuses.append(
-                {
-                    "player_name": player_name,
-                    "status": status,
-                    "reason": reason,
-                    "play_probability": INJURY_STATUS_PLAY_PROBABILITY[status],
-                }
-            )
+            player_status: dict[str, object] = {
+                "player_name": player_name,
+                "status": status,
+                "reason": reason,
+                "play_probability": INJURY_STATUS_PLAY_PROBABILITY[status],
+            }
+            if current_game_date is not None:
+                player_status["game_date"] = current_game_date
+            if current_matchup is not None:
+                player_status["matchup"] = "@".join(current_matchup)
+            if current_team is not None:
+                player_status["team"] = current_team
+            statuses.append(player_status)
     if not statuses:
         raise ValueError("Official NBA injury report contained no player statuses")
-    return {"players": statuses, "team_reports": team_reports}
+    return {
+        "players": statuses,
+        "team_reports": team_reports,
+        "game_team_reports": game_team_reports,
+    }
 
 
 def _normalized_player_name(value: object) -> str:
@@ -1269,6 +1304,8 @@ def _game_rotation(
     players: list[dict[str, object]],
     injury_report: dict[str, object],
     rotation_size: int,
+    game_date: str | None = None,
+    matchup: str | None = None,
 ) -> dict[str, object]:
     team_players = [row for row in players if str(row.get("team")) == team]
     if not team_players:
@@ -1276,12 +1313,44 @@ def _game_rotation(
     roster_by_name = {
         _normalized_player_name(row.get("player_name")): row for row in team_players
     }
-    official = {
-        _normalized_player_name(row.get("player_name")): row
+    game_key = f"{game_date}|{matchup}" if game_date and matchup else None
+    game_team_reports = injury_report.get("game_team_reports")
+    supports_game_scope = isinstance(game_team_reports, dict)
+    scoped_team_reports = (
+        game_team_reports.get(game_key)
+        if game_key is not None and supports_game_scope
+        else None
+    )
+    has_game_scope = isinstance(scoped_team_reports, dict)
+    official_rows = [
+        row
         for row in injury_report.get("players", [])
         if isinstance(row, dict)
+        and (
+            not supports_game_scope
+            or (
+                has_game_scope
+                and row.get("game_date") == game_date
+                and row.get("matchup") == matchup
+                and row.get("team") == team
+            )
+            or (
+                not has_game_scope
+                and row.get("team") == team
+                and row.get("status") != "Available"
+            )
+        )
+    ]
+    official = {
+        _normalized_player_name(row.get("player_name")): row
+        for row in official_rows
     }
-    team_report = injury_report.get("team_reports", {}).get(team)
+    if has_game_scope:
+        team_report = scoped_team_reports.get(team)
+    elif supports_game_scope:
+        team_report = None
+    else:
+        team_report = injury_report.get("team_reports", {}).get(team)
     if isinstance(team_report, dict):
         report_status = str(team_report.get("status", "not_in_report"))
     else:
@@ -1414,12 +1483,16 @@ def _normalize_espn_schedule(
             players=minute_players,
             injury_report=injury_report,
             rotation_size=int(minutes.get("initial_rotation_size", 15)),
+            game_date=game_date,
+            matchup=f"{away_team}@{home_team}",
         )
         away_rotation = _game_rotation(
             away_team,
             players=minute_players,
             injury_report=injury_report,
             rotation_size=int(minutes.get("initial_rotation_size", 15)),
+            game_date=game_date,
+            matchup=f"{away_team}@{home_team}",
         )
         margin = (
             float(home_rotation["team_strength"])

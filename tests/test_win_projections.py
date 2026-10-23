@@ -268,6 +268,56 @@ def test_injury_pdf_preserves_team_reports_that_are_not_submitted(monkeypatch) -
     assert report["players"][0]["player_name"] == "Trae Young"
 
 
+def test_injury_pdf_scopes_repeated_team_reports_by_date_and_matchup(monkeypatch) -> None:
+    rows = [
+        [
+            (24.1, "10/23/2026"),
+            (201.0, "LAC@LAL"),
+            (265.2, "LA"),
+            (277.5, "Clippers"),
+            (426.0, "Beal,"),
+            (448.2, "Bradley"),
+            (586.7, "Out"),
+            (667.1, "Injury/Illness"),
+        ],
+        [(265.2, "Los"), (280.9, "Angeles"), (315.1, "Lakers"), (667.1, "No injuries to report")],
+        [
+            (24.1, "10/24/2026"),
+            (201.0, "GSW@LAC"),
+            (265.2, "Golden State Warriors"),
+            (667.1, "NOT YET SUBMITTED"),
+        ],
+        [(265.2, "LA Clippers"), (667.1, "NOT YET SUBMITTED")],
+    ]
+
+    class FakePage:
+        def extract_text(self, visitor_text):
+            for y, row in enumerate(rows, start=100):
+                for x, value in row:
+                    visitor_text(
+                        value,
+                        None,
+                        [1.0, 0.0, 0.0, 1.0, x, float(y)],
+                        None,
+                        9.0,
+                    )
+
+    monkeypatch.setattr(
+        "pypdf.PdfReader",
+        lambda _source: SimpleNamespace(pages=[FakePage()]),
+    )
+
+    report = _parse_official_injury_report(b"fake pdf")
+
+    assert report["team_reports"]["LAC"]["status"] == "submitted"
+    assert report["team_reports"]["LAC"]["matchup"] == "LAC@LAL"
+    assert report["game_team_reports"]["2026-10-23|LAC@LAL"]["LAC"]["status"] == "submitted"
+    assert report["game_team_reports"]["2026-10-24|GSW@LAC"]["LAC"]["status"] == "not_yet_submitted"
+    assert report["players"][0]["game_date"] == "2026-10-23"
+    assert report["players"][0]["matchup"] == "LAC@LAL"
+    assert report["players"][0]["team"] == "LAC"
+
+
 def test_injury_pdf_parses_second_team_after_continuation_page_header(monkeypatch) -> None:
     pages = [
         [
@@ -533,6 +583,82 @@ def test_pending_team_report_does_not_claim_players_are_available() -> None:
     assert sum(player["projected_minutes"] for player in rotation["players"]) == pytest.approx(
         240.0
     )
+
+
+def test_game_rotation_uses_only_the_exact_date_and_matchup_report() -> None:
+    players = [
+        {
+            "player_id": 1,
+            "player_name": "Jimmy Butler III",
+            "team": "GSW",
+            "conditional_minutes_per_game": 36.0,
+            "projected_nail": 3.0,
+        },
+        {
+            "player_id": 2,
+            "player_name": "Stephen Curry",
+            "team": "GSW",
+            "conditional_minutes_per_game": 36.0,
+            "projected_nail": 4.0,
+        },
+    ]
+    injury_report = {
+        "players": [
+            {
+                "player_name": "Jimmy Butler III",
+                "team": "GSW",
+                "game_date": "2026-10-23",
+                "matchup": "MEM@GSW",
+                "status": "Out",
+                "reason": "Injury/Illness - Right ACL Repair / Surgery",
+                "play_probability": 0.0,
+            },
+            {
+                "player_name": "Jimmy Butler III",
+                "team": "GSW",
+                "game_date": "2026-10-24",
+                "matchup": "GSW@PHX",
+                "status": "Available",
+                "reason": "-",
+                "play_probability": 1.0,
+            },
+        ],
+        "team_reports": {"GSW": {"status": "submitted"}},
+        "game_team_reports": {
+            "2026-10-23|MEM@GSW": {"GSW": {"status": "submitted"}},
+            "2026-10-24|GSW@PHX": {"GSW": {"status": "submitted"}},
+        },
+    }
+
+    rotation = _game_rotation(
+        "GSW",
+        players=players,
+        injury_report=injury_report,
+        rotation_size=2,
+        game_date="2026-10-23",
+        matchup="MEM@GSW",
+    )
+
+    butler = next(
+        player for player in rotation["players"] if player["player_name"] == "Jimmy Butler III"
+    )
+    assert butler["status"] == "Out"
+    assert butler["projected_minutes"] == 0.0
+
+    unreported_future_rotation = _game_rotation(
+        "GSW",
+        players=players,
+        injury_report=injury_report,
+        rotation_size=2,
+        game_date="2026-10-25",
+        matchup="GSW@LAL",
+    )
+    future_players = {
+        player["player_name"]: player for player in unreported_future_rotation["players"]
+    }
+    assert unreported_future_rotation["report_status"] == "not_in_report"
+    assert future_players["Jimmy Butler III"]["status"] == "Out"
+    assert future_players["Stephen Curry"]["status"] == "Report pending"
 
 
 @pytest.mark.parametrize(
