@@ -16,8 +16,8 @@ ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster-daemon run --module-name nb
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60
-MemoryHigh=400M
-MemoryMax=600M
+MemoryHigh=700M
+MemoryMax=900M
 Nice=5
 
 [Install]

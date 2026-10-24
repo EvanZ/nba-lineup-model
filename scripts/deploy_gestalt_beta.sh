@@ -49,7 +49,7 @@ fi
 sudo nginx -t
 sudo systemctl reload nginx
 
-for _ in {1..30}; do
+for _ in {1..60}; do
   if curl --fail --silent http://127.0.0.1:8010/api/health >/dev/null; then
     break
   fi
