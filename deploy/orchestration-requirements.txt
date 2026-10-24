@@ -1,0 +1,4 @@
+# Lightweight orchestration runtime installed into the active GESTALT release.
+dagster==1.13.26
+dagster-webserver==1.13.26
+duckdb==1.5.6

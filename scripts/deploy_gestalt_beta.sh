@@ -21,6 +21,9 @@ if [[ ! -d .venv ]]; then
   uv venv .venv
 fi
 uv pip install --python .venv/bin/python -r deploy/web-requirements.txt
+if [[ -f deploy/orchestration-requirements.txt ]]; then
+  uv pip install --python .venv/bin/python -r deploy/orchestration-requirements.txt
+fi
 uv pip install --python .venv/bin/python --no-deps -e .
 
 if ! command -v npm >/dev/null 2>&1; then
@@ -40,6 +43,9 @@ sudo ln -sfn "$RELEASE_ROOT" "$APP_ROOT/current"
 sudo install -m 0644 "$REPO_DIR/deploy/gestalt-rate-limits.conf" /etc/nginx/conf.d/gestalt-rate-limits.conf
 sudo systemctl daemon-reload
 sudo systemctl restart gestalt-web
+if systemctl cat gestalt-dagster-webserver >/dev/null 2>&1; then
+  sudo systemctl restart gestalt-dagster-webserver gestalt-dagster-daemon
+fi
 sudo nginx -t
 sudo systemctl reload nginx
 

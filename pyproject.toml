@@ -27,6 +27,7 @@ dependencies = [
 nba-refresh-gestalt-schedule = "nba_lineup_model.web_api.win_projections:refresh_schedule_main"
 nba-watch-gestalt-live-scores = "nba_lineup_model.web_api.win_projections:live_score_watcher_main"
 nba-s3-lake-migration = "nba_lineup_model.storage.s3_lake:main"
+nba-check-s3-lake = "nba_lineup_model.storage.duckdb_lake:main"
 nba-audit-games = "nba_lineup_model.audit.runner:main"
 nba-audit-history = "nba_lineup_model.audit.history:main"
 nba-audit-modeling-coverage = "nba_lineup_model.audit.modeling_coverage:main"
@@ -297,6 +298,11 @@ docs = [
     "matplotlib>=3.9",
     "mkdocstrings-python>=2.0.5",
     "zensical>=0.0.51",
+]
+orchestration = [
+    "dagster>=1.12,<2",
+    "dagster-webserver>=1.12,<2",
+    "duckdb>=1.4,<2",
 ]
 
 [build-system]

@@ -97,7 +97,10 @@ mkdir -p "$(dirname "$STAGING_DIR/$PLAYER_CATALOG")"
 # local experiments that happen to exist in the working tree.
 git ls-files -z -- src | rsync -a --from0 --files-from=- ./ "$STAGING_DIR/"
 rsync -a README.md pyproject.toml uv.lock "$STAGING_DIR/"
-rsync -a deploy/web-requirements.txt "$STAGING_DIR/deploy/"
+rsync -a \
+  deploy/web-requirements.txt \
+  deploy/orchestration-requirements.txt \
+  "$STAGING_DIR/deploy/"
 printf '{\n  "run_id": "%s"\n}\n' "$RUN_ID" > "$STAGING_DIR/$MODEL_SEASON_ROOT/latest.json"
 rsync -a "$MODEL_ROOT/" "$STAGING_DIR/$MODEL_ROOT/"
 rsync -a "$LINEUP_CACHE/" "$STAGING_DIR/$LINEUP_CACHE/"
