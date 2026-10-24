@@ -22,6 +22,7 @@ from nba_lineup_model.web_api.win_projections import (
     fit_win_probability_scale,
     read_current_season_records,
     read_schedule_day,
+    read_schedule_performance,
     score_season_win_forecasts,
     score_win_probabilities,
     simulate_baseline_win_total_intervals,
@@ -64,6 +65,90 @@ def test_current_season_records_use_immutable_regular_season_finals(tmp_path) ->
         {"team": "DET", "games": 1, "wins": 1, "losses": 0, "last_game_date": "2026-10-20"},
         {"team": "OKC", "games": 1, "wins": 1, "losses": 0, "last_game_date": "2026-10-22"},
     ]
+
+
+def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
+    final_dir = tmp_path / "final"
+    final_dir.mkdir()
+    games = [
+        ("2026-10-23T23:00:00Z", 10.0, 6.0, 0.7, -4.0, -300, 300, 0.6, "win"),
+        ("2026-10-20T23:00:00Z", -5.0, 2.0, 0.6, -1.0, 300, -300, 0.55, "loss"),
+        ("2026-10-10T23:00:00Z", 3.0, 4.0, 0.55, 2.0, -120, 100, 0.52, "push"),
+        ("2026-09-10T23:00:00Z", -2.0, -1.0, 0.45, -3.0, 110, -130, 0.4, "win"),
+    ]
+    for index, (
+        start_time,
+        actual_margin,
+        model_margin,
+        model_probability,
+        market_margin,
+        home_moneyline,
+        away_moneyline,
+        polymarket_probability,
+        ats_result,
+    ) in enumerate(games, start=1):
+        (final_dir / f"{index}.summary.json").write_text(
+            json.dumps(
+                {
+                    "season": "2026-27",
+                    "game_id": f"002260000{index}",
+                    "archived_at": "2026-10-24T05:00:00Z",
+                    "start_time": start_time,
+                    "final": {
+                        "actual_home_margin": actual_margin,
+                        "status": {"completed": True},
+                    },
+                    "grading": {
+                        "projected_home_margin": model_margin,
+                        "projected_home_win_probability": model_probability,
+                        "market": {
+                            "market_implied_home_margin": market_margin,
+                            "model_ats_result": ats_result,
+                        },
+                    },
+                    "pregame": {
+                        "market": {
+                            "home_moneyline": home_moneyline,
+                            "away_moneyline": away_moneyline,
+                        },
+                        "prediction_market": {
+                            "home_probability": polymarket_probability,
+                        },
+                    },
+                    "retrospective": {
+                        "home_margin": [8.0, -3.0, 2.0, 1.0][index - 1],
+                        "home_win_probability": [0.8, 0.3, 0.6, 0.55][index - 1],
+                    },
+                }
+            )
+        )
+
+    payload = read_schedule_performance(state_dir=tmp_path)
+
+    assert payload["as_of"] == "2026-10-23"
+    seven_days, thirty_days, season = payload["windows"]
+    assert [seven_days["games"], thirty_days["games"], season["games"]] == [2, 3, 4]
+    assert seven_days["probability"]["n"] == 2
+    assert seven_days["probability"]["gestalt"]["accuracy"] == pytest.approx(0.5)
+    assert seven_days["probability"]["gestalt"]["brier"] == pytest.approx(0.225)
+    assert seven_days["probability"]["draftkings"]["accuracy"] == pytest.approx(1.0)
+    assert seven_days["probability"]["draftkings"]["brier"] == pytest.approx(0.0625)
+    assert seven_days["probability"]["polymarket"]["brier"] == pytest.approx(0.23125)
+    assert seven_days["probability"]["actual_minutes"] == {
+        "n": 2,
+        "accuracy": pytest.approx(1.0),
+        "brier": pytest.approx(0.065),
+    }
+    assert seven_days["spread"] == {
+        "n": 2,
+        "gestalt_mae": pytest.approx(5.5),
+        "draftkings_mae": pytest.approx(9.0),
+        "gestalt_advantage": pytest.approx(3.5),
+        "actual_minutes_n": 2,
+        "actual_minutes_mae": pytest.approx(2.0),
+    }
+    assert seven_days["ats"]["cover_rate"] == pytest.approx(0.5)
+    assert seven_days["ats"]["units_at_minus_110"] == pytest.approx(-1.0 / 11.0)
 
 
 def test_polymarket_moneyline_snapshot_uses_main_market_midpoints(monkeypatch) -> None:

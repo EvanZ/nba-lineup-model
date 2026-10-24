@@ -114,6 +114,50 @@ type DailyRecord = {
   atsPushes: number;
 };
 
+type ProbabilityScore = {
+  accuracy: number | null;
+  brier: number | null;
+};
+
+type PerformanceWindow = {
+  key: string;
+  label: string;
+  start_date: string | null;
+  end_date: string;
+  games: number;
+  probability: {
+    n: number;
+    gestalt: ProbabilityScore;
+    draftkings: ProbabilityScore;
+    polymarket: ProbabilityScore;
+    actual_minutes: ProbabilityScore & { n: number };
+  };
+  spread: {
+    n: number;
+    gestalt_mae: number | null;
+    draftkings_mae: number | null;
+    gestalt_advantage: number | null;
+    actual_minutes_n: number;
+    actual_minutes_mae: number | null;
+  };
+  ats: {
+    n: number;
+    wins: number;
+    losses: number;
+    pushes: number;
+    cover_rate: number | null;
+    units_at_minus_110: number;
+  };
+};
+
+type SchedulePerformance = {
+  season: string;
+  as_of: string | null;
+  updated_at: string | null;
+  source: string;
+  windows: PerformanceWindow[];
+};
+
 const TEAM_LOGO_SLUGS: Record<string, string> = { NOP: "no", UTA: "utah" };
 
 function teamLogoUrl(team: string) {
@@ -165,6 +209,10 @@ function shortDay(value: string) {
 
 function shortMonth(value: string) {
   return new Intl.DateTimeFormat("en-US", { month: "short" }).format(parseDate(value));
+}
+
+function shortMonthDay(value: string) {
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(parseDate(value));
 }
 
 function sigmoid(value: number) {
@@ -335,6 +383,61 @@ function gameCountLabel(count: number) {
   return `${count} ${count === 1 ? "game" : "games"}`;
 }
 
+function metricPercent(value: number | null) {
+  return value === null ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
+function metricNumber(value: number | null, digits = 3) {
+  return value === null ? "—" : value.toFixed(digits).replace(/^0/, "");
+}
+
+function metricSigned(value: number | null, suffix = "") {
+  return value === null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(1)}${suffix}`;
+}
+
+function PerformanceSummary({ window, asOf }: { window: PerformanceWindow; asOf: string | null }) {
+  const brierScores = [
+    window.probability.gestalt.brier,
+    window.probability.draftkings.brier,
+    window.probability.polymarket.brier,
+  ].filter((value): value is number => value !== null);
+  const bestBrier = brierScores.length ? Math.min(...brierScores) : null;
+  const brierClass = (value: number | null) => value !== null && value === bestBrier ? "best" : "";
+  const advantage = window.spread.gestalt_advantage;
+  const ats = window.ats;
+  const record = `${ats.wins}-${ats.losses}${ats.pushes ? `-${ats.pushes}` : ""}`;
+  return <aside className="schedule-performance-card" aria-labelledby="schedule-performance-title">
+    <div className="schedule-performance-card-heading">
+      <div><span>Model check · {window.label}</span><strong id="schedule-performance-title">How we’re doing</strong></div>
+      {window.games < 30 && <small>Early sample</small>}
+    </div>
+    <div className="schedule-performance-section">
+      <div className="schedule-performance-label"><span>{window.games} finals{asOf ? ` · through ${shortMonthDay(asOf)}` : ""}</span><small>Pregame n={window.probability.n}</small></div>
+      <div className="schedule-performance-columns schedule-performance-columns-header"><span></span><span>Gestalt</span><span>DK</span><span>Poly</span><span className="retrospective">Actual mins*</span></div>
+      <div className="schedule-performance-columns"><span>Accuracy</span><strong>{metricPercent(window.probability.gestalt.accuracy)}</strong><strong>{metricPercent(window.probability.draftkings.accuracy)}</strong><strong>{metricPercent(window.probability.polymarket.accuracy)}</strong><strong className="retrospective">{metricPercent(window.probability.actual_minutes.accuracy)}</strong></div>
+      <div className="schedule-performance-columns"><span>Brier ↓</span><strong className={brierClass(window.probability.gestalt.brier)}>{metricNumber(window.probability.gestalt.brier)}</strong><strong className={brierClass(window.probability.draftkings.brier)}>{metricNumber(window.probability.draftkings.brier)}</strong><strong className={brierClass(window.probability.polymarket.brier)}>{metricNumber(window.probability.polymarket.brier)}</strong><strong className="retrospective">{metricNumber(window.probability.actual_minutes.brier)}</strong></div>
+    </div>
+    <div className="schedule-performance-section schedule-performance-bottom">
+      <div>
+        <span>Margin MAE</span>
+        <strong>{metricNumber(window.spread.gestalt_mae, 1)} <small>pts</small></strong>
+        <small>DK {metricNumber(window.spread.draftkings_mae, 1)} · actual mins {metricNumber(window.spread.actual_minutes_mae, 1)}</small>
+      </div>
+      <div>
+        <span>vs DK margin</span>
+        <strong className={advantage !== null && advantage >= 0 ? "positive" : "negative"}>{metricSigned(advantage, " pts")}</strong>
+        <small>Positive is better</small>
+      </div>
+      <div>
+        <span>ATS</span>
+        <strong>{record}</strong>
+        <small>{metricPercent(ats.cover_rate)} · {metricSigned(ats.units_at_minus_110, "u")} @ −110</small>
+      </div>
+    </div>
+    <p className="schedule-performance-footnote">* Actual mins is a postgame hindsight diagnostic (n={window.probability.actual_minutes.n}), not a pregame forecast. Lower Brier and margin MAE are better. ATS units assume −110.</p>
+  </aside>;
+}
+
 function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionScheduledGame; forecast: WinProjectionPayload; archived?: ArchivedGame }) {
   const liveProjection = homeProjection(game, forecast);
   const pregame = archived?.pregame ?? archived;
@@ -470,6 +573,7 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
   const [forecast, setForecast] = useState<WinProjectionPayload | null>(null);
   const [scheduleDay, setScheduleDay] = useState<ScheduleDay | null>(null);
   const [dateRecords, setDateRecords] = useState<Record<string, DailyRecord>>({});
+  const [performance, setPerformance] = useState<SchedulePerformance | null>(null);
   const [selectedDate, setSelectedDate] = useState(
     isDateKey(initialDate) ? initialDate : dateKey(new Date()),
   );
@@ -497,6 +601,18 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
         if (!cancelled) setForecast(payload.win_projection);
       })
       .catch((reason: Error) => { if (!cancelled) setError(reason.message); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/schedule-performance")
+      .then(async (response) => {
+        const payload = await response.json() as SchedulePerformance;
+        if (!response.ok) throw new Error("Schedule performance is unavailable.");
+        if (!cancelled) setPerformance(payload);
+      })
+      .catch(() => undefined);
     return () => { cancelled = true; };
   }, []);
 
@@ -589,13 +705,17 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
     });
   }, [archivedGames, forecast, selectedDate, teamFilter]);
   const teams = forecast?.teams.map((team) => team.team).sort() ?? [];
+  const seasonPerformance = performance?.windows.find((window) => window.key === "season") ?? null;
 
   return (
     <section className="schedule-page">
-      <div className="schedule-hero">
-        <p className="eyebrow">2026–27 season</p>
-        <h1>The slate.</h1>
-        <p>Every game, our pregame projection, and the market on one timeline. Move backward to audit results or forward to scout the week.</p>
+      <div className="schedule-hero-row">
+        <div className="schedule-hero">
+          <p className="eyebrow">2026–27 season</p>
+          <h1>The slate.</h1>
+          <p>Every game, our pregame projection, and the market on one timeline. Move backward to audit results or forward to scout the week.</p>
+        </div>
+        {seasonPerformance ? <PerformanceSummary window={seasonPerformance} asOf={performance?.as_of ?? null} /> : null}
       </div>
 
       <div className="schedule-toolbar">

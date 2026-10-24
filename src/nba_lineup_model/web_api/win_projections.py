@@ -788,6 +788,228 @@ def read_current_season_records(
     }
 
 
+def read_schedule_performance(
+    *,
+    state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    season: str = PROJECTION_SEASON,
+) -> dict[str, object]:
+    """Score frozen pregame forecasts against final regular-season results."""
+
+    completed: list[tuple[str, dict[str, object]]] = []
+    latest_archive_time: str | None = None
+    final_dir = Path(state_dir) / "final"
+    if final_dir.is_dir():
+        for path in sorted(final_dir.glob("*.summary.json")):
+            payload = json.loads(path.read_text())
+            if not isinstance(payload, dict) or payload.get("season") != season:
+                continue
+            if not str(payload.get("game_id", "")).startswith("002"):
+                continue
+            final = payload.get("final")
+            grading = payload.get("grading")
+            if not isinstance(final, dict) or not isinstance(grading, dict):
+                continue
+            status = final.get("status")
+            if isinstance(status, dict) and status.get("completed") is not True:
+                continue
+            start_time = str(payload.get("start_time", ""))
+            try:
+                game_date = (
+                    datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    .astimezone(ZoneInfo("America/New_York"))
+                    .date()
+                    .isoformat()
+                )
+            except ValueError:
+                continue
+            completed.append((game_date, payload))
+            archived_at = payload.get("archived_at")
+            if isinstance(archived_at, str):
+                latest_archive_time = max(latest_archive_time or archived_at, archived_at)
+
+    as_of = max((game_date for game_date, _payload in completed), default=None)
+    windows: list[dict[str, object]] = []
+    if as_of is not None:
+        end_date = datetime.strptime(as_of, "%Y-%m-%d").date()
+        for key, label, days in (
+            ("last_7_days", "7 days", 7),
+            ("last_30_days", "30 days", 30),
+            ("season", "Season", None),
+        ):
+            start_date = None if days is None else (end_date - timedelta(days=days - 1))
+            games = [
+                payload
+                for game_date, payload in completed
+                if start_date is None or game_date >= start_date.isoformat()
+            ]
+            windows.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "start_date": start_date.isoformat() if start_date is not None else None,
+                    "end_date": as_of,
+                    **_score_schedule_performance_games(games),
+                }
+            )
+    return {
+        "season": season,
+        "as_of": as_of,
+        "updated_at": latest_archive_time,
+        "source": "Immutable pregame snapshots and completed-game archive",
+        "windows": windows,
+    }
+
+
+def _score_schedule_performance_games(
+    games: list[dict[str, object]],
+) -> dict[str, object]:
+    probability_rows: list[tuple[float, float, float, float]] = []
+    retrospective_probability_rows: list[tuple[float, float]] = []
+    spread_rows: list[tuple[float, float, float]] = []
+    retrospective_spread_rows: list[tuple[float, float]] = []
+    ats_wins = 0
+    ats_losses = 0
+    ats_pushes = 0
+    for game in games:
+        final = game.get("final")
+        grading = game.get("grading")
+        pregame = game.get("pregame")
+        if not isinstance(final, dict) or not isinstance(grading, dict):
+            continue
+        if not isinstance(pregame, dict):
+            pregame = {}
+        actual_margin = _float_or_none(final.get("actual_home_margin"))
+        model_margin = _float_or_none(grading.get("projected_home_margin"))
+        model_probability = _float_or_none(grading.get("projected_home_win_probability"))
+        retrospective = game.get("retrospective")
+        retrospective = retrospective if isinstance(retrospective, dict) else {}
+        retrospective_margin = _float_or_none(retrospective.get("home_margin"))
+        retrospective_probability = _float_or_none(
+            retrospective.get("home_win_probability")
+        )
+        market_grading = grading.get("market")
+        market_grading = market_grading if isinstance(market_grading, dict) else {}
+        market = pregame.get("market")
+        market = market if isinstance(market, dict) else {}
+        prediction_market = pregame.get("prediction_market")
+        prediction_market = prediction_market if isinstance(prediction_market, dict) else {}
+        dk_probability = _no_vig_home_probability(
+            market.get("home_moneyline"), market.get("away_moneyline")
+        )
+        polymarket_probability = _float_or_none(prediction_market.get("home_probability"))
+        if (
+            actual_margin is not None
+            and model_probability is not None
+            and dk_probability is not None
+            and polymarket_probability is not None
+        ):
+            outcome = 1.0 if actual_margin > 0.0 else 0.0
+            probability_rows.append(
+                (outcome, model_probability, dk_probability, polymarket_probability)
+            )
+        if actual_margin is not None and retrospective_probability is not None:
+            outcome = 1.0 if actual_margin > 0.0 else 0.0
+            retrospective_probability_rows.append((outcome, retrospective_probability))
+        market_margin = _float_or_none(market_grading.get("market_implied_home_margin"))
+        if actual_margin is not None and model_margin is not None and market_margin is not None:
+            spread_rows.append((actual_margin, model_margin, market_margin))
+        if actual_margin is not None and retrospective_margin is not None:
+            retrospective_spread_rows.append((actual_margin, retrospective_margin))
+        ats_result = market_grading.get("model_ats_result")
+        if ats_result == "win":
+            ats_wins += 1
+        elif ats_result == "loss":
+            ats_losses += 1
+        elif ats_result == "push":
+            ats_pushes += 1
+
+    probability = {
+        "n": len(probability_rows),
+        "gestalt": _probability_metrics(probability_rows, 1),
+        "draftkings": _probability_metrics(probability_rows, 2),
+        "polymarket": _probability_metrics(probability_rows, 3),
+        "actual_minutes": {
+            "n": len(retrospective_probability_rows),
+            **_probability_metrics(retrospective_probability_rows, 1),
+        },
+    }
+    model_mae = (
+        float(np.mean([abs(actual - model) for actual, model, _market in spread_rows]))
+        if spread_rows
+        else None
+    )
+    market_mae = (
+        float(np.mean([abs(actual - market) for actual, _model, market in spread_rows]))
+        if spread_rows
+        else None
+    )
+    graded_ats = ats_wins + ats_losses
+    return {
+        "games": len(games),
+        "probability": probability,
+        "spread": {
+            "n": len(spread_rows),
+            "gestalt_mae": model_mae,
+            "draftkings_mae": market_mae,
+            "gestalt_advantage": (
+                market_mae - model_mae
+                if market_mae is not None and model_mae is not None
+                else None
+            ),
+            "actual_minutes_n": len(retrospective_spread_rows),
+            "actual_minutes_mae": (
+                float(
+                    np.mean(
+                        [
+                            abs(actual - retrospective)
+                            for actual, retrospective in retrospective_spread_rows
+                        ]
+                    )
+                )
+                if retrospective_spread_rows
+                else None
+            ),
+        },
+        "ats": {
+            "n": ats_wins + ats_losses + ats_pushes,
+            "wins": ats_wins,
+            "losses": ats_losses,
+            "pushes": ats_pushes,
+            "cover_rate": ats_wins / graded_ats if graded_ats else None,
+            "units_at_minus_110": ats_wins * (100.0 / 110.0) - ats_losses,
+        },
+    }
+
+
+def _probability_metrics(
+    rows: list[tuple[float, float, float, float]], probability_index: int
+) -> dict[str, float | None]:
+    if not rows:
+        return {"accuracy": None, "brier": None}
+    outcomes = np.asarray([row[0] for row in rows], dtype=float)
+    probabilities = np.asarray([row[probability_index] for row in rows], dtype=float)
+    predictions = probabilities >= 0.5
+    return {
+        "accuracy": float(np.mean(predictions == (outcomes == 1.0))),
+        "brier": float(np.mean(np.square(probabilities - outcomes))),
+    }
+
+
+def _no_vig_home_probability(home_moneyline: object, away_moneyline: object) -> float | None:
+    home = _american_implied_probability(home_moneyline)
+    away = _american_implied_probability(away_moneyline)
+    if home is None or away is None or home + away <= 0.0:
+        return None
+    return home / (home + away)
+
+
+def _american_implied_probability(value: object) -> float | None:
+    odds = _float_or_none(value)
+    if odds is None or odds == 0.0:
+        return None
+    return 100.0 / (odds + 100.0) if odds > 0.0 else -odds / (-odds + 100.0)
+
+
 def refresh_schedule_archive(
     *,
     game_date: str,

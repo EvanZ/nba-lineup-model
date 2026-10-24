@@ -31,6 +31,7 @@ from nba_lineup_model.web_api.win_projections import (
     build_win_projection_payload,
     read_current_season_records,
     read_schedule_day,
+    read_schedule_performance,
     read_win_projection_cache,
 )
 
@@ -363,6 +364,18 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         )
         try:
             return read_current_season_records(state_dir=state_dir)
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/api/schedule-performance")
+    def schedule_performance() -> dict[str, object]:
+        """Return rolling model-versus-market metrics from immutable audits."""
+
+        state_dir = Path(
+            os.environ.get("GESTALT_SCHEDULE_STATE_DIR", "/var/lib/nba-gestalt/schedule")
+        )
+        try:
+            return read_schedule_performance(state_dir=state_dir)
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
