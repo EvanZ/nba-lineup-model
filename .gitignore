@@ -21,6 +21,7 @@ data/audit/*
 !data/audit/.gitkeep
 data/external/*
 !data/external/.gitkeep
+data/manifests/s3_migration/
 
 artifacts/models/*
 !artifacts/models/.gitkeep

@@ -5,6 +5,7 @@ description = "Direct NBA data ingestion and lineup modeling experiments."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "boto3>=1.35,<2",
     "catboost>=1.2.7,<2",
     "httpx>=0.27.2",
     "joblib>=1.4",
@@ -25,6 +26,7 @@ dependencies = [
 [project.scripts]
 nba-refresh-gestalt-schedule = "nba_lineup_model.web_api.win_projections:refresh_schedule_main"
 nba-watch-gestalt-live-scores = "nba_lineup_model.web_api.win_projections:live_score_watcher_main"
+nba-s3-lake-migration = "nba_lineup_model.storage.s3_lake:main"
 nba-audit-games = "nba_lineup_model.audit.runner:main"
 nba-audit-history = "nba_lineup_model.audit.history:main"
 nba-audit-modeling-coverage = "nba_lineup_model.audit.modeling_coverage:main"

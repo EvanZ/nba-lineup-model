@@ -144,6 +144,12 @@ artifacts/models/rapm/
 Raw and derived datasets are intentionally excluded from Git. Schemas,
 algorithms, manifests, fixtures, and documentation are version controlled.
 
+The S3 archive contract is configured in `config/s3_lake_migration.json`.
+`nba-s3-lake-migration plan` inventories and hashes the authoritative layers;
+`upload` is a no-network dry run unless `--execute` is supplied. Archived
+objects are immutable and carry their SHA-256 digest in S3 metadata. The
+migration manifest is published only after every selected object verifies.
+
 Raw responses remain one JSON file per endpoint and game. Retryable processed
 artifacts also remain per-game files. Validated analytical tables compact into
 season and season-type Parquet partitions; orchestration does not change those

@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "destination_base_uri": "s3://nba-gestalt-data/lake",
+  "manifest_prefix": "manifests/migrations",
+  "exclude_globs": [
+    "**/*.tmp",
+    "**/.DS_Store",
+    "**/__pycache__/**",
+    "**/.assisted_shot_taxonomy_parts/**",
+    "**/s3_migration/**",
+    "s3_migration/**"
+  ],
+  "datasets": [
+    {
+      "name": "raw",
+      "source": "data/raw",
+      "destination": "raw",
+      "disposition": "archive"
+    },
+    {
+      "name": "catalog",
+      "source": "data/catalog",
+      "destination": "catalog",
+      "disposition": "archive"
+    },
+    {
+      "name": "manifests",
+      "source": "data/manifests",
+      "destination": "manifests/datasets",
+      "disposition": "archive"
+    },
+    {
+      "name": "quality",
+      "source": "data/quality",
+      "destination": "quality",
+      "disposition": "archive"
+    },
+    {
+      "name": "audit",
+      "source": "data/audit",
+      "destination": "audit",
+      "disposition": "archive"
+    },
+    {
+      "name": "curated",
+      "source": "data/curated",
+      "destination": "curated",
+      "disposition": "archive"
+    },
+    {
+      "name": "analytical",
+      "source": "data/analytical",
+      "destination": "analytical",
+      "disposition": "archive"
+    },
+    {
+      "name": "external",
+      "source": "data/external",
+      "destination": "external",
+      "disposition": "archive"
+    },
+    {
+      "name": "processed",
+      "source": "data/processed",
+      "disposition": "regenerate"
+    },
+    {
+      "name": "artifact_cache",
+      "source": "artifacts/cache",
+      "disposition": "regenerate"
+    },
+    {
+      "name": "mlflow_index",
+      "source": "artifacts/mlflow",
+      "disposition": "regenerate"
+    },
+    {
+      "name": "artifact_matplotlib_cache",
+      "source": "artifacts/.mplconfig",
+      "disposition": "regenerate"
+    },
+    {
+      "name": "artifact_partial_taxonomy",
+      "source": "artifacts/assisted_shot_taxonomy_parts",
+      "disposition": "regenerate"
+    },
+    {
+      "name": "artifact_logs",
+      "source": "artifacts/logs",
+      "disposition": "regenerate"
+    },
+    {
+      "name": "analysis_artifacts",
+      "source": "artifacts/analysis",
+      "disposition": "defer"
+    },
+    {
+      "name": "audit_artifacts",
+      "source": "artifacts/audits",
+      "disposition": "defer"
+    },
+    {
+      "name": "model_artifacts",
+      "source": "artifacts/models",
+      "disposition": "defer"
+    },
+    {
+      "name": "rotation_artifacts",
+      "source": "artifacts/rotation",
+      "disposition": "defer"
+    },
+    {
+      "name": "web_artifacts",
+      "source": "artifacts/web",
+      "disposition": "defer"
+    },
+    {
+      "name": "report_artifacts",
+      "source": "artifacts/reports",
+      "disposition": "defer"
+    }
+  ]
+}
