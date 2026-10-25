@@ -2248,6 +2248,7 @@ def refresh_live_score_state(
         if isinstance(event, dict)
     }
     newly_completed: list[dict[str, object]] = []
+    observed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     for game in payload["games"]:
         if not isinstance(game, dict):
             continue
@@ -2268,6 +2269,10 @@ def refresh_live_score_state(
             status_type = {}
         game["home_score"] = _integer_or_none(competitors.get("home", {}).get("score"))
         game["away_score"] = _integer_or_none(competitors.get("away", {}).get("score"))
+        was_completed = bool(
+            isinstance(game.get("status"), dict)
+            and game["status"].get("completed")
+        )
         game["status"] = {
             "state": status_type.get("state", "pre"),
             "completed": bool(status_type.get("completed", False)),
@@ -2276,6 +2281,8 @@ def refresh_live_score_state(
             "display_clock": status.get("displayClock") if isinstance(status, dict) else None,
             "period": status.get("period") if isinstance(status, dict) else None,
         }
+        if game["status"]["completed"] and not was_completed:
+            game.setdefault("final_observed_at", observed_at)
         if game["status"]["completed"] and "retrospective" not in game:
             newly_completed.append(game)
     if newly_completed:

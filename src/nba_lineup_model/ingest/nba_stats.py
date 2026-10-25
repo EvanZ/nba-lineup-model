@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import random
 import threading
 import time
@@ -234,6 +235,7 @@ class NbaStatsClient:
             DEFAULT_STATS_ACCESS_DENIAL_COOLDOWN_SECONDS
         ),
         request_gate: NbaStatsRequestGate | None = None,
+        proxy: str | None = None,
     ) -> None:
         if min_request_interval_seconds < 0:
             raise ValueError("Minimum request interval cannot be negative")
@@ -248,15 +250,19 @@ class NbaStatsClient:
         self.access_denial_cooldown_seconds = access_denial_cooldown_seconds
         self._request_gate = request_gate or _DEFAULT_REQUEST_GATE
         self._owns_http_client = http_client is None
-        self._client = http_client or self._new_http_client(timeout)
+        self._client = http_client or self._new_http_client(
+            timeout,
+            proxy=proxy or os.environ.get("GESTALT_NBA_STATS_PROXY"),
+        )
         self._client.headers.update(_stats_headers())
 
     @staticmethod
-    def _new_http_client(timeout: float) -> httpx.Client:
+    def _new_http_client(timeout: float, *, proxy: str | None = None) -> httpx.Client:
         return httpx.Client(
             timeout=httpx.Timeout(timeout, connect=min(timeout, 10.0)),
             headers=_stats_headers(),
             follow_redirects=True,
+            proxy=proxy,
         )
 
     def close(self) -> None:

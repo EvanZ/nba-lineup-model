@@ -24,6 +24,7 @@ from nba_lineup_model.web_api.win_projections import (
     read_current_season_records,
     read_schedule_day,
     read_schedule_performance,
+    refresh_live_score_state,
     score_season_win_forecasts,
     score_win_probabilities,
     simulate_baseline_win_total_intervals,
@@ -300,6 +301,60 @@ def test_live_score_default_advances_after_previous_date_is_final(tmp_path) -> N
     )
 
     assert game_date == "2026-10-23"
+
+
+def test_live_score_records_first_final_observation(monkeypatch, tmp_path) -> None:
+    latest = tmp_path / "latest" / "2026-10-24.json"
+    latest.parent.mkdir()
+    latest.write_text(
+        json.dumps(
+            {
+                "games": [
+                    {
+                        "espn_game_id": "401909860",
+                        "start_time": "2026-10-25T02:00:00Z",
+                        "retrospective": {},
+                        "status": {"state": "in", "completed": False},
+                    }
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(
+        win_projections,
+        "_fetch_json",
+        lambda _url: {
+            "events": [
+                {
+                    "id": "401909860",
+                    "competitions": [
+                        {
+                            "competitors": [
+                                {"homeAway": "home", "score": "110"},
+                                {"homeAway": "away", "score": "105"},
+                            ]
+                        }
+                    ],
+                    "status": {
+                        "displayClock": "0.0",
+                        "period": 4,
+                        "type": {
+                            "state": "post",
+                            "completed": True,
+                            "description": "Final",
+                            "detail": "Final",
+                        },
+                    },
+                }
+            ]
+        },
+    )
+
+    refresh_live_score_state(game_date="2026-10-24", state_dir=tmp_path)
+
+    game = json.loads(latest.read_text())["games"][0]
+    assert game["status"]["completed"] is True
+    assert datetime.fromisoformat(game["final_observed_at"].replace("Z", "+00:00"))
 
 
 def test_injury_pdf_preserves_team_reports_that_are_not_submitted(monkeypatch) -> None:

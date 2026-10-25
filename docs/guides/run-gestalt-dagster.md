@@ -17,6 +17,14 @@ DuckDB for bounded analytical queries and S3 as durable storage.
   running around the clock.
 - `daily_s3_lake_health` reads a small immutable Parquet object directly from
   S3 using DuckDB's AWS credential chain.
+- `completed_game_stats_v3` evaluates every 15 minutes and launches ingestion
+  only when a game has been final for at least 60 minutes and either its V3
+  play-by-play or traditional box score is missing from the lake. It examines
+  only today's and yesterday's compact schedule files and reads a persistent
+  local coverage index; it does not list the full season on every tick.
+- `stats_v3_morning_reconciliation` re-fetches the prior day's final games at
+  08:00 America/New_York. Byte-identical responses are no-ops; corrected
+  responses become new immutable content-addressed versions.
 
 The instance permits one run at a time. DuckDB is limited to two threads and
 512 MB by default. Dagster schedule/sensor history is retained for 30 days.
@@ -94,3 +102,58 @@ The active release deployment restarts Dagster after moving the `current`
 symlink, so jobs and the API always load the same code. Persistent Dagster
 state lives in `/var/lib/nba-gestalt/dagster`; schedule state remains in
 `/var/lib/nba-gestalt/schedule` and immutable copies remain in S3.
+
+## Stats V3 backfill and coverage
+
+The scheduled collector uses the compact serving snapshots as its completion
+catalog and writes no durable local PBP cache. Raw source bytes are stored at:
+
+```text
+s3://nba-gestalt-data/lake/raw/stats/<endpoint>/season=<season>/game_id=<game-id>/<sha256>.json
+```
+
+Append-only terminal records and run summaries are stored under
+`lake/manifests/stats_v3/`. A successful response is represented once per
+checksum, while failures retain their run and attempt IDs.
+
+Run or resume a date-bounded backfill with the same implementation used by
+Dagster:
+
+```bash
+nba-ingest-stats-v3 \
+  --season 2026-27 \
+  --start-date 2026-10-20 \
+  --end-date 2026-10-24 \
+  --discover-from-nba-schedule \
+  --ignore-grace
+```
+
+Re-running that command validates S3 coverage and skips complete endpoint
+pairs. Use `--refresh` only for a reconciliation pass that should detect an
+upstream correction.
+
+`stats.nba.com` may drop traffic from data-center IP ranges. If the EC2 egress
+address is affected, set `GESTALT_NBA_STATS_PROXY` in
+`/etc/nba-gestalt/dagster.env` to an approved HTTP(S) proxy and restart the
+code server and daemon. The V3 sensor and reconciliation schedule remain
+stopped until a proxy is present. For a host whose direct egress has been
+verified, `GESTALT_STATS_V3_ENABLED=1` explicitly enables them without a proxy.
+Proxy credentials must never be committed or printed.
+
+DuckDB can audit the append-only success/failure records directly:
+
+```sql
+select
+  game_date,
+  game_id,
+  endpoint,
+  status,
+  sha256,
+  finished_at
+from read_json_auto(
+  's3://nba-gestalt-data/lake/manifests/stats_v3/records/**/*.json',
+  hive_partitioning = true,
+  union_by_name = true
+)
+order by game_date, game_id, endpoint, finished_at;
+```
