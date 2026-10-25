@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from nba_lineup_model.modeling.in_season_nail import (
     ContributionLedger,
     InSeasonNailConfig,
     build_game_contribution,
+    load_frozen_preseason_nail,
     publish_game_contribution,
     publish_player_state,
     read_game_contribution,
@@ -70,6 +72,34 @@ def _config() -> InSeasonNailConfig:
     )
 
 
+def _write_preseason_forecast(root: Path, *, curry_rapm: float = 1.454) -> Path:
+    path = root / "2026-27.parquet"
+    pd.DataFrame(
+        {
+            "season": ["2026-27", "2026-27"],
+            "player_id": [201939, 2],
+            "player_name": ["Stephen Curry", "Other Player"],
+            "team": ["GSW", "TST"],
+            "rapm": [curry_rapm, -0.5],
+            "prior_rating": [-0.162, -0.2],
+            "additive_profile_adjustment": [1.616, -0.3],
+            "forecast_source": ["forward_prior", "forward_prior"],
+        }
+    ).to_parquet(path, index=False)
+    path.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "target_season": "2026-27",
+                "model_artifact": "forward_nail_rapm_v1212_residualized_lambda",
+                "run_id": "promoted-run",
+                "contract": "complete frozen preseason forecast",
+                "player_count": 2,
+            }
+        )
+    )
+    return path
+
+
 def _solve(contributions=(), *, cutoff_time=FINALIZED_AT + timedelta(seconds=1)):
     return solve_in_season_state(
         season="2026-27",
@@ -90,6 +120,43 @@ def test_zero_possessions_exactly_preserve_complete_preseason_forecast() -> None
     assert state["raw_on_court_possessions"].eq(0.0).all()
     assert state["evidence_weight"].eq(0.0).all()
     assert state["prior_weight"].eq(1.0).all()
+
+
+def test_frozen_preseason_loader_uses_complete_published_rating(tmp_path: Path) -> None:
+    artifact = load_frozen_preseason_nail(
+        _write_preseason_forecast(tmp_path),
+        expected_season="2026-27",
+        expected_model_artifact="forward_nail_rapm_v1212_residualized_lambda",
+    )
+
+    assert artifact.ratings[201939] == pytest.approx(1.454)
+    assert artifact.teams[201939] == "GSW"
+    assert artifact.player_ids == (2, 201939)
+    assert len(artifact.lineage_sha256) == 64
+
+
+def test_frozen_preseason_loader_rejects_scalar_only_or_misaligned_rating(
+    tmp_path: Path,
+) -> None:
+    path = _write_preseason_forecast(tmp_path, curry_rapm=-0.162)
+
+    with pytest.raises(ValueError, match="scalar prior plus additive profile"):
+        load_frozen_preseason_nail(path)
+
+
+def test_frozen_preseason_loader_accepts_folded_cold_start_profile(
+    tmp_path: Path,
+) -> None:
+    path = _write_preseason_forecast(tmp_path)
+    rankings = pd.read_parquet(path)
+    rankings.loc[1, "rapm"] = rankings.loc[1, "prior_rating"]
+    rankings.loc[1, "additive_profile_adjustment"] = np.nan
+    rankings.loc[1, "forecast_source"] = "draft_cold_start_prior"
+    rankings.to_parquet(path, index=False)
+
+    artifact = load_frozen_preseason_nail(path)
+
+    assert artifact.ratings[2] == pytest.approx(-0.2)
 
 
 def test_game_contribution_residualizes_complete_prior_and_context() -> None:

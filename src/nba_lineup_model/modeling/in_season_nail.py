@@ -72,6 +72,47 @@ class InSeasonNailConfig:
 
 
 @dataclass(frozen=True)
+class FrozenPreseasonNail:
+    """Validated published forecast used as the complete in-season prior."""
+
+    season: str
+    model_artifact: str
+    run_id: str
+    contract: str
+    rankings: pd.DataFrame
+    rankings_sha256: str
+    metadata_sha256: str
+
+    @property
+    def player_ids(self) -> tuple[int, ...]:
+        return tuple(self.rankings["player_id"].astype(int))
+
+    @property
+    def ratings(self) -> dict[int, float]:
+        return dict(
+            zip(
+                self.rankings["player_id"].astype(int),
+                self.rankings["rapm"].astype(float),
+                strict=True,
+            )
+        )
+
+    @property
+    def teams(self) -> dict[int, str]:
+        return dict(
+            zip(
+                self.rankings["player_id"].astype(int),
+                self.rankings["team"].astype(str),
+                strict=True,
+            )
+        )
+
+    @property
+    def lineage_sha256(self) -> str:
+        return hashlib.sha256(f"{self.rankings_sha256}:{self.metadata_sha256}".encode()).hexdigest()
+
+
+@dataclass(frozen=True)
 class GameContribution:
     """One game's immutable contribution to the residual normal equations."""
 
@@ -169,6 +210,81 @@ class ContributionLedger:
                 key=lambda item: (item.finalized_at, item.game_time_utc, item.game_id),
             )
         )
+
+
+def load_frozen_preseason_nail(
+    rankings_path: Path | str,
+    *,
+    metadata_path: Path | str | None = None,
+    expected_season: str | None = None,
+    expected_model_artifact: str | None = None,
+) -> FrozenPreseasonNail:
+    """Load the exact published forecast and enforce its complete-prior contract."""
+
+    parquet_path = Path(rankings_path)
+    json_path = (
+        Path(metadata_path) if metadata_path is not None else parquet_path.with_suffix(".json")
+    )
+    rankings = pd.read_parquet(parquet_path)
+    metadata = json.loads(json_path.read_text())
+    required_columns = {
+        "season",
+        "player_id",
+        "player_name",
+        "team",
+        "rapm",
+        "prior_rating",
+        "additive_profile_adjustment",
+        "forecast_source",
+    }
+    missing = required_columns - set(rankings.columns)
+    if missing:
+        raise ValueError(f"Preseason rankings missing columns: {sorted(missing)}")
+    if rankings.empty or rankings["player_id"].duplicated().any():
+        raise ValueError("Preseason rankings must contain one row per player")
+    seasons = tuple(rankings["season"].astype(str).unique())
+    if len(seasons) != 1:
+        raise ValueError("Preseason rankings must contain exactly one season")
+    season = validate_season(seasons[0])
+    if metadata.get("target_season") != season:
+        raise ValueError("Preseason ranking metadata season does not match the data")
+    if expected_season is not None and validate_season(expected_season) != season:
+        raise ValueError("Preseason rankings do not match the expected season")
+    model_artifact = str(metadata.get("model_artifact", "")).strip()
+    run_id = str(metadata.get("run_id", "")).strip()
+    contract = str(metadata.get("contract", "")).strip()
+    if not model_artifact or not run_id or not contract:
+        raise ValueError("Preseason ranking metadata is incomplete")
+    if expected_model_artifact is not None and model_artifact != expected_model_artifact:
+        raise ValueError("Preseason rankings do not match the promoted model artifact")
+    if int(metadata.get("player_count", -1)) != len(rankings):
+        raise ValueError("Preseason ranking metadata player count does not match")
+
+    numeric = rankings.loc[:, ["rapm", "prior_rating"]].apply(pd.to_numeric, errors="coerce")
+    additive = pd.to_numeric(rankings["additive_profile_adjustment"], errors="coerce")
+    if not np.isfinite(numeric.to_numpy(dtype=float)).all():
+        raise ValueError("Published preseason ratings and scalar priors must be finite")
+    cold_start = rankings["forecast_source"].astype(str).str.contains("cold_start")
+    missing_additive = additive.isna()
+    if (missing_additive & ~cold_start).any():
+        raise ValueError("Only cold-start forecasts may omit additive profile adjustment")
+    expected = numeric["prior_rating"] + additive.fillna(0.0)
+    if not np.allclose(numeric["rapm"], expected, atol=1e-10):
+        raise ValueError("Published preseason NAIL must equal scalar prior plus additive profile")
+    normalized = rankings.copy()
+    normalized["player_id"] = normalized["player_id"].astype(int)
+    normalized.loc[:, numeric.columns] = numeric
+    normalized["additive_profile_adjustment"] = additive
+    normalized = normalized.sort_values("player_id", kind="stable").reset_index(drop=True)
+    return FrozenPreseasonNail(
+        season=season,
+        model_artifact=model_artifact,
+        run_id=run_id,
+        contract=contract,
+        rankings=normalized,
+        rankings_sha256=_file_sha256(parquet_path),
+        metadata_sha256=_file_sha256(json_path),
+    )
 
 
 def build_game_contribution(

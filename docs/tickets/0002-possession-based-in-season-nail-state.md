@@ -33,6 +33,8 @@ content-addressed and immutable.
 ## Implemented first slice
 
 - Prior-centered, possession-weighted sufficient-statistic builder.
+- Strict loader for the exact promoted preseason forecast, including validation
+  that the published rating equals scalar prior plus additive profile.
 - Strict finalized-before-cutoff cumulative solver.
 - Game-keyed add/replace ledger for idempotence and corrections.
 - Posterior state fields for exposure, information, weights, and uncertainty.
