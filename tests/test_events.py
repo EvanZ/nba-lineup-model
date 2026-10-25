@@ -210,6 +210,114 @@ def test_positive_clock_correction_after_period_end_is_repaired():
     assert [event.event_type for event in events] == ["2pt", "period"]
 
 
+def test_repaired_stream_preserves_raw_order_at_the_same_clock():
+    payload = {
+        "game": {
+            "gameId": "0020000006",
+            "actions": [
+                {
+                    "actionNumber": 20,
+                    "orderNumber": 10000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT10M00.00S",
+                    "actionType": "2pt",
+                    "scoreHome": "2",
+                    "scoreAway": "0",
+                },
+                {
+                    "actionNumber": 10,
+                    "orderNumber": 20000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT10M00.00S",
+                    "actionType": "substitution",
+                    "subType": "in",
+                    "scoreHome": "2",
+                    "scoreAway": "0",
+                },
+                {
+                    "actionNumber": 30,
+                    "orderNumber": 30000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT00M00.00S",
+                    "actionType": "period",
+                    "subType": "end",
+                    "scoreHome": "2",
+                    "scoreAway": "0",
+                },
+                {
+                    "actionNumber": 5,
+                    "orderNumber": 90000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT05M00.00S",
+                    "actionType": "timeout",
+                    "scoreHome": "2",
+                    "scoreAway": "0",
+                },
+            ],
+        }
+    }
+
+    events = canonical_events(payload)
+
+    assert [event.event_id for event in events[:2]] == [
+        "0020000006:10000",
+        "0020000006:20000",
+    ]
+    assert not any("negative_score_delta" in event.validation_flags for event in events)
+
+
+def test_repaired_stream_clamps_stale_score_snapshots_without_double_counting():
+    payload = {
+        "game": {
+            "gameId": "0020000007",
+            "actions": [
+                {
+                    "actionNumber": 1,
+                    "orderNumber": 10000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT10M00.00S",
+                    "actionType": "2pt",
+                    "scoreHome": "2",
+                    "scoreAway": "0",
+                },
+                {
+                    "actionNumber": 2,
+                    "orderNumber": 20000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT00M00.00S",
+                    "actionType": "period",
+                    "subType": "end",
+                    "scoreHome": "4",
+                    "scoreAway": "0",
+                },
+                {
+                    "actionNumber": 3,
+                    "orderNumber": 90000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT05M00.00S",
+                    "actionType": "substitution",
+                    "subType": "in",
+                    "scoreHome": "1",
+                    "scoreAway": "0",
+                },
+            ],
+        }
+    }
+
+    events = canonical_events(payload)
+
+    assert [event.score_home for event in events] == [2, 2, 4]
+    assert [event.score_home_delta for event in events] == [2, 0, 2]
+    assert "negative_score_delta" in events[1].validation_flags
+
+
 def test_event_identifier_columns_use_nullable_integer_dtype():
     frame = events_frame(load_fixture("playbyplay_minimal.json"))
 

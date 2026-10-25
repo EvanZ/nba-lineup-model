@@ -91,10 +91,16 @@ def canonical_events(payload: Mapping[str, Any]) -> list[Event]:
 
         home_score = _score(action.get("scoreHome"), previous_home_score)
         away_score = _score(action.get("scoreAway"), previous_away_score)
+        if home_score < previous_home_score or away_score < previous_away_score:
+            flags.append("negative_score_delta")
+            # Semantically reordered CDN corrections can expose stale score
+            # snapshots on substitutions or reviews. Canonical game score is
+            # monotonic; clamping prevents the next action from counting the
+            # already-recorded point a second time while retaining the flag.
+            home_score = max(home_score, previous_home_score)
+            away_score = max(away_score, previous_away_score)
         home_delta = home_score - previous_home_score
         away_delta = away_score - previous_away_score
-        if home_delta < 0 or away_delta < 0:
-            flags.append("negative_score_delta")
 
         elapsed_game_seconds = completed_period_seconds(period) + max(
             duration - seconds_remaining,
@@ -190,8 +196,8 @@ def _semantic_action_sort_key(action: Mapping[str, Any]) -> tuple[int, float, in
         period,
         -clock,
         boundary_priority,
-        _required_int(action, "actionNumber"),
         _required_int(action, "orderNumber"),
+        _required_int(action, "actionNumber"),
     )
 
 
