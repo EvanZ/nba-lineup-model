@@ -439,6 +439,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     player_state_root = Path(args.cache_dir) / "player_states"
     cached_contribution_count = 0
     created_contribution_paths: list[Path] = []
+    contribution_paths: list[Path] = []
 
     grouped: dict[date, list[dict[str, Any]]] = defaultdict(list)
     for summary in summaries:
@@ -494,13 +495,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 source_uri = (
                     f"{args.cdn_s3_prefix}/season={SEASON}/game_id={game_id}/{source_sha}.json"
                 )
-                cached, _cached_path = _cached_game_contribution(
+                cached, cached_path = _cached_game_contribution(
                     contribution_cache_root,
                     game_id=game_id,
                     source_sha256=source_sha,
                 )
                 if cached is not None:
                     day_contributions.append(cached)
+                    if cached_path is None:
+                        raise RuntimeError("Cached contribution is missing its directory")
+                    contribution_paths.append(cached_path)
                     cached_contribution_count += 1
                     continue
                 play_by_play = _fetch_s3_json(source_uri)
@@ -552,6 +556,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     contribution_cache_root,
                 )
                 day_contributions.append(contribution)
+                contribution_paths.append(contribution_path)
                 if created:
                     created_contribution_paths.append(contribution_path)
             except Exception as error:  # Keep the audit report explicit about exclusions.
@@ -642,7 +647,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "summary": str(args.output_dir / "summary.json"),
         "game_predictions": str(args.output_dir / "game_predictions.csv"),
         "player_state": str(player_state_path / "player_state.parquet"),
-        "new_contribution_directories": [str(path) for path in created_contribution_paths],
+        "contribution_directories": [
+            str(path) for path in dict.fromkeys(contribution_paths)
+        ],
     }
     return result
 

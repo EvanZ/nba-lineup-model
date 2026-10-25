@@ -561,9 +561,14 @@ def update_in_season_nail_shadow_op(context: OpExecutionContext) -> dict[str, ob
         store.put_bytes(uri, payload)
         published[label] = uri
 
-    for directory_value in local_artifacts["new_contribution_directories"]:
+    publication_marker_root = root / "s3-published-contributions"
+    for directory_value in local_artifacts["contribution_directories"]:
         directory = Path(str(directory_value))
         relative = directory.relative_to(root / "contributions")
+        marker_path = publication_marker_root / relative.with_suffix(".json")
+        if marker_path.exists():
+            continue
+        contribution_uris: list[str] = []
         for path in sorted(directory.iterdir()):
             if not path.is_file():
                 continue
@@ -576,6 +581,17 @@ def update_in_season_nail_shadow_op(context: OpExecutionContext) -> dict[str, ob
                 path.name,
             )
             store.put_bytes(uri, path.read_bytes())
+            contribution_uris.append(uri)
+        marker_payload = {
+            "schema_version": 1,
+            "published_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "directory": str(directory),
+            "objects": contribution_uris,
+        }
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_tmp = marker_path.with_suffix(".json.tmp")
+        marker_tmp.write_text(json.dumps(marker_payload, indent=2, sort_keys=True) + "\n")
+        marker_tmp.replace(marker_path)
 
     publication = {
         "schema_version": 1,
