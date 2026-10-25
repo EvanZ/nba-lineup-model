@@ -1,6 +1,6 @@
 # Possession-based in-season NAIL state updater
 
-Status: in progress  
+Status: complete
 GitHub: [Issue #29](https://github.com/EvanZ/nba-lineup-model/issues/29)
 
 ## Decision record
@@ -67,19 +67,22 @@ frozen baseline matched all 1,230 published 2025-26 game margins to machine
 precision (maximum absolute difference below 6e-15). This is evidence for
 continuing the offline updater work, not approval to change the production site.
 The reproducible local run is
-`in-season-nail-calibration-20261025T161109Z-ff8a4ba0`; its derived artifacts
-remain outside Git and have not been published to S3.
+`in-season-nail-calibration-20261025T161109Z-ff8a4ba0`. Its immutable,
+checksum-verified artifacts are published at
+`s3://nba-gestalt-data/lake/analytical/in_season_nail_updater_calibration/run_id=in-season-nail-calibration-20261025T161109Z-ff8a4ba0`.
 
-## Remaining production wiring
+## Closure state
 
-1. Resolve the two current CDN period-boundary reconstruction failures and the
-   deployed preseason-catalog omission for Walter Clayton Jr.; these remain
-   visible as shadow coverage exclusions rather than being silently imputed.
-2. Publish the reviewed updater calibration artifact to S3.
-3. Accumulate enough immutable 2026-27 shadow results to judge whether the
-   updater consistently surpasses the frozen production control.
-4. Require an explicit promotion decision before the public site consumes any
-   in-season state.
+- The deployed preseason catalog safely extends the frozen player vocabulary
+  for newly rostered players without changing any existing frozen row.
+- CDN late corrections are semantically reordered while preserving score and
+  event provenance, so all 36 completed games through October 25 reconstruct.
+- The production shadow replay has 36 validated contributions and zero
+  exclusions; a second replay read all 36 from cache and created none.
+- The reviewed historical calibration is durably published to S3.
+- The public projection path remains unchanged. Continued shadow monitoring
+  and any decision to promote the updater are explicit follow-on work, not part
+  of this implementation ticket.
 
 ## Shadow operations
 
@@ -90,9 +93,10 @@ reconstructed, or rescored through the contextual endpoint. The chronological
 comparison itself is regenerated from the compact contributions so corrections
 remain reproducible.
 
-The initial EC2 validation reconstructed 32 of 36 completed games and a second
-run reused all 32 contributions, created none, completed in 8.6 seconds, and
-peaked at roughly 242 MB RSS. Four games were excluded explicitly: two because
-of malformed period-boundary events and two involving a player missing from the
-deployed preseason catalog. These exclusions affect future updater evidence but
-do not remove the games from the production-versus-shadow scoring table.
+The initial EC2 validation reconstructed 32 of 36 completed games. The final
+production validation on release `gestalt-web-da1952b` reconstructed all 36
+games with zero exclusions. Its immediate idempotence replay reused all 36
+cached contributions, created none, and completed successfully in 12.6 seconds.
+Through October 25, the shadow updater improved margin MAE by 0.145, margin
+RMSE by 0.100, and Brier score by 0.0035 versus the frozen production control;
+the sample remains too small for promotion.
