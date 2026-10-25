@@ -51,11 +51,19 @@ def test_shadow_monitor_reuses_only_matching_source_contribution(tmp_path: Path)
         tmp_path,
         game_id=contribution.game_id,
         source_sha256=contribution.source_sha256,
+        player_ids=contribution.player_ids,
     )
     revised, revised_path = _cached_game_contribution(
         tmp_path,
         game_id=contribution.game_id,
         source_sha256="b" * 64,
+        player_ids=contribution.player_ids,
+    )
+    changed_vocabulary, changed_vocabulary_path = _cached_game_contribution(
+        tmp_path,
+        game_id=contribution.game_id,
+        source_sha256=contribution.source_sha256,
+        player_ids=(*contribution.player_ids, 5),
     )
 
     assert created is True
@@ -64,6 +72,8 @@ def test_shadow_monitor_reuses_only_matching_source_contribution(tmp_path: Path)
     assert cached_path == path
     assert revised is None
     assert revised_path is None
+    assert changed_vocabulary is None
+    assert changed_vocabulary_path is None
 
 
 def test_shadow_monitor_back_to_back_flags_are_date_batched() -> None:

@@ -376,6 +376,7 @@ def _cached_game_contribution(
     *,
     game_id: str,
     source_sha256: str,
+    player_ids: tuple[int, ...],
 ) -> tuple[Any | None, Path | None]:
     game_root = cache_root / f"season={SEASON}" / f"game_id={game_id}"
     if not game_root.is_dir():
@@ -386,6 +387,8 @@ def _cached_game_contribution(
             if manifest.get("source_sha256") != source_sha256:
                 continue
             contribution = read_game_contribution(manifest_path.parent)
+            if contribution.player_ids != player_ids:
+                continue
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             continue
         return contribution, manifest_path.parent
@@ -499,6 +502,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     contribution_cache_root,
                     game_id=game_id,
                     source_sha256=source_sha,
+                    player_ids=player_ids,
                 )
                 if cached is not None:
                     day_contributions.append(cached)
