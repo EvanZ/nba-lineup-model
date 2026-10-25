@@ -12,9 +12,26 @@ from nba_lineup_model.modeling.in_season_nail_calibration import (
     HistoricalReplayGame,
     HistoricalReplaySeason,
     calibrate_prior_strength,
+    publish_calibration_run,
     read_historical_replay_mart,
     write_historical_replay_mart,
 )
+
+
+class _MemoryStore:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def list_keys(self, prefix_uri: str) -> list[str]:
+        return sorted(uri for uri in self.objects if uri.startswith(prefix_uri))
+
+    def put_bytes(self, uri: str, payload: bytes) -> bool:
+        if uri in self.objects:
+            if self.objects[uri] != payload:
+                raise RuntimeError("immutable collision")
+            return False
+        self.objects[uri] = payload
+        return True
 
 
 def _game(
@@ -133,3 +150,43 @@ def test_calibration_rejects_empty_replay() -> None:
             prior_grid=(100.0,),
             selection_seasons=("2023-24",),
         )
+
+
+def test_publish_calibration_run_is_verified_and_idempotent(tmp_path) -> None:
+    run_id = "in-season-nail-calibration-fixture"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    parameters = b'{"prior": 6000}\n'
+    (run_dir / "updater_parameters.json").write_bytes(parameters)
+    import hashlib
+    import json
+
+    manifest = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "files": {"updater_parameters.json": hashlib.sha256(parameters).hexdigest()},
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest) + "\n")
+    store = _MemoryStore()
+
+    first = publish_calibration_run(run_dir, lake_uri="s3://fixture/lake", store=store)
+    second = publish_calibration_run(run_dir, lake_uri="s3://fixture/lake", store=store)
+
+    assert first["manifest_created"] is True
+    assert second["manifest_created"] is False
+    assert first["root_uri"] == f"s3://fixture/lake/run_id={run_id}"
+    assert len(store.objects) == 2
+
+
+def test_publish_calibration_run_rejects_changed_artifact(tmp_path) -> None:
+    run_id = "in-season-nail-calibration-fixture"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    (run_dir / "updater_parameters.json").write_text("changed")
+    (run_dir / "manifest.json").write_text(
+        '{"run_id": "in-season-nail-calibration-fixture", '
+        '"files": {"updater_parameters.json": "' + "0" * 64 + '"}}\n'
+    )
+
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        publish_calibration_run(run_dir, lake_uri="s3://fixture/lake", store=_MemoryStore())

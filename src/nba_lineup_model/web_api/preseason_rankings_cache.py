@@ -57,6 +57,17 @@ def materialize_preseason_rankings(
     """
 
     run_dir, run_id = _published_run(completed_season)
+    path = preseason_rankings_path(MODEL_ARTIFACT, run_id, target_season)
+    profiles_path = preseason_profiles_path(MODEL_ARTIFACT, run_id, target_season)
+    existing_rankings = pd.read_parquet(path) if path.is_file() else None
+    existing_profiles = pd.read_parquet(profiles_path) if profiles_path.is_file() else None
+    existing_metadata = (
+        json.loads(path.with_suffix(".json").read_text())
+        if path.with_suffix(".json").is_file()
+        else None
+    )
+    if (existing_rankings is None) != (existing_profiles is None):
+        raise ValueError("Frozen preseason rankings and profiles must exist together")
     metadata = json.loads((run_dir / "metadata.json").read_text())
     padding_contract = _published_profile_padding_contract(metadata)
     use_last_observed_profile = (
@@ -141,7 +152,7 @@ def materialize_preseason_rankings(
         exposure_cohort=pd.read_parquet(exposure_cohort_path(MODEL_ARTIFACT, run_id)),
         padding_contract=padding_contract,
         use_last_observed_profile=use_last_observed_profile,
-    )
+    ).assign(season=target_season)
     base = roster.loc[:, ["player_id", "base_prior"]].rename(columns={"base_prior": "rapm"})
     uncentered = _compiled_linear_x3_coefficients(base, profiles, context_model)
     profile_adjustment = (
@@ -149,9 +160,14 @@ def materialize_preseason_rankings(
         - base.set_index("player_id")["rapm"]
     )
     completed_exposure = exposure_history[-1].loc[:, ["player_id", "on_court_possessions"]]
-    center = _player_rating_center(
+    computed_center = _player_rating_center(
         uncentered,
         completed_exposure.rename(columns={"on_court_possessions": "possessions"}),
+    )
+    center = (
+        float(existing_metadata["display_center"])
+        if existing_metadata is not None and "display_center" in existing_metadata
+        else computed_center
     )
     profile_breakdown = compiled_linear_x3_additive_profile_breakdown(
         profiles,
@@ -225,13 +241,19 @@ def materialize_preseason_rankings(
     output = output.loc[:, columns].sort_values(
         ["rapm", "player_name", "player_id"], ascending=[False, True, True], kind="stable"
     ).reset_index(drop=True)
-    path = preseason_rankings_path(MODEL_ARTIFACT, run_id, target_season)
+    added_player_ids: list[int] = []
+    if existing_rankings is not None and existing_profiles is not None:
+        added_player_ids = sorted(
+            set(output["player_id"].astype(int))
+            - set(existing_rankings["player_id"].astype(int))
+        )
+        output = extend_frozen_preseason_catalog(existing_rankings, output)
+        profiles = extend_frozen_preseason_catalog(existing_profiles, profiles)
     path.parent.mkdir(parents=True, exist_ok=True)
     print("Writing preseason ranking cache", flush=True)
     output.to_parquet(path, index=False)
-    profiles_path = preseason_profiles_path(MODEL_ARTIFACT, run_id, target_season)
     profiles_path.parent.mkdir(parents=True, exist_ok=True)
-    profiles.assign(season=target_season).to_parquet(profiles_path, index=False)
+    profiles.to_parquet(profiles_path, index=False)
     metadata = {
         "target_season": target_season,
         "completed_season": completed_season,
@@ -244,9 +266,31 @@ def materialize_preseason_rankings(
         ),
         "display_center": center,
         "player_count": len(output),
+        "frozen_catalog_extended": existing_rankings is not None,
+        "added_player_ids": added_player_ids,
     }
     path.with_suffix(".json").write_text(json.dumps(metadata, indent=2) + "\n")
     return path
+
+
+def extend_frozen_preseason_catalog(
+    frozen: pd.DataFrame,
+    candidate: pd.DataFrame,
+) -> pd.DataFrame:
+    """Append newly rostered players without rewriting an existing frozen state."""
+
+    for label, frame in (("frozen", frozen), ("candidate", candidate)):
+        if "player_id" not in frame:
+            raise ValueError(f"{label} preseason catalog has no player_id column")
+        if frame["player_id"].duplicated().any():
+            raise ValueError(f"{label} preseason catalog duplicates player IDs")
+    if list(frozen.columns) != list(candidate.columns):
+        raise ValueError("Frozen and candidate preseason catalogs have different schemas")
+    frozen_ids = set(frozen["player_id"].astype(int))
+    additions = candidate.loc[~candidate["player_id"].astype(int).isin(frozen_ids)]
+    return pd.concat([frozen, additions], ignore_index=True).sort_values(
+        ["player_id"], kind="stable"
+    ).reset_index(drop=True)
 
 
 def _published_run(completed_season: str) -> tuple[Path, str]:

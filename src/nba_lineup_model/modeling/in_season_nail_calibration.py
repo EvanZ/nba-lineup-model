@@ -42,6 +42,11 @@ from nba_lineup_model.modeling.schedule_controls import build_back_to_back_game_
 from nba_lineup_model.modeling.stints import read_rapm_stints
 from nba_lineup_model.models.baselines import signed_entity_matrix, vocabulary_mapping
 from nba_lineup_model.season.schema import validate_season
+from nba_lineup_model.season.stats_v3_lake import (
+    AwsCliImmutableObjectStore,
+    ImmutableObjectStore,
+    _join_s3_uri,
+)
 from nba_lineup_model.web_api.inference import _compiled_linear_x3_coefficients
 
 DEFAULT_SEASONS = ("2023-24", "2024-25", "2025-26")
@@ -67,6 +72,9 @@ DEFAULT_RUN_DIR = Path(
 )
 DEFAULT_OUTPUT_DIR = Path("artifacts/models/in_season_nail_updater_calibration")
 DEFAULT_REPLAY_MART_PATH = Path("artifacts/cache/in_season_nail_replay_mart/recent-seasons.joblib")
+DEFAULT_CALIBRATION_LAKE_URI = (
+    "s3://nba-gestalt-data/lake/analytical/in_season_nail_updater_calibration"
+)
 CORE_MODEL_VERSION = "NAIL-RAPM v1.2.1.3"
 UPDATER_VERSION = "in-season-possession-v0.1.0"
 WIN_PROBABILITY_MARGIN_SCALE = 6.5
@@ -379,6 +387,66 @@ def write_calibration_run(
         run_id=run_id,
         selected_prior_equivalent_possessions=(calibration.selected_prior_equivalent_possessions),
     )
+
+
+def publish_calibration_run(
+    run_dir: Path | str,
+    *,
+    lake_uri: str = DEFAULT_CALIBRATION_LAKE_URI,
+    store: ImmutableObjectStore | None = None,
+) -> dict[str, object]:
+    """Publish one reviewed calibration run as immutable, verified S3 objects."""
+
+    source = Path(run_dir)
+    manifest_path = source / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    run_id = str(manifest.get("run_id") or "")
+    if not run_id or source.name != run_id:
+        raise ValueError("Calibration manifest run_id must match its directory")
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("Calibration manifest has no file checksums")
+    active_store = store or AwsCliImmutableObjectStore()
+    root_uri = _join_s3_uri(lake_uri, f"run_id={run_id}")
+    objects: list[dict[str, object]] = []
+    for filename, expected_sha in sorted(files.items()):
+        if not isinstance(filename, str) or Path(filename).name != filename:
+            raise ValueError(f"Invalid calibration artifact filename: {filename!r}")
+        path = source / filename
+        payload = path.read_bytes()
+        actual_sha = hashlib.sha256(payload).hexdigest()
+        if actual_sha != expected_sha:
+            raise ValueError(f"Calibration artifact checksum mismatch: {filename}")
+        uri = _join_s3_uri(root_uri, filename)
+        created = active_store.put_bytes(uri, payload)
+        objects.append(
+            {
+                "filename": filename,
+                "sha256": actual_sha,
+                "byte_count": len(payload),
+                "uri": uri,
+                "created": created,
+            }
+        )
+    manifest_payload = manifest_path.read_bytes()
+    manifest_uri = _join_s3_uri(root_uri, "manifest.json")
+    manifest_created = active_store.put_bytes(manifest_uri, manifest_payload)
+    return {
+        "run_id": run_id,
+        "root_uri": root_uri,
+        "manifest_uri": manifest_uri,
+        "manifest_sha256": hashlib.sha256(manifest_payload).hexdigest(),
+        "manifest_created": manifest_created,
+        "objects": objects,
+    }
+
+
+def publish_main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Publish a reviewed calibration run to S3")
+    parser.add_argument("run_dir", type=Path)
+    parser.add_argument("--lake-uri", default=DEFAULT_CALIBRATION_LAKE_URI)
+    args = parser.parse_args(argv)
+    print(json.dumps(publish_calibration_run(args.run_dir, lake_uri=args.lake_uri), indent=2))
 
 
 def run_calibration(

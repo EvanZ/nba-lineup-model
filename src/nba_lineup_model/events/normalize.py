@@ -71,6 +71,10 @@ def canonical_events(payload: Mapping[str, Any]) -> list[Event]:
     if len(order_numbers) != len(set(order_numbers)):
         raise ValueError(f"Duplicate orderNumber values in game {game_id}")
 
+    source_order_repaired = _has_late_source_correction(actions)
+    if source_order_repaired:
+        actions = sorted(actions, key=_semantic_action_sort_key)
+
     events: list[Event] = []
     previous_home_score = 0
     previous_away_score = 0
@@ -104,12 +108,19 @@ def canonical_events(payload: Mapping[str, Any]) -> list[Event]:
             elapsed_game_seconds = previous_elapsed_game_seconds
 
         order_number = _required_int(action, "orderNumber")
+        if source_order_repaired:
+            flags.append("source_order_repaired")
         event = Event(
             game_id=game_id,
             event_id=f"{game_id}:{order_number}",
             event_index=event_index,
             source_action_number=_required_int(action, "actionNumber"),
-            source_order_number=order_number,
+            # A late CDN correction can carry an orderNumber allocated after
+            # the game ended even though its period/clock belongs much earlier.
+            # Lineup reconstruction requires this field to be monotonic, so an
+            # anomalous stream receives a deterministic semantic sequence. The
+            # original orderNumber remains recoverable from event_id.
+            source_order_number=(event_index + 1 if source_order_repaired else order_number),
             period=period,
             period_type=str(action.get("periodType") or ""),
             source_clock=source_clock,
@@ -140,6 +151,43 @@ def canonical_events(payload: Mapping[str, Any]) -> list[Event]:
         previous_elapsed_game_seconds = elapsed_game_seconds
 
     return events
+
+
+def _has_late_source_correction(actions: Sequence[Mapping[str, Any]]) -> bool:
+    """Detect CDN inserts that appear after their period has already closed."""
+
+    highest_period = 0
+    ended_periods: set[int] = set()
+    for action in actions:
+        period = _required_int(action, "period")
+        action_type = str(action.get("actionType") or "").casefold()
+        subtype = str(action.get("subType") or "").casefold()
+        is_period_end = action_type == "period" and subtype == "end"
+        if period < highest_period or (period in ended_periods and not is_period_end):
+            return True
+        highest_period = max(highest_period, period)
+        if is_period_end:
+            ended_periods.add(period)
+    return False
+
+
+def _semantic_action_sort_key(action: Mapping[str, Any]) -> tuple[int, float, int, int, int]:
+    """Order CDN actions by basketball time, including late source corrections."""
+
+    period = _required_int(action, "period")
+    clock = parse_nba_clock(_required_str(action, "clock"))
+    action_type = str(action.get("actionType") or "").casefold()
+    subtype = str(action.get("subType") or "").casefold()
+    # Preserve action-number semantics at a period boundary, except that a
+    # period-end marker must remain after a late scoring correction at 0:00.
+    boundary_priority = int(action_type == "period" and subtype == "end")
+    return (
+        period,
+        -clock,
+        boundary_priority,
+        _required_int(action, "actionNumber"),
+        _required_int(action, "orderNumber"),
+    )
 
 
 def events_frame(payload: Mapping[str, Any]) -> pd.DataFrame:

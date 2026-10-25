@@ -109,6 +109,107 @@ def test_nonmonotonic_source_clock_clamps_derived_elapsed_time():
     assert events[1].validation_flags == ("nonmonotonic_source_clock",)
 
 
+def test_late_cdn_correction_is_repaired_into_semantic_game_order():
+    payload = {
+        "game": {
+            "gameId": "0020000004",
+            "actions": [
+                {
+                    "actionNumber": 1,
+                    "orderNumber": 10000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT12M00.00S",
+                    "actionType": "period",
+                    "subType": "start",
+                    "scoreHome": "0",
+                    "scoreAway": "0",
+                },
+                {
+                    "actionNumber": 20,
+                    "orderNumber": 20000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT00M00.00S",
+                    "actionType": "period",
+                    "subType": "end",
+                    "scoreHome": "25",
+                    "scoreAway": "22",
+                },
+                {
+                    "actionNumber": 21,
+                    "orderNumber": 30000,
+                    "period": 2,
+                    "periodType": "REGULAR",
+                    "clock": "PT12M00.00S",
+                    "actionType": "period",
+                    "subType": "start",
+                    "scoreHome": "25",
+                    "scoreAway": "22",
+                },
+                {
+                    "actionNumber": 19,
+                    "orderNumber": 90000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT02M55.00S",
+                    "actionType": "freethrow",
+                    "subType": "1 of 1",
+                    "scoreHome": "25",
+                    "scoreAway": "22",
+                },
+            ],
+        }
+    }
+
+    events = canonical_events(payload)
+
+    assert [event.event_id for event in events] == [
+        "0020000004:10000",
+        "0020000004:90000",
+        "0020000004:20000",
+        "0020000004:30000",
+    ]
+    assert [event.source_order_number for event in events] == [1, 2, 3, 4]
+    assert all("source_order_repaired" in event.validation_flags for event in events)
+
+
+def test_period_boundaries_sort_around_actions_at_the_same_clock():
+    payload = {
+        "game": {
+            "gameId": "0020000005",
+            "actions": [
+                {
+                    "actionNumber": 2,
+                    "orderNumber": 10000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT00M00.00S",
+                    "actionType": "period",
+                    "subType": "end",
+                    "scoreHome": "2",
+                    "scoreAway": "0",
+                },
+                {
+                    "actionNumber": 1,
+                    "orderNumber": 90000,
+                    "period": 1,
+                    "periodType": "REGULAR",
+                    "clock": "PT00M00.00S",
+                    "actionType": "2pt",
+                    "subType": "Layup",
+                    "scoreHome": "2",
+                    "scoreAway": "0",
+                },
+            ],
+        }
+    }
+
+    events = canonical_events(payload)
+
+    assert [event.event_type for event in events] == ["2pt", "period"]
+
+
 def test_event_identifier_columns_use_nullable_integer_dtype():
     frame = events_frame(load_fixture("playbyplay_minimal.json"))
 
