@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-07-31"
+last_updated: "2026-10-24"
 ---
 
 # Events
@@ -78,6 +78,19 @@ opening lineup from player activity and substitution direction, then emits
 explicit boundary substitution events with
 `descriptor = stats_v3_period_lineup`. These events expose the inference in
 processed data and subject it to the existing lineup and minute audits.
+
+## Cross-source training reconciliation
+
+Current-season CDN actions and historical V3/V2 actions are never concatenated
+as raw records. A build selects one immutable source revision per game and
+endpoint, adapts it to this canonical event contract, and records the selected
+source and SHA-256 digest in provenance. When sources overlap, the alternate
+artifact is a conformance input rather than a second copy of the game.
+
+`source_action_number` and `source_order_number` retain lineage within the
+selected feed. They are not stable cross-source join keys. Cross-source audits
+compare canonical period, clock, team, player, event type, score, and lineup
+semantics before a source policy is changed.
 
 ## Output
 

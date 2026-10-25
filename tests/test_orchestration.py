@@ -8,6 +8,8 @@ from dagster import DefaultScheduleStatus, DefaultSensorStatus, Definitions
 
 from nba_lineup_model.orchestration.definitions import (
     active_live_game_date,
+    cdn_morning_reconciliation_schedule,
+    completed_game_cdn_play_by_play_sensor,
     completed_game_stats_v3_sensor,
     defs,
     live_score_sensor,
@@ -82,8 +84,16 @@ def test_definitions_are_loadable_and_automations_default_stopped() -> None:
     assert schedule_refresh_schedule.default_status is DefaultScheduleStatus.STOPPED
     assert yesterday_finalization_schedule.default_status is DefaultScheduleStatus.STOPPED
     assert (
+        cdn_morning_reconciliation_schedule.default_status
+        is DefaultScheduleStatus.STOPPED
+    )
+    assert (
         stats_v3_morning_reconciliation_schedule.default_status
         is DefaultScheduleStatus.STOPPED
     )
     assert live_score_sensor.default_status is DefaultSensorStatus.STOPPED
+    assert (
+        completed_game_cdn_play_by_play_sensor.default_status
+        is DefaultSensorStatus.STOPPED
+    )
     assert completed_game_stats_v3_sensor.default_status is DefaultSensorStatus.STOPPED

@@ -1,5 +1,5 @@
 ---
-last_updated: "2026-08-01"
+last_updated: "2026-10-24"
 ---
 
 # Decision Log
@@ -16,6 +16,7 @@ modeling. They explain why a rule exists and which alternatives were rejected.
 | [ADR-0005](0005-mlflow-experiment-index.md) | Accepted | Index immutable model runs in MLflow without making it authoritative. |
 | [ADR-0006](0006-historical-stats-v3-first.md) | Accepted | Use Stats V3 as the primary historical game archive and retain liveData only as a legacy fallback. |
 | [ADR-0007](0007-stats-v3-play-by-play-history-boundary.md) | Accepted | Use 1996-97 as the practical V3 play-by-play history boundary. |
+| [ADR-0008](0008-current-season-cdn-ingestion.md) | Accepted | Collect current-season CDN play-by-play on EC2 and reconcile it with historical sources at the canonical event boundary. |
 
 New decisions should be added as numbered Markdown files. Existing decisions
 should be superseded by a new record rather than rewritten after their context

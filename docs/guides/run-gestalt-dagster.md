@@ -103,10 +103,45 @@ symlink, so jobs and the API always load the same code. Persistent Dagster
 state lives in `/var/lib/nba-gestalt/dagster`; schedule state remains in
 `/var/lib/nba-gestalt/schedule` and immutable copies remain in S3.
 
+## Current-season CDN play-by-play
+
+The active completed-game sensor checks only today's and yesterday's compact
+serving snapshots plus `/var/lib/nba-gestalt/cdn/coverage.json`. It does not
+scan the season or list S3 on each evaluation. One hour after a game is first
+observed final, it archives the raw CDN play-by-play bytes at:
+
+```text
+s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=<season>/game_id=<game-id>/<sha256>.json
+```
+
+Append-only records and run summaries live under
+`lake/manifests/cdn_live_data/`. A reconciliation run at 08:00
+America/New_York re-fetches the prior day's final games and preserves a new
+revision only when the checksum changes. The existing schedule pipeline remains
+the source for final player minutes; this collector does not download a
+duplicate box score.
+
+Run or resume a date-bounded backfill with the same implementation used by
+Dagster:
+
+```bash
+nba-ingest-cdn-play-by-play \
+  --season 2026-27 \
+  --start-date 2026-10-20 \
+  --end-date 2026-10-24 \
+  --ignore-grace
+```
+
+Current CDN and historical Stats V3/V2 actions are reconciled only at the
+canonical event boundary. A training build selects one immutable source
+revision per game and records the source and checksum in provenance; it never
+unions overlapping raw source actions.
+
 ## Stats V3 backfill and coverage
 
-The scheduled collector uses the compact serving snapshots as its completion
-catalog and writes no durable local PBP cache. Raw source bytes are stored at:
+The optional Stats V3 repair collector uses the compact serving snapshots as
+its completion catalog and writes no durable local PBP cache. Raw source bytes
+are stored at:
 
 ```text
 s3://nba-gestalt-data/lake/raw/stats/<endpoint>/season=<season>/game_id=<game-id>/<sha256>.json
@@ -139,6 +174,7 @@ code server and daemon. The V3 sensor and reconciliation schedule remain
 stopped until a proxy is present. For a host whose direct egress has been
 verified, `GESTALT_STATS_V3_ENABLED=1` explicitly enables them without a proxy.
 Proxy credentials must never be committed or printed.
+Normal current-season collection does not depend on this optional V3 path.
 
 DuckDB can audit the append-only success/failure records directly:
 

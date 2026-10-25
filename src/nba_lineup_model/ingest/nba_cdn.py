@@ -120,6 +120,7 @@ class CachedResponse(BaseModel):
     url: str
     fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     payload: dict[str, Any]
+    response_headers: dict[str, str] = Field(default_factory=dict)
     raw_body: bytes | None = Field(default=None, exclude=True, repr=False)
 
 
@@ -256,13 +257,17 @@ class NbaCdnClient:
         return httpx.Client(
             timeout=timeout,
             headers={
-                "Accept": "application/json, text/plain, */*",
+                "Accept": (
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                    "image/avif,image/webp,image/apng,*/*;q=0.8,"
+                    "application/signed-exchange;v=b3;q=0.9"
+                ),
                 "Accept-Language": "en-US,en;q=0.9",
-                "Origin": "https://www.nba.com",
+                "Cache-Control": "max-age=0",
                 "Referer": "https://www.nba.com/",
                 "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) "
+                    "Gecko/20100101 Firefox/158.0"
                 ),
             },
             follow_redirects=True,
@@ -365,6 +370,7 @@ class NbaCdnClient:
             game_id=game_id,
             url=url,
             payload=payload,
+            response_headers=dict(http_response.headers),
             raw_body=raw_body,
         )
 

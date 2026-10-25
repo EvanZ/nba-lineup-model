@@ -39,6 +39,10 @@ DEFAULT_STATS_V3_LAKE_URI = "s3://nba-gestalt-data/lake"
 DEFAULT_STATS_V3_SEASON = "2026-27"
 DEFAULT_STATS_V3_GRACE_MINUTES = 60
 DEFAULT_STATS_V3_COVERAGE_PATH = Path("/var/lib/nba-gestalt/stats-v3/coverage.json")
+DEFAULT_CDN_LAKE_URI = "s3://nba-gestalt-data/lake"
+DEFAULT_CDN_SEASON = "2026-27"
+DEFAULT_CDN_GRACE_MINUTES = 60
+DEFAULT_CDN_COVERAGE_PATH = Path("/var/lib/nba-gestalt/cdn/coverage.json")
 DEFAULT_HEALTHCHECK_PARQUET = (
     "s3://nba-gestalt-data/lake/analytical/box_score_prior_panel/"
     "season_cohort_summary.parquet"
@@ -91,6 +95,20 @@ def _stats_v3_season() -> str:
 def _stats_v3_coverage_path() -> Path:
     return Path(
         os.environ.get("GESTALT_STATS_V3_COVERAGE_PATH", DEFAULT_STATS_V3_COVERAGE_PATH)
+    )
+
+
+def _cdn_lake_uri() -> str:
+    return os.environ.get("GESTALT_CDN_LAKE_URI", DEFAULT_CDN_LAKE_URI).rstrip("/")
+
+
+def _cdn_season() -> str:
+    return os.environ.get("GESTALT_CDN_SEASON", DEFAULT_CDN_SEASON)
+
+
+def _cdn_coverage_path() -> Path:
+    return Path(
+        os.environ.get("GESTALT_CDN_COVERAGE_PATH", DEFAULT_CDN_COVERAGE_PATH)
     )
 
 
@@ -262,6 +280,143 @@ def live_score_sensor(context: SensorEvaluationContext) -> RunRequest | SkipReas
         },
         tags={WORKLOAD_TAG: "live_scores", "gestalt/game_date": game_date},
     )
+
+
+@op(
+    name="archive_completed_cdn_play_by_play",
+    config_schema={
+        "season": Field(str, default_value=DEFAULT_CDN_SEASON),
+        "start_date": Field(str, default_value=""),
+        "end_date": Field(str, default_value=""),
+        "game_ids": Field([str], default_value=[]),
+        "refresh": Field(bool, default_value=False),
+        "ignore_grace": Field(bool, default_value=False),
+        "grace_minutes": Field(int, default_value=DEFAULT_CDN_GRACE_MINUTES),
+    },
+    retry_policy=RetryPolicy(max_retries=1, delay=300),
+)
+def archive_completed_cdn_play_by_play_op(
+    context: OpExecutionContext,
+) -> dict[str, object]:
+    """Archive immutable CDN play-by-play for eligible final games."""
+
+    from datetime import date
+
+    from nba_lineup_model.season.cdn_lake import ingest_completed_cdn
+
+    config = context.op_config
+    start_date = date.fromisoformat(config["start_date"]) if config["start_date"] else None
+    end_date = date.fromisoformat(config["end_date"]) if config["end_date"] else None
+    result = ingest_completed_cdn(
+        state_dir=_state_dir(),
+        lake_uri=_cdn_lake_uri(),
+        coverage_path=_cdn_coverage_path(),
+        season=str(config["season"]),
+        start_date=start_date,
+        end_date=end_date,
+        game_ids=list(config["game_ids"]),
+        refresh=bool(config["refresh"]),
+        ignore_grace=bool(config["ignore_grace"]),
+        grace_period=timedelta(minutes=int(config["grace_minutes"])),
+    )
+    context.add_output_metadata(
+        {
+            "selected_games": int(result["selected_game_count"]),
+            "archived": int(result["archived_count"]),
+            "revised": int(result["revised_count"]),
+            "unchanged": int(result["unchanged_count"]),
+            "skipped": int(result["skipped_count"]),
+            "manifest_uri": MetadataValue.url(str(result["manifest_uri"])),
+        }
+    )
+    return result
+
+
+@job(
+    name="ingest_completed_cdn_play_by_play",
+    executor_def=in_process_executor,
+    tags={WORKLOAD_TAG: "cdn_play_by_play_ingest"},
+)
+def ingest_completed_cdn_play_by_play_job() -> None:
+    archive_completed_cdn_play_by_play_op()
+
+
+@sensor(
+    name="completed_game_cdn_play_by_play",
+    job=ingest_completed_cdn_play_by_play_job,
+    minimum_interval_seconds=900,
+    default_status=SENSOR_DEFAULT_STATUS,
+    description="Archive CDN play-by-play once each game has been final for one hour.",
+)
+def completed_game_cdn_play_by_play_sensor(
+    context: SensorEvaluationContext,
+) -> RunRequest | SkipReason:
+    from nba_lineup_model.season.cdn_lake import pending_completed_cdn_game_ids
+
+    now = datetime.now(UTC)
+    pending = pending_completed_cdn_game_ids(
+        state_dir=_state_dir(),
+        season=_cdn_season(),
+        coverage_path=_cdn_coverage_path(),
+        now=now,
+        grace_period=timedelta(minutes=DEFAULT_CDN_GRACE_MINUTES),
+    )
+    if not pending:
+        return SkipReason("No final games are missing CDN play-by-play")
+    interval_bucket = int(now.timestamp() // 900)
+    pending_digest = hashlib.sha256(",".join(pending).encode()).hexdigest()[:12]
+    return RunRequest(
+        run_key=f"cdn-pbp:{interval_bucket}:{pending_digest}",
+        run_config={
+            "ops": {
+                "archive_completed_cdn_play_by_play": {
+                    "config": {
+                        "season": _cdn_season(),
+                        "game_ids": pending,
+                        "refresh": False,
+                        "ignore_grace": False,
+                        "grace_minutes": DEFAULT_CDN_GRACE_MINUTES,
+                    }
+                }
+            }
+        },
+        tags={
+            WORKLOAD_TAG: "cdn_play_by_play_ingest",
+            "gestalt/game_count": str(len(pending)),
+        },
+    )
+
+
+def _cdn_reconciliation_config(context: object) -> dict[str, object]:
+    game_date = (
+        _scheduled_time(context).astimezone(EASTERN).date() - timedelta(days=1)
+    ).isoformat()
+    return {
+        "ops": {
+            "archive_completed_cdn_play_by_play": {
+                "config": {
+                    "season": _cdn_season(),
+                    "start_date": game_date,
+                    "end_date": game_date,
+                    "game_ids": [],
+                    "refresh": True,
+                    "ignore_grace": True,
+                    "grace_minutes": DEFAULT_CDN_GRACE_MINUTES,
+                }
+            }
+        }
+    }
+
+
+cdn_morning_reconciliation_schedule = ScheduleDefinition(
+    name="cdn_play_by_play_morning_reconciliation",
+    job=ingest_completed_cdn_play_by_play_job,
+    cron_schedule="0 8 * * *",
+    execution_timezone="America/New_York",
+    run_config_fn=_cdn_reconciliation_config,
+    default_status=SCHEDULE_DEFAULT_STATUS,
+    description="Re-fetch yesterday's final CDN play-by-play and preserve revisions.",
+)
 
 
 @op(
@@ -441,14 +596,20 @@ defs = Definitions(
     jobs=[
         refresh_schedule_job,
         update_live_scores_job,
+        ingest_completed_cdn_play_by_play_job,
         ingest_completed_stats_v3_job,
         daily_lake_health_job,
     ],
     schedules=[
         schedule_refresh_schedule,
         yesterday_finalization_schedule,
+        cdn_morning_reconciliation_schedule,
         stats_v3_morning_reconciliation_schedule,
         daily_lake_health_schedule,
     ],
-    sensors=[live_score_sensor, completed_game_stats_v3_sensor],
+    sensors=[
+        live_score_sensor,
+        completed_game_cdn_play_by_play_sensor,
+        completed_game_stats_v3_sensor,
+    ],
 )
