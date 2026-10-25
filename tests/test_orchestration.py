@@ -4,9 +4,17 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from dagster import DefaultScheduleStatus, DefaultSensorStatus, Definitions
+from dagster import (
+    DagsterInstance,
+    DagsterRunStatus,
+    DefaultScheduleStatus,
+    DefaultSensorStatus,
+    Definitions,
+    build_sensor_context,
+)
 
 from nba_lineup_model.orchestration.definitions import (
+    EASTERN,
     active_live_game_date,
     cdn_morning_reconciliation_schedule,
     completed_game_cdn_play_by_play_sensor,
@@ -17,6 +25,7 @@ from nba_lineup_model.orchestration.definitions import (
     live_score_sensor,
     schedule_refresh_schedule,
     stats_v3_morning_reconciliation_schedule,
+    update_live_scores_job,
     yesterday_finalization_schedule,
 )
 
@@ -79,6 +88,35 @@ def test_live_window_does_not_poll_all_day(tmp_path: Path) -> None:
         )
         is None
     )
+
+
+def test_live_score_sensor_does_not_queue_duplicate_inflight_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC)
+    game_date = now.astimezone(EASTERN).date().isoformat()
+    _write_slate(
+        tmp_path,
+        game_date=game_date,
+        start_time=now.isoformat(),
+        state="in",
+    )
+    monkeypatch.setenv("GESTALT_SCHEDULE_STATE_DIR", str(tmp_path))
+    instance = DagsterInstance.ephemeral()
+    queued = instance.create_run_for_job(
+        update_live_scores_job,
+        run_config={
+            "ops": {"update_live_score_state": {"config": {"game_date": game_date}}}
+        },
+        status=DagsterRunStatus.STARTED,
+        tags={"gestalt/game_date": game_date},
+    )
+
+    result = live_score_sensor(build_sensor_context(instance=instance))
+
+    assert "already queued or running" in result.skip_message
+    assert queued.run_id in result.skip_message
 
 
 def test_definitions_are_loadable_and_automations_default_stopped() -> None:

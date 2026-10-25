@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from dagster import (
     AssetExecutionContext,
+    DagsterRunStatus,
     DefaultScheduleStatus,
     DefaultSensorStatus,
     Definitions,
@@ -17,6 +18,7 @@ from dagster import (
     OpExecutionContext,
     RetryPolicy,
     RunRequest,
+    RunsFilter,
     ScheduleDefinition,
     SensorEvaluationContext,
     SkipReason,
@@ -355,6 +357,24 @@ def live_score_sensor(context: SensorEvaluationContext) -> RunRequest | SkipReas
     game_date = active_live_game_date(state_dir=_state_dir(), now=now)
     if game_date is None:
         return SkipReason("No unfinished slate is inside its live-game window")
+    inflight = context.instance.get_runs(
+        filters=RunsFilter(
+            job_name="update_live_scores",
+            statuses=(
+                DagsterRunStatus.QUEUED,
+                DagsterRunStatus.STARTING,
+                DagsterRunStatus.STARTED,
+                DagsterRunStatus.CANCELING,
+            ),
+            tags={"gestalt/game_date": game_date},
+        ),
+        limit=1,
+    )
+    if inflight:
+        return SkipReason(
+            f"Live-score update already queued or running for {game_date}: "
+            f"{inflight[0].run_id}"
+        )
     interval_bucket = int(now.timestamp() // 75)
     return RunRequest(
         run_key=f"{game_date}:{interval_bucket}",
