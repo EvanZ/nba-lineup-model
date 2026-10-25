@@ -12,6 +12,7 @@ from nba_lineup_model.orchestration.definitions import (
     completed_game_cdn_play_by_play_sensor,
     completed_game_stats_v3_sensor,
     defs,
+    final_game_archive_morning_reconciliation_schedule,
     live_score_sensor,
     schedule_refresh_schedule,
     stats_v3_morning_reconciliation_schedule,
@@ -83,6 +84,10 @@ def test_definitions_are_loadable_and_automations_default_stopped() -> None:
     Definitions.validate_loadable(defs)
     assert schedule_refresh_schedule.default_status is DefaultScheduleStatus.STOPPED
     assert yesterday_finalization_schedule.default_status is DefaultScheduleStatus.STOPPED
+    assert (
+        final_game_archive_morning_reconciliation_schedule.default_status
+        is DefaultScheduleStatus.STOPPED
+    )
     assert (
         cdn_morning_reconciliation_schedule.default_status
         is DefaultScheduleStatus.STOPPED

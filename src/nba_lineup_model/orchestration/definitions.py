@@ -207,13 +207,19 @@ def update_live_scores_op(context: OpExecutionContext) -> dict[str, object]:
     from nba_lineup_model.web_api.win_projections import refresh_live_score_state
 
     game_date = str(context.op_config["game_date"])
-    result = refresh_live_score_state(game_date=game_date, state_dir=_state_dir())
+    result = refresh_live_score_state(
+        game_date=game_date,
+        state_dir=_state_dir(),
+        s3_uri=_schedule_s3_uri(),
+    )
     context.add_output_metadata(
         {
             "game_date": game_date,
             "games": int(result["game_count"]),
             "any_live": bool(result["any_live"]),
             "all_final": bool(result["all_final"]),
+            "newly_finalized_games": int(result["newly_finalized_game_count"]),
+            "uploaded_final_artifacts": int(result["uploaded_final_artifact_count"]),
         }
     )
     return result
@@ -226,6 +232,70 @@ def update_live_scores_op(context: OpExecutionContext) -> dict[str, object]:
 )
 def update_live_scores_job() -> None:
     update_live_scores_op()
+
+
+@op(
+    name="verify_final_game_archives_s3",
+    config_schema={"game_date": str},
+    retry_policy=RETRY_POLICY,
+)
+def reconcile_final_game_archives_op(context: OpExecutionContext) -> dict[str, object]:
+    """Verify yesterday's immutable final audit artifacts against S3."""
+
+    from nba_lineup_model.web_api.win_projections import (
+        reconcile_final_game_artifacts_to_s3,
+    )
+
+    game_date = str(context.op_config["game_date"])
+    s3_uri = _schedule_s3_uri()
+    if not s3_uri:
+        raise ValueError("GESTALT_SCHEDULE_S3_URI must be set for final reconciliation")
+    result = reconcile_final_game_artifacts_to_s3(
+        game_date=game_date,
+        state_dir=_state_dir(),
+        s3_uri=s3_uri,
+    )
+    context.add_output_metadata(
+        {
+            "game_date": game_date,
+            "final_games": int(result["final_game_count"]),
+            "verified_final_artifacts": int(result["verified_artifact_count"]),
+        }
+    )
+    return result
+
+
+@job(
+    name="reconcile_final_game_archives",
+    executor_def=in_process_executor,
+    tags={WORKLOAD_TAG: "final_archive_reconciliation"},
+)
+def reconcile_final_game_archives_job() -> None:
+    reconcile_final_game_archives_op()
+
+
+def _final_archive_reconciliation_config(context: object) -> dict[str, object]:
+    game_date = (
+        _scheduled_time(context).astimezone(EASTERN).date() - timedelta(days=1)
+    ).isoformat()
+    return {
+        "ops": {
+            "verify_final_game_archives_s3": {
+                "config": {"game_date": game_date}
+            }
+        }
+    }
+
+
+final_game_archive_morning_reconciliation_schedule = ScheduleDefinition(
+    name="final_game_archive_morning_reconciliation",
+    job=reconcile_final_game_archives_job,
+    cron_schedule="15 8 * * *",
+    execution_timezone="America/New_York",
+    run_config_fn=_final_archive_reconciliation_config,
+    default_status=SCHEDULE_DEFAULT_STATUS,
+    description="Verify yesterday's local final audit artifacts against immutable S3.",
+)
 
 
 def active_live_game_date(
@@ -596,6 +666,7 @@ defs = Definitions(
     jobs=[
         refresh_schedule_job,
         update_live_scores_job,
+        reconcile_final_game_archives_job,
         ingest_completed_cdn_play_by_play_job,
         ingest_completed_stats_v3_job,
         daily_lake_health_job,
@@ -603,6 +674,7 @@ defs = Definitions(
     schedules=[
         schedule_refresh_schedule,
         yesterday_finalization_schedule,
+        final_game_archive_morning_reconciliation_schedule,
         cdn_morning_reconciliation_schedule,
         stats_v3_morning_reconciliation_schedule,
         daily_lake_health_schedule,

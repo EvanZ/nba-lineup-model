@@ -2231,8 +2231,9 @@ def refresh_live_score_state(
     *,
     game_date: str,
     state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    s3_uri: str | None = None,
 ) -> dict[str, object]:
-    """Update only volatile score, clock, period, and game-status fields."""
+    """Update live state and publish newly final audit artifacts immediately."""
 
     state_root = Path(state_dir)
     latest_path = state_root / "latest" / f"{game_date}.json"
@@ -2248,6 +2249,7 @@ def refresh_live_score_state(
         if isinstance(event, dict)
     }
     newly_completed: list[dict[str, object]] = []
+    uploaded_final_artifact_count = 0
     observed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     for game in payload["games"]:
         if not isinstance(game, dict):
@@ -2319,6 +2321,20 @@ def refresh_live_score_state(
                 state_root / "final" / f"{game['espn_game_id']}.espn.json",
                 summary,
             )
+            if s3_uri:
+                prefix = (
+                    f"{s3_uri.rstrip('/')}/season={PROJECTION_SEASON}"
+                    f"/game_date={game_date}/final"
+                )
+                for suffix in ("summary.json", "espn.json"):
+                    final_path = (
+                        state_root / "final" / f"{game['espn_game_id']}.{suffix}"
+                    )
+                    _aws_s3_cp_exclusive(
+                        final_path,
+                        f"{prefix}/{game['espn_game_id']}.{suffix}",
+                    )
+                    uploaded_final_artifact_count += 1
     collected_at = datetime.now(UTC)
     payload["live_score_collected_at"] = collected_at.isoformat().replace("+00:00", "Z")
     _write_json(latest_path, payload)
@@ -2338,6 +2354,64 @@ def refresh_live_score_state(
         "all_final": bool(states) and all(state == "post" for state in states),
         "earliest_start": min(starts) if starts else None,
         "latest_start": max(starts) if starts else None,
+        "newly_finalized_game_count": len(newly_completed),
+        "uploaded_final_artifact_count": uploaded_final_artifact_count,
+    }
+
+
+def reconcile_final_game_artifacts_to_s3(
+    *,
+    game_date: str,
+    state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    s3_uri: str = DEFAULT_SCHEDULE_S3_URI,
+) -> dict[str, object]:
+    """Verify yesterday's local immutable final artifacts exist byte-for-byte in S3."""
+
+    state_root = Path(state_dir)
+    latest_path = state_root / "latest" / f"{game_date}.json"
+    if not latest_path.is_file():
+        raise FileNotFoundError(f"No archived schedule state for {game_date}")
+    payload = json.loads(latest_path.read_text())
+    if not isinstance(payload, dict) or not isinstance(payload.get("games"), list):
+        raise ValueError(f"Invalid schedule state: {latest_path}")
+
+    prefix = (
+        f"{s3_uri.rstrip('/')}/season={PROJECTION_SEASON}"
+        f"/game_date={game_date}/final"
+    )
+    final_game_count = 0
+    verified_artifact_count = 0
+    missing_local_artifacts: list[str] = []
+    for game in payload["games"]:
+        if not isinstance(game, dict):
+            continue
+        status = game.get("status", {})
+        if not isinstance(status, dict) or not bool(status.get("completed")):
+            continue
+        final_game_count += 1
+        espn_game_id = str(game.get("espn_game_id", "")).strip()
+        if not espn_game_id:
+            raise ValueError(f"Final game in {latest_path} is missing espn_game_id")
+        for suffix in ("summary.json", "espn.json"):
+            final_path = state_root / "final" / f"{espn_game_id}.{suffix}"
+            if not final_path.is_file():
+                missing_local_artifacts.append(final_path.name)
+                continue
+            _aws_s3_cp_exclusive(
+                final_path,
+                f"{prefix}/{espn_game_id}.{suffix}",
+            )
+            verified_artifact_count += 1
+
+    if missing_local_artifacts:
+        missing = ", ".join(sorted(missing_local_artifacts))
+        raise FileNotFoundError(
+            f"Cannot reconcile {game_date}; local final artifacts are missing: {missing}"
+        )
+    return {
+        "game_date": game_date,
+        "final_game_count": final_game_count,
+        "verified_artifact_count": verified_artifact_count,
     }
 
 
@@ -2640,12 +2714,22 @@ def live_score_watcher_main() -> int:
         default=Path(os.environ.get("GESTALT_SCHEDULE_STATE_DIR", DEFAULT_SCHEDULE_STATE_DIR)),
     )
     parser.add_argument("--interval-seconds", type=int, default=75)
+    parser.add_argument("--s3-uri", default=DEFAULT_SCHEDULE_S3_URI)
+    parser.add_argument(
+        "--no-s3",
+        action="store_true",
+        help="Do not publish newly finalized audit artifacts to S3",
+    )
     args = parser.parse_args()
     if args.interval_seconds < 30:
         parser.error("--interval-seconds must be at least 30")
     game_date = args.date or _default_live_score_date(state_dir=args.state_dir)
     while True:
-        state = refresh_live_score_state(game_date=game_date, state_dir=args.state_dir)
+        state = refresh_live_score_state(
+            game_date=game_date,
+            state_dir=args.state_dir,
+            s3_uri=None if args.no_s3 else args.s3_uri,
+        )
         now = datetime.now(UTC)
         earliest = state["earliest_start"]
         latest = state["latest_start"]

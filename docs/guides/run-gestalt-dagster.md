@@ -13,8 +13,14 @@ DuckDB for bounded analytical queries and S3 as durable storage.
   through 09:30 UTC.
 - `live_score_game_window` evaluates every 75 seconds but creates score-update
   runs only from 30 minutes before the first game through six hours after the
-  last scheduled start. Each run is short; there is no minute-by-minute job
-  running around the clock.
+  last scheduled start. When a game becomes final, the run immediately writes
+  and byte-verifies its immutable audit summary and source ESPN payload in S3
+  before advancing local state. Each run is short; there is no minute-by-minute
+  job running around the clock.
+- `final_game_archive_morning_reconciliation` runs at 08:15
+  America/New_York and byte-verifies every local final artifact from the prior
+  day's completed games against its immutable S3 key. Missing local artifacts
+  fail the run instead of being silently skipped.
 - `daily_s3_lake_health` reads a small immutable Parquet object directly from
   S3 using DuckDB's AWS credential chain.
 - `completed_game_stats_v3` evaluates every 15 minutes and launches ingestion

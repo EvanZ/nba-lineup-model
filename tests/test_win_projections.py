@@ -24,6 +24,7 @@ from nba_lineup_model.web_api.win_projections import (
     read_current_season_records,
     read_schedule_day,
     read_schedule_performance,
+    reconcile_final_game_artifacts_to_s3,
     refresh_live_score_state,
     score_season_win_forecasts,
     score_win_probabilities,
@@ -355,6 +356,237 @@ def test_live_score_records_first_final_observation(monkeypatch, tmp_path) -> No
     game = json.loads(latest.read_text())["games"][0]
     assert game["status"]["completed"] is True
     assert datetime.fromisoformat(game["final_observed_at"].replace("Z", "+00:00"))
+
+
+def _write_unfinalized_live_game(tmp_path) -> None:
+    latest = tmp_path / "latest" / "2026-10-24.json"
+    latest.parent.mkdir()
+    latest.write_text(
+        json.dumps(
+            {
+                "games": [
+                    {
+                        "espn_game_id": "401909860",
+                        "game_id": "0022600030",
+                        "start_time": "2026-10-25T02:00:00Z",
+                        "away_team": "GSW",
+                        "home_team": "LAL",
+                        "status": {"state": "in", "completed": False},
+                    }
+                ]
+            }
+        )
+    )
+    frozen = tmp_path / "frozen" / "401909860.json"
+    frozen.parent.mkdir()
+    frozen.write_text(
+        json.dumps(
+            {
+                "frozen_at": "2026-10-25T01:30:00Z",
+                "projection": {
+                    "model": "NAIL-RAPM v1.2.1.3",
+                    "home_margin": 2.5,
+                    "home_win_probability": 0.58,
+                },
+                "market": None,
+            }
+        )
+    )
+
+
+def _final_scoreboard_payload() -> dict[str, object]:
+    return {
+        "events": [
+            {
+                "id": "401909860",
+                "competitions": [
+                    {
+                        "competitors": [
+                            {"homeAway": "home", "score": "110"},
+                            {"homeAway": "away", "score": "105"},
+                        ]
+                    }
+                ],
+                "status": {
+                    "displayClock": "0.0",
+                    "period": 4,
+                    "type": {
+                        "state": "post",
+                        "completed": True,
+                        "description": "Final",
+                        "detail": "Final",
+                    },
+                },
+            }
+        ]
+    }
+
+
+def test_live_finalizer_immediately_publishes_immutable_artifacts(
+    monkeypatch, tmp_path
+) -> None:
+    _write_unfinalized_live_game(tmp_path)
+    monkeypatch.setattr(
+        win_projections,
+        "_fetch_json",
+        lambda url: (
+            _final_scoreboard_payload()
+            if "scoreboard" in url
+            else ({"boxscore": {}} if "summary" in url else {})
+        ),
+    )
+    monkeypatch.setattr(
+        win_projections,
+        "_build_actual_minutes_retrospective",
+        lambda *_args, **_kwargs: {"home_win_probability": 0.61},
+    )
+    uploads: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        win_projections,
+        "_aws_s3_cp_exclusive",
+        lambda source, destination: uploads.append((source.name, destination)),
+    )
+
+    result = refresh_live_score_state(
+        game_date="2026-10-24",
+        state_dir=tmp_path,
+        s3_uri="s3://archive/schedule",
+    )
+
+    assert result["newly_finalized_game_count"] == 1
+    assert result["uploaded_final_artifact_count"] == 2
+    assert uploads == [
+        (
+            "401909860.summary.json",
+            "s3://archive/schedule/season=2026-27/game_date=2026-10-24/"
+            "final/401909860.summary.json",
+        ),
+        (
+            "401909860.espn.json",
+            "s3://archive/schedule/season=2026-27/game_date=2026-10-24/"
+            "final/401909860.espn.json",
+        ),
+    ]
+    assert (tmp_path / "final" / "401909860.summary.json").is_file()
+    assert (tmp_path / "final" / "401909860.espn.json").is_file()
+
+
+def test_live_finalizer_s3_failure_leaves_latest_state_retryable(
+    monkeypatch, tmp_path
+) -> None:
+    _write_unfinalized_live_game(tmp_path)
+    original_latest = (tmp_path / "latest" / "2026-10-24.json").read_bytes()
+    monkeypatch.setattr(
+        win_projections,
+        "_fetch_json",
+        lambda url: (
+            _final_scoreboard_payload()
+            if "scoreboard" in url
+            else ({"boxscore": {}} if "summary" in url else {})
+        ),
+    )
+    monkeypatch.setattr(
+        win_projections,
+        "_build_actual_minutes_retrospective",
+        lambda *_args, **_kwargs: {"home_win_probability": 0.61},
+    )
+    monkeypatch.setattr(
+        win_projections,
+        "_aws_s3_cp_exclusive",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("S3 unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="S3 unavailable"):
+        refresh_live_score_state(
+            game_date="2026-10-24",
+            state_dir=tmp_path,
+            s3_uri="s3://archive/schedule",
+        )
+
+    assert (tmp_path / "latest" / "2026-10-24.json").read_bytes() == original_latest
+    assert (tmp_path / "final" / "401909860.summary.json").is_file()
+    assert (tmp_path / "final" / "401909860.espn.json").is_file()
+
+
+def test_final_artifact_reconciliation_verifies_completed_games(
+    monkeypatch, tmp_path
+) -> None:
+    latest = tmp_path / "latest" / "2026-10-24.json"
+    latest.parent.mkdir()
+    latest.write_text(
+        json.dumps(
+            {
+                "games": [
+                    {
+                        "espn_game_id": "401909860",
+                        "status": {"state": "post", "completed": True},
+                    },
+                    {
+                        "espn_game_id": "401909861",
+                        "status": {"state": "pre", "completed": False},
+                    },
+                ]
+            }
+        )
+    )
+    final_dir = tmp_path / "final"
+    final_dir.mkdir()
+    for suffix in ("summary.json", "espn.json"):
+        (final_dir / f"401909860.{suffix}").write_text("{}\n")
+    uploads: list[str] = []
+    monkeypatch.setattr(
+        win_projections,
+        "_aws_s3_cp_exclusive",
+        lambda _source, destination: uploads.append(destination),
+    )
+
+    result = reconcile_final_game_artifacts_to_s3(
+        game_date="2026-10-24",
+        state_dir=tmp_path,
+        s3_uri="s3://archive/schedule",
+    )
+
+    assert result == {
+        "game_date": "2026-10-24",
+        "final_game_count": 1,
+        "verified_artifact_count": 2,
+    }
+    assert uploads == [
+        "s3://archive/schedule/season=2026-27/game_date=2026-10-24/"
+        "final/401909860.summary.json",
+        "s3://archive/schedule/season=2026-27/game_date=2026-10-24/"
+        "final/401909860.espn.json",
+    ]
+
+
+def test_final_artifact_reconciliation_fails_on_missing_local_artifact(
+    monkeypatch, tmp_path
+) -> None:
+    latest = tmp_path / "latest" / "2026-10-24.json"
+    latest.parent.mkdir()
+    latest.write_text(
+        json.dumps(
+            {
+                "games": [
+                    {
+                        "espn_game_id": "401909860",
+                        "status": {"state": "post", "completed": True},
+                    }
+                ]
+            }
+        )
+    )
+    final_dir = tmp_path / "final"
+    final_dir.mkdir()
+    (final_dir / "401909860.summary.json").write_text("{}\n")
+    monkeypatch.setattr(win_projections, "_aws_s3_cp_exclusive", lambda *_args: None)
+
+    with pytest.raises(FileNotFoundError, match="401909860.espn.json"):
+        reconcile_final_game_artifacts_to_s3(
+            game_date="2026-10-24",
+            state_dir=tmp_path,
+            s3_uri="s3://archive/schedule",
+        )
 
 
 def test_injury_pdf_preserves_team_reports_that_are_not_submitted(monkeypatch) -> None:
