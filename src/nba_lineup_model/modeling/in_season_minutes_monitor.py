@@ -239,11 +239,12 @@ def _latest_rating_contribution(
     source_sha256: str,
 ) -> Any | None:
     game_root = root / "contributions" / f"season={SEASON}" / f"game_id={game_id}"
+    matches: list[Any] = []
     for manifest in sorted(game_root.glob("contribution_sha256=*/manifest.json")):
         payload = _load_json(manifest)
         if str(payload.get("source_sha256")) == source_sha256:
-            return read_game_contribution(manifest.parent)
-    return None
+            matches.append(read_game_contribution(manifest.parent))
+    return max(matches, key=lambda item: len(item.player_ids)) if matches else None
 
 
 def _rating_state_by_date(

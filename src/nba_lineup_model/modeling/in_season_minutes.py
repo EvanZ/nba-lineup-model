@@ -232,6 +232,12 @@ def forecast_team_minutes(
         for row in (injury_rows or [])
         if row.get("player_id") is not None
     }
+    game_baseline_by_id = {
+        int(row["player_id"]): float(row["projected_minutes"])
+        for row in (injury_rows or [])
+        if row.get("player_id") is not None and row.get("projected_minutes") is not None
+    }
+    has_game_baseline = bool(game_baseline_by_id)
     prior_p = players["preseason_participation_prior"].clip(lower=1e-6)
     current_conditional = players["current_conditional_minutes_estimate"].clip(
         lower=0.0, upper=48.0
@@ -246,6 +252,14 @@ def forecast_team_minutes(
             status = str(injury["status"])
             probability = STATUS_PROBABILITY[status]
             reason = injury.get("reason")
+        elif injury_rows and report_status == "submitted":
+            # The submitted official report is authoritative at the game
+            # cutoff. An unlisted player has no reported medical restriction;
+            # the learned participation state remains an audited forecast but
+            # does not override this game-specific evidence.
+            status = "Unlisted"
+            probability = 1.0
+            reason = None
         else:
             status = "Report pending" if report_status != "submitted" else "Unlisted"
             probability = float(row.current_participation_estimate)
@@ -256,16 +270,23 @@ def forecast_team_minutes(
     players["game_participation_probability"] = forecast_probability
     players["injury_status"] = statuses
     players["injury_reason"] = reasons
-    players["pre_normalization_minutes"] = (
-        players["preseason_normalized_minutes"]
-        * (players["game_participation_probability"] / prior_p)
-        * (current_conditional / prior_conditional)
+    players["game_baseline_minutes"] = (
+        players["player_id"].map(game_baseline_by_id).fillna(0.0)
+        if has_game_baseline
+        else players["preseason_normalized_minutes"]
     )
+    players["pre_normalization_minutes"] = players["game_baseline_minutes"] * (
+        current_conditional / prior_conditional
+    )
+    if not has_game_baseline or report_status != "submitted":
+        players["pre_normalization_minutes"] *= (
+            players["game_participation_probability"] / prior_p
+        )
     # A player with a preseason zero can enter only after actual participation
     # evidence. This preserves exact zero-evidence identity while supporting
     # late signings and rotation changes.
     team_scale_rows = players.loc[
-        players["preseason_normalized_minutes"].gt(0.0)
+        players["game_baseline_minutes"].gt(0.0)
         & players["preseason_participation_prior"].gt(0.0)
         & players["preseason_conditional_minutes_prior"].gt(0.0)
     ]
@@ -274,16 +295,16 @@ def forecast_team_minutes(
     else:
         team_scale = float(
             np.median(
-                team_scale_rows["preseason_normalized_minutes"]
+                team_scale_rows["game_baseline_minutes"]
                 / (
                     team_scale_rows["preseason_participation_prior"]
                     * team_scale_rows["preseason_conditional_minutes_prior"]
                 )
             )
         )
-    cold_entry = players["preseason_normalized_minutes"].le(0.0) & players[
+    cold_entry = players["game_baseline_minutes"].le(0.0) & players[
         "participation_played"
-    ].gt(0.0)
+    ].gt(0.0) & players["game_participation_probability"].gt(0.0)
     players.loc[cold_entry, "pre_normalization_minutes"] = (
         team_scale
         * players.loc[cold_entry, "game_participation_probability"]
@@ -318,6 +339,7 @@ def calibrate_prior_games(
     *,
     participation_grid: tuple[float, ...] = (4.0, 8.0, 12.0, 20.0, 32.0, 48.0),
     conditional_grid: tuple[float, ...] = (2.0, 4.0, 8.0, 12.0, 20.0, 32.0),
+    conditional_clip_delta: float = 12.0,
 ) -> dict[str, object]:
     """Select shrinkage strengths by chronological next-game replay."""
 
@@ -335,7 +357,9 @@ def calibrate_prior_games(
         for strength in participation_grid
     }
     conditional_scores = {
-        strength: _sequential_conditional_mae(target, strength)
+        strength: _sequential_conditional_mae(
+            target, strength, clip_delta=conditional_clip_delta
+        )
         for strength in conditional_grid
     }
     selected_participation = min(participation_scores, key=participation_scores.get)
@@ -456,7 +480,9 @@ def _sequential_participation_brier(frame: pd.DataFrame, strength: float) -> flo
     return float(np.mean(errors))
 
 
-def _sequential_conditional_mae(frame: pd.DataFrame, strength: float) -> float:
+def _sequential_conditional_mae(
+    frame: pd.DataFrame, strength: float, *, clip_delta: float
+) -> float:
     total: dict[int, float] = {}
     count: dict[int, int] = {}
     errors: list[float] = []
@@ -470,8 +496,13 @@ def _sequential_conditional_mae(frame: pd.DataFrame, strength: float) -> float:
             errors.append(abs(prediction - float(row.regulation_equivalent_minutes)))
         for row in day.loc[day["played"]].itertuples(index=False):
             player_id = int(row.player_id)
+            prior = float(row.preseason_conditional_minutes_prior)
             total[player_id] = total.get(player_id, 0.0) + float(
-                row.regulation_equivalent_minutes
+                np.clip(
+                    row.regulation_equivalent_minutes,
+                    max(0.0, prior - clip_delta),
+                    min(48.0, prior + clip_delta),
+                )
             )
             count[player_id] = count.get(player_id, 0) + 1
     return float(np.mean(errors))
