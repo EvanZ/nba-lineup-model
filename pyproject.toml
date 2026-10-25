@@ -137,6 +137,7 @@ nba-audit-nail-v1212-back-to-back-weights = "nba_lineup_model.modeling.nail_v121
 nba-study-team-change-events = "nba_lineup_model.modeling.team_change_event_study:main"
 nba-screen-frozen-feature = "nba_lineup_model.modeling.frozen_feature_screen:main"
 nba-train-nail-v1213-kalman-player-state = "nba_lineup_model.modeling.forward_nail_v1213_kalman_player_state:main"
+nba-calibrate-in-season-nail = "nba_lineup_model.modeling.in_season_nail_calibration:main"
 nba-backtest-nail-v1213-kalman-player-state = "nba_lineup_model.modeling.nail_v1213_kalman_player_state_frozen_backtest:main"
 nba-train-nail-state-precision-parity = "nba_lineup_model.modeling.forward_nail_state_precision_parity:main"
 nba-audit-nail-state-precision-parity = "nba_lineup_model.modeling.state_precision_parity:main"

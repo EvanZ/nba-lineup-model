@@ -43,6 +43,25 @@ content-addressed and immutable.
 - Unit coverage for zero-possession identity, possession accumulation, leakage
   boundaries, correction replacement, incremental/full parity, and immutable
   round trips.
+- Chronological historical calibration over configurable equivalent-possession
+  strengths, with selection seasons separated from a final holdout season.
+- Margin MAE/RMSE, winner accuracy, and fixed-link Brier/log-loss reporting
+  against the unchanged frozen-preseason control.
+- A checksummed, compressed sparse replay mart that allows subsequent prior
+  grids to run without rereading historical stint data.
+
+## Historical calibration result
+
+The refined offline run selected a 6,000-equivalent-possession prior on pooled
+2023-24 and 2024-25 results. On the untouched 2025-26 holdout, the selected
+updater improved margin RMSE from 14.414 to 14.085, winner accuracy from 68.4%
+to 70.9%, and fixed-link Brier score from 0.2031 to 0.1966. The reconstructed
+frozen baseline matched all 1,230 published 2025-26 game margins to machine
+precision (maximum absolute difference below 6e-15). This is evidence for
+continuing the offline updater work, not approval to change the production site.
+The reproducible local run is
+`in-season-nail-calibration-20261025T161109Z-ff8a4ba0`; its derived artifacts
+remain outside Git and have not been published to S3.
 
 ## Remaining production wiring
 
@@ -50,8 +69,7 @@ content-addressed and immutable.
    box-score/roster inputs.
 2. Load the exact promoted 2026-27 player prior and frozen context artifacts.
 3. Add S3 readers/writers and compact replay-mart manifests.
-4. Calibrate equivalent-possession strength on recent historical seasons on
-   EC2, then publish a separate immutable updater artifact.
-5. Add resource-bounded Dagster calibration/replay and nightly update jobs.
+4. Publish the reviewed updater calibration artifact to S3.
+5. Add resource-bounded Dagster replay and nightly update jobs.
 6. Run a chronological offline 2026-27 replay and approve promotion before the
    public site consumes any in-season state.
