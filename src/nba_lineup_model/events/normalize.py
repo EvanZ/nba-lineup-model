@@ -163,7 +163,12 @@ def _has_late_source_correction(actions: Sequence[Mapping[str, Any]]) -> bool:
         action_type = str(action.get("actionType") or "").casefold()
         subtype = str(action.get("subType") or "").casefold()
         is_period_end = action_type == "period" and subtype == "end"
-        if period < highest_period or (period in ended_periods and not is_period_end):
+        positive_clock_after_end = (
+            period in ended_periods
+            and not is_period_end
+            and parse_nba_clock(_required_str(action, "clock")) > 0
+        )
+        if period < highest_period or positive_clock_after_end:
             return True
         highest_period = max(highest_period, period)
         if is_period_end:

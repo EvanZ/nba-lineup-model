@@ -174,7 +174,7 @@ def test_late_cdn_correction_is_repaired_into_semantic_game_order():
     assert all("source_order_repaired" in event.validation_flags for event in events)
 
 
-def test_period_boundaries_sort_around_actions_at_the_same_clock():
+def test_positive_clock_correction_after_period_end_is_repaired():
     payload = {
         "game": {
             "gameId": "0020000005",
@@ -195,7 +195,7 @@ def test_period_boundaries_sort_around_actions_at_the_same_clock():
                     "orderNumber": 90000,
                     "period": 1,
                     "periodType": "REGULAR",
-                    "clock": "PT00M00.00S",
+                    "clock": "PT00M00.01S",
                     "actionType": "2pt",
                     "subType": "Layup",
                     "scoreHome": "2",
