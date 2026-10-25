@@ -11,6 +11,7 @@ WorkingDirectory=/opt/nba-gestalt/current
 Environment=PYTHONUNBUFFERED=1
 Environment=DAGSTER_HOME=/var/lib/nba-gestalt/dagster
 Environment=AWS_REGION=us-west-1
+Environment=GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1
 EnvironmentFile=-/etc/nba-gestalt/dagster.env
 ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster-daemon run --module-name nba_lineup_model.orchestration.definitions --working-directory /opt/nba-gestalt/current
 Restart=on-failure

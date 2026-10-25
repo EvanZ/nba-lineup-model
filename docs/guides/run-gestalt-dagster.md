@@ -36,8 +36,11 @@ cd ~/nba-lineup-model
 ./scripts/deploy_gestalt_orchestration.sh
 ```
 
-The UI and daemon start at boot, but all schedules and sensors default to
-stopped. Confirm both services before cutover:
+The initial cutover keeps automations stopped unless
+`GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1` is set. The production systemd units
+set that flag after cutover so schedules and sensors remain enabled when a new
+immutable release changes Dagster's physical code-location path. Confirm both
+services before cutover:
 
 ```bash
 systemctl status gestalt-dagster-webserver gestalt-dagster-daemon

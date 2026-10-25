@@ -41,6 +41,10 @@ sudo rsync -a --delete dist/ "$WEB_ROOT/"
 
 sudo ln -sfn "$RELEASE_ROOT" "$APP_ROOT/current"
 sudo install -m 0644 "$REPO_DIR/deploy/gestalt-rate-limits.conf" /etc/nginx/conf.d/gestalt-rate-limits.conf
+if systemctl cat gestalt-dagster-webserver >/dev/null 2>&1; then
+  sudo install -m 0644 "$REPO_DIR/deploy/gestalt-dagster-webserver.service" /etc/systemd/system/gestalt-dagster-webserver.service
+  sudo install -m 0644 "$REPO_DIR/deploy/gestalt-dagster-daemon.service" /etc/systemd/system/gestalt-dagster-daemon.service
+fi
 sudo systemctl daemon-reload
 sudo systemctl restart gestalt-web
 if systemctl cat gestalt-dagster-webserver >/dev/null 2>&1; then

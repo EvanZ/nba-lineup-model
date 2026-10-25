@@ -43,6 +43,19 @@ from nba_lineup_model.web_api.win_projections import (
 EASTERN = ZoneInfo("America/New_York")
 RETRY_POLICY = RetryPolicy(max_retries=3, delay=30)
 WORKLOAD_TAG = "gestalt/workload"
+AUTOMATIONS_DEFAULT_RUNNING = os.environ.get(
+    "GESTALT_AUTOMATIONS_DEFAULT_RUNNING", "0"
+) == "1"
+SCHEDULE_DEFAULT_STATUS = (
+    DefaultScheduleStatus.RUNNING
+    if AUTOMATIONS_DEFAULT_RUNNING
+    else DefaultScheduleStatus.STOPPED
+)
+SENSOR_DEFAULT_STATUS = (
+    DefaultSensorStatus.RUNNING
+    if AUTOMATIONS_DEFAULT_RUNNING
+    else DefaultSensorStatus.STOPPED
+)
 
 
 def _state_dir() -> Path:
@@ -121,7 +134,7 @@ schedule_refresh_schedule = ScheduleDefinition(
     cron_schedule="*/30 * * * *",
     execution_timezone="UTC",
     run_config_fn=_regular_refresh_config,
-    default_status=DefaultScheduleStatus.STOPPED,
+    default_status=SCHEDULE_DEFAULT_STATUS,
     description="Refresh the current and next seven NBA boards every 30 minutes.",
 )
 
@@ -131,7 +144,7 @@ yesterday_finalization_schedule = ScheduleDefinition(
     cron_schedule="0,30 4-9 * * *",
     execution_timezone="UTC",
     run_config_fn=_yesterday_refresh_config,
-    default_status=DefaultScheduleStatus.STOPPED,
+    default_status=SCHEDULE_DEFAULT_STATUS,
     description="Revisit yesterday's board overnight until late games are final.",
 )
 
@@ -202,7 +215,7 @@ def active_live_game_date(
     name="live_score_game_window",
     job=update_live_scores_job,
     minimum_interval_seconds=75,
-    default_status=DefaultSensorStatus.STOPPED,
+    default_status=SENSOR_DEFAULT_STATUS,
     description="Emit short score-update runs only while an unfinished slate is active.",
 )
 def live_score_sensor(context: SensorEvaluationContext) -> RunRequest | SkipReason:
@@ -247,7 +260,7 @@ daily_lake_health_schedule = ScheduleDefinition(
     target=daily_lake_health_job,
     cron_schedule="15 10 * * *",
     execution_timezone="UTC",
-    default_status=DefaultScheduleStatus.STOPPED,
+    default_status=SCHEDULE_DEFAULT_STATUS,
     description="Prove that DuckDB can query the immutable S3 lake directly each day.",
 )
 
