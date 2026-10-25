@@ -128,6 +128,32 @@ def test_archive_uses_distinct_cdn_namespace_and_retains_revisions() -> None:
     assert len(raw_objects) == 2
 
 
+def test_concurrent_identical_archive_is_an_idempotent_checksum_hit() -> None:
+    store = MemoryObjectStore()
+    archive = CdnLakeArchive(store=store)
+    response = _response()
+
+    first = archive.archive(
+        _game(),
+        response,
+        run_id="run-1",
+        attempt_number=1,
+        known_sha256=[],
+    )
+    raced = archive.archive(
+        _game(),
+        response,
+        run_id="run-2",
+        attempt_number=1,
+        known_sha256=[],
+    )
+
+    assert first.disposition == "archived"
+    assert raced.disposition == "unchanged"
+    assert raced.prior_sha256 == first.sha256
+    assert len([uri for uri in store.objects if "/success-" in uri]) == 1
+
+
 def test_ingest_is_resumable_and_fetches_only_play_by_play(tmp_path: Path) -> None:
     _write_final_slate(tmp_path)
     store = MemoryObjectStore()

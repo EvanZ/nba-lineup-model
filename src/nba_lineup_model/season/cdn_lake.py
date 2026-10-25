@@ -133,7 +133,19 @@ class CdnLakeArchive:
                 prior_sha256=prior,
             )
 
-        self.store.put_bytes(raw_uri, raw_body)
+        raw_created = self.store.put_bytes(raw_uri, raw_body)
+        if not raw_created:
+            # Another process may have archived the same content after this
+            # run loaded its local coverage index. Treat that race exactly as
+            # an idempotent checksum hit and do not contend on sidecars.
+            return CdnArchiveOutcome(
+                sha256=digest,
+                byte_count=len(raw_body),
+                disposition="unchanged",
+                raw_uri=raw_uri,
+                record_uri=None,
+                prior_sha256=digest,
+            )
         metadata = self._record_payload(
             game,
             run_id=run_id,
