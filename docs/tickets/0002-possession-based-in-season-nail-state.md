@@ -49,6 +49,13 @@ content-addressed and immutable.
   against the unchanged frozen-preseason control.
 - A checksummed, compressed sparse replay mart that allows subsequent prior
   grids to run without rereading historical stint data.
+- A daily shadow Dagster job scheduled for 8:45 AM Eastern, after the morning
+  CDN and final-archive reconciliation jobs. It builds only new or revised
+  game contributions, reuses the local sparse cache, publishes immutable
+  states and reports to S3, and never changes the serving projection path.
+- A cumulative live-season control comparison covering margin MAE/RMSE,
+  Brier score, log loss, winner accuracy, ATS record, projection movement,
+  and explicit contribution exclusions.
 
 ## Historical calibration result
 
@@ -65,11 +72,27 @@ remain outside Git and have not been published to S3.
 
 ## Remaining production wiring
 
-1. Materialize current-season lineup stints from the CDN lake plus the required
-   box-score/roster inputs.
-2. Load the exact promoted 2026-27 player prior and frozen context artifacts.
-3. Add S3 readers/writers and compact replay-mart manifests.
-4. Publish the reviewed updater calibration artifact to S3.
-5. Add resource-bounded Dagster replay and nightly update jobs.
-6. Run a chronological offline 2026-27 replay and approve promotion before the
-   public site consumes any in-season state.
+1. Resolve the two current CDN period-boundary reconstruction failures and the
+   deployed preseason-catalog omission for Walter Clayton Jr.; these remain
+   visible as shadow coverage exclusions rather than being silently imputed.
+2. Publish the reviewed updater calibration artifact to S3.
+3. Accumulate enough immutable 2026-27 shadow results to judge whether the
+   updater consistently surpasses the frozen production control.
+4. Require an explicit promotion decision before the public site consumes any
+   in-season state.
+
+## Shadow operations
+
+The `in_season_nail_shadow_daily` schedule runs at 8:45 AM Eastern and scores
+games through the prior date. Its expensive work is incremental: a game whose
+current CDN checksum already has a validated sparse contribution is not fetched,
+reconstructed, or rescored through the contextual endpoint. The chronological
+comparison itself is regenerated from the compact contributions so corrections
+remain reproducible.
+
+The initial EC2 validation reconstructed 32 of 36 completed games and a second
+run reused all 32 contributions, created none, completed in 8.6 seconds, and
+peaked at roughly 242 MB RSS. Four games were excluded explicitly: two because
+of malformed period-boundary events and two involving a player missing from the
+deployed preseason catalog. These exclusions affect future updater evidence but
+do not remove the games from the production-versus-shadow scoring table.

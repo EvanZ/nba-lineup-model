@@ -43,6 +43,9 @@ DEFAULT_CDN_LAKE_URI = "s3://nba-gestalt-data/lake"
 DEFAULT_CDN_SEASON = "2026-27"
 DEFAULT_CDN_GRACE_MINUTES = 60
 DEFAULT_CDN_COVERAGE_PATH = Path("/var/lib/nba-gestalt/cdn/coverage.json")
+DEFAULT_IN_SEASON_NAIL_ROOT = Path("/var/lib/nba-gestalt/in-season-nail")
+DEFAULT_IN_SEASON_NAIL_LAKE_URI = "s3://nba-gestalt-data/lake"
+DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS = 6000
 DEFAULT_HEALTHCHECK_PARQUET = (
     "s3://nba-gestalt-data/lake/analytical/box_score_prior_panel/"
     "season_cohort_summary.parquet"
@@ -110,6 +113,16 @@ def _cdn_coverage_path() -> Path:
     return Path(
         os.environ.get("GESTALT_CDN_COVERAGE_PATH", DEFAULT_CDN_COVERAGE_PATH)
     )
+
+
+def _in_season_nail_root() -> Path:
+    return Path(os.environ.get("GESTALT_IN_SEASON_NAIL_ROOT", DEFAULT_IN_SEASON_NAIL_ROOT))
+
+
+def _in_season_nail_lake_uri() -> str:
+    return os.environ.get(
+        "GESTALT_IN_SEASON_NAIL_LAKE_URI", DEFAULT_IN_SEASON_NAIL_LAKE_URI
+    ).rstrip("/")
 
 
 def _scheduled_time(context: object) -> datetime:
@@ -490,6 +503,173 @@ cdn_morning_reconciliation_schedule = ScheduleDefinition(
 
 
 @op(
+    name="run_in_season_nail_shadow",
+    config_schema={
+        "through_date": str,
+        "prior_possessions": Field(
+            int,
+            default_value=DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS,
+        ),
+    },
+    retry_policy=RetryPolicy(max_retries=1, delay=300),
+)
+def update_in_season_nail_shadow_op(context: OpExecutionContext) -> dict[str, object]:
+    """Advance the shadow updater and compare it with frozen production forecasts."""
+
+    import argparse
+
+    from nba_lineup_model.modeling.in_season_nail_monitor import run
+    from nba_lineup_model.season.stats_v3_lake import (
+        AwsCliImmutableObjectStore,
+        _join_s3_uri,
+    )
+
+    through_date = str(context.op_config["through_date"])
+    root = _in_season_nail_root()
+    output_dir = root / "runs" / f"through_date={through_date}" / context.run_id
+    result = run(
+        argparse.Namespace(
+            state_dir=_state_dir(),
+            coverage_path=_cdn_coverage_path(),
+            release_root=Path.cwd(),
+            cdn_s3_prefix=(f"{_cdn_lake_uri()}/raw/cdn/playbyplay"),
+            matchup_url=os.environ.get(
+                "GESTALT_MATCHUP_API_URL", "http://127.0.0.1:8010/api/matchups"
+            ),
+            prior_possessions=float(context.op_config["prior_possessions"]),
+            through_date=through_date,
+            cache_dir=root,
+            output_dir=output_dir,
+        )
+    )
+    local_artifacts = result.pop("local_artifacts")
+    store = AwsCliImmutableObjectStore()
+    lake_uri = _in_season_nail_lake_uri()
+    published: dict[str, str] = {}
+    for label in ("summary", "game_predictions", "player_state"):
+        path = Path(str(local_artifacts[label]))
+        payload = path.read_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        uri = _join_s3_uri(
+            lake_uri,
+            "analytical",
+            "in_season_nail_shadow",
+            f"season={_cdn_season()}",
+            f"through_date={through_date}",
+            f"{label}-{digest}{path.suffix}",
+        )
+        store.put_bytes(uri, payload)
+        published[label] = uri
+
+    for directory_value in local_artifacts["new_contribution_directories"]:
+        directory = Path(str(directory_value))
+        relative = directory.relative_to(root / "contributions")
+        for path in sorted(directory.iterdir()):
+            if not path.is_file():
+                continue
+            uri = _join_s3_uri(
+                lake_uri,
+                "analytical",
+                "in_season_nail_shadow",
+                "game_contributions",
+                relative.as_posix(),
+                path.name,
+            )
+            store.put_bytes(uri, path.read_bytes())
+
+    publication = {
+        "schema_version": 1,
+        "season": _cdn_season(),
+        "through_date": through_date,
+        "dagster_run_id": context.run_id,
+        "generated_at": result["generated_at"],
+        "artifacts": published,
+        "metrics": result["metrics"],
+        "comparison": result["comparison"],
+        "coverage": {
+            "games": result["game_count"],
+            "contributions": result["contribution_count"],
+            "excluded": len(result["excluded_contributions"]),
+        },
+    }
+    publication_bytes = (json.dumps(publication, indent=2, sort_keys=True) + "\n").encode()
+    publication_sha = hashlib.sha256(publication_bytes).hexdigest()
+    publication_uri = _join_s3_uri(
+        lake_uri,
+        "analytical",
+        "in_season_nail_shadow",
+        "manifests",
+        f"season={_cdn_season()}",
+        f"through_date={through_date}",
+        f"{publication_sha}.json",
+    )
+    store.put_bytes(publication_uri, publication_bytes)
+    latest_path = root / "latest.json"
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = latest_path.with_suffix(".json.tmp")
+    temporary.write_bytes(publication_bytes)
+    temporary.replace(latest_path)
+
+    current = result["metrics"]["current_model"]
+    updater = result["metrics"]["in_season_updater"]
+    context.add_output_metadata(
+        {
+            "through_date": through_date,
+            "games": int(result["game_count"]),
+            "contributions": int(result["contribution_count"]),
+            "excluded_contributions": len(result["excluded_contributions"]),
+            "current_brier": float(current["brier_score"]),
+            "updater_brier": float(updater["brier_score"]),
+            "current_margin_mae": float(current["margin_mae"]),
+            "updater_margin_mae": float(updater["margin_mae"]),
+            "current_ats": f"{current['ats_wins']}-{current['ats_losses']}-{current['ats_pushes']}",
+            "updater_ats": f"{updater['ats_wins']}-{updater['ats_losses']}-{updater['ats_pushes']}",
+            "publication": MetadataValue.url(publication_uri),
+        }
+    )
+    return {**result, "publication_uri": publication_uri, "published": published}
+
+
+@job(
+    name="update_in_season_nail_shadow",
+    executor_def=in_process_executor,
+    tags={WORKLOAD_TAG: "in_season_nail_shadow"},
+)
+def update_in_season_nail_shadow_job() -> None:
+    update_in_season_nail_shadow_op()
+
+
+def _in_season_nail_shadow_config(context: object) -> dict[str, object]:
+    through_date = (
+        _scheduled_time(context).astimezone(EASTERN).date() - timedelta(days=1)
+    ).isoformat()
+    return {
+        "ops": {
+            "run_in_season_nail_shadow": {
+                "config": {
+                    "through_date": through_date,
+                    "prior_possessions": DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS,
+                }
+            }
+        }
+    }
+
+
+in_season_nail_shadow_schedule = ScheduleDefinition(
+    name="in_season_nail_shadow_daily",
+    job=update_in_season_nail_shadow_job,
+    cron_schedule="45 8 * * *",
+    execution_timezone="America/New_York",
+    run_config_fn=_in_season_nail_shadow_config,
+    default_status=SCHEDULE_DEFAULT_STATUS,
+    description=(
+        "Advance the possession-based NAIL shadow state after morning CDN reconciliation "
+        "and compare it with immutable production forecasts."
+    ),
+)
+
+
+@op(
     name="archive_completed_stats_v3",
     config_schema={
         "season": Field(str, default_value=DEFAULT_STATS_V3_SEASON),
@@ -668,6 +848,7 @@ defs = Definitions(
         update_live_scores_job,
         reconcile_final_game_archives_job,
         ingest_completed_cdn_play_by_play_job,
+        update_in_season_nail_shadow_job,
         ingest_completed_stats_v3_job,
         daily_lake_health_job,
     ],
@@ -676,6 +857,7 @@ defs = Definitions(
         yesterday_finalization_schedule,
         final_game_archive_morning_reconciliation_schedule,
         cdn_morning_reconciliation_schedule,
+        in_season_nail_shadow_schedule,
         stats_v3_morning_reconciliation_schedule,
         daily_lake_health_schedule,
     ],

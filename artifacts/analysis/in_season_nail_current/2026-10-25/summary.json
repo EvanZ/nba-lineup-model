@@ -1,0 +1,67 @@
+{
+  "season": "2026-27",
+  "through_date": "2026-10-25",
+  "generated_at": "2026-10-25T20:06:23.969219Z",
+  "method": {
+    "prior_equivalent_possessions": 6000.0,
+    "date_batched": true,
+    "frozen_pregame_minutes": true,
+    "actual_lineup_stints_for_updates": true,
+    "win_probability_scale": 0.1057045733229936
+  },
+  "game_count": 36,
+  "contribution_count": 32,
+  "excluded_contributions": [
+    {
+      "game_id": "0022600095",
+      "reason": "Players missing from frozen preseason prior: [1642383]"
+    },
+    {
+      "game_id": "0022600009",
+      "reason": "Event 0022600009:89749125 occurred outside an active period"
+    },
+    {
+      "game_id": "0022600101",
+      "reason": "Event 0022600101:508699300 occurred outside an active period"
+    },
+    {
+      "game_id": "0022600109",
+      "reason": "Players missing from frozen preseason prior: [1642383]"
+    }
+  ],
+  "metrics": {
+    "current_model": {
+      "games": 36,
+      "margin_mae": 11.31285141187353,
+      "margin_rmse": 15.53468139747449,
+      "winner_accuracy": 0.6666666666666666,
+      "brier_score": 0.19942380063049553,
+      "log_loss": 0.5804113470297438,
+      "ats_wins": 16,
+      "ats_losses": 20,
+      "ats_pushes": 0,
+      "ats_games": 36
+    },
+    "in_season_updater": {
+      "games": 36,
+      "margin_mae": 11.150562597968591,
+      "margin_rmse": 15.430281751480427,
+      "winner_accuracy": 0.6388888888888888,
+      "brier_score": 0.19601449197310022,
+      "log_loss": 0.5729308294216771,
+      "ats_wins": 15,
+      "ats_losses": 21,
+      "ats_pushes": 0,
+      "ats_games": 36
+    }
+  },
+  "comparison": {
+    "margin_mae_change": -0.16228881390493832,
+    "margin_rmse_change": -0.1043996459940626,
+    "brier_change": -0.0034093086573953046,
+    "mean_absolute_projection_change": 0.44062490278544303,
+    "max_absolute_projection_change": 2.084959174107788,
+    "winner_pick_changes": 1,
+    "ats_pick_changes": 1
+  }
+}
