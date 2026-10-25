@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import unicodedata
@@ -1019,6 +1021,7 @@ def refresh_schedule_archive(
     source_payload: dict[str, object] | None = None,
     injury_report: dict[str, object] | None = None,
     injury_pdf: bytes | None = None,
+    injury_artifact: dict[str, str] | None = None,
     forecast_response: dict[str, object] | None = None,
     prediction_market_snapshot: dict[str, object] | None = None,
     now: datetime | None = None,
@@ -1057,6 +1060,12 @@ def refresh_schedule_archive(
             game_date=game_date,
             collected_at=collected_at,
         )
+    if injury_pdf is not None and injury_artifact is None and s3_uri:
+        injury_artifact = _ensure_s3_injury_report(
+            injury_pdf=injury_pdf,
+            state_root=state_root,
+            s3_uri=s3_uri,
+        )
     payload = _normalize_espn_schedule(
         raw,
         forecast=forecast,
@@ -1066,6 +1075,8 @@ def refresh_schedule_archive(
         game_date=game_date,
         collected_at=collected_at,
     )
+    if injury_artifact is not None:
+        payload["injury_report_artifact"] = injury_artifact
     previous_games = {
         str(game.get("espn_game_id")): game
         for game in (previous or {}).get("games", [])
@@ -1088,13 +1099,20 @@ def refresh_schedule_archive(
             }
 
     timestamp = collected_at.strftime("%Y%m%dT%H%M%SZ")
-    archive_dir = state_root / "archive" / game_date
-    raw_path = archive_dir / f"{timestamp}.espn.json"
-    injury_path = archive_dir / f"{timestamp}.injury.pdf"
-    prediction_market_path = archive_dir / f"{timestamp}.polymarket.json"
-    normalized_path = archive_dir / f"{timestamp}.json"
+    if s3_uri:
+        snapshot_dir = state_root / "pending" / game_date / timestamp
+        raw_path = snapshot_dir / "espn.json"
+        prediction_market_path = snapshot_dir / "polymarket.json"
+        normalized_path = snapshot_dir / "normalized.json"
+        injury_path = None
+    else:
+        archive_dir = state_root / "archive" / game_date
+        raw_path = archive_dir / f"{timestamp}.espn.json"
+        injury_path = archive_dir / f"{timestamp}.injury.pdf"
+        prediction_market_path = archive_dir / f"{timestamp}.polymarket.json"
+        normalized_path = archive_dir / f"{timestamp}.json"
     _write_json(raw_path, raw)
-    if injury_pdf is not None:
+    if injury_pdf is not None and injury_path is not None:
         injury_path.parent.mkdir(parents=True, exist_ok=True)
         injury_path.write_bytes(injury_pdf)
     _write_json(prediction_market_path, prediction_market_snapshot)
@@ -1130,11 +1148,6 @@ def refresh_schedule_archive(
     if s3_uri:
         prefix = f"{s3_uri.rstrip('/')}/season={PROJECTION_SEASON}/game_date={game_date}"
         _aws_s3_cp_exclusive(raw_path, f"{prefix}/snapshots/{timestamp}.espn.json")
-        if injury_path.is_file():
-            _aws_s3_cp_exclusive(
-                injury_path,
-                f"{prefix}/snapshots/{timestamp}.injury.pdf",
-            )
         _aws_s3_cp_exclusive(
             prediction_market_path,
             f"{prefix}/snapshots/{timestamp}.polymarket.json",
@@ -1162,6 +1175,7 @@ def refresh_schedule_archive(
                     final_espn_path,
                     f"{prefix}/final/{game['espn_game_id']}.espn.json",
                 )
+        shutil.rmtree(snapshot_dir)
     return {**payload, "newly_frozen_game_count": frozen_count}
 
 
@@ -1193,6 +1207,13 @@ def refresh_schedule_window(
         report_date=report_date,
         now=collected_at,
     )
+    injury_artifact = None
+    if s3_uri:
+        injury_artifact = _ensure_s3_injury_report(
+            injury_pdf=injury_pdf,
+            state_root=Path(state_dir),
+            s3_uri=s3_uri,
+        )
     forecast_response = _fetch_json(projection_url)
     archived_days: list[dict[str, object]] = []
     total_games = 0
@@ -1216,6 +1237,7 @@ def refresh_schedule_window(
             source_payload=raw,
             injury_report=injury_report,
             injury_pdf=injury_pdf,
+            injury_artifact=injury_artifact,
             forecast_response=forecast_response,
             prediction_market_snapshot=prediction_market_snapshot,
             now=collected_at,
@@ -2119,6 +2141,38 @@ def _post_json(url: str, payload: object) -> dict[str, object]:
     if not isinstance(result, dict):
         raise ValueError(f"JSON endpoint did not return an object: {url}")
     return result
+
+
+def _ensure_s3_injury_report(
+    *,
+    injury_pdf: bytes,
+    state_root: Path,
+    s3_uri: str,
+) -> dict[str, str]:
+    """Publish one content-addressed injury PDF and retain only a tiny marker."""
+
+    digest = hashlib.sha256(injury_pdf).hexdigest()
+    destination = (
+        f"{s3_uri.rstrip('/')}/season={PROJECTION_SEASON}"
+        f"/injury-reports/sha256={digest}.pdf"
+    )
+    marker_path = state_root / "artifacts" / "injury-reports" / f"{digest}.json"
+    artifact = {
+        "sha256": digest,
+        "s3_uri": destination,
+    }
+    if marker_path.is_file():
+        existing = json.loads(marker_path.read_text())
+        if existing == artifact:
+            return artifact
+
+    pending_path = state_root / "pending" / "injury-reports" / f"{digest}.pdf"
+    pending_path.parent.mkdir(parents=True, exist_ok=True)
+    pending_path.write_bytes(injury_pdf)
+    _aws_s3_cp_exclusive(pending_path, destination)
+    _write_json(marker_path, artifact)
+    pending_path.unlink()
+    return artifact
 
 
 def _write_json(path: Path, payload: object) -> None:

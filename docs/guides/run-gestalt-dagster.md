@@ -21,6 +21,12 @@ DuckDB for bounded analytical queries and S3 as durable storage.
 The instance permits one run at a time. DuckDB is limited to two threads and
 512 MB by default. Dagster schedule/sensor history is retained for 30 days.
 
+High-frequency raw schedule snapshots are staged locally only while their
+immutable S3 uploads are verified, then removed. Official injury-report PDFs
+use a SHA-256 content-addressed S3 key and a small local marker, so an unchanged
+report is stored once rather than copied into every date and half-hour snapshot.
+Only the compact `latest`, `frozen`, and `final` serving state remains local.
+
 ## Deploy with automations stopped
 
 Publish and deploy a normal GESTALT release, then on EC2 run:

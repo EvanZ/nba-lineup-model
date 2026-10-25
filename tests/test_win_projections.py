@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -860,6 +861,88 @@ def test_schedule_window_ingests_available_future_boards_with_current_report(
     assert all("forecast_response" in call for call in archived_calls)
     assert any("dates=20261020" in url for url in fetched_urls)
     assert any("dates=20261022" in url for url in fetched_urls)
+
+
+def test_injury_pdf_is_uploaded_once_by_checksum(tmp_path, monkeypatch) -> None:
+    injury_pdf = b"same official injury report"
+    uploads: list[tuple[bytes, str]] = []
+
+    def fake_upload(source, destination):
+        uploads.append((source.read_bytes(), destination))
+
+    monkeypatch.setattr(win_projections, "_aws_s3_cp_exclusive", fake_upload)
+
+    first = win_projections._ensure_s3_injury_report(
+        injury_pdf=injury_pdf,
+        state_root=tmp_path,
+        s3_uri="s3://archive/schedule",
+    )
+    second = win_projections._ensure_s3_injury_report(
+        injury_pdf=injury_pdf,
+        state_root=tmp_path,
+        s3_uri="s3://archive/schedule",
+    )
+
+    digest = hashlib.sha256(injury_pdf).hexdigest()
+    assert first == second == {
+        "sha256": digest,
+        "s3_uri": (
+            "s3://archive/schedule/season=2026-27/"
+            f"injury-reports/sha256={digest}.pdf"
+        ),
+    }
+    assert uploads == [(injury_pdf, first["s3_uri"])]
+    assert not (tmp_path / "pending" / "injury-reports" / f"{digest}.pdf").exists()
+    assert (tmp_path / "artifacts" / "injury-reports" / f"{digest}.json").is_file()
+
+
+def test_s3_schedule_snapshot_does_not_retain_local_archive(tmp_path, monkeypatch) -> None:
+    immutable_uploads: list[str] = []
+    mutable_uploads: list[str] = []
+    artifact = {
+        "sha256": "abc123",
+        "s3_uri": "s3://archive/schedule/season=2026-27/injury-reports/sha256=abc123.pdf",
+    }
+
+    monkeypatch.setattr(
+        win_projections,
+        "_normalize_espn_schedule",
+        lambda *_args, **_kwargs: {"game_date": "2026-10-24", "games": []},
+    )
+    monkeypatch.setattr(
+        win_projections,
+        "_aws_s3_cp_exclusive",
+        lambda _source, destination: immutable_uploads.append(destination),
+    )
+    monkeypatch.setattr(
+        win_projections,
+        "_aws_s3_cp",
+        lambda _source, destination: mutable_uploads.append(destination),
+    )
+
+    result = win_projections.refresh_schedule_archive(
+        game_date="2026-10-24",
+        state_dir=tmp_path,
+        s3_uri="s3://archive/schedule",
+        source_payload={"events": []},
+        injury_report={"players": []},
+        injury_pdf=b"official report",
+        injury_artifact=artifact,
+        forecast_response={"win_projection": {}, "minutes": {}},
+        prediction_market_snapshot={"games": {}},
+        now=datetime(2026, 10, 24, 20, 30, tzinfo=UTC),
+    )
+
+    assert result["injury_report_artifact"] == artifact
+    assert not (tmp_path / "archive").exists()
+    assert not any((tmp_path / "pending" / "2026-10-24").glob("*"))
+    assert all(not destination.endswith(".injury.pdf") for destination in immutable_uploads)
+    assert len(immutable_uploads) == 3
+    assert mutable_uploads == [
+        "s3://archive/schedule/season=2026-27/game_date=2026-10-24/latest.json"
+    ]
+    latest = json.loads((tmp_path / "latest" / "2026-10-24.json").read_text())
+    assert latest["injury_report_artifact"] == artifact
 
 
 def test_immutable_s3_upload_accepts_only_byte_identical_retry(
