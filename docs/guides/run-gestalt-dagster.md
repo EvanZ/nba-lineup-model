@@ -20,6 +20,10 @@ DuckDB for bounded analytical queries and S3 as durable storage.
 
 The instance permits one run at a time. DuckDB is limited to two threads and
 512 MB by default. Dagster schedule/sensor history is retained for 30 days.
+The UI and daemon share one persistent loopback-only code server. Orchestration
+definitions use lazy workload imports so NumPy, pandas, DuckDB, and model code
+are loaded only by the active run rather than duplicated in every Dagster
+control-plane process.
 
 High-frequency raw schedule snapshots are staged locally only while their
 immutable S3 uploads are verified, then removed. Official injury-report PDFs
@@ -43,7 +47,7 @@ immutable release changes Dagster's physical code-location path. Confirm both
 services before cutover:
 
 ```bash
-systemctl status gestalt-dagster-webserver gestalt-dagster-daemon
+systemctl status gestalt-dagster-code-server gestalt-dagster-webserver gestalt-dagster-daemon
 journalctl -u gestalt-dagster-daemon -n 100 --no-pager
 ```
 

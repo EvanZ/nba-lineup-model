@@ -42,12 +42,25 @@ sudo rsync -a --delete dist/ "$WEB_ROOT/"
 sudo ln -sfn "$RELEASE_ROOT" "$APP_ROOT/current"
 sudo install -m 0644 "$REPO_DIR/deploy/gestalt-rate-limits.conf" /etc/nginx/conf.d/gestalt-rate-limits.conf
 if systemctl cat gestalt-dagster-webserver >/dev/null 2>&1; then
+  sudo install -m 0644 "$REPO_DIR/deploy/gestalt-dagster-code-server.service" /etc/systemd/system/gestalt-dagster-code-server.service
   sudo install -m 0644 "$REPO_DIR/deploy/gestalt-dagster-webserver.service" /etc/systemd/system/gestalt-dagster-webserver.service
   sudo install -m 0644 "$REPO_DIR/deploy/gestalt-dagster-daemon.service" /etc/systemd/system/gestalt-dagster-daemon.service
+  sudo install -m 0644 "$REPO_DIR/deploy/gestalt-dagster-workspace.yaml" /var/lib/nba-gestalt/dagster/workspace.yaml
 fi
 sudo systemctl daemon-reload
 sudo systemctl restart gestalt-web
 if systemctl cat gestalt-dagster-webserver >/dev/null 2>&1; then
+  sudo systemctl enable gestalt-dagster-code-server
+  sudo systemctl restart gestalt-dagster-code-server
+  for _ in {1..60}; do
+    if "$RELEASE_ROOT/.venv/bin/dagster" api grpc-health-check \
+      --host 127.0.0.1 --port 4000 >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  "$RELEASE_ROOT/.venv/bin/dagster" api grpc-health-check \
+    --host 127.0.0.1 --port 4000
   sudo systemctl restart gestalt-dagster-webserver gestalt-dagster-daemon
 fi
 sudo nginx -t

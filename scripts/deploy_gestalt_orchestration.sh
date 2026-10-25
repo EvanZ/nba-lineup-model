@@ -20,6 +20,9 @@ uv pip install \
 
 sudo install -d -o ubuntu -g ubuntu "$DAGSTER_HOME"
 sudo install -m 0644 "$REPO_DIR/deploy/dagster.yaml" "$DAGSTER_HOME/dagster.yaml"
+sudo install -m 0644 \
+  "$REPO_DIR/deploy/gestalt-dagster-workspace.yaml" \
+  "$DAGSTER_HOME/workspace.yaml"
 
 cd "$CURRENT_RELEASE"
 DAGSTER_HOME="$DAGSTER_HOME" \
@@ -27,12 +30,26 @@ DAGSTER_HOME="$DAGSTER_HOME" \
   --module-name nba_lineup_model.orchestration.definitions
 
 sudo install -m 0644 \
+  "$REPO_DIR/deploy/gestalt-dagster-code-server.service" \
+  /etc/systemd/system/gestalt-dagster-code-server.service
+sudo install -m 0644 \
   "$REPO_DIR/deploy/gestalt-dagster-webserver.service" \
   /etc/systemd/system/gestalt-dagster-webserver.service
 sudo install -m 0644 \
   "$REPO_DIR/deploy/gestalt-dagster-daemon.service" \
   /etc/systemd/system/gestalt-dagster-daemon.service
 sudo systemctl daemon-reload
+sudo systemctl enable --now gestalt-dagster-code-server
+
+for _ in {1..60}; do
+  if "$CURRENT_RELEASE/.venv/bin/dagster" api grpc-health-check \
+    --host 127.0.0.1 --port 4000 >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+"$CURRENT_RELEASE/.venv/bin/dagster" api grpc-health-check \
+  --host 127.0.0.1 --port 4000
 sudo systemctl enable --now gestalt-dagster-webserver gestalt-dagster-daemon
 
 for _ in {1..30}; do
@@ -42,6 +59,7 @@ for _ in {1..30}; do
   sleep 1
 done
 curl --fail --silent --show-error http://127.0.0.1:3000/ >/dev/null
-systemctl --quiet is-active gestalt-dagster-webserver gestalt-dagster-daemon
+systemctl --quiet is-active \
+  gestalt-dagster-code-server gestalt-dagster-webserver gestalt-dagster-daemon
 
-printf 'Dagster deployed on 127.0.0.1:3000 with automations stopped pending cutover.\n'
+printf 'Dagster deployed on 127.0.0.1:3000 with a shared local code server.\n'

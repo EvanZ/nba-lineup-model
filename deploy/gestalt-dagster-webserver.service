@@ -1,7 +1,8 @@
 [Unit]
 Description=NBA GESTALT Dagster UI
-After=network-online.target gestalt-web.service
+After=network-online.target gestalt-web.service gestalt-dagster-code-server.service
 Wants=network-online.target
+Requires=gestalt-dagster-code-server.service
 
 [Service]
 Type=simple
@@ -13,12 +14,12 @@ Environment=DAGSTER_HOME=/var/lib/nba-gestalt/dagster
 Environment=AWS_REGION=us-west-1
 Environment=GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1
 EnvironmentFile=-/etc/nba-gestalt/dagster.env
-ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster-webserver --host 127.0.0.1 --port 3000 --module-name nba_lineup_model.orchestration.definitions
+ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster-webserver --host 127.0.0.1 --port 3000 --workspace /var/lib/nba-gestalt/dagster/workspace.yaml
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
-MemoryHigh=450M
-MemoryMax=650M
+MemoryHigh=300M
+MemoryMax=450M
 Nice=5
 
 [Install]

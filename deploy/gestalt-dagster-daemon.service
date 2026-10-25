@@ -1,7 +1,8 @@
 [Unit]
 Description=NBA GESTALT Dagster daemon
-After=network-online.target gestalt-web.service
+After=network-online.target gestalt-web.service gestalt-dagster-code-server.service
 Wants=network-online.target
+Requires=gestalt-dagster-code-server.service
 
 [Service]
 Type=simple
@@ -13,12 +14,12 @@ Environment=DAGSTER_HOME=/var/lib/nba-gestalt/dagster
 Environment=AWS_REGION=us-west-1
 Environment=GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1
 EnvironmentFile=-/etc/nba-gestalt/dagster.env
-ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster-daemon run --module-name nba_lineup_model.orchestration.definitions --working-directory /opt/nba-gestalt/current
+ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster-daemon run --workspace /var/lib/nba-gestalt/dagster/workspace.yaml
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60
-MemoryHigh=700M
-MemoryMax=900M
+MemoryHigh=300M
+MemoryMax=450M
 Nice=5
 
 [Install]

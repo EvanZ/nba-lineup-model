@@ -27,22 +27,17 @@ from dagster import (
     sensor,
 )
 
-from nba_lineup_model.storage.duckdb_lake import (
-    DEFAULT_HEALTHCHECK_PARQUET,
-    s3_parquet_row_count,
-)
-from nba_lineup_model.web_api.win_projections import (
-    DEFAULT_SCHEDULE_API_URL,
-    DEFAULT_SCHEDULE_DAYS_AHEAD,
-    DEFAULT_SCHEDULE_S3_URI,
-    DEFAULT_SCHEDULE_STATE_DIR,
-    refresh_live_score_state,
-    refresh_schedule_window,
-)
-
 EASTERN = ZoneInfo("America/New_York")
 RETRY_POLICY = RetryPolicy(max_retries=3, delay=30)
 WORKLOAD_TAG = "gestalt/workload"
+DEFAULT_SCHEDULE_STATE_DIR = Path("/var/lib/nba-gestalt/schedule")
+DEFAULT_SCHEDULE_API_URL = "http://127.0.0.1:8010/api/win-projections"
+DEFAULT_SCHEDULE_S3_URI = "s3://nba-gestalt-data/nba-gestalt/schedule"
+DEFAULT_SCHEDULE_DAYS_AHEAD = 7
+DEFAULT_HEALTHCHECK_PARQUET = (
+    "s3://nba-gestalt-data/lake/analytical/box_score_prior_panel/"
+    "season_cohort_summary.parquet"
+)
 AUTOMATIONS_DEFAULT_RUNNING = os.environ.get(
     "GESTALT_AUTOMATIONS_DEFAULT_RUNNING", "0"
 ) == "1"
@@ -89,6 +84,8 @@ def _schedule_run_config(*, start_date: str, days_ahead: int) -> dict[str, objec
 )
 def refresh_schedule_op(context: OpExecutionContext) -> dict[str, object]:
     """Refresh ESPN, lines, injury reports, projections, and immutable snapshots."""
+
+    from nba_lineup_model.web_api.win_projections import refresh_schedule_window
 
     payload = refresh_schedule_window(
         start_date=str(context.op_config["start_date"]),
@@ -156,6 +153,8 @@ yesterday_finalization_schedule = ScheduleDefinition(
 )
 def update_live_scores_op(context: OpExecutionContext) -> dict[str, object]:
     """Perform one short score/clock update; the sensor controls when it runs."""
+
+    from nba_lineup_model.web_api.win_projections import refresh_live_score_state
 
     game_date = str(context.op_config["game_date"])
     result = refresh_live_score_state(game_date=game_date, state_dir=_state_dir())
@@ -240,6 +239,8 @@ def live_score_sensor(context: SensorEvaluationContext) -> RunRequest | SkipReas
     description="Read a small immutable Parquet object directly from S3 with DuckDB.",
 )
 def s3_lake_query_health(context: AssetExecutionContext) -> int:
+    from nba_lineup_model.storage.duckdb_lake import s3_parquet_row_count
+
     uri = os.environ.get("GESTALT_LAKE_HEALTHCHECK_URI", DEFAULT_HEALTHCHECK_PARQUET)
     count = s3_parquet_row_count(uri)
     context.add_output_metadata(
