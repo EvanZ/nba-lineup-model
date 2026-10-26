@@ -486,10 +486,36 @@ def completed_game_cdn_play_by_play_sensor(
     )
     if not pending:
         return SkipReason("No final games are missing CDN play-by-play")
-    interval_bucket = int(now.timestamp() // 900)
     pending_digest = hashlib.sha256(",".join(pending).encode()).hexdigest()[:12]
+    pending_tag = {"gestalt/cdn_pending_digest": pending_digest}
+    prior_attempts = context.instance.get_runs(
+        filters=RunsFilter(
+            job_name="ingest_completed_cdn_play_by_play",
+            tags=pending_tag,
+        ),
+    )
+    inflight = [
+        run
+        for run in prior_attempts
+        if run.status
+        in (
+            DagsterRunStatus.QUEUED,
+            DagsterRunStatus.STARTING,
+            DagsterRunStatus.STARTED,
+            DagsterRunStatus.CANCELING,
+        )
+    ]
+    if inflight:
+        return SkipReason(
+            "Equivalent CDN play-by-play ingestion already queued or running: "
+            f"{inflight[0].run_id}"
+        )
+    # The pending-set digest stays stable while an attempt is queued or running.
+    # A terminal attempt increments the suffix so failed/canceled runs remain
+    # retryable without allowing every 15-minute sensor tick to create a copy.
+    attempt = len(prior_attempts)
     return RunRequest(
-        run_key=f"cdn-pbp:{interval_bucket}:{pending_digest}",
+        run_key=f"cdn-pbp:{pending_digest}:attempt-{attempt}",
         run_config={
             "ops": {
                 "archive_completed_cdn_play_by_play": {
@@ -506,6 +532,7 @@ def completed_game_cdn_play_by_play_sensor(
         tags={
             WORKLOAD_TAG: "cdn_play_by_play_ingest",
             "gestalt/game_count": str(len(pending)),
+            **pending_tag,
         },
     )
 

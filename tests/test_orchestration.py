@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from nba_lineup_model.orchestration.definitions import (
     defs,
     final_game_archive_morning_reconciliation_schedule,
     in_season_nail_shadow_schedule,
+    ingest_completed_cdn_play_by_play_job,
     live_score_sensor,
     schedule_refresh_schedule,
     stats_v3_morning_reconciliation_schedule,
@@ -117,6 +119,62 @@ def test_live_score_sensor_does_not_queue_duplicate_inflight_run(
 
     assert "already queued or running" in result.skip_message
     assert queued.run_id in result.skip_message
+
+
+def test_cdn_sensor_does_not_queue_duplicate_pending_set(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    game_ids = ["0022600118"]
+    digest = hashlib.sha256(",".join(game_ids).encode()).hexdigest()[:12]
+    monkeypatch.setenv("GESTALT_SCHEDULE_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "nba_lineup_model.season.cdn_lake.pending_completed_cdn_game_ids",
+        lambda **_kwargs: game_ids,
+    )
+    instance = DagsterInstance.ephemeral()
+    queued = instance.create_run_for_job(
+        ingest_completed_cdn_play_by_play_job,
+        status=DagsterRunStatus.STARTED,
+        tags={"gestalt/cdn_pending_digest": digest},
+    )
+
+    result = completed_game_cdn_play_by_play_sensor(
+        build_sensor_context(instance=instance)
+    )
+
+    assert "already queued or running" in result.skip_message
+    assert queued.run_id in result.skip_message
+
+
+def test_cdn_sensor_uses_stable_retryable_pending_set_key(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    game_ids = ["0022600118"]
+    digest = hashlib.sha256(",".join(game_ids).encode()).hexdigest()[:12]
+    monkeypatch.setenv("GESTALT_SCHEDULE_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "nba_lineup_model.season.cdn_lake.pending_completed_cdn_game_ids",
+        lambda **_kwargs: game_ids,
+    )
+    instance = DagsterInstance.ephemeral()
+
+    first = completed_game_cdn_play_by_play_sensor(
+        build_sensor_context(instance=instance)
+    )
+    assert first.run_key == f"cdn-pbp:{digest}:attempt-0"
+    assert first.tags["gestalt/cdn_pending_digest"] == digest
+
+    instance.create_run_for_job(
+        ingest_completed_cdn_play_by_play_job,
+        status=DagsterRunStatus.FAILURE,
+        tags={"gestalt/cdn_pending_digest": digest},
+    )
+    retry = completed_game_cdn_play_by_play_sensor(
+        build_sensor_context(instance=instance)
+    )
+    assert retry.run_key == f"cdn-pbp:{digest}:attempt-1"
 
 
 def test_definitions_are_loadable_and_automations_default_stopped() -> None:
