@@ -863,6 +863,35 @@ def _score_schedule_performance_games(
     ats_wins = 0
     ats_losses = 0
     ats_pushes = 0
+    ats_edge_buckets = [
+        {
+            "key": "under_2",
+            "label": "<2 pts",
+            "minimum_edge": 0.0,
+            "maximum_edge": 2.0,
+            "wins": 0,
+            "losses": 0,
+            "pushes": 0,
+        },
+        {
+            "key": "2_to_under_4",
+            "label": "2–<4 pts",
+            "minimum_edge": 2.0,
+            "maximum_edge": 4.0,
+            "wins": 0,
+            "losses": 0,
+            "pushes": 0,
+        },
+        {
+            "key": "4_plus",
+            "label": "4+ pts",
+            "minimum_edge": 4.0,
+            "maximum_edge": None,
+            "wins": 0,
+            "losses": 0,
+            "pushes": 0,
+        },
+    ]
     for game in games:
         final = game.get("final")
         grading = game.get("grading")
@@ -915,6 +944,19 @@ def _score_schedule_performance_games(
             ats_losses += 1
         elif ats_result == "push":
             ats_pushes += 1
+        if ats_result in {"win", "loss", "push"}:
+            model_edge = _float_or_none(market_grading.get("model_edge_points"))
+            if model_edge is None and model_margin is not None and market_margin is not None:
+                model_edge = model_margin - market_margin
+            if model_edge is not None:
+                absolute_edge = abs(model_edge)
+                bucket_index = (
+                    0 if absolute_edge < 2.0 else 1 if absolute_edge < 4.0 else 2
+                )
+                result_key = {"win": "wins", "loss": "losses", "push": "pushes"}[
+                    ats_result
+                ]
+                ats_edge_buckets[bucket_index][result_key] += 1
 
     probability = {
         "n": len(probability_rows),
@@ -937,6 +979,14 @@ def _score_schedule_performance_games(
         else None
     )
     graded_ats = ats_wins + ats_losses
+    for bucket in ats_edge_buckets:
+        bucket_wins = int(bucket["wins"])
+        bucket_losses = int(bucket["losses"])
+        bucket_pushes = int(bucket["pushes"])
+        bucket_graded = bucket_wins + bucket_losses
+        bucket["n"] = bucket_graded + bucket_pushes
+        bucket["cover_rate"] = bucket_wins / bucket_graded if bucket_graded else None
+        bucket["units_at_minus_110"] = bucket_wins * (100.0 / 110.0) - bucket_losses
     return {
         "games": len(games),
         "probability": probability,
@@ -970,6 +1020,7 @@ def _score_schedule_performance_games(
             "pushes": ats_pushes,
             "cover_rate": ats_wins / graded_ats if graded_ats else None,
             "units_at_minus_110": ats_wins * (100.0 / 110.0) - ats_losses,
+            "edge_buckets": ats_edge_buckets,
         },
     }
 

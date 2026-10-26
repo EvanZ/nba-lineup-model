@@ -1216,6 +1216,13 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-performance-bottom strong.negative { color: #a33e28; }
 .schedule-performance-bottom strong small { color: #69716b; font-size: 8px; }
 .schedule-performance-bottom div > small { overflow: hidden; color: #8a918b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 7px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.schedule-performance-edge-buckets { border-top: 1px solid #d9d6ce; }
+.schedule-performance-edge-title { display: block; margin-bottom: 6px; color: #69716b; font-size: 8px; font-weight: 900; letter-spacing: 0.03em; text-transform: uppercase; }
+.schedule-performance-edge-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.schedule-performance-edge-grid > div { min-width: 0; display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 2px 5px; }
+.schedule-performance-edge-grid span { color: #69716b; font-size: 8px; font-weight: 800; }
+.schedule-performance-edge-grid strong { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; text-align: right; }
+.schedule-performance-edge-grid small { grid-column: 1 / -1; color: #8a918b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 7px; text-align: right; }
 .schedule-performance-footnote { margin: 0; padding: 6px 13px; border-top: 1px solid #e2dfd7; color: #8a918b; font-size: 7px; line-height: 1.4; }
 .schedule-day-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; padding: 35px 0 15px; border-bottom: 1px solid #17201c; }
 .schedule-day-heading .eyebrow { margin: 0 0 7px; }

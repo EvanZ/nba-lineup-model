@@ -119,6 +119,19 @@ type ProbabilityScore = {
   brier: number | null;
 };
 
+type AtsEdgeBucket = {
+  key: "under_2" | "2_to_under_4" | "4_plus";
+  label: string;
+  minimum_edge: number;
+  maximum_edge: number | null;
+  n: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  cover_rate: number | null;
+  units_at_minus_110: number;
+};
+
 type PerformanceWindow = {
   key: string;
   label: string;
@@ -147,6 +160,7 @@ type PerformanceWindow = {
     pushes: number;
     cover_rate: number | null;
     units_at_minus_110: number;
+    edge_buckets?: AtsEdgeBucket[];
   };
 };
 
@@ -395,6 +409,10 @@ function metricSigned(value: number | null, suffix = "") {
   return value === null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(1)}${suffix}`;
 }
 
+function atsRecord(bucket: AtsEdgeBucket) {
+  return `${bucket.wins}-${bucket.losses}${bucket.pushes ? `-${bucket.pushes}` : ""}`;
+}
+
 function PerformanceSummary({ window, asOf }: { window: PerformanceWindow; asOf: string | null }) {
   const brierScores = [
     window.probability.gestalt.brier,
@@ -405,6 +423,7 @@ function PerformanceSummary({ window, asOf }: { window: PerformanceWindow; asOf:
   const brierClass = (value: number | null) => value !== null && value === bestBrier ? "best" : "";
   const advantage = window.spread.gestalt_advantage;
   const ats = window.ats;
+  const edgeBuckets = ats.edge_buckets ?? [];
   const record = `${ats.wins}-${ats.losses}${ats.pushes ? `-${ats.pushes}` : ""}`;
   return <aside className="schedule-performance-card" aria-labelledby="schedule-performance-title">
     <div className="schedule-performance-card-heading">
@@ -434,6 +453,16 @@ function PerformanceSummary({ window, asOf }: { window: PerformanceWindow; asOf:
         <small>{metricPercent(ats.cover_rate)} · {metricSigned(ats.units_at_minus_110, "u")} @ −110</small>
       </div>
     </div>
+    {edgeBuckets.length > 0 && <div className="schedule-performance-section schedule-performance-edge-buckets">
+      <span className="schedule-performance-edge-title">ATS by frozen model edge</span>
+      <div className="schedule-performance-edge-grid">
+        {edgeBuckets.map((bucket) => <div key={bucket.key}>
+          <span>{bucket.label}</span>
+          <strong>{atsRecord(bucket)}</strong>
+          <small>{metricPercent(bucket.cover_rate)} · n={bucket.n}</small>
+        </div>)}
+      </div>
+    </div>}
     <p className="schedule-performance-footnote">* Actual mins is a postgame hindsight diagnostic (n={window.probability.actual_minutes.n}), not a pregame forecast. Lower Brier and margin MAE are better. ATS units assume −110.</p>
   </aside>;
 }

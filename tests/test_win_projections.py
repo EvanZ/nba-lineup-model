@@ -74,10 +74,10 @@ def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
     final_dir = tmp_path / "final"
     final_dir.mkdir()
     games = [
-        ("2026-10-23T23:00:00Z", 10.0, 6.0, 0.7, -4.0, -300, 300, 0.6, "win"),
-        ("2026-10-20T23:00:00Z", -5.0, 2.0, 0.6, -1.0, 300, -300, 0.55, "loss"),
-        ("2026-10-10T23:00:00Z", 3.0, 4.0, 0.55, 2.0, -120, 100, 0.52, "push"),
-        ("2026-09-10T23:00:00Z", -2.0, -1.0, 0.45, -3.0, 110, -130, 0.4, "win"),
+        ("2026-10-23T23:00:00Z", 10.0, 6.0, 0.7, -4.0, -300, 300, 0.6, "win", 4.0),
+        ("2026-10-20T23:00:00Z", -5.0, 2.0, 0.6, -1.0, 300, -300, 0.55, "loss", 3.999),
+        ("2026-10-10T23:00:00Z", 3.0, 4.0, 0.55, 2.0, -120, 100, 0.52, "push", 2.0),
+        ("2026-09-10T23:00:00Z", -2.0, -1.0, 0.45, -3.0, 110, -130, 0.4, "win", 1.999),
     ]
     for index, (
         start_time,
@@ -89,6 +89,7 @@ def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
         away_moneyline,
         polymarket_probability,
         ats_result,
+        model_edge_points,
     ) in enumerate(games, start=1):
         (final_dir / f"{index}.summary.json").write_text(
             json.dumps(
@@ -107,6 +108,7 @@ def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
                         "market": {
                             "market_implied_home_margin": market_margin,
                             "model_ats_result": ats_result,
+                            "model_edge_points": model_edge_points,
                         },
                     },
                     "pregame": {
@@ -152,6 +154,44 @@ def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
     }
     assert seven_days["ats"]["cover_rate"] == pytest.approx(0.5)
     assert seven_days["ats"]["units_at_minus_110"] == pytest.approx(-1.0 / 11.0)
+    assert season["ats"]["edge_buckets"] == [
+        {
+            "key": "under_2",
+            "label": "<2 pts",
+            "minimum_edge": 0.0,
+            "maximum_edge": 2.0,
+            "n": 1,
+            "wins": 1,
+            "losses": 0,
+            "pushes": 0,
+            "cover_rate": pytest.approx(1.0),
+            "units_at_minus_110": pytest.approx(10.0 / 11.0),
+        },
+        {
+            "key": "2_to_under_4",
+            "label": "2–<4 pts",
+            "minimum_edge": 2.0,
+            "maximum_edge": 4.0,
+            "n": 2,
+            "wins": 0,
+            "losses": 1,
+            "pushes": 1,
+            "cover_rate": pytest.approx(0.0),
+            "units_at_minus_110": pytest.approx(-1.0),
+        },
+        {
+            "key": "4_plus",
+            "label": "4+ pts",
+            "minimum_edge": 4.0,
+            "maximum_edge": None,
+            "n": 1,
+            "wins": 1,
+            "losses": 0,
+            "pushes": 0,
+            "cover_rate": pytest.approx(1.0),
+            "units_at_minus_110": pytest.approx(10.0 / 11.0),
+        },
+    ]
 
 
 def test_polymarket_moneyline_snapshot_uses_main_market_midpoints(monkeypatch) -> None:
