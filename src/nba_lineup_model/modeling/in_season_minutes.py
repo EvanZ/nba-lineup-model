@@ -19,8 +19,8 @@ import numpy as np
 import pandas as pd
 
 REGULATION_TEAM_MINUTES = 240.0
-STATE_SCHEMA_VERSION = 1
-CONTRIBUTION_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
+CONTRIBUTION_SCHEMA_VERSION = 2
 
 PLAYED = "played"
 MEDICAL_ABSENCE = "medical_absence"
@@ -60,6 +60,7 @@ class InSeasonMinutesConfig:
     conditional_prior_games: float
     rotation_size: int = 15
     conditional_clip_delta: float = 12.0
+    conditional_lookback_games: int | None = None
 
     def validate(self) -> None:
         if not self.updater_version.strip():
@@ -72,6 +73,8 @@ class InSeasonMinutesConfig:
             raise ValueError("Rotation size must be positive")
         if not np.isfinite(self.conditional_clip_delta) or self.conditional_clip_delta <= 0:
             raise ValueError("Conditional clipping delta must be finite and positive")
+        if self.conditional_lookback_games is not None and self.conditional_lookback_games <= 0:
+            raise ValueError("Conditional lookback games must be positive or None")
 
 
 def initialize_minutes_state(
@@ -127,6 +130,8 @@ def initialize_minutes_state(
     state["conditional_observations"] = 0
     state["conditional_minutes_weighted_sum"] = 0.0
     state["effective_conditional_weight"] = 0.0
+    state["conditional_window_observations"] = 0
+    state["conditional_history_json"] = "[]"
     state["included_game_ids_json"] = "[]"
     state["contribution_lineage_json"] = "[]"
     return state.sort_values("player_id", kind="stable").reset_index(drop=True)
@@ -191,7 +196,15 @@ def advance_minutes_state(
             if not np.isfinite(weight) or not 0.0 <= weight <= 1.0:
                 raise ValueError("Conditional observation weight must lie in [0, 1]")
             observed = float(
-                getattr(row, "competitive_role_minutes", row.regulation_equivalent_minutes)
+                getattr(
+                    row,
+                    "early_game_role_minutes",
+                    getattr(
+                        row,
+                        "competitive_role_minutes",
+                        row.regulation_equivalent_minutes,
+                    ),
+                )
             )
             prior = float(output.at[player_id, "preseason_conditional_minutes_prior"])
             clipped = (
@@ -205,9 +218,21 @@ def advance_minutes_state(
                     )
                 )
             )
+            history = json.loads(str(output.at[player_id, "conditional_history_json"]))
+            history.append({"minutes": clipped, "weight": weight})
+            if config.conditional_lookback_games is not None:
+                history = history[-config.conditional_lookback_games :]
+            output.at[player_id, "conditional_history_json"] = json.dumps(
+                history, separators=(",", ":")
+            )
             output.at[player_id, "conditional_observations"] += 1
-            output.at[player_id, "conditional_minutes_weighted_sum"] += weight * clipped
-            output.at[player_id, "effective_conditional_weight"] += weight
+            output.at[player_id, "conditional_window_observations"] = len(history)
+            output.at[player_id, "conditional_minutes_weighted_sum"] = sum(
+                float(item["weight"]) * float(item["minutes"]) for item in history
+            )
+            output.at[player_id, "effective_conditional_weight"] = sum(
+                float(item["weight"]) for item in history
+            )
     participation_denominator = (
         config.participation_prior_games + output["participation_observations"].astype(float)
     )

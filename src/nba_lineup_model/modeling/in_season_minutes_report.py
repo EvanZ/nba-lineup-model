@@ -39,8 +39,8 @@ def _player_summary(evaluation: pd.DataFrame, state: pd.DataFrame) -> pd.DataFra
     if available.empty:
         return pd.DataFrame()
     target = (
-        "competitive_role_minutes"
-        if "competitive_role_minutes" in available
+        "early_game_role_minutes"
+        if "early_game_role_minutes" in available
         else "regulation_equivalent_minutes"
     )
     available["frozen_error"] = (
@@ -69,6 +69,7 @@ def _player_summary(evaluation: pd.DataFrame, state: pd.DataFrame) -> pd.DataFra
         "preseason_conditional_minutes_prior",
         "current_conditional_minutes_estimate",
         "conditional_observations",
+        "conditional_window_observations",
     ]
     available = [column for column in state_columns if column in state.columns]
     if "player_id" in available:
@@ -87,7 +88,11 @@ def _player_rows(players: pd.DataFrame) -> str:
         change_class = "positive" if improvement > 0 else "negative" if improvement < 0 else ""
         current = getattr(row, "current_conditional_minutes_estimate", None)
         prior = getattr(row, "preseason_conditional_minutes_prior", None)
-        observations = getattr(row, "conditional_observations", None)
+        observations = getattr(
+            row,
+            "conditional_window_observations",
+            getattr(row, "conditional_observations", None),
+        )
         rows.append(
             "<tr>"
             f"<td>{html.escape(str(row.player_name))}</td>"
@@ -151,10 +156,12 @@ def render_minutes_shadow_report(
             "</tr>"
         )
     exclusions = len(summary.get("excluded_games", []))
-    coverage = summary.get("game_script_coverage", {})
+    coverage = summary.get("early_role_coverage", {})
     reconstructed = int(coverage.get("reconstructed_games", 0))
     fallback = int(coverage.get("fallback_games", int(summary["games"])))
-    garbage_games = int(coverage.get("garbage_time_games", 0))
+    role_config = summary.get("config", {}).get("early_game_role", {})
+    cutoff_minutes = int(role_config.get("cutoff_minutes", 44))
+    lookback_games = int(summary.get("config", {}).get("conditional_lookback_games", 3))
     table_header = """
       <thead><tr><th>Player</th><th>Team</th><th>Available games</th><th>Actual avg.</th>
       <th>Frozen</th><th>Updated</th><th>Frozen MAE</th><th>Updated MAE</th>
@@ -173,17 +180,17 @@ main{{max-width:1480px;margin:auto;padding:32px}} h1,h2{{font-family:Inter,syste
 .grid{{display:grid;grid-template-columns:1fr 1fr;gap:18px}} .grid>section{{min-width:0}} input{{width:100%;max-width:420px;padding:10px;border:1px solid var(--line);background:#fffdf7;font:inherit;margin:0 0 10px}} footer{{margin:36px 0;color:var(--muted);font-size:11px}} @media(max-width:900px){{.grid{{grid-template-columns:1fr}}main{{padding:18px}}}}
 </style></head><body><main>
 <div class="eyebrow">NBA GESTALT · Shadow evaluation</div>
-<h1>Game-script-aware minutes updater</h1>
-<p>Season {html.escape(str(summary['season']))} · through {html.escape(str(summary['through_date']))} Pacific · generated {html.escape(generated_label)} · conditional prior {float(summary['config']['conditional_prior_games']):g} equivalent games</p>
-<div class="note"><strong>Research only.</strong> Official injury reports control availability. Updated NAIL ratings are held fixed so the game table isolates frozen versus updated minutes. Realized score paths reconstruct historical role targets but are never used as pregame features.</div>
+<h1>Early-game minutes updater</h1>
+<p>Season {html.escape(str(summary['season']))} · through {html.escape(str(summary['through_date']))} Pacific · generated {html.escape(generated_label)} · first {cutoff_minutes} minutes · {lookback_games}-game lookback · preseason weight {float(summary['config']['conditional_prior_games']):g} games</p>
+<div class="note"><strong>Research only.</strong> Official injury reports control availability. Both game-table rows use the same possession-updated NAIL ratings, so the comparison isolates frozen versus updated minutes. The updated role uses only earlier completed games.</div>
 <section class="cards">
   <div class="card"><div class="label">Games</div><div class="value">{int(summary['games'])}</div><div class="sub">{int(summary['player_game_rows']):,} player-game rows · {exclusions} exclusions</div></div>
   <div class="card"><div class="label">Conditional MAE</div><div class="value">{_number(updated['conditional_minutes_mae'], 2)}</div><div class="sub">Frozen {_number(frozen['conditional_minutes_mae'], 2)} · <span class="positive">better by {conditional_delta:.2f}</span></div></div>
   <div class="card"><div class="label">Unconditional MAE</div><div class="value">{_number(updated['unconditional_minutes_mae'], 2)}</div><div class="sub">Frozen {_number(frozen['unconditional_minutes_mae'], 2)} · <span class="positive">better by {unconditional_delta:.2f}</span></div></div>
   <div class="card"><div class="label">Available-player observations</div><div class="value">{int(updated['conditional_minutes_n']):,}</div><div class="sub">Played games plus healthy coach DNPs</div></div>
-  <div class="card"><div class="label">Game-script coverage</div><div class="value">{reconstructed}/{int(summary['games'])}</div><div class="sub">{garbage_games} garbage-time games · {fallback} fallbacks</div></div>
+  <div class="card"><div class="label">{cutoff_minutes}-minute role coverage</div><div class="value">{reconstructed}/{int(summary['games'])}</div><div class="sub">{fallback} realized-minute fallbacks</div></div>
 </section>
-<h2>Updated-ratings minutes A/B</h2><p>Both rows use the same updated NAIL ratings and pregame-only game-script transform. Lower is better for MAE, RMSE, Brier, and log loss.</p>
+<h2>Updated-ratings minutes A/B</h2><p>Both rows use the same possession-updated NAIL ratings. Only the minutes allocation changes. Lower is better for MAE, RMSE, Brier, and log loss.</p>
 <div class="table-wrap"><table><thead><tr><th>Model inputs</th><th>Games</th><th>Margin MAE</th><th>RMSE</th><th>Brier</th><th>Log loss</th><th>Winner</th><th>ATS</th></tr></thead><tbody>{''.join(four_cell_rows)}</tbody></table></div>
 <div class="grid">
  <section><h2>Most improved players</h2><p>At least two available games; improvement is frozen MAE minus updated MAE.</p><div class="table-wrap"><table>{table_header}<tbody>{_player_rows(top)}</tbody></table></div></section>
@@ -191,7 +198,7 @@ main{{max-width:1480px;margin:auto;padding:32px}} h1,h2{{font-family:Inter,syste
 </div>
 <h2>All evaluated players</h2><input id="filter" aria-label="Filter players" placeholder="Filter player or team…">
 <div class="table-wrap"><table id="players">{table_header}<tbody>{_player_rows(players)}</tbody></table></div>
-<footer>Frozen = immutable pregame role projection. Updated = prior-centered competitive-role estimate using only earlier completed games. The conditional target removes persistent fourth-quarter garbage time and extrapolates the competitive rotation to 240 team minutes. The unconditional target remains realized regulation-equivalent minutes. Medical and inactive-list absences are excluded; healthy coach DNPs remain zero-minute role observations. Both A/B arms use projected margin—not final margin—to estimate expected blowout minutes.</footer>
+<footer>Frozen = immutable pregame minutes projection. Updated = the last {lookback_games} eligible early-game roles, measured through {cutoff_minutes} elapsed minutes and normalized to a 48-minute role, with a {float(summary['config']['conditional_prior_games']):g}-game preseason prior. Each injury-conditioned team allocation is normalized to 240 minutes. Medical and inactive-list absences are excluded; known active coach DNPs remain zero-minute role observations. No realized score or margin is used as a forecast feature.</footer>
 </main><script>const q=document.getElementById('filter'),rows=[...document.querySelectorAll('#players tbody tr')];q.addEventListener('input',()=>{{const v=q.value.toLowerCase();rows.forEach(r=>r.hidden=!r.textContent.toLowerCase().includes(v));}});</script></body></html>"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(document)

@@ -25,7 +25,8 @@ from nba_lineup_model.modeling.in_season_minutes import (
 )
 from nba_lineup_model.modeling.in_season_minutes_monitor import (
     _load_cdn_play_by_play,
-    apply_competitive_role_observations,
+    _projection_margin,
+    apply_early_game_role_observations,
     build_game_observations,
 )
 from nba_lineup_model.season.slate_time import summary_slate_date
@@ -52,6 +53,21 @@ def test_summary_slate_date_uses_pacific_date_across_utc_midnight() -> None:
         "pregame": {"start_time": "2026-10-26T01:00:00Z"},
     }
     assert summary_slate_date(late_west_game).isoformat() == "2026-10-25"
+
+
+def test_projection_margin_combines_requested_ratings_and_minutes() -> None:
+    summary = {"pregame": {"projection": {"home_margin": 0.0}}}
+    margin = _projection_margin(
+        summary,
+        home_minutes={3: 48.0},
+        away_minutes={2: 48.0},
+        frozen_home={1: 48.0},
+        frozen_away={2: 48.0},
+        preseason_ratings={1: 1.0, 2: 0.0, 3: 4.0},
+        forecast_ratings={1: 2.0, 2: 0.0, 3: 5.0},
+    )
+
+    assert margin == pytest.approx(4.0)
 
 
 def _priors() -> pd.DataFrame:
@@ -113,11 +129,11 @@ def test_injury_absence_does_not_erase_conditional_role() -> None:
     assert updated.loc[3, "current_participation_estimate"] == pytest.approx(0.5)
 
 
-def test_state_prefers_competitive_role_target_over_realized_blowout_minutes() -> None:
+def test_state_prefers_early_game_role_target_over_realized_minutes() -> None:
     state = initialize_minutes_state(_priors(), season="2026-27", config=_config())
     observation = _observations().iloc[[0]].copy()
     observation["regulation_equivalent_minutes"] = 20.0
-    observation["competitive_role_minutes"] = 34.0
+    observation["early_game_role_minutes"] = 34.0
     updated = advance_minutes_state(
         state,
         observation,
@@ -128,12 +144,45 @@ def test_state_prefers_competitive_role_target_over_realized_blowout_minutes() -
     assert updated.loc[1, "current_conditional_minutes_estimate"] == pytest.approx(30.8)
 
 
+def test_conditional_state_uses_locked_three_game_window_and_point_two_prior() -> None:
+    config = InSeasonMinutesConfig(
+        updater_version="early-game-test",
+        participation_prior_games=4.0,
+        conditional_prior_games=0.2,
+        conditional_clip_delta=48.0,
+        conditional_lookback_games=3,
+    )
+    state = initialize_minutes_state(_priors(), season="2026-27", config=config)
+    for index, role in enumerate((36.0, 24.0, 48.0, 12.0), start=1):
+        observation = _observations(f"g{index}").iloc[[0]].copy()
+        observation["regulation_equivalent_minutes"] = role
+        observation["early_game_role_minutes"] = role
+        state = advance_minutes_state(
+            state,
+            observation,
+            config=config,
+            contribution_sha256=str(index) * 64,
+        )
+
+    player = state.set_index("player_id").loc[1]
+    assert player["conditional_observations"] == 4
+    assert player["conditional_window_observations"] == 3
+    assert json.loads(player["conditional_history_json"]) == [
+        {"minutes": 24.0, "weight": 1.0},
+        {"minutes": 48.0, "weight": 1.0},
+        {"minutes": 12.0, "weight": 1.0},
+    ]
+    assert player["current_conditional_minutes_estimate"] == pytest.approx(
+        (0.2 * 30.0 + 24.0 + 48.0 + 12.0) / 3.2
+    )
+
+
 def test_missing_play_by_play_falls_back_to_realized_minutes() -> None:
     observations = _observations().assign(
         team="AAA",
         player_name=["One", "Two", "Three"],
     )
-    result = apply_competitive_role_observations(
+    result = apply_early_game_role_observations(
         observations,
         {"game_id": "001", "home_team": "AAA", "away_team": "BBB"},
         {},
@@ -141,13 +190,13 @@ def test_missing_play_by_play_falls_back_to_realized_minutes() -> None:
         priors=_priors(),
     )
 
-    assert result["competitive_role_minutes"].tolist() == pytest.approx(
+    assert result["early_game_role_minutes"].tolist() == pytest.approx(
         result["regulation_equivalent_minutes"].tolist()
     )
-    assert result["game_script_status"].eq("fallback").all()
+    assert result["early_role_status"].eq("fallback").all()
 
 
-def test_garbage_only_player_can_have_zero_competitive_role(monkeypatch) -> None:
+def test_post_cutoff_only_player_can_have_zero_early_role(monkeypatch) -> None:
     observations = pd.DataFrame(
         {
             "player_id": [1, 2],
@@ -177,15 +226,11 @@ def test_garbage_only_player_can_have_zero_competitive_role(monkeypatch) -> None
         lambda reconstruction: pd.DataFrame(),
     )
     monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor.competitive_boundary_seconds",
-        lambda frame: 2520.0,
-    )
-    monkeypatch.setattr(
         "nba_lineup_model.modeling.in_season_minutes_monitor.competitive_role_minutes",
         lambda frame, boundary_seconds: {1: 34.0},
     )
 
-    result = apply_competitive_role_observations(
+    result = apply_early_game_role_observations(
         observations,
         {"game_id": "001", "home_team": "AAA", "away_team": "BBB"},
         {},
@@ -193,11 +238,12 @@ def test_garbage_only_player_can_have_zero_competitive_role(monkeypatch) -> None
         priors=_priors(),
     ).set_index("player_id")
 
-    assert result["game_script_status"].eq("reconstructed").all()
-    assert result.loc[2, "competitive_role_minutes"] == 0.0
+    assert result["early_role_status"].eq("reconstructed").all()
+    assert result.loc[2, "early_game_role_minutes"] == 0.0
+    assert result.loc[1, "role_cutoff_seconds"] == 44 * 60
 
 
-def test_missing_competitive_player_fails_when_minutes_exceed_garbage_window(
+def test_missing_early_player_fails_when_minutes_exceed_post_cutoff_window(
     monkeypatch,
 ) -> None:
     observations = pd.DataFrame(
@@ -229,15 +275,11 @@ def test_missing_competitive_player_fails_when_minutes_exceed_garbage_window(
         lambda reconstruction: pd.DataFrame(),
     )
     monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor.competitive_boundary_seconds",
-        lambda frame: 2520.0,
-    )
-    monkeypatch.setattr(
         "nba_lineup_model.modeling.in_season_minutes_monitor.competitive_role_minutes",
         lambda frame, boundary_seconds: {1: 34.0},
     )
 
-    result = apply_competitive_role_observations(
+    result = apply_early_game_role_observations(
         observations,
         {"game_id": "001", "home_team": "AAA", "away_team": "BBB"},
         {},
@@ -245,8 +287,8 @@ def test_missing_competitive_player_fails_when_minutes_exceed_garbage_window(
         priors=_priors(),
     )
 
-    assert result["game_script_status"].eq("fallback").all()
-    assert result["game_script_reason"].str.contains("omit played players").all()
+    assert result["early_role_status"].eq("fallback").all()
+    assert result["early_role_reason"].str.contains("omit played players").all()
 
 
 def test_cdn_play_by_play_uses_archive_endpoint_value(monkeypatch) -> None:

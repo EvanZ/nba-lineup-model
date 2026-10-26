@@ -24,11 +24,7 @@ from nba_lineup_model.events.normalize import canonical_events
 from nba_lineup_model.ingest.nba_cdn import NbaCdnEndpoint
 from nba_lineup_model.lineups.reconstruct import lineup_stints_frame, reconstruct_lineups
 from nba_lineup_model.modeling.game_script_minutes import (
-    DEFAULT_GAME_SCRIPT_CONFIG,
-    apply_expected_game_script,
-    competitive_boundary_seconds,
     competitive_role_minutes,
-    expected_garbage_minutes,
 )
 from nba_lineup_model.modeling.in_season_minutes import (
     COACH_DNP,
@@ -51,7 +47,10 @@ from nba_lineup_model.modeling.in_season_nail import read_game_contribution
 from nba_lineup_model.season.slate_time import summary_slate_date
 
 SEASON = "2026-27"
-UPDATER_VERSION = "game_script_role_shrinkage_v4"
+UPDATER_VERSION = "early_game_role_v1"
+DEFAULT_ROLE_CUTOFF_MINUTES = 44
+DEFAULT_ROLE_LOOKBACK_GAMES = 3
+DEFAULT_ROLE_PRIOR_GAMES = 0.2
 ESPN_TEAM_ALIASES = {
     "GS": "GSW",
     "NY": "NYK",
@@ -227,23 +226,26 @@ def build_game_observations(
     return output.sort_values(["team", "player_id"], kind="stable").reset_index(drop=True)
 
 
-def apply_competitive_role_observations(
+def apply_early_game_role_observations(
     observations: pd.DataFrame,
     summary: dict[str, Any],
     espn: dict[str, Any],
     play_by_play: dict[str, Any] | None,
     *,
     priors: pd.DataFrame,
+    cutoff_minutes: int = DEFAULT_ROLE_CUTOFF_MINUTES,
 ) -> pd.DataFrame:
-    """Attach leakage-safe role targets, falling back to realized minutes."""
+    """Attach cutoff-normalized role targets, falling back to realized minutes."""
 
+    cutoff_seconds = float(cutoff_minutes * 60)
+    if cutoff_minutes not in (36, 40, 44, 48):
+        raise ValueError("Early-game role cutoff must be one of 36, 40, 44, or 48")
     output = observations.copy()
-    output["competitive_role_minutes"] = output["regulation_equivalent_minutes"]
-    output["competitive_boundary_seconds"] = np.nan
+    output["early_game_role_minutes"] = output["regulation_equivalent_minutes"]
+    output["role_cutoff_seconds"] = cutoff_seconds
     output["game_duration_seconds"] = np.nan
-    output["garbage_time_detected"] = False
-    output["game_script_status"] = "fallback"
-    output["game_script_reason"] = "play-by-play unavailable"
+    output["early_role_status"] = "fallback"
+    output["early_role_reason"] = "play-by-play unavailable"
     if play_by_play is None:
         return output
     try:
@@ -255,36 +257,32 @@ def apply_competitive_role_observations(
             validate_boxscore_minutes=False,
         )
         stints = lineup_stints_frame(reconstruction)
-        boundary = competitive_boundary_seconds(events)
         game_end = max(float(event.elapsed_game_seconds) for event in events)
-        roles = competitive_role_minutes(stints, boundary_seconds=boundary)
+        roles = competitive_role_minutes(stints, boundary_seconds=cutoff_seconds)
         played = output.loc[output["played"]].copy()
         missing = played.loc[
             ~played["player_id"].astype(int).isin(roles),
             ["player_id", "actual_minutes"],
         ]
         if not missing.empty:
-            # A player used only after the competitive boundary correctly has
-            # a zero-minute competitive role.  Fail closed only when their
-            # realized exposure could not fit entirely inside the detected
-            # garbage-time window, which indicates incomplete reconstruction.
-            garbage_minutes = max(0.0, game_end - boundary) / 60.0
+            # A player used only after the fixed cutoff correctly has a
+            # zero-minute early role. Fail closed only when their realized
+            # exposure could not fit entirely after the cutoff.
+            post_cutoff_minutes = max(0.0, game_end - cutoff_seconds) / 60.0
             impossible = missing.loc[
-                missing["actual_minutes"].astype(float).gt(garbage_minutes + 0.25)
+                missing["actual_minutes"].astype(float).gt(post_cutoff_minutes + 0.25)
             ]
             if not impossible.empty:
                 ids = sorted(impossible["player_id"].astype(int).tolist())
-                raise ValueError(f"competitive stints omit played players: {ids}")
-        output["competitive_role_minutes"] = (
+                raise ValueError(f"early-game stints omit played players: {ids}")
+        output["early_game_role_minutes"] = (
             output["player_id"].astype(int).map(roles).fillna(0.0).astype(float)
         )
-        output["competitive_boundary_seconds"] = boundary
         output["game_duration_seconds"] = game_end
-        output["garbage_time_detected"] = boundary + 1e-6 < game_end
-        output["game_script_status"] = "reconstructed"
-        output["game_script_reason"] = None
+        output["early_role_status"] = "reconstructed"
+        output["early_role_reason"] = None
     except (KeyError, TypeError, ValueError) as error:
-        output["game_script_reason"] = str(error)
+        output["early_role_reason"] = str(error)
     return output
 
 
@@ -480,7 +478,7 @@ def _signed_strength(
     )
 
 
-def _script_adjusted_projection(
+def _projection_margin(
     summary: dict[str, Any],
     *,
     home_minutes: dict[int, float],
@@ -489,35 +487,14 @@ def _script_adjusted_projection(
     frozen_away: dict[int, float],
     preseason_ratings: dict[int, float],
     forecast_ratings: dict[int, float],
-    iterations: int = 2,
-) -> tuple[float, dict[int, float], dict[int, float], float]:
-    """Resolve the small margin/minutes feedback loop using pregame inputs only."""
+) -> float:
+    """Replace the frozen lineup strength with the requested ratings/minutes."""
 
     base_margin = float(summary["pregame"]["projection"]["home_margin"])
     frozen_strength = _signed_strength(summary, frozen_home, frozen_away, preseason_ratings)
-    margin = base_margin + _signed_strength(
+    return base_margin + _signed_strength(
         summary, home_minutes, away_minutes, forecast_ratings
     ) - frozen_strength
-    adjusted_home = home_minutes
-    adjusted_away = away_minutes
-    for _ in range(iterations):
-        adjusted_home = apply_expected_game_script(
-            home_minutes,
-            projected_margin=margin,
-        )
-        adjusted_away = apply_expected_game_script(
-            away_minutes,
-            projected_margin=margin,
-        )
-        margin = base_margin + _signed_strength(
-            summary, adjusted_home, adjusted_away, forecast_ratings
-        ) - frozen_strength
-    return (
-        margin,
-        adjusted_home,
-        adjusted_away,
-        expected_garbage_minutes(margin),
-    )
 
 
 def _ats(summary: dict[str, Any], margin: float) -> str | None:
@@ -559,19 +536,15 @@ def _game_metrics(frame: pd.DataFrame, prefix: str) -> dict[str, object]:
 def _player_metrics(frame: pd.DataFrame) -> dict[str, object]:
     available = frame["outcome_classification"].isin(CONDITIONAL_OUTCOMES)
     conditional_target = (
-        "competitive_role_minutes"
-        if "competitive_role_minutes" in frame
+        "early_game_role_minutes"
+        if "early_game_role_minutes" in frame
         else "regulation_equivalent_minutes"
     )
     result: dict[str, object] = {}
     for label, prefix in (("frozen", "frozen"), ("updated", "updated")):
         conditional = frame.loc[available, f"{prefix}_conditional_minutes"].astype(float)
         actual_conditional = frame.loc[available, conditional_target].astype(float)
-        projected_column = (
-            f"{prefix}_script_projected_minutes"
-            if f"{prefix}_script_projected_minutes" in frame
-            else f"{prefix}_projected_minutes"
-        )
+        projected_column = f"{prefix}_projected_minutes"
         unconditional = frame[projected_column].astype(float)
         actual = frame["regulation_equivalent_minutes"].astype(float)
         result[label] = {
@@ -613,7 +586,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         participation_prior_games=float(args.participation_prior_games),
         conditional_prior_games=float(args.conditional_prior_games),
         rotation_size=int(cache["minutes"].get("initial_rotation_size", 15)),
+        conditional_clip_delta=48.0,
+        conditional_lookback_games=int(args.conditional_lookback_games),
     )
+    role_cutoff_minutes = int(args.role_cutoff_minutes)
     state = initialize_minutes_state(priors, season=SEASON, config=config)
     ratings = dict(
         zip(
@@ -682,15 +658,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     )
                 except (OSError, subprocess.CalledProcessError, ValueError) as error:
                     play_by_play_error = str(error)
-                observations = apply_competitive_role_observations(
+                observations = apply_early_game_role_observations(
                     observations,
                     summary,
                     espn,
                     play_by_play,
                     priors=priors,
+                    cutoff_minutes=role_cutoff_minutes,
                 )
                 if play_by_play_error is not None:
-                    observations["game_script_reason"] = play_by_play_error
+                    observations["early_role_reason"] = play_by_play_error
                 summary_path = (
                     Path(args.state_dir) / "final" / f"{summary['espn_game_id']}.summary.json"
                 )
@@ -729,12 +706,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     player_id: rating + rating_adjustment.get(player_id, 0.0)
                     for player_id, rating in ratings.items()
                 }
-                (
-                    updated_frozen_margin,
-                    frozen_script_home,
-                    frozen_script_away,
-                    frozen_expected_garbage,
-                ) = _script_adjusted_projection(
+                updated_frozen_margin = _projection_margin(
                     summary,
                     home_minutes=frozen_home,
                     away_minutes=frozen_away,
@@ -743,12 +715,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     preseason_ratings=ratings,
                     forecast_ratings=combined_ratings,
                 )
-                (
-                    updated_updated_margin,
-                    updated_script_home,
-                    updated_script_away,
-                    updated_expected_garbage,
-                ) = _script_adjusted_projection(
+                updated_updated_margin = _projection_margin(
                     summary,
                     home_minutes=updated_home,
                     away_minutes=updated_away,
@@ -757,8 +724,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     preseason_ratings=ratings,
                     forecast_ratings=combined_ratings,
                 )
-                frozen_script = {home: frozen_script_home, away: frozen_script_away}
-                updated_script = {home: updated_script_home, away: updated_script_away}
                 actual = observations.set_index("player_id")
                 for team in (str(summary["away_team"]), str(summary["home_team"])):
                     forecast = forecasts[team].set_index("player_id")
@@ -767,7 +732,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         for row in _pregame_rows(summary, team)
                     }
                     actual_team_ids = set(actual.loc[actual["team"].eq(team)].index)
-                    player_ids = sorted(set(forecast.index) | actual_team_ids)
+                    player_ids = sorted(
+                        set(forecast.index) | actual_team_ids | set(frozen_rows)
+                    )
                     for player_id in player_ids:
                         actual_row = actual.loc[player_id] if player_id in actual.index else None
                         shadow_row = (
@@ -786,7 +753,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                         "player_name": (
                                             str(shadow_row["player_name"])
                                             if shadow_row is not None
-                                            else str(actual_row["player_name"])
+                                            else (
+                                                str(actual_row["player_name"])
+                                                if actual_row is not None
+                                                else str(frozen.get("player_name", player_id))
+                                            )
                                         ),
                                         "outcome_classification": (
                                             str(actual_row["outcome_classification"])
@@ -803,78 +774,95 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                             if actual_row is not None
                                             else 0.0
                                         ),
-                                        "competitive_role_minutes": (
-                                            float(actual_row["competitive_role_minutes"])
+                                        "early_game_role_minutes": (
+                                            float(actual_row["early_game_role_minutes"])
                                             if actual_row is not None
                                             else 0.0
                                         ),
-                                        "game_script_status": (
-                                            str(actual_row["game_script_status"])
+                                        "early_role_status": (
+                                            str(actual_row["early_role_status"])
                                             if actual_row is not None
                                             else "missing player"
                                         ),
-                                        "game_script_reason": (
-                                            actual_row["game_script_reason"]
+                                        "early_role_reason": (
+                                            actual_row["early_role_reason"]
                                             if actual_row is not None
                                             else "missing player"
                                         ),
-                                        "competitive_boundary_seconds": (
-                                            float(actual_row["competitive_boundary_seconds"])
+                                        "role_cutoff_seconds": (
+                                            float(actual_row["role_cutoff_seconds"])
                                             if actual_row is not None
-                                            and pd.notna(
-                                                actual_row["competitive_boundary_seconds"]
-                                            )
-                                            else np.nan
-                                        ),
-                                        "garbage_time_detected": (
-                                            bool(actual_row["garbage_time_detected"])
-                                            if actual_row is not None
-                                            else False
+                                            else float(role_cutoff_minutes * 60)
                                         ),
                                         "frozen_participation_probability": float(
                                             frozen.get(
                                                 "play_probability",
-                                                shadow_row["preseason_participation_prior"],
+                                                (
+                                                    shadow_row[
+                                                        "preseason_participation_prior"
+                                                    ]
+                                                    if shadow_row is not None
+                                                    else 0.0
+                                                ),
                                             )
                                             or 0.0
                                         ),
-                                        "updated_participation_probability": float(
-                                            shadow_row["game_participation_probability"]
+                                        "updated_participation_probability": (
+                                            float(
+                                                shadow_row[
+                                                    "game_participation_probability"
+                                                ]
+                                            )
+                                            if shadow_row is not None
+                                            else 0.0
                                         ),
                                         "frozen_conditional_minutes": float(
                                             frozen.get(
                                                 "conditional_minutes",
-                                                shadow_row[
-                                                    "preseason_conditional_minutes_prior"
-                                                ],
+                                                (
+                                                    shadow_row[
+                                                        "preseason_conditional_minutes_prior"
+                                                    ]
+                                                    if shadow_row is not None
+                                                    else 0.0
+                                                ),
                                             )
                                         ),
-                                        "updated_conditional_minutes": float(
-                                            shadow_row["current_conditional_minutes_estimate"]
+                                        "updated_conditional_minutes": (
+                                            float(
+                                                shadow_row[
+                                                    "current_conditional_minutes_estimate"
+                                                ]
+                                            )
+                                            if shadow_row is not None
+                                            else 0.0
                                         ),
                                         "frozen_projected_minutes": float(
                                             frozen.get("projected_minutes", 0.0)
                                         ),
-                                        "updated_projected_minutes": float(
-                                            shadow_row["final_normalized_minutes"]
-                                        ),
-                                        "frozen_script_projected_minutes": float(
-                                            frozen_script[team].get(player_id, 0.0)
-                                        ),
-                                        "updated_script_projected_minutes": float(
-                                            updated_script[team].get(player_id, 0.0)
+                                        "updated_projected_minutes": (
+                                            float(shadow_row["final_normalized_minutes"])
+                                            if shadow_row is not None
+                                            else 0.0
                                         ),
                                     }
                                 ]
                             )
                         )
                 base_margin = float(summary["pregame"]["projection"]["home_margin"])
-                frozen_strength = _signed_strength(summary, frozen_home, frozen_away, ratings)
-                updated_strength = _signed_strength(summary, updated_home, updated_away, ratings)
-                minutes_only = base_margin + updated_strength - frozen_strength
+                frozen_frozen = base_margin
+                frozen_updated = _projection_margin(
+                    summary,
+                    home_minutes=updated_home,
+                    away_minutes=updated_away,
+                    frozen_home=frozen_home,
+                    frozen_away=frozen_away,
+                    preseason_ratings=ratings,
+                    forecast_ratings=ratings,
+                )
                 margins = {
-                    "frozen_frozen": base_margin,
-                    "frozen_updated": minutes_only,
+                    "frozen_frozen": frozen_frozen,
+                    "frozen_updated": frozen_updated,
                     "updated_frozen": updated_frozen_margin,
                     "updated_updated": updated_updated_margin,
                 }
@@ -884,9 +872,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "away_team": away,
                     "home_team": home,
                     "actual_margin": float(summary["final"]["actual_home_margin"]),
-                    "frozen_expected_garbage_minutes": frozen_expected_garbage,
-                    "updated_expected_garbage_minutes": updated_expected_garbage,
-                    "game_script_status": str(observations["game_script_status"].iloc[0]),
+                    "early_role_status": str(observations["early_role_status"].iloc[0]),
                 }
                 for label, margin in margins.items():
                     row[f"{label}_margin"] = margin
@@ -920,7 +906,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         for label in ("updated_frozen", "updated_updated")
     }
     reconstructed_games = (
-        int(games["game_script_status"].eq("reconstructed").sum())
+        int(games["early_role_status"].eq("reconstructed").sum())
         if not games.empty
         else 0
     )
@@ -928,7 +914,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     state["prior_participation_weight"] = config.participation_prior_games
     state["prior_conditional_weight"] = config.conditional_prior_games
     result = {
-        "schema_version": 2,
+        "schema_version": 3,
         "season": SEASON,
         "through_date": max(grouped).isoformat() if grouped else None,
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -938,19 +924,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "conditional_prior_games": config.conditional_prior_games,
             "rotation_size": config.rotation_size,
             "conditional_clip_delta": config.conditional_clip_delta,
-            "game_script": {
-                "minimum_margin": DEFAULT_GAME_SCRIPT_CONFIG.minimum_margin,
-                "margin_per_minute": DEFAULT_GAME_SCRIPT_CONFIG.margin_per_minute,
-                "extra_margin": DEFAULT_GAME_SCRIPT_CONFIG.extra_margin,
-                "persistence_margin": DEFAULT_GAME_SCRIPT_CONFIG.persistence_margin,
-                "minimum_garbage_seconds": (
-                    DEFAULT_GAME_SCRIPT_CONFIG.minimum_garbage_seconds
-                ),
-                "blowout_final_margin": DEFAULT_GAME_SCRIPT_CONFIG.blowout_final_margin,
-                "margin_residual_sd": DEFAULT_GAME_SCRIPT_CONFIG.margin_residual_sd,
-                "garbage_minutes_when_blowout": (
-                    DEFAULT_GAME_SCRIPT_CONFIG.garbage_minutes_when_blowout
-                ),
+            "conditional_lookback_games": config.conditional_lookback_games,
+            "early_game_role": {
+                "cutoff_minutes": role_cutoff_minutes,
+                "normalization_minutes": 48,
             },
         },
         "games": int(len(games)),
@@ -961,16 +938,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "player_metrics": player_metrics,
         "four_cell_game_metrics": four_cell,
         "minutes_ab_game_metrics": minutes_ab,
-        "game_script_coverage": {
+        "early_role_coverage": {
             "reconstructed_games": reconstructed_games,
             "fallback_games": int(len(games) - reconstructed_games),
-            "garbage_time_games": int(
-                evaluation.loc[evaluation["garbage_time_detected"]]
-                ["game_id"]
-                .nunique()
-                if not evaluation.empty
-                else 0
-            ),
+            "cutoff_minutes": role_cutoff_minutes,
         },
     }
     output = Path(args.output_dir)
@@ -1006,6 +977,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--through-date", required=True)
     parser.add_argument("--participation-prior-games", type=float, required=True)
     parser.add_argument("--conditional-prior-games", type=float, required=True)
+    parser.add_argument(
+        "--conditional-lookback-games",
+        type=int,
+        default=DEFAULT_ROLE_LOOKBACK_GAMES,
+    )
+    parser.add_argument(
+        "--role-cutoff-minutes",
+        type=int,
+        default=DEFAULT_ROLE_CUTOFF_MINUTES,
+    )
     parser.add_argument("--rating-cache-dir", type=Path)
     parser.add_argument("--rating-coverage-path", type=Path)
     parser.add_argument("--cdn-coverage-path", type=Path)

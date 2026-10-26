@@ -89,3 +89,26 @@ Immutable local outputs are under
 `artifacts/analysis/early_game_minutes_backtest_v1/`; `summary.json` contains
 the input SHA-256 lineage, full segment results, representative players, and
 bootstrap settings.
+
+## Current-season shadow integration
+
+The validated configuration was integrated into the shadow report as a clean
+two-arm comparison. Both arms use the same possession-updated NAIL ratings;
+only frozen versus updated minutes changes. The former score-based role
+boundary and pregame blowout transform are excluded.
+
+On the locally available 36-game sample through 2026-10-24:
+
+| Metric | Updated ratings + frozen minutes | Updated ratings + updated minutes |
+| --- | ---: | ---: |
+| Margin MAE | 11.150 | 10.971 |
+| Margin RMSE | 15.427 | 15.394 |
+| Brier | 0.19550 | 0.19459 |
+| Log loss | 0.57206 | 0.57055 |
+| Winner accuracy | 63.9% | 66.7% |
+| ATS | 15-21 | 16-20 |
+
+All 36 early-role targets reconstructed successfully and both exported minute
+allocations sum to exactly 240 minutes for every team-game. The sample is too
+small for promotion; it confirms the shadow integration is operating as
+designed and currently points in the same direction as the historical study.

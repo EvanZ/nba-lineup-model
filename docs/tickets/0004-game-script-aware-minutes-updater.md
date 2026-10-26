@@ -142,3 +142,33 @@ These results support continued shadow use. They do not yet support promotion
 to the public game model because this study evaluates player-level conditional
 role accuracy, not the final injury-conditioned, team-normalized 240-minute
 game allocation or downstream margin probabilities.
+
+## Shadow-report integration
+
+The validated updater is now wired into the two-arm shadow report:
+
+1. possession-updated NAIL ratings plus frozen pregame minutes; and
+2. the same possession-updated NAIL ratings plus updated minutes.
+
+The updated arm uses the first 44 minutes of each completed game, a three-game
+rolling window, a 0.2-game preseason prior, no role clipping, the official
+pregame injury assumptions, and an exact 240-minute team normalization. The
+superseded score-based boundary and projected-blowout minutes transform are no
+longer part of this comparison.
+
+A local opening-sample replay through 2026-10-24 covered 36 games with no
+exclusions or role-reconstruction fallbacks. Updated ratings plus updated
+minutes beat updated ratings plus frozen minutes on every reported aggregate:
+
+| Metric | Updated ratings + frozen minutes | Updated ratings + updated minutes |
+| --- | ---: | ---: |
+| Margin MAE | 11.150 | 10.971 |
+| Margin RMSE | 15.427 | 15.394 |
+| Brier | 0.19550 | 0.19459 |
+| Log loss | 0.57206 | 0.57055 |
+| Winner accuracy | 63.9% | 66.7% |
+| ATS | 15-21 | 16-20 |
+
+Both exported minute allocations reconcile to exactly 240 minutes for every
+team-game. This small 36-game result is directional monitoring evidence, not
+promotion evidence.

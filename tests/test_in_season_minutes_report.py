@@ -17,7 +17,15 @@ def test_render_minutes_shadow_report_is_self_contained(tmp_path: Path) -> None:
         "games": 2,
         "player_game_rows": 2,
         "excluded_games": [],
-        "config": {"conditional_prior_games": 0.1},
+        "config": {
+            "conditional_prior_games": 0.2,
+            "conditional_lookback_games": 3,
+            "early_game_role": {"cutoff_minutes": 44},
+        },
+        "early_role_coverage": {
+            "reconstructed_games": 2,
+            "fallback_games": 0,
+        },
         "player_metrics": {
             "frozen": {
                 "conditional_minutes_mae": 5.5,
@@ -58,7 +66,7 @@ def test_render_minutes_shadow_report_is_self_contained(tmp_path: Path) -> None:
             "played": [True, True],
             "outcome_classification": ["played", "played"],
             "regulation_equivalent_minutes": [34.0, 36.0],
-            "competitive_role_minutes": [35.0, 35.0],
+            "early_game_role_minutes": [35.0, 35.0],
             "frozen_conditional_minutes": [32.0, 32.0],
             "updated_conditional_minutes": [33.0, 34.0],
         }
@@ -69,6 +77,7 @@ def test_render_minutes_shadow_report_is_self_contained(tmp_path: Path) -> None:
             "preseason_conditional_minutes_prior": [32.0],
             "current_conditional_minutes_estimate": [34.0],
             "conditional_observations": [2],
+            "conditional_window_observations": [2],
         }
     )
     destination = tmp_path / "report.html"
@@ -83,11 +92,13 @@ def test_render_minutes_shadow_report_is_self_contained(tmp_path: Path) -> None:
 
     page = destination.read_text()
     assert rendered == destination
-    assert "Game-script-aware minutes updater" in page
+    assert "Early-game minutes updater" in page
     assert "Stephen Curry" in page
     assert "Log loss" in page
     assert "through 2026-10-25 Pacific" in page
-    assert "conditional prior 0.1 equivalent games" in page
+    assert "first 44 minutes" in page
+    assert "3-game lookback" in page
+    assert "preseason weight 0.2 games" in page
     assert "0.18000" in page
     assert "Updated-ratings minutes A/B" in page
     assert "Frozen ratings + frozen minutes" not in page

@@ -53,7 +53,9 @@ DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS = 6000
 DEFAULT_IN_SEASON_MINUTES_ROOT = Path("/var/lib/nba-gestalt/in-season-minutes")
 DEFAULT_IN_SEASON_MINUTES_LAKE_URI = "s3://nba-gestalt-data/lake"
 DEFAULT_IN_SEASON_MINUTES_PARTICIPATION_PRIOR_GAMES = 4
-DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES = 0.1
+DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES = 0.2
+DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_LOOKBACK_GAMES = 3
+DEFAULT_IN_SEASON_MINUTES_ROLE_CUTOFF_MINUTES = 44
 DEFAULT_HEALTHCHECK_PARQUET = (
     "s3://nba-gestalt-data/lake/analytical/box_score_prior_panel/"
     "season_cohort_summary.parquet"
@@ -733,6 +735,12 @@ in_season_nail_shadow_schedule = ScheduleDefinition(
         "conditional_prior_games": Field(
             float, default_value=DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES
         ),
+        "conditional_lookback_games": Field(
+            int, default_value=DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_LOOKBACK_GAMES
+        ),
+        "role_cutoff_minutes": Field(
+            int, default_value=DEFAULT_IN_SEASON_MINUTES_ROLE_CUTOFF_MINUTES
+        ),
     },
     retry_policy=RetryPolicy(max_retries=1, delay=300),
 )
@@ -761,6 +769,10 @@ def update_in_season_minutes_shadow_op(
                 context.op_config["participation_prior_games"]
             ),
             conditional_prior_games=float(context.op_config["conditional_prior_games"]),
+            conditional_lookback_games=int(
+                context.op_config["conditional_lookback_games"]
+            ),
+            role_cutoff_minutes=int(context.op_config["role_cutoff_minutes"]),
             rating_prior_possessions=float(DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS),
             rating_cache_dir=_in_season_nail_root(),
             rating_coverage_path=_cdn_coverage_path(),
@@ -847,7 +859,7 @@ def update_in_season_minutes_shadow_op(
         "player_metrics": result["player_metrics"],
         "four_cell_game_metrics": result["four_cell_game_metrics"],
         "minutes_ab_game_metrics": result["minutes_ab_game_metrics"],
-        "game_script_coverage": result["game_script_coverage"],
+        "early_role_coverage": result["early_role_coverage"],
     }
     publication_bytes = (json.dumps(publication, indent=2, sort_keys=True) + "\n").encode()
     publication_sha = hashlib.sha256(publication_bytes).hexdigest()
@@ -904,6 +916,12 @@ def _in_season_minutes_shadow_config(context: object) -> dict[str, object]:
                     ),
                     "conditional_prior_games": (
                         DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES
+                    ),
+                    "conditional_lookback_games": (
+                        DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_LOOKBACK_GAMES
+                    ),
+                    "role_cutoff_minutes": (
+                        DEFAULT_IN_SEASON_MINUTES_ROLE_CUTOFF_MINUTES
                     ),
                 }
             }
