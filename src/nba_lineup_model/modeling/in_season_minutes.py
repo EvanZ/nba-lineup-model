@@ -190,7 +190,9 @@ def advance_minutes_state(
             weight = float(row.conditional_observation_weight)
             if not np.isfinite(weight) or not 0.0 <= weight <= 1.0:
                 raise ValueError("Conditional observation weight must lie in [0, 1]")
-            observed = float(row.regulation_equivalent_minutes)
+            observed = float(
+                getattr(row, "competitive_role_minutes", row.regulation_equivalent_minutes)
+            )
             prior = float(output.at[player_id, "preseason_conditional_minutes_prior"])
             clipped = (
                 0.0
@@ -586,6 +588,11 @@ def _sequential_participation_brier(frame: pd.DataFrame, strength: float) -> flo
 def _sequential_conditional_mae(
     frame: pd.DataFrame, strength: float, *, clip_delta: float
 ) -> float:
+    target_column = (
+        "competitive_role_minutes"
+        if "competitive_role_minutes" in frame
+        else "regulation_equivalent_minutes"
+    )
     total: dict[int, float] = {}
     count: dict[int, int] = {}
     errors: list[float] = []
@@ -597,7 +604,8 @@ def _sequential_conditional_mae(
                 strength * float(row.preseason_conditional_minutes_prior)
                 + total.get(player_id, 0.0)
             ) / (strength + count.get(player_id, 0))
-            errors.append(abs(prediction - float(row.regulation_equivalent_minutes)))
+            target = float(getattr(row, target_column))
+            errors.append(abs(prediction - target))
         for row in day.loc[available].itertuples(index=False):
             player_id = int(row.player_id)
             prior = float(row.preseason_conditional_minutes_prior)
@@ -606,7 +614,7 @@ def _sequential_conditional_mae(
                 if str(row.availability_state) == COACH_DNP
                 else float(
                     np.clip(
-                        row.regulation_equivalent_minutes,
+                        getattr(row, target_column),
                         max(0.0, prior - clip_delta),
                         min(48.0, prior + clip_delta),
                     )

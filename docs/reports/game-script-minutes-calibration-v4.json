@@ -1,0 +1,46 @@
+{
+  "calibration_season": "2025-26",
+  "blowout_duration_calibration": {
+    "final_margin_cutoff": 20.0,
+    "games": 281,
+    "mean_garbage_minutes": 7.344128113879003,
+    "median_garbage_minutes": 7.033333333333333
+  },
+  "conditional_grid_mae": {
+    "0.1": 5.658125026132869,
+    "0.25": 5.665626806360934,
+    "0.5": 5.681586764533375,
+    "1.0": 5.717583911722367,
+    "12.0": 6.222582176982409,
+    "2.0": 5.786003144254428,
+    "20.0": 6.43475890048258,
+    "4.0": 5.902340436456738,
+    "8.0": 6.083001708856848
+  },
+  "conditional_prior_games": 0.1,
+  "game_script_config": {
+    "blowout_final_margin": 20.0,
+    "extra_margin": 3,
+    "garbage_minutes_when_blowout": 7.34,
+    "margin_per_minute": 3,
+    "margin_residual_sd": 12.0,
+    "minimum_garbage_seconds": 60.0,
+    "minimum_margin": 10,
+    "persistence_margin": 8
+  },
+  "games_reconstructed": 1230,
+  "garbage_time_games": 689,
+  "generated_at": "2026-10-26T13:32:29.077747Z",
+  "input_lineage": {
+    "availability_sha256": "7006c5c9c2df8f77057020072c54e1507a452955d5630a8b91cdc301efa4ef5a",
+    "events_sha256": "583c14045535f2646c8c3da3d342605b147fd2e6c3d480c5afa7221c565ea626",
+    "lineup_stints_sha256": "5b31e55c9a5c9dfeead7b78d58e924fcc372f91301328ddcc313609fe9500ebd",
+    "preseason_priors_sha256": "83bb6b4e281222a43bf22474c964d15ad23987fd3c48b0bb387104b90bc4af8f"
+  },
+  "played_rows_using_regulation_fallback": 1955,
+  "reconstruction_exclusions": [],
+  "schema_version": 1,
+  "target_available_player_games": 31154,
+  "target_player_games": 43265,
+  "updater_version": "game_script_role_shrinkage_v4"
+}

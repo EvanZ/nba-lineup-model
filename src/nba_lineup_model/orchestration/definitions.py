@@ -764,6 +764,8 @@ def update_in_season_minutes_shadow_op(
             rating_prior_possessions=float(DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS),
             rating_cache_dir=_in_season_nail_root(),
             rating_coverage_path=_cdn_coverage_path(),
+            cdn_coverage_path=_cdn_coverage_path(),
+            cdn_lake_uri=_cdn_lake_uri(),
             cache_dir=root,
             output_dir=output_dir,
         )
@@ -844,6 +846,8 @@ def update_in_season_minutes_shadow_op(
         },
         "player_metrics": result["player_metrics"],
         "four_cell_game_metrics": result["four_cell_game_metrics"],
+        "minutes_ab_game_metrics": result["minutes_ab_game_metrics"],
+        "game_script_coverage": result["game_script_coverage"],
     }
     publication_bytes = (json.dumps(publication, indent=2, sort_keys=True) + "\n").encode()
     publication_sha = hashlib.sha256(publication_bytes).hexdigest()
@@ -964,6 +968,9 @@ def in_season_minutes_shadow_sensor(
         )
     if not source_parts:
         return SkipReason(f"No completed games are available through {through_date}")
+    coverage_path = _cdn_coverage_path()
+    if coverage_path.is_file():
+        source_parts.append(hashlib.sha256(coverage_path.read_bytes()).hexdigest())
     snapshot = hashlib.sha256(":".join(source_parts).encode()).hexdigest()[:16]
     inflight = context.instance.get_runs(
         filters=RunsFilter(

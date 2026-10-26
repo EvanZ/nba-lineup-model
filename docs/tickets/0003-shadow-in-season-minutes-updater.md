@@ -39,6 +39,9 @@ are recorded in `docs/reports/in-season-minutes-calibration-v3.json`.
 
 ## Artifact and execution contract
 
+Game-script-aware role reconstruction and the direct updated-ratings minutes
+A/B are tracked in successor ticket [#31](0004-game-script-aware-minutes-updater.md).
+
 - Completed summary and ESPN box-score checksums identify an immutable
   player-game contribution.
 - Byte-identical games reuse the contribution; a source revision produces a

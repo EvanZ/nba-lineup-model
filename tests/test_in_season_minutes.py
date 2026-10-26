@@ -22,6 +22,7 @@ from nba_lineup_model.modeling.in_season_minutes import (
     regulation_equivalent_minutes,
 )
 from nba_lineup_model.modeling.in_season_minutes_monitor import (
+    apply_competitive_role_observations,
     build_game_observations,
 )
 from nba_lineup_model.season.slate_time import summary_slate_date
@@ -107,6 +108,40 @@ def test_injury_absence_does_not_erase_conditional_role() -> None:
     assert updated.loc[2, "current_conditional_minutes_estimate"] == pytest.approx(20.0)
     assert updated.loc[2, "conditional_observations"] == 0
     assert updated.loc[3, "current_participation_estimate"] == pytest.approx(0.5)
+
+
+def test_state_prefers_competitive_role_target_over_realized_blowout_minutes() -> None:
+    state = initialize_minutes_state(_priors(), season="2026-27", config=_config())
+    observation = _observations().iloc[[0]].copy()
+    observation["regulation_equivalent_minutes"] = 20.0
+    observation["competitive_role_minutes"] = 34.0
+    updated = advance_minutes_state(
+        state,
+        observation,
+        config=_config(),
+        contribution_sha256="d" * 64,
+    ).set_index("player_id")
+
+    assert updated.loc[1, "current_conditional_minutes_estimate"] == pytest.approx(30.8)
+
+
+def test_missing_play_by_play_falls_back_to_realized_minutes() -> None:
+    observations = _observations().assign(
+        team="AAA",
+        player_name=["One", "Two", "Three"],
+    )
+    result = apply_competitive_role_observations(
+        observations,
+        {"game_id": "001", "home_team": "AAA", "away_team": "BBB"},
+        {},
+        None,
+        priors=_priors(),
+    )
+
+    assert result["competitive_role_minutes"].tolist() == pytest.approx(
+        result["regulation_equivalent_minutes"].tolist()
+    )
+    assert result["game_script_status"].eq("fallback").all()
 
 
 def test_inactive_player_updates_participation_only() -> None:

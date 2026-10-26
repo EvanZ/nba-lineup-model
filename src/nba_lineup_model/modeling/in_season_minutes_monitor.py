@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import unicodedata
 from collections import defaultdict
 from datetime import UTC, date, datetime
@@ -19,6 +20,15 @@ from scipy import sparse
 from scipy.sparse.linalg import spsolve
 from scipy.special import expit, logit
 
+from nba_lineup_model.events.normalize import canonical_events
+from nba_lineup_model.lineups.reconstruct import lineup_stints_frame, reconstruct_lineups
+from nba_lineup_model.modeling.game_script_minutes import (
+    DEFAULT_GAME_SCRIPT_CONFIG,
+    apply_expected_game_script,
+    competitive_boundary_seconds,
+    competitive_role_minutes,
+    expected_garbage_minutes,
+)
 from nba_lineup_model.modeling.in_season_minutes import (
     COACH_DNP,
     CONDITIONAL_OUTCOMES,
@@ -40,7 +50,7 @@ from nba_lineup_model.modeling.in_season_nail import read_game_contribution
 from nba_lineup_model.season.slate_time import summary_slate_date
 
 SEASON = "2026-27"
-UPDATER_VERSION = "available_role_shrinkage_v3"
+UPDATER_VERSION = "game_script_role_shrinkage_v4"
 ESPN_TEAM_ALIASES = {
     "GS": "GSW",
     "NY": "NYK",
@@ -216,6 +226,141 @@ def build_game_observations(
     return output.sort_values(["team", "player_id"], kind="stable").reset_index(drop=True)
 
 
+def apply_competitive_role_observations(
+    observations: pd.DataFrame,
+    summary: dict[str, Any],
+    espn: dict[str, Any],
+    play_by_play: dict[str, Any] | None,
+    *,
+    priors: pd.DataFrame,
+) -> pd.DataFrame:
+    """Attach leakage-safe role targets, falling back to realized minutes."""
+
+    output = observations.copy()
+    output["competitive_role_minutes"] = output["regulation_equivalent_minutes"]
+    output["competitive_boundary_seconds"] = np.nan
+    output["game_duration_seconds"] = np.nan
+    output["garbage_time_detected"] = False
+    output["game_script_status"] = "fallback"
+    output["game_script_reason"] = "play-by-play unavailable"
+    if play_by_play is None:
+        return output
+    try:
+        events = canonical_events(play_by_play)
+        boxscore = _lineup_boxscore_from_espn(summary, espn, priors=priors, events=events)
+        reconstruction = reconstruct_lineups(
+            events,
+            boxscore,
+            validate_boxscore_minutes=False,
+        )
+        stints = lineup_stints_frame(reconstruction)
+        boundary = competitive_boundary_seconds(events)
+        game_end = max(float(event.elapsed_game_seconds) for event in events)
+        roles = competitive_role_minutes(stints, boundary_seconds=boundary)
+        played = output.loc[output["played"], "player_id"].astype(int)
+        missing = sorted(set(played) - set(roles))
+        if missing:
+            raise ValueError(f"competitive stints omit played players: {missing}")
+        output["competitive_role_minutes"] = (
+            output["player_id"].astype(int).map(roles).fillna(0.0).astype(float)
+        )
+        output["competitive_boundary_seconds"] = boundary
+        output["game_duration_seconds"] = game_end
+        output["garbage_time_detected"] = boundary + 1e-6 < game_end
+        output["game_script_status"] = "reconstructed"
+        output["game_script_reason"] = None
+    except (KeyError, TypeError, ValueError) as error:
+        output["game_script_reason"] = str(error)
+    return output
+
+
+def _lineup_boxscore_from_espn(
+    summary: dict[str, Any],
+    espn: dict[str, Any],
+    *,
+    priors: pd.DataFrame,
+    events: list[Any],
+) -> dict[str, Any]:
+    """Adapt ESPN starters to the minimal shape required by reconstruction."""
+
+    name_to_id = {
+        (str(row.team), _normalize_name(row.player_name)): int(row.player_id)
+        for row in priors.itertuples(index=False)
+    }
+    team_ids: dict[str, int] = {}
+    for event in events:
+        if event.team_tricode and event.team_id:
+            team_ids[str(event.team_tricode)] = int(event.team_id)
+    teams: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for group in espn.get("boxscore", {}).get("players", []):
+        if not isinstance(group, dict):
+            continue
+        team_data = group.get("team", {})
+        raw_team = str(team_data.get("abbreviation", "")) if isinstance(team_data, dict) else ""
+        team = ESPN_TEAM_ALIASES.get(raw_team, raw_team)
+        for statistics in group.get("statistics", []):
+            if not isinstance(statistics, dict):
+                continue
+            for athlete_row in statistics.get("athletes", []):
+                if not isinstance(athlete_row, dict):
+                    continue
+                athlete = athlete_row.get("athlete", {})
+                name = str(athlete.get("displayName", "")) if isinstance(athlete, dict) else ""
+                player_id = name_to_id.get((team, _normalize_name(name)))
+                if player_id is None:
+                    continue
+                starter = athlete_row.get("starter")
+                is_starter = starter is True or str(starter).casefold() in {"1", "true"}
+                teams[team].append(
+                    {
+                        "personId": player_id,
+                        "starter": "1" if is_starter else "0",
+                    }
+                )
+    home = str(summary["home_team"])
+    away = str(summary["away_team"])
+    for team in (home, away):
+        starters = [row for row in teams.get(team, []) if row["starter"] == "1"]
+        if len(starters) != 5:
+            raise ValueError(f"ESPN box score has {len(starters)} mapped starters for {team}")
+        if team not in team_ids:
+            raise ValueError(f"play-by-play has no team ID for {team}")
+    return {
+        "game": {
+            "gameId": str(summary["game_id"]),
+            "homeTeam": {"teamId": team_ids[home], "players": teams[home]},
+            "awayTeam": {"teamId": team_ids[away], "players": teams[away]},
+        }
+    }
+
+
+def _load_cdn_play_by_play(
+    game_id: str,
+    *,
+    coverage: dict[str, list[str]],
+    lake_uri: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    digests = coverage.get(game_id, [])
+    if not digests:
+        return None, None
+    digest = str(digests[-1])
+    uri = (
+        f"{lake_uri.rstrip('/')}/raw/cdn/play_by_play/season={SEASON}/"
+        f"game_id={game_id}/{digest}.json"
+    )
+    result = subprocess.run(
+        ["aws", "s3", "cp", uri, "-", "--only-show-errors"],
+        capture_output=True,
+        check=True,
+    )
+    if hashlib.sha256(result.stdout).hexdigest() != digest:
+        raise ValueError(f"CDN play-by-play checksum mismatch for {game_id}")
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, dict):
+        raise ValueError(f"CDN play-by-play is not an object for {game_id}")
+    return payload, digest
+
+
 def _probability_scale(summaries: list[dict[str, Any]]) -> float:
     values = []
     for summary in summaries:
@@ -320,6 +465,46 @@ def _signed_strength(
     )
 
 
+def _script_adjusted_projection(
+    summary: dict[str, Any],
+    *,
+    home_minutes: dict[int, float],
+    away_minutes: dict[int, float],
+    frozen_home: dict[int, float],
+    frozen_away: dict[int, float],
+    preseason_ratings: dict[int, float],
+    forecast_ratings: dict[int, float],
+    iterations: int = 2,
+) -> tuple[float, dict[int, float], dict[int, float], float]:
+    """Resolve the small margin/minutes feedback loop using pregame inputs only."""
+
+    base_margin = float(summary["pregame"]["projection"]["home_margin"])
+    frozen_strength = _signed_strength(summary, frozen_home, frozen_away, preseason_ratings)
+    margin = base_margin + _signed_strength(
+        summary, home_minutes, away_minutes, forecast_ratings
+    ) - frozen_strength
+    adjusted_home = home_minutes
+    adjusted_away = away_minutes
+    for _ in range(iterations):
+        adjusted_home = apply_expected_game_script(
+            home_minutes,
+            projected_margin=margin,
+        )
+        adjusted_away = apply_expected_game_script(
+            away_minutes,
+            projected_margin=margin,
+        )
+        margin = base_margin + _signed_strength(
+            summary, adjusted_home, adjusted_away, forecast_ratings
+        ) - frozen_strength
+    return (
+        margin,
+        adjusted_home,
+        adjusted_away,
+        expected_garbage_minutes(margin),
+    )
+
+
 def _ats(summary: dict[str, Any], margin: float) -> str | None:
     market = summary["pregame"].get("market") or {}
     spread = market.get("home_spread")
@@ -358,13 +543,21 @@ def _game_metrics(frame: pd.DataFrame, prefix: str) -> dict[str, object]:
 
 def _player_metrics(frame: pd.DataFrame) -> dict[str, object]:
     available = frame["outcome_classification"].isin(CONDITIONAL_OUTCOMES)
+    conditional_target = (
+        "competitive_role_minutes"
+        if "competitive_role_minutes" in frame
+        else "regulation_equivalent_minutes"
+    )
     result: dict[str, object] = {}
     for label, prefix in (("frozen", "frozen"), ("updated", "updated")):
         conditional = frame.loc[available, f"{prefix}_conditional_minutes"].astype(float)
-        actual_conditional = frame.loc[
-            available, "regulation_equivalent_minutes"
-        ].astype(float)
-        unconditional = frame[f"{prefix}_projected_minutes"].astype(float)
+        actual_conditional = frame.loc[available, conditional_target].astype(float)
+        projected_column = (
+            f"{prefix}_script_projected_minutes"
+            if f"{prefix}_script_projected_minutes" in frame
+            else f"{prefix}_projected_minutes"
+        )
+        unconditional = frame[projected_column].astype(float)
         actual = frame["regulation_equivalent_minutes"].astype(float)
         result[label] = {
             "conditional_minutes_n": int(available.sum()),
@@ -421,6 +614,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         rating_coverage_path=getattr(args, "rating_coverage_path", None),
         prior_possessions=float(args.rating_prior_possessions),
     )
+    cdn_coverage_path = getattr(args, "cdn_coverage_path", None)
+    cdn_coverage_payload = (
+        _load_json(Path(cdn_coverage_path))
+        if cdn_coverage_path is not None and Path(cdn_coverage_path).is_file()
+        else {}
+    )
+    cdn_coverage = {
+        str(game_id): [str(digest) for digest in digests]
+        for game_id, digests in cdn_coverage_payload.get("games", {}).items()
+        if isinstance(digests, list)
+    }
+    cdn_lake_uri = str(getattr(args, "cdn_lake_uri", "s3://nba-gestalt-data/lake"))
     grouped: dict[date, list[dict[str, Any]]] = defaultdict(list)
     for summary in summaries:
         grouped[summary_slate_date(summary)].append(summary)
@@ -451,11 +656,34 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 espn_path = Path(args.state_dir) / "final" / f"{summary['espn_game_id']}.espn.json"
                 espn = _load_json(espn_path)
                 observations = build_game_observations(summary, espn, priors=priors)
+                play_by_play: dict[str, Any] | None = None
+                play_by_play_sha256: str | None = None
+                play_by_play_error: str | None = None
+                try:
+                    play_by_play, play_by_play_sha256 = _load_cdn_play_by_play(
+                        game_id,
+                        coverage=cdn_coverage,
+                        lake_uri=cdn_lake_uri,
+                    )
+                except (OSError, subprocess.CalledProcessError, ValueError) as error:
+                    play_by_play_error = str(error)
+                observations = apply_competitive_role_observations(
+                    observations,
+                    summary,
+                    espn,
+                    play_by_play,
+                    priors=priors,
+                )
+                if play_by_play_error is not None:
+                    observations["game_script_reason"] = play_by_play_error
                 summary_path = (
                     Path(args.state_dir) / "final" / f"{summary['espn_game_id']}.summary.json"
                 )
                 source_sha = hashlib.sha256(
-                    f"{_sha256(summary_path)}:{_sha256(espn_path)}".encode()
+                    (
+                        f"{_sha256(summary_path)}:{_sha256(espn_path)}:"
+                        f"{play_by_play_sha256 or 'missing'}"
+                    ).encode()
                 ).hexdigest()
                 metadata = {
                     "season": SEASON,
@@ -465,6 +693,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "finalized_at": str(summary["archived_at"]),
                     "summary_sha256": _sha256(summary_path),
                     "espn_sha256": _sha256(espn_path),
+                    "play_by_play_sha256": play_by_play_sha256,
                     "source_sha256": source_sha,
                     "updater_version": UPDATER_VERSION,
                 }
@@ -475,6 +704,46 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 created += int(was_created)
                 cached += int(not was_created)
                 day_contributions.append((observations, digest))
+                home = str(summary["home_team"])
+                away = str(summary["away_team"])
+                frozen_home = _frozen_map(summary, home)
+                frozen_away = _frozen_map(summary, away)
+                updated_home = _allocation_map(forecasts[home])
+                updated_away = _allocation_map(forecasts[away])
+                combined_ratings = {
+                    player_id: rating + rating_adjustment.get(player_id, 0.0)
+                    for player_id, rating in ratings.items()
+                }
+                (
+                    updated_frozen_margin,
+                    frozen_script_home,
+                    frozen_script_away,
+                    frozen_expected_garbage,
+                ) = _script_adjusted_projection(
+                    summary,
+                    home_minutes=frozen_home,
+                    away_minutes=frozen_away,
+                    frozen_home=frozen_home,
+                    frozen_away=frozen_away,
+                    preseason_ratings=ratings,
+                    forecast_ratings=combined_ratings,
+                )
+                (
+                    updated_updated_margin,
+                    updated_script_home,
+                    updated_script_away,
+                    updated_expected_garbage,
+                ) = _script_adjusted_projection(
+                    summary,
+                    home_minutes=updated_home,
+                    away_minutes=updated_away,
+                    frozen_home=frozen_home,
+                    frozen_away=frozen_away,
+                    preseason_ratings=ratings,
+                    forecast_ratings=combined_ratings,
+                )
+                frozen_script = {home: frozen_script_home, away: frozen_script_away}
+                updated_script = {home: updated_script_home, away: updated_script_away}
                 actual = observations.set_index("player_id")
                 for team in (str(summary["away_team"]), str(summary["home_team"])):
                     forecast = forecasts[team].set_index("player_id")
@@ -495,6 +764,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                 [
                                     {
                                         "game_id": game_id,
+                                        "contribution_sha256": digest,
                                         "game_date": str(game_date),
                                         "team": team,
                                         "player_id": player_id,
@@ -517,6 +787,34 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                             float(actual_row["regulation_equivalent_minutes"])
                                             if actual_row is not None
                                             else 0.0
+                                        ),
+                                        "competitive_role_minutes": (
+                                            float(actual_row["competitive_role_minutes"])
+                                            if actual_row is not None
+                                            else 0.0
+                                        ),
+                                        "game_script_status": (
+                                            str(actual_row["game_script_status"])
+                                            if actual_row is not None
+                                            else "missing player"
+                                        ),
+                                        "game_script_reason": (
+                                            actual_row["game_script_reason"]
+                                            if actual_row is not None
+                                            else "missing player"
+                                        ),
+                                        "competitive_boundary_seconds": (
+                                            float(actual_row["competitive_boundary_seconds"])
+                                            if actual_row is not None
+                                            and pd.notna(
+                                                actual_row["competitive_boundary_seconds"]
+                                            )
+                                            else np.nan
+                                        ),
+                                        "garbage_time_detected": (
+                                            bool(actual_row["garbage_time_detected"])
+                                            if actual_row is not None
+                                            else False
                                         ),
                                         "frozen_participation_probability": float(
                                             frozen.get(
@@ -545,35 +843,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                         "updated_projected_minutes": float(
                                             shadow_row["final_normalized_minutes"]
                                         ),
+                                        "frozen_script_projected_minutes": float(
+                                            frozen_script[team].get(player_id, 0.0)
+                                        ),
+                                        "updated_script_projected_minutes": float(
+                                            updated_script[team].get(player_id, 0.0)
+                                        ),
                                     }
                                 ]
                             )
                         )
-                home = str(summary["home_team"])
-                away = str(summary["away_team"])
-                frozen_home = _frozen_map(summary, home)
-                frozen_away = _frozen_map(summary, away)
-                updated_home = _allocation_map(forecasts[home])
-                updated_away = _allocation_map(forecasts[away])
                 base_margin = float(summary["pregame"]["projection"]["home_margin"])
                 frozen_strength = _signed_strength(summary, frozen_home, frozen_away, ratings)
                 updated_strength = _signed_strength(summary, updated_home, updated_away, ratings)
-                rating_only = base_margin + _signed_strength(
-                    summary, frozen_home, frozen_away, rating_adjustment
-                )
                 minutes_only = base_margin + updated_strength - frozen_strength
-                combined_ratings = {
-                    player_id: rating + rating_adjustment.get(player_id, 0.0)
-                    for player_id, rating in ratings.items()
-                }
-                combined = base_margin + _signed_strength(
-                    summary, updated_home, updated_away, combined_ratings
-                ) - frozen_strength
                 margins = {
                     "frozen_frozen": base_margin,
                     "frozen_updated": minutes_only,
-                    "updated_frozen": rating_only,
-                    "updated_updated": combined,
+                    "updated_frozen": updated_frozen_margin,
+                    "updated_updated": updated_updated_margin,
                 }
                 row: dict[str, object] = {
                     "game_id": game_id,
@@ -581,13 +869,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "away_team": away,
                     "home_team": home,
                     "actual_margin": float(summary["final"]["actual_home_margin"]),
+                    "frozen_expected_garbage_minutes": frozen_expected_garbage,
+                    "updated_expected_garbage_minutes": updated_expected_garbage,
+                    "game_script_status": str(observations["game_script_status"].iloc[0]),
                 }
                 for label, margin in margins.items():
                     row[f"{label}_margin"] = margin
                     row[f"{label}_probability"] = float(expit(probability_scale * margin))
                     row[f"{label}_ats"] = _ats(summary, margin)
                 game_rows.append(row)
-                observation_rows[-1]["contribution_sha256"] = digest
             except Exception as error:
                 exclusions.append({"game_id": game_id, "reason": str(error)})
         for observations, digest in day_contributions:
@@ -610,11 +900,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "updated_updated",
         )
     }
+    minutes_ab = {
+        label: _game_metrics(games, label)
+        for label in ("updated_frozen", "updated_updated")
+    }
+    reconstructed_games = (
+        int(games["game_script_status"].eq("reconstructed").sum())
+        if not games.empty
+        else 0
+    )
     state["cutoff_time"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     state["prior_participation_weight"] = config.participation_prior_games
     state["prior_conditional_weight"] = config.conditional_prior_games
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "season": SEASON,
         "through_date": max(grouped).isoformat() if grouped else None,
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -624,6 +923,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "conditional_prior_games": config.conditional_prior_games,
             "rotation_size": config.rotation_size,
             "conditional_clip_delta": config.conditional_clip_delta,
+            "game_script": {
+                "minimum_margin": DEFAULT_GAME_SCRIPT_CONFIG.minimum_margin,
+                "margin_per_minute": DEFAULT_GAME_SCRIPT_CONFIG.margin_per_minute,
+                "extra_margin": DEFAULT_GAME_SCRIPT_CONFIG.extra_margin,
+                "persistence_margin": DEFAULT_GAME_SCRIPT_CONFIG.persistence_margin,
+                "minimum_garbage_seconds": (
+                    DEFAULT_GAME_SCRIPT_CONFIG.minimum_garbage_seconds
+                ),
+                "blowout_final_margin": DEFAULT_GAME_SCRIPT_CONFIG.blowout_final_margin,
+                "margin_residual_sd": DEFAULT_GAME_SCRIPT_CONFIG.margin_residual_sd,
+                "garbage_minutes_when_blowout": (
+                    DEFAULT_GAME_SCRIPT_CONFIG.garbage_minutes_when_blowout
+                ),
+            },
         },
         "games": int(len(games)),
         "player_game_rows": int(len(evaluation)),
@@ -632,6 +945,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "excluded_games": exclusions,
         "player_metrics": player_metrics,
         "four_cell_game_metrics": four_cell,
+        "minutes_ab_game_metrics": minutes_ab,
+        "game_script_coverage": {
+            "reconstructed_games": reconstructed_games,
+            "fallback_games": int(len(games) - reconstructed_games),
+            "garbage_time_games": int(
+                evaluation.loc[evaluation["garbage_time_detected"]]
+                ["game_id"]
+                .nunique()
+                if not evaluation.empty
+                else 0
+            ),
+        },
     }
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -668,6 +993,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--conditional-prior-games", type=float, required=True)
     parser.add_argument("--rating-cache-dir", type=Path)
     parser.add_argument("--rating-coverage-path", type=Path)
+    parser.add_argument("--cdn-coverage-path", type=Path)
+    parser.add_argument("--cdn-lake-uri", default="s3://nba-gestalt-data/lake")
     parser.add_argument("--rating-prior-possessions", type=float, default=6000.0)
     return parser
 

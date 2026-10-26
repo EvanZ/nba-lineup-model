@@ -58,6 +58,7 @@ def test_render_minutes_shadow_report_is_self_contained(tmp_path: Path) -> None:
             "played": [True, True],
             "outcome_classification": ["played", "played"],
             "regulation_equivalent_minutes": [34.0, 36.0],
+            "competitive_role_minutes": [35.0, 35.0],
             "frozen_conditional_minutes": [32.0, 32.0],
             "updated_conditional_minutes": [33.0, 34.0],
         }
@@ -82,10 +83,12 @@ def test_render_minutes_shadow_report_is_self_contained(tmp_path: Path) -> None:
 
     page = destination.read_text()
     assert rendered == destination
-    assert "In-season minutes updater" in page
+    assert "Game-script-aware minutes updater" in page
     assert "Stephen Curry" in page
     assert "Log loss" in page
     assert "through 2026-10-25 Pacific" in page
     assert "conditional prior 0.1 equivalent games" in page
     assert "0.18000" in page
+    assert "Updated-ratings minutes A/B" in page
+    assert "Frozen ratings + frozen minutes" not in page
     assert "https://" not in page
