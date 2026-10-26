@@ -84,6 +84,10 @@ STATS_V3_SCHEDULE_DEFAULT_STATUS = (
 STATS_V3_SENSOR_DEFAULT_STATUS = (
     SENSOR_DEFAULT_STATUS if STATS_V3_SOURCE_CONFIGURED else DefaultSensorStatus.STOPPED
 )
+ODDS_API_CONFIGURED = bool(os.environ.get("GESTALT_ODDS_API_KEY", "").strip())
+ODDS_API_SCHEDULE_DEFAULT_STATUS = (
+    SCHEDULE_DEFAULT_STATUS if ODDS_API_CONFIGURED else DefaultScheduleStatus.STOPPED
+)
 
 
 def _state_dir() -> Path:
@@ -228,6 +232,112 @@ yesterday_finalization_schedule = ScheduleDefinition(
     run_config_fn=_yesterday_refresh_config,
     default_status=SCHEDULE_DEFAULT_STATUS,
     description="Revisit yesterday's board overnight until late games are final.",
+)
+
+
+@op(
+    name="collect_nba_market_odds_snapshot",
+    config_schema={
+        "bookmakers": Field(
+            [str],
+            default_value=[
+                "draftkings",
+                "fanduel",
+                "betmgm",
+                "betrivers",
+                "polymarket",
+            ],
+        ),
+        "markets": Field([str], default_value=["spreads", "h2h"]),
+        "minimum_remaining_credits": Field(int, default_value=50),
+    },
+    retry_policy=RetryPolicy(max_retries=1, delay=60),
+)
+def archive_nba_market_odds_op(context: OpExecutionContext) -> dict[str, object]:
+    """Archive one quota-bounded, league-wide NBA market snapshot."""
+
+    from nba_lineup_model.web_api.the_odds_api import (
+        OddsApiQuotaGuard,
+        collect_nba_odds_snapshot,
+    )
+
+    now = datetime.now(UTC)
+    upcoming_games = 0
+    for offset in range(DEFAULT_SCHEDULE_DAYS_AHEAD + 1):
+        game_date = (now.astimezone(PACIFIC).date() + timedelta(days=offset)).isoformat()
+        path = _state_dir() / "latest" / f"{game_date}.json"
+        if not path.is_file():
+            continue
+        try:
+            board = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(board, dict):
+            continue
+        upcoming_games += sum(
+            1
+            for game in board.get("games", [])
+            if isinstance(game, dict)
+            and isinstance(game.get("status"), dict)
+            and game["status"].get("state") == "pre"
+        )
+    if not upcoming_games:
+        reason = "No pregame NBA events are present in the next seven schedule boards"
+        context.log.info(reason)
+        context.add_output_metadata({"skipped": True, "reason": reason})
+        return {"skipped": True, "reason": reason}
+
+    try:
+        result = collect_nba_odds_snapshot(
+            api_key=os.environ.get("GESTALT_ODDS_API_KEY", ""),
+            state_dir=_state_dir(),
+            s3_uri=_schedule_s3_uri(),
+            bookmakers=tuple(context.op_config["bookmakers"]),
+            markets=tuple(context.op_config["markets"]),
+            minimum_remaining_credits=int(
+                context.op_config["minimum_remaining_credits"]
+            ),
+            request_id=context.run_id,
+        )
+    except OddsApiQuotaGuard as error:
+        context.log.warning(str(error))
+        context.add_output_metadata({"skipped": True, "reason": str(error)})
+        return {"skipped": True, "reason": str(error)}
+    quota = result.get("quota", {})
+    metadata = {
+        "events": len(result.get("events", [])),
+        "credits_used": quota.get("requests_used"),
+        "credits_remaining": quota.get("requests_remaining"),
+        "request_cost": quota.get("request_cost"),
+        "bookmakers": ", ".join(result.get("request", {}).get("bookmakers", [])),
+        "markets": ", ".join(result.get("request", {}).get("markets", [])),
+    }
+    context.add_output_metadata(
+        {key: value for key, value in metadata.items() if value is not None}
+    )
+    return result
+
+
+@job(
+    name="archive_nba_market_odds",
+    executor_def=in_process_executor,
+    tags={WORKLOAD_TAG: "market_odds"},
+)
+def archive_nba_market_odds_job() -> None:
+    archive_nba_market_odds_op()
+
+
+nba_market_odds_schedule = ScheduleDefinition(
+    name="nba_market_odds_game_day",
+    job=archive_nba_market_odds_job,
+    cron_schedule="20 8,12,15-19 * * *",
+    execution_timezone="America/Los_Angeles",
+    default_status=ODDS_API_SCHEDULE_DEFAULT_STATUS,
+    description=(
+        "Archive league-wide spreads and moneylines at 08:20, 12:20, and hourly "
+        "from 15:20 through 19:20 Pacific; normal usage is at most 434 credits in "
+        "a 31-day month."
+    ),
 )
 
 
@@ -1222,6 +1332,7 @@ defs = Definitions(
     assets=[s3_lake_query_health],
     jobs=[
         refresh_schedule_job,
+        archive_nba_market_odds_job,
         update_live_scores_job,
         reconcile_final_game_archives_job,
         ingest_completed_cdn_play_by_play_job,
@@ -1232,6 +1343,7 @@ defs = Definitions(
     ],
     schedules=[
         schedule_refresh_schedule,
+        nba_market_odds_schedule,
         yesterday_finalization_schedule,
         final_game_archive_morning_reconciliation_schedule,
         cdn_morning_reconciliation_schedule,

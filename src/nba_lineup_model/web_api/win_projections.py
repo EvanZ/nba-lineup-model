@@ -1066,6 +1066,7 @@ def refresh_schedule_archive(
     injury_artifact: dict[str, str] | None = None,
     forecast_response: dict[str, object] | None = None,
     prediction_market_snapshot: dict[str, object] | None = None,
+    odds_api_snapshot: dict[str, object] | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Archive one ESPN board, normalize it, and freeze the final pregame view.
@@ -1102,6 +1103,13 @@ def refresh_schedule_archive(
             game_date=game_date,
             collected_at=collected_at,
         )
+    if odds_api_snapshot is None:
+        from nba_lineup_model.web_api.the_odds_api import read_latest_odds_snapshot
+
+        odds_api_snapshot = read_latest_odds_snapshot(state_dir=state_root)
+    from nba_lineup_model.web_api.the_odds_api import normalize_bookmaker_lines
+
+    bookmaker_lines = normalize_bookmaker_lines(odds_api_snapshot)
     if injury_pdf is not None and injury_artifact is None and s3_uri:
         injury_artifact = _ensure_s3_injury_report(
             injury_pdf=injury_pdf,
@@ -1114,6 +1122,7 @@ def refresh_schedule_archive(
         minutes=minutes_payload,
         injury_report=injury_report,
         prediction_markets=prediction_market_snapshot.get("games", {}),
+        bookmaker_lines=bookmaker_lines,
         game_date=game_date,
         collected_at=collected_at,
     )
@@ -1257,6 +1266,9 @@ def refresh_schedule_window(
             s3_uri=s3_uri,
         )
     forecast_response = _fetch_json(projection_url)
+    from nba_lineup_model.web_api.the_odds_api import read_latest_odds_snapshot
+
+    odds_api_snapshot = read_latest_odds_snapshot(state_dir=state_dir)
     archived_days: list[dict[str, object]] = []
     total_games = 0
     newly_frozen = 0
@@ -1282,6 +1294,7 @@ def refresh_schedule_window(
             injury_artifact=injury_artifact,
             forecast_response=forecast_response,
             prediction_market_snapshot=prediction_market_snapshot,
+            odds_api_snapshot=odds_api_snapshot,
             now=collected_at,
         )
         game_count = len(payload["games"])
@@ -1749,10 +1762,12 @@ def _normalize_espn_schedule(
     minutes: dict[str, object],
     injury_report: dict[str, object],
     prediction_markets: object,
+    bookmaker_lines: object,
     game_date: str,
     collected_at: datetime,
 ) -> dict[str, object]:
     prediction_markets = prediction_markets if isinstance(prediction_markets, dict) else {}
+    bookmaker_lines = bookmaker_lines if isinstance(bookmaker_lines, dict) else {}
     minute_players = [row for row in minutes.get("players", []) if isinstance(row, dict)]
     schedule = {
         (str(row.get("home_team")), str(row.get("away_team"))): row
@@ -1857,7 +1872,8 @@ def _normalize_espn_schedule(
                     "away": away_rotation["players"],
                     "home": home_rotation["players"],
                 },
-                "market": (
+                "market": bookmaker_lines.get(f"{game_date}|{away_team}@{home_team}")
+                or (
                     _normalize_espn_odds(odds[0])
                     if odds and isinstance(odds[0], dict)
                     else None

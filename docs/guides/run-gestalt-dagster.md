@@ -9,6 +9,13 @@ DuckDB for bounded analytical queries and S3 as durable storage.
 - `schedule_refresh_every_30_minutes` refreshes today's and the next seven
   available ESPN boards, lines, official injury reports, projections, and
   immutable snapshots.
+- `nba_market_odds_game_day` archives league-wide DraftKings, FanDuel, BetMGM,
+  BetRivers, and Polymarket responses at 08:20, 12:20, and hourly from 15:20
+  through 19:20 America/Los_Angeles. The request is limited to spreads and
+  moneylines, so the normal maximum is 14 credits per day and 434 credits in a
+  31-day month. A 50-credit reserve is enforced from the provider's response
+  headers. DraftKings is the displayed benchmark; the complete response is
+  retained for consensus research.
 - `yesterday_finalization_overnight` revisits yesterday's board from 04:00
   through 09:30 UTC.
 - `live_score_game_window` evaluates every 75 seconds but creates score-update
@@ -44,6 +51,19 @@ immutable S3 uploads are verified, then removed. Official injury-report PDFs
 use a SHA-256 content-addressed S3 key and a small local marker, so an unchanged
 report is stored once rather than copied into every date and half-hour snapshot.
 Only the compact `latest`, `frozen`, and `final` serving state remains local.
+
+The Odds API credential is read only from `GESTALT_ODDS_API_KEY` in
+`/etc/nba-gestalt/dagster.env`; never place it in the repository or a Dagster
+run config. Restart the code server and daemon after adding it. Immutable raw
+responses and the mutable latest pointer are stored under:
+
+```text
+s3://nba-gestalt-data/nba-gestalt/schedule/season=2026-27/odds-api/
+```
+
+Each successful run records `x-requests-used`, `x-requests-remaining`, and
+`x-requests-last` as Dagster metadata. Retries after an S3 failure reuse the
+locally staged provider response rather than consuming another API request.
 
 ## Deploy with automations stopped
 

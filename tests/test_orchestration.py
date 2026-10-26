@@ -25,6 +25,7 @@ from nba_lineup_model.orchestration.definitions import (
     in_season_nail_shadow_schedule,
     ingest_completed_cdn_play_by_play_job,
     live_score_sensor,
+    nba_market_odds_schedule,
     schedule_refresh_schedule,
     stats_v3_morning_reconciliation_schedule,
     update_live_scores_job,
@@ -181,6 +182,9 @@ def test_definitions_are_loadable_and_automations_default_stopped() -> None:
     Definitions.validate_loadable(defs)
     assert schedule_refresh_schedule.default_status is DefaultScheduleStatus.STOPPED
     assert yesterday_finalization_schedule.default_status is DefaultScheduleStatus.STOPPED
+    assert nba_market_odds_schedule.default_status is DefaultScheduleStatus.STOPPED
+    assert nba_market_odds_schedule.cron_schedule == "20 8,12,15-19 * * *"
+    assert nba_market_odds_schedule.execution_timezone == "America/Los_Angeles"
     assert (
         final_game_archive_morning_reconciliation_schedule.default_status
         is DefaultScheduleStatus.STOPPED
