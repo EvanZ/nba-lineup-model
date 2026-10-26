@@ -1,0 +1,777 @@
+{
+  "availability_classification_audit": {
+    "canonical_lost_rookie_examples": [
+      {
+        "career_available_games_at_debut": 0,
+        "first_played_date": "2010-10-27",
+        "first_played_game_id": "0021000016",
+        "observed_predebut_rows": 0,
+        "player_id": 201933,
+        "player_name": "Blake Griffin",
+        "predebut_available_increments": 0
+      },
+      {
+        "career_available_games_at_debut": 0,
+        "first_played_date": "2023-10-25",
+        "first_played_game_id": "0022300070",
+        "observed_predebut_rows": 82,
+        "player_id": 1631096,
+        "player_name": "Chet Holmgren",
+        "predebut_available_increments": 0
+      }
+    ],
+    "does_not_increment": [
+      "medical_absence",
+      "inactive_or_assignment",
+      "suspension_or_ineligible",
+      "unknown"
+    ],
+    "increments": [
+      "coach_dnp",
+      "played"
+    ],
+    "same_date_rule": "All games on a date receive the career count entering that date; the date's observations increment only later dates."
+  },
+  "career_feature_source": {
+    "boundary": "Before the classified availability mart begins, only positive-minute box-score appearances count as available; unobserved DNPs add nothing.",
+    "classified_availability_seasons": [
+      "2015-16",
+      "2016-17",
+      "2017-18",
+      "2018-19",
+      "2019-20",
+      "2020-21",
+      "2021-22",
+      "2022-23",
+      "2023-24",
+      "2024-25",
+      "2025-26"
+    ],
+    "classified_rows": 437798,
+    "precoverage_played_only_seasons": [
+      "1996-97",
+      "1997-98",
+      "1998-99",
+      "1999-00",
+      "2000-01",
+      "2001-02",
+      "2002-03",
+      "2003-04",
+      "2004-05",
+      "2005-06",
+      "2006-07",
+      "2007-08",
+      "2008-09",
+      "2009-10",
+      "2010-11",
+      "2011-12",
+      "2012-13",
+      "2013-14",
+      "2014-15"
+    ],
+    "precoverage_played_rows": 448844
+  },
+  "control_prior_weight": 0.2,
+  "coverage": {
+    "2023-24": {
+      "availability_rows": 40277,
+      "availability_sha256": "85b12937a5b6886049ac0746c785c131e50224d02a27a736fd7eb94e7f50ced7",
+      "common_complete_game_teams": 2284,
+      "common_complete_games": 1142,
+      "cutoff_coverage": [
+        {
+          "complete_game_teams": 2284,
+          "cutoff_minutes": 44,
+          "game_teams": 2284
+        }
+      ],
+      "eligible_rows": 29310,
+      "played_state_overrides_from_stints": 6,
+      "priors_sha256": "1f922992fbb260f45e8a13a878c223ecd893862cf778e471ae4b37ec6a5906b8",
+      "scored_rows": 29310,
+      "stints_sha256": "d317b1f8f30dfbe8a0f5a0c199126eb18c0bff7e10381050137dde247a56e3c7"
+    },
+    "2024-25": {
+      "availability_rows": 39847,
+      "availability_sha256": "cb562ba01c045ad587122a20e797f72b28a8aa218830c226977e8b67b19c4449",
+      "common_complete_game_teams": 2278,
+      "common_complete_games": 1139,
+      "cutoff_coverage": [
+        {
+          "complete_game_teams": 2278,
+          "cutoff_minutes": 44,
+          "game_teams": 2278
+        }
+      ],
+      "eligible_rows": 28865,
+      "played_state_overrides_from_stints": 4,
+      "priors_sha256": "da4f8a46bef01926170a37d69bf5c394750b98e9ae1187bc7e17d0a11f8c6b2d",
+      "scored_rows": 28865,
+      "stints_sha256": "abacdb27c6c08e9ae2807b7e564675920efec2012550ea2897e55fb91748313e"
+    },
+    "2025-26": {
+      "availability_rows": 43265,
+      "availability_sha256": "7006c5c9c2df8f77057020072c54e1507a452955d5630a8b91cdc301efa4ef5a",
+      "common_complete_game_teams": 2460,
+      "common_complete_games": 1230,
+      "cutoff_coverage": [
+        {
+          "complete_game_teams": 2460,
+          "cutoff_minutes": 44,
+          "game_teams": 2460
+        }
+      ],
+      "eligible_rows": 31154,
+      "played_state_overrides_from_stints": 0,
+      "priors_sha256": "83bb6b4e281222a43bf22474c964d15ad23987fd3c48b0bb387104b90bc4af8f",
+      "scored_rows": 31154,
+      "stints_sha256": "7bdd61586f2879c91542f12a32d41f552485c823ba908526877736ebdca0efd2"
+    }
+  },
+  "development_seasons": [
+    "2023-24",
+    "2024-25"
+  ],
+  "downstream_current_season": {
+    "input_lineage": {
+      "game_evaluation_sha256": "80dcf70b5a5573336acb8f430301d3eabdb17f1bfb8ab2edb5f8e3110cd6cd91",
+      "player_game_evaluation_sha256": "93b1d7ebc19b1f5855016354c8c4a76bda7a736cabc8159479a1b29089da9a09",
+      "rating_contributions_sha256": "a3d6b66258acd033e349c3aa502f838cb65b4da4086e07d5375d40acd57d2d87",
+      "rating_coverage_sha256": "374b3e732e38854a342607324b2c21f7d6bbd42c633d47d41c003ce8105191f3",
+      "release_minutes_cache_sha256": "0800c16b1f5e90d213e4268b22af23a37fdc602ef897dbc816d6e19ccb373cc3",
+      "summary_files_sha256": "bf98236d0ff01511141766e9488c29baa052102d386d702c9c41b37a86c1ada4"
+    },
+    "interpretation": "Secondary only: both minutes arms use the same date-specific possession-updated NAIL ratings and archived injury-conditioned inputs.",
+    "metrics": {
+      "career_candidate_minutes": {
+        "ats_losses": 24,
+        "ats_pushes": 0,
+        "ats_wins": 19,
+        "brier_score": 0.19188894061542772,
+        "games": 43,
+        "log_loss": 0.5646464602138265,
+        "margin_mae": 11.27935700434036,
+        "margin_rmse": 15.365512535385673,
+        "winner_accuracy": 0.6744186046511628
+      },
+      "control_updated_minutes": {
+        "ats_losses": 24,
+        "ats_pushes": 0,
+        "ats_wins": 19,
+        "brier_score": 0.1921490417160453,
+        "games": 43,
+        "log_loss": 0.5652107658004281,
+        "margin_mae": 11.288402540499943,
+        "margin_rmse": 15.371809799790224,
+        "winner_accuracy": 0.6744186046511628
+      }
+    },
+    "replay_audit": {
+      "candidate_team_minutes_max_error": 5.684341886080802e-14,
+      "control_reproduction_mae": 2.0118631758697042e-17,
+      "control_reproduction_max_absolute_error": 3.552713678800501e-15,
+      "games": 43,
+      "rows": 1501
+    },
+    "through_date": "2026-10-25"
+  },
+  "generated_at": "2026-10-26T17:58:46.571023Z",
+  "grid": {
+    "beta": [
+      0.0,
+      0.1,
+      0.25,
+      0.5,
+      1.0,
+      2.0
+    ],
+    "unique_curves": 54,
+    "w_max": [
+      0.2,
+      0.5,
+      1.0,
+      2.0,
+      4.0
+    ],
+    "w_min": [
+      0.05,
+      0.1,
+      0.2
+    ]
+  },
+  "holdout_bootstrap": {
+    "played_only": {
+      "ci95_lower": -0.01158762582344142,
+      "ci95_upper": -0.006120270321687862,
+      "mean_candidate_mae_advantage": -0.008860096310534239,
+      "population": "played_only",
+      "probability_candidate_better": 0.0,
+      "samples": 2000,
+      "seed": 20261026
+    },
+    "played_plus_coach_dnp": {
+      "ci95_lower": -0.004363080258143779,
+      "ci95_upper": 0.0009880556844022099,
+      "mean_candidate_mae_advantage": -0.001690770729323684,
+      "population": "played_plus_coach_dnp",
+      "probability_candidate_better": 0.1085,
+      "samples": 2000,
+      "seed": 20261026
+    }
+  },
+  "holdout_by_availability_state": [
+    {
+      "availability_state": "coach_dnp",
+      "candidate_bias": 4.359726730610899,
+      "candidate_mae": 4.359726730610899,
+      "candidate_mae_advantage": 0.040886462107494914,
+      "candidate_mae_advantage_pct": 0.92910829279767,
+      "candidate_rmse": 7.025456266707279,
+      "control_bias": 4.400613192718394,
+      "control_mae": 4.400613192718394,
+      "control_rmse": 7.008276380981984,
+      "games": 1056,
+      "players": 365,
+      "population": "played_plus_coach_dnp",
+      "rows": 4503
+    },
+    {
+      "availability_state": "played",
+      "candidate_bias": -0.8110254315686313,
+      "candidate_mae": 5.1432950138777125,
+      "candidate_mae_advantage": -0.008825390906971542,
+      "candidate_mae_advantage_pct": -0.17188515182733283,
+      "candidate_rmse": 6.943774542931202,
+      "control_bias": -0.8554606077394497,
+      "control_mae": 5.134469622970741,
+      "control_rmse": 6.933296866744433,
+      "games": 1230,
+      "players": 582,
+      "population": "played_plus_coach_dnp",
+      "rows": 26651
+    }
+  ],
+  "holdout_by_career_exposure": {
+    "played_only": [
+      {
+        "candidate_bias": -2.3160437610224167,
+        "candidate_mae": 6.02743502019629,
+        "candidate_mae_advantage": -0.055850783904880075,
+        "candidate_mae_advantage_pct": -0.9352758279026744,
+        "candidate_rmse": 8.12817841462766,
+        "career_exposure_band": "First year",
+        "control_bias": -2.430276222242012,
+        "control_mae": 5.9715842362914096,
+        "control_rmse": 8.06889944512842,
+        "games": 1191,
+        "players": 216,
+        "population": "played_only",
+        "rows": 5114
+      },
+      {
+        "candidate_bias": -1.1568933070586362,
+        "candidate_mae": 5.535472884928455,
+        "candidate_mae_advantage": -0.025815861984324506,
+        "candidate_mae_advantage_pct": -0.468556606642088,
+        "candidate_rmse": 7.306497145199598,
+        "career_exposure_band": "Second year",
+        "control_bias": -1.224901144093304,
+        "control_mae": 5.509657022944131,
+        "control_rmse": 7.274179833978865,
+        "games": 1221,
+        "players": 141,
+        "population": "played_only",
+        "rows": 4500
+      },
+      {
+        "candidate_bias": -0.6199059704350882,
+        "candidate_mae": 5.1329921602135204,
+        "candidate_mae_advantage": -0.005527726813224554,
+        "candidate_mae_advantage_pct": -0.10780624390521266,
+        "candidate_rmse": 6.907118176283691,
+        "career_exposure_band": "Years 3\u20134",
+        "control_bias": -0.6288783713289925,
+        "control_mae": 5.127464433400296,
+        "control_rmse": 6.897589196950186,
+        "games": 1226,
+        "players": 159,
+        "population": "played_only",
+        "rows": 5933
+      },
+      {
+        "candidate_bias": -0.07983330137893632,
+        "candidate_mae": 4.582671312396094,
+        "candidate_mae_advantage": 0.01795594361853059,
+        "candidate_mae_advantage_pct": 0.39029337999630176,
+        "candidate_rmse": 6.178272622246166,
+        "career_exposure_band": "Veteran",
+        "control_bias": -0.10151814938793603,
+        "control_mae": 4.600627256014625,
+        "control_rmse": 6.206893177225102,
+        "games": 1230,
+        "players": 225,
+        "population": "played_only",
+        "rows": 11104
+      }
+    ],
+    "played_plus_coach_dnp": [
+      {
+        "candidate_bias": -0.9889127076414437,
+        "candidate_mae": 5.378577291933615,
+        "candidate_mae_advantage": 0.014717727786479173,
+        "candidate_mae_advantage_pct": 0.27288935117892005,
+        "candidate_rmse": 7.619642465587917,
+        "career_exposure_band": "First year",
+        "control_bias": -1.0187501056253643,
+        "control_mae": 5.393295019720094,
+        "control_rmse": 7.57337013195651,
+        "games": 1225,
+        "players": 223,
+        "population": "played_plus_coach_dnp",
+        "rows": 6701
+      },
+      {
+        "candidate_bias": -0.3942931874927864,
+        "candidate_mae": 5.402751637135108,
+        "candidate_mae_advantage": -0.007404052552113072,
+        "candidate_mae_advantage_pct": -0.13723031623152282,
+        "candidate_rmse": 7.2549917318418915,
+        "career_exposure_band": "Second year",
+        "control_bias": -0.4382446679037151,
+        "control_mae": 5.395347584582995,
+        "control_rmse": 7.229599578510007,
+        "games": 1229,
+        "players": 141,
+        "population": "played_plus_coach_dnp",
+        "rows": 5195
+      },
+      {
+        "candidate_bias": 0.07450338846068591,
+        "candidate_mae": 5.248361901290488,
+        "candidate_mae_advantage": -0.00040858646937724785,
+        "candidate_mae_advantage_pct": -0.007785634605843965,
+        "candidate_rmse": 7.153048482600284,
+        "career_exposure_band": "Years 3\u20134",
+        "control_bias": 0.07099684059663522,
+        "control_mae": 5.24795331482111,
+        "control_rmse": 7.146297722882499,
+        "games": 1229,
+        "players": 160,
+        "population": "played_plus_coach_dnp",
+        "rows": 6597
+      },
+      {
+        "candidate_bias": 0.4897534950209686,
+        "candidate_mae": 4.578881623238167,
+        "candidate_mae_advantage": -0.00857418451482328,
+        "candidate_mae_advantage_pct": -0.187606296289301,
+        "candidate_rmse": 6.3294571587560755,
+        "career_exposure_band": "Veteran",
+        "control_bias": 0.44641338757493215,
+        "control_mae": 4.5703074387233436,
+        "control_rmse": 6.343777107134825,
+        "games": 1230,
+        "players": 227,
+        "population": "played_plus_coach_dnp",
+        "rows": 12661
+      }
+    ]
+  },
+  "holdout_metrics": [
+    {
+      "candidate_bias": -0.8110254315686313,
+      "candidate_mae": 5.1432950138777125,
+      "candidate_mae_advantage": -0.008825390906971542,
+      "candidate_mae_advantage_pct": -0.17188515182733283,
+      "candidate_rmse": 6.943774542931202,
+      "control_bias": -0.8554606077394497,
+      "control_mae": 5.134469622970741,
+      "control_rmse": 6.933296866744433,
+      "games": 1230,
+      "players": 582,
+      "population": "played_only",
+      "rows": 26651
+    },
+    {
+      "candidate_bias": -0.06364477462909132,
+      "candidate_mae": 5.030038033087109,
+      "candidate_mae_advantage": -0.00164003833188886,
+      "candidate_mae_advantage_pct": -0.0326155235444663,
+      "candidate_rmse": 6.955640123901218,
+      "control_bias": -0.09574755890264963,
+      "control_mae": 5.02839799475522,
+      "control_rmse": 6.94418445997931,
+      "games": 1230,
+      "players": 592,
+      "population": "played_plus_coach_dnp",
+      "rows": 31154
+    }
+  ],
+  "holdout_season": "2025-26",
+  "production_status": "shadow_only_no_public_projection_change",
+  "representative_players": {
+    "minimum_rows": 20,
+    "most_improved": [
+      {
+        "actual_minutes": 2.074404761904762,
+        "advantage": 0.2826131636299425,
+        "candidate_mae": 2.711313514535555,
+        "candidate_minutes": 1.056237376647693,
+        "career_available_games": 15.5,
+        "control_mae": 2.9939266781654976,
+        "control_minutes": 1.6641596170345934,
+        "player_id": 1642434,
+        "player_name": "Riley Minix",
+        "rows": 28,
+        "team": "CLE"
+      },
+      {
+        "actual_minutes": 1.1871212121212122,
+        "advantage": 0.18292322646345083,
+        "candidate_mae": 1.423900194037014,
+        "candidate_minutes": 0.7485773657666249,
+        "career_available_games": 22.5,
+        "control_mae": 1.6068234205004648,
+        "control_minutes": 1.126800267846759,
+        "player_id": 1631127,
+        "player_name": "Harrison Ingram",
+        "rows": 22,
+        "team": "SAS"
+      },
+      {
+        "actual_minutes": 18.061449056603774,
+        "advantage": 0.16207221834965235,
+        "candidate_mae": 4.939750265646985,
+        "candidate_minutes": 16.617446775451693,
+        "career_available_games": 24.5,
+        "control_mae": 5.101822483996638,
+        "control_minutes": 16.17672351228352,
+        "player_id": 1642928,
+        "player_name": "Dylan Cardwell",
+        "rows": 50,
+        "team": "SAC"
+      },
+      {
+        "actual_minutes": 3.2369047619047615,
+        "advantage": 0.14226210210400403,
+        "candidate_mae": 4.601401655470746,
+        "candidate_minutes": 3.5988524156302,
+        "career_available_games": 10.0,
+        "control_mae": 4.74366375757475,
+        "control_minutes": 4.164681910832636,
+        "player_id": 1642357,
+        "player_name": "David Jones Garcia",
+        "rows": 21,
+        "team": "SAS"
+      },
+      {
+        "actual_minutes": 3.8280135462022256,
+        "advantage": 0.1348073087236612,
+        "candidate_mae": 4.294405473014822,
+        "candidate_minutes": 3.555767545870512,
+        "career_available_games": 98.0,
+        "control_mae": 4.429212781738483,
+        "control_minutes": 3.906703755765606,
+        "player_id": 1642367,
+        "player_name": "Jonathan Mogbo",
+        "rows": 65,
+        "team": "TOR"
+      },
+      {
+        "actual_minutes": 1.7634848484848484,
+        "advantage": 0.12631436011572816,
+        "candidate_mae": 2.146832852370819,
+        "candidate_minutes": 1.3513561532768406,
+        "career_available_games": 27.0,
+        "control_mae": 2.2731472124865473,
+        "control_minutes": 1.7131157987018855,
+        "player_id": 1642443,
+        "player_name": "Jahmir Young",
+        "rows": 33,
+        "team": "MIA"
+      },
+      {
+        "actual_minutes": 16.828791666666667,
+        "advantage": 0.1257817554310101,
+        "candidate_mae": 5.0658585080261584,
+        "candidate_minutes": 13.899556203050125,
+        "career_available_games": 19.5,
+        "control_mae": 5.191640263457169,
+        "control_minutes": 13.57455832459063,
+        "player_id": 1642942,
+        "player_name": "Jahmai Mashack",
+        "rows": 40,
+        "team": "MEM"
+      },
+      {
+        "actual_minutes": 18.423784067085954,
+        "advantage": 0.12045716821605534,
+        "candidate_mae": 6.521486155327924,
+        "candidate_minutes": 17.429048723770883,
+        "career_available_games": 22.0,
+        "control_mae": 6.6419433235439795,
+        "control_minutes": 16.970963215705122,
+        "player_id": 1642914,
+        "player_name": "Javon Small",
+        "rows": 45,
+        "team": "MEM"
+      },
+      {
+        "actual_minutes": 3.2300801138065287,
+        "advantage": 0.11703108130196149,
+        "candidate_mae": 4.930437349366764,
+        "candidate_minutes": 3.163640163077279,
+        "career_available_games": 27.5,
+        "control_mae": 5.047468430668726,
+        "control_minutes": 3.528062766481501,
+        "player_id": 1642449,
+        "player_name": "Tolu Smith",
+        "rows": 42,
+        "team": "DET"
+      },
+      {
+        "actual_minutes": 1.825388888888889,
+        "advantage": 0.11381697208723152,
+        "candidate_mae": 2.23953098948172,
+        "candidate_minutes": 1.3914464665296706,
+        "career_available_games": 14.5,
+        "control_mae": 2.3533479615689514,
+        "control_minutes": 1.7287673105449217,
+        "player_id": 1641780,
+        "player_name": "Johni Broome",
+        "rows": 30,
+        "team": "PHI"
+      },
+      {
+        "actual_minutes": 4.295241060025543,
+        "advantage": 0.11114778340776788,
+        "candidate_mae": 4.279048284397744,
+        "candidate_minutes": 3.7076823571592477,
+        "career_available_games": 23.5,
+        "control_mae": 4.390196067805512,
+        "control_minutes": 4.107933762366127,
+        "player_id": 1641755,
+        "player_name": "Kevin McCullar Jr.",
+        "rows": 36,
+        "team": "NYK"
+      },
+      {
+        "actual_minutes": 3.822153779750894,
+        "advantage": 0.10364690451118719,
+        "candidate_mae": 3.164214701280623,
+        "candidate_minutes": 3.691589375320597,
+        "career_available_games": 41.0,
+        "control_mae": 3.2678616057918104,
+        "control_minutes": 4.076404906286455,
+        "player_id": 1628502,
+        "player_name": "Nigel Hayes-Davis",
+        "rows": 51,
+        "team": "PHX"
+      }
+    ],
+    "most_regressed": [
+      {
+        "actual_minutes": 1.4395121951219514,
+        "advantage": -0.4189114428583438,
+        "candidate_mae": 3.566723332704554,
+        "candidate_minutes": 3.2058477823378353,
+        "career_available_games": 1215.5,
+        "control_mae": 3.1478118898462104,
+        "control_minutes": 2.575100233114328,
+        "player_id": 200768,
+        "player_name": "Kyle Lowry",
+        "rows": 82,
+        "team": "PHI"
+      },
+      {
+        "actual_minutes": 1.4664150943396226,
+        "advantage": -0.37810241861272553,
+        "candidate_mae": 3.999306720169677,
+        "candidate_minutes": 3.289087244644621,
+        "career_available_games": 960.5,
+        "control_mae": 3.6212043015569515,
+        "control_minutes": 2.808660332321491,
+        "player_id": 201569,
+        "player_name": "Eric Gordon",
+        "rows": 50,
+        "team": "PHI"
+      },
+      {
+        "actual_minutes": 1.723821138211382,
+        "advantage": -0.2260271760716015,
+        "candidate_mae": 2.821160891419796,
+        "candidate_minutes": 2.526398092077791,
+        "career_available_games": 991.5,
+        "control_mae": 2.5951337153481946,
+        "control_minutes": 2.108141212441273,
+        "player_id": 202687,
+        "player_name": "Bismack Biyombo",
+        "rows": 82,
+        "team": "SAS"
+      },
+      {
+        "actual_minutes": 10.3425,
+        "advantage": -0.15798680654430886,
+        "candidate_mae": 6.404547276371215,
+        "candidate_minutes": 13.244656184371502,
+        "career_available_games": 1359.5,
+        "control_mae": 6.246560469826906,
+        "control_minutes": 12.731532527614512,
+        "player_id": 101108,
+        "player_name": "Chris Paul",
+        "rows": 22,
+        "team": "LAC"
+      },
+      {
+        "actual_minutes": 2.454320987654321,
+        "advantage": -0.14747612456311998,
+        "candidate_mae": 3.477541230663264,
+        "candidate_minutes": 3.2134273807083433,
+        "career_available_games": 1319.0,
+        "control_mae": 3.330065106100144,
+        "control_minutes": 3.042884904485813,
+        "player_id": 201599,
+        "player_name": "DeAndre Jordan",
+        "rows": 81,
+        "team": "NOP"
+      },
+      {
+        "actual_minutes": 3.9789986114514413,
+        "advantage": -0.14505495154110637,
+        "candidate_mae": 4.731301214511811,
+        "candidate_minutes": 5.151798646060842,
+        "career_available_games": 691.0,
+        "control_mae": 4.586246262970705,
+        "control_minutes": 4.93624644584671,
+        "player_id": 1626172,
+        "player_name": "Kevon Looney",
+        "rows": 77,
+        "team": "NOP"
+      },
+      {
+        "actual_minutes": 11.547765436688664,
+        "advantage": -0.13586743610878482,
+        "candidate_mae": 6.935850899218418,
+        "candidate_minutes": 13.949362116308139,
+        "career_available_games": 649.5,
+        "control_mae": 6.799983463109633,
+        "control_minutes": 13.65571082838665,
+        "player_id": 1626156,
+        "player_name": "D'Angelo Russell",
+        "rows": 42,
+        "team": "DAL"
+      },
+      {
+        "actual_minutes": 4.802844444444445,
+        "advantage": -0.13403929047811314,
+        "candidate_mae": 4.97727746199148,
+        "candidate_minutes": 5.95099268817412,
+        "career_available_games": 852.0,
+        "control_mae": 4.8432381715133666,
+        "control_minutes": 5.551468139192063,
+        "player_id": 203482,
+        "player_name": "Kelly Olynyk",
+        "rows": 75,
+        "team": "SAS"
+      },
+      {
+        "actual_minutes": 7.817814075418431,
+        "advantage": -0.13044411684190038,
+        "candidate_mae": 7.925671535036543,
+        "candidate_minutes": 8.966855597456403,
+        "career_available_games": 533.0,
+        "control_mae": 7.795227418194643,
+        "control_minutes": 8.697121451290789,
+        "player_id": 203992,
+        "player_name": "Bogdan Bogdanovi\u0107",
+        "rows": 57,
+        "team": "LAC"
+      },
+      {
+        "actual_minutes": 12.881332547169812,
+        "advantage": -0.11524316482079477,
+        "candidate_mae": 5.412203707878514,
+        "candidate_minutes": 14.996117457902244,
+        "career_available_games": 617.5,
+        "control_mae": 5.296960543057719,
+        "control_minutes": 14.723181917222242,
+        "player_id": 1627827,
+        "player_name": "Dorian Finney-Smith",
+        "rows": 48,
+        "team": "HOU"
+      },
+      {
+        "actual_minutes": 20.385550650992005,
+        "advantage": -0.11445710579959201,
+        "candidate_mae": 5.4190831386971725,
+        "candidate_minutes": 19.46380470402796,
+        "career_available_games": 28.5,
+        "control_mae": 5.3046260328975805,
+        "control_minutes": 19.164481757673375,
+        "player_id": 1642874,
+        "player_name": "Danny Wolf",
+        "rows": 58,
+        "team": "BKN"
+      },
+      {
+        "actual_minutes": 10.197002358490566,
+        "advantage": -0.08370264234820102,
+        "candidate_mae": 5.418265443144657,
+        "candidate_minutes": 11.293947665134203,
+        "career_available_games": 753.5,
+        "control_mae": 5.334562800796456,
+        "control_minutes": 11.000376386974896,
+        "player_id": 1627741,
+        "player_name": "Buddy Hield",
+        "rows": 80,
+        "team": "ATL"
+      }
+    ]
+  },
+  "role_cutoff_minutes": 44,
+  "role_lookback_games": 3,
+  "schema_version": 1,
+  "selected_config": {
+    "beta": 0.1,
+    "development_conditional_mae": 4.905382081584857,
+    "development_control_mae": 4.908144032477228,
+    "w_max": 0.5,
+    "w_min": 0.05
+  },
+  "selected_weight_audit": [
+    {
+      "career_available_games": 0,
+      "prior_weight": 0.05
+    },
+    {
+      "career_available_games": 10,
+      "prior_weight": 0.06150693297847872
+    },
+    {
+      "career_available_games": 25,
+      "prior_weight": 0.07661095871976531
+    },
+    {
+      "career_available_games": 50,
+      "prior_weight": 0.09760826753221177
+    },
+    {
+      "career_available_games": 82,
+      "prior_weight": 0.11931471805599453
+    },
+    {
+      "career_available_games": 164,
+      "prior_weight": 0.15986122886681098
+    },
+    {
+      "career_available_games": 410,
+      "prior_weight": 0.22917594692280552
+    },
+    {
+      "career_available_games": 820,
+      "prior_weight": 0.2897895272798371
+    }
+  ],
+  "selection_rule": "lowest pooled development played-plus-coach-DNP MAE, then RMSE, then played-only MAE; holdout loaded after selection",
+  "study": "career_available_game_minutes_shrinkage_v1"
+}

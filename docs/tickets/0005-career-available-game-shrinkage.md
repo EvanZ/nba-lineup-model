@@ -147,3 +147,41 @@ directly aligned with repeated opportunities to occupy an NBA rotation role.
 - Adding team continuity, coaching continuity, age, or role-volatility
   interactions in this slice. Those remain possible follow-ups only if the
   single-variable model leaves a documented residual problem.
+
+## Implementation result (2026-10-26)
+
+The historical study is implemented in
+`nba_lineup_model.modeling.career_available_minutes`. The compact curve grid was
+selected on pooled 2023-24 and 2024-25 rows before the code loaded the locked
+2025-26 holdout. The selected curve was:
+
+```text
+prior_weight = clip(0.05 + 0.10 * log1p(career_available_games / 82), 0.05, 0.50)
+```
+
+The locked holdout did **not** support replacing the constant-0.2 control:
+
+| Population | Rows | Constant 0.2 MAE | Career curve MAE | Candidate advantage |
+| --- | ---: | ---: | ---: | ---: |
+| Played only | 26,651 | **5.134** | 5.143 | -0.009 |
+| Played + healthy coach DNP | 31,154 | **5.028** | 5.030 | -0.002 |
+
+The paired game-bootstrap interval for played-plus-coach-DNP MAE advantage was
+`[-0.004, +0.001]`, with only a 10.8% bootstrap probability that the candidate
+was better. The apparent first-year improvement in the combined population was
+`+0.015` minutes, but first-year played-only performance regressed by `-0.056`.
+The gain therefore came from predicting healthy coach DNP zeros, not from more
+accurate minutes conditional on actually playing.
+
+As secondary evidence, the exact current-season replay reproduced the existing
+constant-0.2 updater to floating-point tolerance and compared both minutes arms
+under identical possession-updated NAIL ratings and archived injury/context
+inputs. Across 43 games, the candidate changed Brier from `0.19215` to `0.19189`
+and log loss from `0.56521` to `0.56465`, while winner accuracy remained 67.4%
+and ATS remained 19-24-0. That sample is too small and the differences are too
+small to override the negative full-season conditional-minutes result.
+
+Decision: retain the constant-0.2 updater. Keep career available games as an
+audited cohort diagnostic; do not promote the curve or change public
+projections. The portable report and row-level artifacts are generated under
+`artifacts/analysis/career_available_minutes_v6/`.
