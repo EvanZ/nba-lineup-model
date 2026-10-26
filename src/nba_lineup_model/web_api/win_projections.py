@@ -24,6 +24,7 @@ import pandas as pd
 
 from nba_lineup_model.modeling.schedule_controls import build_back_to_back_game_features
 from nba_lineup_model.season.schedule import SeasonScheduleCache
+from nba_lineup_model.season.slate_time import PACIFIC, pacific_date
 from nba_lineup_model.web_api.inference import (
     DEFAULT_ARTIFACTS_DIR,
     MODEL_ARTIFACT,
@@ -751,12 +752,7 @@ def read_current_season_records(
                 continue
             start_time = str(payload.get("start_time", ""))
             try:
-                game_date = (
-                    datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                    .astimezone(ZoneInfo("America/New_York"))
-                    .date()
-                    .isoformat()
-                )
+                game_date = pacific_date(start_time).isoformat()
             except ValueError:
                 continue
             winner = home_team if home_score > away_score else away_team
@@ -816,12 +812,7 @@ def read_schedule_performance(
                 continue
             start_time = str(payload.get("start_time", ""))
             try:
-                game_date = (
-                    datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                    .astimezone(ZoneInfo("America/New_York"))
-                    .date()
-                    .isoformat()
-                )
+                game_date = pacific_date(start_time).isoformat()
             except ValueError:
                 continue
             completed.append((game_date, payload))
@@ -2493,7 +2484,7 @@ def _build_final_game_archive(
         "record_type": "immutable_final_game_audit",
         "archived_at": (archived_at or datetime.now(UTC)).isoformat().replace("+00:00", "Z"),
         "season": PROJECTION_SEASON,
-        "game_date": str(game.get("start_time", ""))[:10],
+        "game_date": pacific_date(game.get("start_time")).isoformat(),
         "game_id": game.get("game_id"),
         "espn_game_id": str(game.get("espn_game_id", "")),
         "start_time": game.get("start_time"),
@@ -2671,10 +2662,10 @@ def _default_live_score_date(
     """Prefer yesterday's unfinished slate while its live window is still open."""
 
     current_time = (now or datetime.now(UTC)).astimezone(UTC)
-    eastern_date = current_time.astimezone(ZoneInfo("America/New_York")).date()
+    pacific_date_today = current_time.astimezone(PACIFIC).date()
     candidate_dates = [
-        (eastern_date - timedelta(days=1)).isoformat(),
-        eastern_date.isoformat(),
+        (pacific_date_today - timedelta(days=1)).isoformat(),
+        pacific_date_today.isoformat(),
     ]
     for game_date in candidate_dates:
         path = Path(state_dir) / "latest" / f"{game_date}.json"
@@ -2696,7 +2687,7 @@ def _default_live_score_date(
             hours=6
         ):
             return game_date
-    return eastern_date.isoformat()
+    return pacific_date_today.isoformat()
 
 
 def live_score_watcher_main() -> int:
@@ -2754,7 +2745,7 @@ def refresh_schedule_main() -> int:
     parser = argparse.ArgumentParser(description="Archive NBA schedule and odds from ESPN")
     parser.add_argument(
         "--date",
-        default=datetime.now(ZoneInfo("America/New_York")).date().isoformat(),
+        default=datetime.now(PACIFIC).date().isoformat(),
     )
     parser.add_argument(
         "--state-dir",

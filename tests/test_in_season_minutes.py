@@ -20,7 +20,10 @@ from nba_lineup_model.modeling.in_season_minutes import (
     publish_minutes_contribution,
     regulation_equivalent_minutes,
 )
-from nba_lineup_model.modeling.in_season_minutes_monitor import build_game_observations
+from nba_lineup_model.modeling.in_season_minutes_monitor import (
+    build_game_observations,
+)
+from nba_lineup_model.season.slate_time import summary_slate_date
 
 
 def _config() -> InSeasonMinutesConfig:
@@ -30,6 +33,20 @@ def _config() -> InSeasonMinutesConfig:
         conditional_prior_games=4.0,
         rotation_size=2,
     )
+
+
+def test_summary_slate_date_uses_pacific_date_across_utc_midnight() -> None:
+    summary = {
+        "game_date": "2026-10-25",
+        "pregame": {"start_time": "2026-10-25T00:30:00Z"},
+    }
+    assert summary_slate_date(summary).isoformat() == "2026-10-24"
+
+    late_west_game = {
+        "game_date": "2026-10-26",
+        "pregame": {"start_time": "2026-10-26T01:00:00Z"},
+    }
+    assert summary_slate_date(late_west_game).isoformat() == "2026-10-25"
 
 
 def _priors() -> pd.DataFrame:

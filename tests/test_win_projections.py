@@ -298,7 +298,7 @@ def test_live_score_default_advances_after_previous_date_is_final(tmp_path) -> N
 
     game_date = _default_live_score_date(
         state_dir=tmp_path,
-        now=datetime(2026, 10, 23, 4, 23, tzinfo=UTC),
+        now=datetime(2026, 10, 23, 12, 23, tzinfo=UTC),
     )
 
     assert game_date == "2026-10-23"

@@ -41,6 +41,7 @@ from nba_lineup_model.modeling.in_season_nail import (
 )
 from nba_lineup_model.modeling.stints import rapm_stints_frame
 from nba_lineup_model.possessions import possession_segments_frame
+from nba_lineup_model.season.slate_time import summary_slate_date
 
 SEASON = "2026-27"
 CORE_MODEL_VERSION = "forward_nail_rapm_v1212_residualized_lambda"
@@ -233,7 +234,7 @@ def _rapm_stints(
     lineup_frame = lineup_frame.assign(
         season=SEASON,
         season_type="regular",
-        game_date=str(summary["game_date"]),
+        game_date=summary_slate_date(summary).isoformat(),
         game_time_utc=str(summary["pregame"]["start_time"]),
         catalog_home_team_tricode=home,
         catalog_away_team_tricode=away,
@@ -256,7 +257,7 @@ def _b2b_flags(summaries: list[dict[str, Any]]) -> dict[str, tuple[bool, bool]]:
     output: dict[str, tuple[bool, bool]] = {}
     grouped: dict[date, list[dict[str, Any]]] = defaultdict(list)
     for summary in summaries:
-        grouped[date.fromisoformat(str(summary["game_date"]))].append(summary)
+        grouped[summary_slate_date(summary)].append(summary)
     for game_date in sorted(grouped):
         for summary in grouped[game_date]:
             home = str(summary["home_team"])
@@ -411,11 +412,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         summaries = [
             summary
             for summary in summaries
-            if date.fromisoformat(str(summary["game_date"])) <= through_date
+            if summary_slate_date(summary) <= through_date
         ]
     summaries.sort(
         key=lambda row: (
-            str(row["game_date"]),
+            summary_slate_date(row),
             str(row["pregame"]["start_time"]),
             str(row["game_id"]),
         )
@@ -446,7 +447,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     grouped: dict[date, list[dict[str, Any]]] = defaultdict(list)
     for summary in summaries:
-        grouped[date.fromisoformat(str(summary["game_date"]))].append(summary)
+        grouped[summary_slate_date(summary)].append(summary)
 
     for game_date in sorted(grouped):
         adjustment_vector = (

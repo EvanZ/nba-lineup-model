@@ -33,6 +33,7 @@ from nba_lineup_model.modeling.in_season_minutes import (
     regulation_equivalent_minutes,
 )
 from nba_lineup_model.modeling.in_season_nail import read_game_contribution
+from nba_lineup_model.season.slate_time import summary_slate_date
 
 SEASON = "2026-27"
 UPDATER_VERSION = "participation_conditional_shrinkage_v1"
@@ -188,7 +189,7 @@ def build_game_observations(
                     {
                         "season": SEASON,
                         "game_id": str(summary["game_id"]),
-                        "game_date": str(summary["game_date"]),
+                        "game_date": summary_slate_date(summary).isoformat(),
                         "team": team,
                         "player_id": player_id,
                         "player_name": name,
@@ -254,7 +255,7 @@ def _rating_state_by_date(
     rating_coverage_path: Path | None,
     prior_possessions: float,
 ) -> dict[date, dict[int, float]]:
-    dates = sorted({date.fromisoformat(str(row["game_date"])) for row in summaries})
+    dates = sorted({summary_slate_date(row) for row in summaries})
     if rating_cache_root is None or rating_coverage_path is None:
         return {game_date: {} for game_date in dates}
     coverage = _load_json(rating_coverage_path).get("games", {})
@@ -270,7 +271,7 @@ def _rating_state_by_date(
         )
         if contribution is not None:
             player_ids = contribution.player_ids
-            contributions[date.fromisoformat(str(summary["game_date"]))].append(contribution)
+            contributions[summary_slate_date(summary)].append(contribution)
     if player_ids is None:
         return {game_date: {} for game_date in dates}
     gram = sparse.csr_matrix((len(player_ids), len(player_ids)), dtype=float)
@@ -390,10 +391,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         for row in summaries
         if row.get("final", {}).get("status", {}).get("completed")
         and str(row.get("game_id", "")).startswith("002")
-        and date.fromisoformat(str(row["game_date"])) <= date.fromisoformat(args.through_date)
+        and summary_slate_date(row) <= date.fromisoformat(args.through_date)
     ]
     summaries.sort(
-        key=lambda row: (str(row["game_date"]), str(row["pregame"]["start_time"]), row["game_id"])
+        key=lambda row: (
+            summary_slate_date(row),
+            str(row["pregame"]["start_time"]),
+            row["game_id"],
+        )
     )
     cache = _load_json(_minutes_cache_path(Path(args.release_root)))
     priors = pd.DataFrame(cache["minutes"]["players"])
@@ -420,7 +425,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     grouped: dict[date, list[dict[str, Any]]] = defaultdict(list)
     for summary in summaries:
-        grouped[date.fromisoformat(str(summary["game_date"]))].append(summary)
+        grouped[summary_slate_date(summary)].append(summary)
     observation_rows: list[pd.DataFrame] = []
     game_rows: list[dict[str, object]] = []
     exclusions: list[dict[str, str]] = []
@@ -457,7 +462,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 metadata = {
                     "season": SEASON,
                     "game_id": game_id,
-                    "game_date": str(summary["game_date"]),
+                    "game_date": game_date.isoformat(),
+                    "source_game_date": str(summary["game_date"]),
                     "finalized_at": str(summary["archived_at"]),
                     "summary_sha256": _sha256(summary_path),
                     "espn_sha256": _sha256(espn_path),

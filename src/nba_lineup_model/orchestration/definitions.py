@@ -30,6 +30,8 @@ from dagster import (
     sensor,
 )
 
+from nba_lineup_model.season.slate_time import PACIFIC, summary_slate_date
+
 EASTERN = ZoneInfo("America/New_York")
 RETRY_POLICY = RetryPolicy(max_retries=3, delay=30)
 WORKLOAD_TAG = "gestalt/workload"
@@ -693,7 +695,7 @@ def update_in_season_nail_shadow_job() -> None:
 
 def _in_season_nail_shadow_config(context: object) -> dict[str, object]:
     through_date = (
-        _scheduled_time(context).astimezone(EASTERN).date() - timedelta(days=1)
+        _scheduled_time(context).astimezone(PACIFIC).date() - timedelta(days=1)
     ).isoformat()
     return {
         "ops": {
@@ -710,8 +712,8 @@ def _in_season_nail_shadow_config(context: object) -> dict[str, object]:
 in_season_nail_shadow_schedule = ScheduleDefinition(
     name="in_season_nail_shadow_daily",
     job=update_in_season_nail_shadow_job,
-    cron_schedule="45 8 * * *",
-    execution_timezone="America/New_York",
+    cron_schedule="45 5 * * *",
+    execution_timezone="America/Los_Angeles",
     run_config_fn=_in_season_nail_shadow_config,
     default_status=SCHEDULE_DEFAULT_STATUS,
     description=(
@@ -884,7 +886,7 @@ def update_in_season_minutes_shadow_job() -> None:
 
 def _in_season_minutes_shadow_config(context: object) -> dict[str, object]:
     through_date = (
-        _scheduled_time(context).astimezone(EASTERN).date() - timedelta(days=1)
+        _scheduled_time(context).astimezone(PACIFIC).date() - timedelta(days=1)
     ).isoformat()
     return {
         "ops": {
@@ -906,8 +908,8 @@ def _in_season_minutes_shadow_config(context: object) -> dict[str, object]:
 in_season_minutes_shadow_schedule = ScheduleDefinition(
     name="in_season_minutes_shadow_daily",
     job=update_in_season_minutes_shadow_job,
-    cron_schedule="5 9 * * *",
-    execution_timezone="America/New_York",
+    cron_schedule="5 6 * * *",
+    execution_timezone="America/Los_Angeles",
     run_config_fn=_in_season_minutes_shadow_config,
     default_status=SCHEDULE_DEFAULT_STATUS,
     description=(
@@ -931,10 +933,10 @@ def in_season_minutes_shadow_sensor(
     context: SensorEvaluationContext,
 ) -> RunRequest | SkipReason:
     now = datetime.now(UTC)
-    eastern = now.astimezone(EASTERN)
-    if (eastern.hour, eastern.minute) < (9, 5):
-        return SkipReason("Minutes shadow waits until 9:05 AM Eastern")
-    through_date = (eastern.date() - timedelta(days=1)).isoformat()
+    pacific = now.astimezone(PACIFIC)
+    if (pacific.hour, pacific.minute) < (6, 5):
+        return SkipReason("Minutes shadow waits until 6:05 AM Pacific")
+    through_date = (pacific.date() - timedelta(days=1)).isoformat()
     final_root = _state_dir() / "final"
     source_parts: list[str] = []
     for summary_path in sorted(final_root.glob("*.summary.json")):
@@ -946,7 +948,7 @@ def in_season_minutes_shadow_sensor(
             not isinstance(summary, dict)
             or not summary.get("final", {}).get("status", {}).get("completed")
             or str(summary.get("game_id", ""))[:3] != "002"
-            or str(summary.get("game_date", "")) > through_date
+            or summary_slate_date(summary).isoformat() > through_date
         ):
             continue
         espn_path = final_root / f"{summary.get('espn_game_id')}.espn.json"

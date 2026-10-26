@@ -132,7 +132,8 @@ def test_definitions_are_loadable_and_automations_default_stopped() -> None:
         is DefaultScheduleStatus.STOPPED
     )
     assert in_season_nail_shadow_schedule.default_status is DefaultScheduleStatus.STOPPED
-    assert in_season_nail_shadow_schedule.cron_schedule == "45 8 * * *"
+    assert in_season_nail_shadow_schedule.cron_schedule == "45 5 * * *"
+    assert in_season_nail_shadow_schedule.execution_timezone == "America/Los_Angeles"
     assert (
         stats_v3_morning_reconciliation_schedule.default_status
         is DefaultScheduleStatus.STOPPED
