@@ -15,6 +15,7 @@ from dagster import (
 )
 
 from nba_lineup_model.orchestration.definitions import (
+    DEFAULT_ODDS_API_BOOKMAKERS,
     EASTERN,
     active_live_game_date,
     cdn_morning_reconciliation_schedule,
@@ -31,6 +32,7 @@ from nba_lineup_model.orchestration.definitions import (
     update_live_scores_job,
     yesterday_finalization_schedule,
 )
+from nba_lineup_model.web_api.the_odds_api import DEFAULT_BOOKMAKERS
 
 
 def _write_slate(
@@ -180,6 +182,7 @@ def test_cdn_sensor_uses_stable_retryable_pending_set_key(
 
 def test_definitions_are_loadable_and_automations_default_stopped() -> None:
     Definitions.validate_loadable(defs)
+    assert DEFAULT_ODDS_API_BOOKMAKERS == DEFAULT_BOOKMAKERS
     assert schedule_refresh_schedule.default_status is DefaultScheduleStatus.STOPPED
     assert yesterday_finalization_schedule.default_status is DefaultScheduleStatus.STOPPED
     assert nba_market_odds_schedule.default_status is DefaultScheduleStatus.STOPPED

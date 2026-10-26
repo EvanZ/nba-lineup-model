@@ -1202,13 +1202,14 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-performance-label { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
 .schedule-performance-label span, .schedule-performance-bottom span { color: #69716b; font-size: 8px; font-weight: 900; letter-spacing: 0.03em; text-transform: uppercase; }
 .schedule-performance-label small { color: #8a918b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 7px; }
-.schedule-performance-columns { display: grid; grid-template-columns: minmax(54px, 1fr) repeat(4, minmax(43px, 0.65fr)); align-items: baseline; gap: 6px; min-height: 24px; border-top: 1px solid #e2dfd7; }
+.schedule-performance-columns { display: grid; grid-template-columns: minmax(54px, 1fr) repeat(4, minmax(43px, 0.68fr)); align-items: baseline; gap: 5px; min-height: 24px; border-top: 1px solid #e2dfd7; }
 .schedule-performance-columns > span { color: #69716b; font-size: 8px; }
 .schedule-performance-columns > strong { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; text-align: right; }
 .schedule-performance-columns > strong.best { color: #167157; }
 .schedule-performance-columns > .retrospective { padding-left: 6px; border-left: 1px dashed #c9c6bd; color: #3e7891; }
 .schedule-performance-columns-header { min-height: 18px; border-top: 0; }
 .schedule-performance-columns-header > span { color: #8a918b; font-size: 7px; font-weight: 800; text-align: right; text-transform: uppercase; }
+.schedule-performance-columns-header > span small { display: block; margin-top: 2px; color: #a0a59f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 6px; font-weight: 700; text-transform: none; }
 .schedule-performance-bottom { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; border-top: 1px solid #d9d6ce; }
 .schedule-performance-bottom > div { min-width: 0; display: grid; gap: 3px; }
 .schedule-performance-bottom strong { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
@@ -1264,12 +1265,30 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-model-line span { color: #8a918b; font-size: 8px; font-weight: 800; text-transform: uppercase; }
 .schedule-model-line strong { color: #245a47; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .schedule-market-heading { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
-.schedule-market-heading span { padding: 3px 5px; background: #f4dfd7; color: #a33e28; font-size: 7px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
+.schedule-market-tag { padding: 3px 5px; background: #f4dfd7; color: #a33e28; font-size: 7px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
+.schedule-market-meta { display: grid; justify-items: end; gap: 5px; }
+.schedule-bookmaker-avatars { display: flex; align-items: center; padding-right: 1px; }
+.schedule-bookmaker-avatar { position: relative; display: grid; width: 19px; height: 19px; margin-left: -4px; place-items: center; border: 2px solid #faf8f2; border-radius: 50%; background: #69716b; color: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 6px; font-weight: 950; letter-spacing: -0.04em; line-height: 1; cursor: help; }
+.schedule-bookmaker-avatar:first-child { margin-left: 0; }
+.schedule-bookmaker-avatar[data-bookmaker="draftkings"] { background: #53d337; color: #142016; }
+.schedule-bookmaker-avatar[data-bookmaker="fanduel"] { background: #1478d4; }
+.schedule-bookmaker-avatar[data-bookmaker="betmgm"] { background: #c7a14a; color: #201a0d; font-size: 5px; }
+.schedule-bookmaker-avatar[data-bookmaker="betrivers"] { background: #28468f; }
+.schedule-bookmaker-avatar[data-bookmaker="espnbet"] { background: #e5202b; }
+.schedule-bookmaker-avatar[data-bookmaker="hardrockbet"] { background: #7a2437; }
+.schedule-bookmaker-avatar[data-bookmaker="betparx"] { background: #155474; }
+.schedule-bookmaker-avatar[data-bookmaker="ballybet"] { background: #d41567; }
+.schedule-bookmaker-avatar[data-bookmaker="betonlineag"] { background: #bd1f27; }
+.schedule-bookmaker-avatar.overflow { background: #e7e3d9; color: #4e5650; font-size: 6px; }
 .schedule-market-teams { display: grid; gap: 6px; }
 .schedule-market-teams div { display: grid; grid-template-columns: 1fr auto auto; gap: 9px; align-items: baseline; }
 .schedule-market-teams span { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 900; }
 .schedule-market-teams strong { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .schedule-market-teams small { min-width: 34px; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; text-align: right; }
+.schedule-polymarket-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; margin-top: 8px; padding-top: 7px; border-top: 1px dashed #d9d6ce; color: #55505f; text-decoration: none; }
+.schedule-polymarket-row span { font-size: 7px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
+.schedule-polymarket-row small { color: #675f73; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 7px; font-weight: 800; }
+.schedule-polymarket-row:hover span, .schedule-polymarket-row:focus-visible span { color: #7047a0; text-decoration: underline; text-underline-offset: 2px; }
 .schedule-market-empty { margin: 18px 0 0; color: #8a918b; font-size: 11px; }
 .schedule-polymarket { display: grid; gap: 6px; margin-top: 12px; padding-top: 9px; border-top: 1px solid #e2dfd7; }
 .schedule-polymarket > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }

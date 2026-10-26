@@ -856,13 +856,16 @@ def read_schedule_performance(
 def _score_schedule_performance_games(
     games: list[dict[str, object]],
 ) -> dict[str, object]:
-    probability_rows: list[tuple[float, float, float, float]] = []
+    model_probability_rows: list[tuple[float, float]] = []
+    market_probability_rows: list[tuple[float, float]] = []
+    polymarket_probability_rows: list[tuple[float, float]] = []
     retrospective_probability_rows: list[tuple[float, float]] = []
     spread_rows: list[tuple[float, float, float]] = []
     retrospective_spread_rows: list[tuple[float, float]] = []
     ats_wins = 0
     ats_losses = 0
     ats_pushes = 0
+    market_source_counts = {"draftkings": 0, "market_consensus": 0}
     ats_edge_buckets = [
         {
             "key": "under_2",
@@ -913,31 +916,50 @@ def _score_schedule_performance_games(
         market_grading = market_grading if isinstance(market_grading, dict) else {}
         market = pregame.get("market")
         market = market if isinstance(market, dict) else {}
-        prediction_market = pregame.get("prediction_market")
-        prediction_market = prediction_market if isinstance(prediction_market, dict) else {}
-        dk_probability = _no_vig_home_probability(
-            market.get("home_moneyline"), market.get("away_moneyline")
+        market_source = _market_benchmark_source(market)
+        is_market_benchmark = market_source is not None
+        if market_source is not None:
+            market_source_counts[market_source] += 1
+        market_probability = (
+            _float_or_none(market.get("home_win_probability"))
+            if is_market_benchmark
+            else None
         )
-        polymarket_probability = _float_or_none(prediction_market.get("home_probability"))
-        if (
-            actual_margin is not None
-            and model_probability is not None
-            and dk_probability is not None
-            and polymarket_probability is not None
-        ):
-            outcome = 1.0 if actual_margin > 0.0 else 0.0
-            probability_rows.append(
-                (outcome, model_probability, dk_probability, polymarket_probability)
+        if market_probability is None and is_market_benchmark:
+            market_probability = _no_vig_home_probability(
+                market.get("home_moneyline"), market.get("away_moneyline")
             )
+        prediction_market = pregame.get("prediction_market")
+        prediction_market = (
+            prediction_market if isinstance(prediction_market, dict) else {}
+        )
+        polymarket_probability = _float_or_none(
+            prediction_market.get("home_probability")
+        )
+        if actual_margin is not None:
+            outcome = 1.0 if actual_margin > 0.0 else 0.0
+            if model_probability is not None:
+                model_probability_rows.append((outcome, model_probability))
+            if market_probability is not None:
+                market_probability_rows.append((outcome, market_probability))
+            if polymarket_probability is not None:
+                polymarket_probability_rows.append((outcome, polymarket_probability))
         if actual_margin is not None and retrospective_probability is not None:
             outcome = 1.0 if actual_margin > 0.0 else 0.0
             retrospective_probability_rows.append((outcome, retrospective_probability))
         market_margin = _float_or_none(market_grading.get("market_implied_home_margin"))
-        if actual_margin is not None and model_margin is not None and market_margin is not None:
+        if (
+            is_market_benchmark
+            and actual_margin is not None
+            and model_margin is not None
+            and market_margin is not None
+        ):
             spread_rows.append((actual_margin, model_margin, market_margin))
         if actual_margin is not None and retrospective_margin is not None:
             retrospective_spread_rows.append((actual_margin, retrospective_margin))
-        ats_result = market_grading.get("model_ats_result")
+        ats_result = (
+            market_grading.get("model_ats_result") if is_market_benchmark else None
+        )
         if ats_result == "win":
             ats_wins += 1
         elif ats_result == "loss":
@@ -959,10 +981,19 @@ def _score_schedule_performance_games(
                 ats_edge_buckets[bucket_index][result_key] += 1
 
     probability = {
-        "n": len(probability_rows),
-        "gestalt": _probability_metrics(probability_rows, 1),
-        "draftkings": _probability_metrics(probability_rows, 2),
-        "polymarket": _probability_metrics(probability_rows, 3),
+        "n": len(model_probability_rows),
+        "gestalt": {
+            "n": len(model_probability_rows),
+            **_probability_metrics(model_probability_rows, 1),
+        },
+        "market_consensus": {
+            "n": len(market_probability_rows),
+            **_probability_metrics(market_probability_rows, 1),
+        },
+        "polymarket": {
+            "n": len(polymarket_probability_rows),
+            **_probability_metrics(polymarket_probability_rows, 1),
+        },
         "actual_minutes": {
             "n": len(retrospective_probability_rows),
             **_probability_metrics(retrospective_probability_rows, 1),
@@ -989,11 +1020,12 @@ def _score_schedule_performance_games(
         bucket["units_at_minus_110"] = bucket_wins * (100.0 / 110.0) - bucket_losses
     return {
         "games": len(games),
+        "market_sources": market_source_counts,
         "probability": probability,
         "spread": {
             "n": len(spread_rows),
             "gestalt_mae": model_mae,
-            "draftkings_mae": market_mae,
+            "market_consensus_mae": market_mae,
             "gestalt_advantage": (
                 market_mae - model_mae
                 if market_mae is not None and model_mae is not None
@@ -1025,8 +1057,18 @@ def _score_schedule_performance_games(
     }
 
 
+def _market_benchmark_source(market: dict[str, object]) -> str | None:
+    provider_key = str(market.get("provider_key") or "").lower().replace(" ", "")
+    provider = str(market.get("provider") or "").lower().replace(" ", "")
+    if provider_key == "market_consensus":
+        return "market_consensus"
+    if provider_key == "draftkings" or provider == "draftkings":
+        return "draftkings"
+    return None
+
+
 def _probability_metrics(
-    rows: list[tuple[float, float, float, float]], probability_index: int
+    rows: list[tuple[float, ...]], probability_index: int
 ) -> dict[str, float | None]:
     if not rows:
         return {"accuracy": None, "brier": None}
@@ -1107,9 +1149,9 @@ def refresh_schedule_archive(
         from nba_lineup_model.web_api.the_odds_api import read_latest_odds_snapshot
 
         odds_api_snapshot = read_latest_odds_snapshot(state_dir=state_root)
-    from nba_lineup_model.web_api.the_odds_api import normalize_bookmaker_lines
+    from nba_lineup_model.web_api.the_odds_api import normalize_market_consensus
 
-    bookmaker_lines = normalize_bookmaker_lines(odds_api_snapshot)
+    bookmaker_lines = normalize_market_consensus(odds_api_snapshot)
     if injury_pdf is not None and injury_artifact is None and s3_uri:
         injury_artifact = _ensure_s3_injury_report(
             injury_pdf=injury_pdf,
@@ -2530,11 +2572,16 @@ def _build_final_game_archive(
         )
         market_grading = {
             "provider": market.get("provider"),
+            "provider_key": market.get("provider_key"),
+            "bookmaker_keys": market.get("bookmaker_keys"),
+            "bookmaker_count": market.get("bookmaker_count"),
             "captured_home_spread": home_spread,
             "captured_away_spread": away_spread,
             "captured_total": market.get("total"),
             "captured_home_moneyline": market.get("home_moneyline"),
             "captured_away_moneyline": market.get("away_moneyline"),
+            "captured_home_win_probability": market.get("home_win_probability"),
+            "captured_away_win_probability": market.get("away_win_probability"),
             "market_implied_home_margin": market_implied_home_margin,
             "market_favorite": market_side,
             "market_favorite_won": bool(market_side_correct),

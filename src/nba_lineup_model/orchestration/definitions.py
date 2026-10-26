@@ -39,6 +39,18 @@ DEFAULT_SCHEDULE_STATE_DIR = Path("/var/lib/nba-gestalt/schedule")
 DEFAULT_SCHEDULE_API_URL = "http://127.0.0.1:8010/api/win-projections"
 DEFAULT_SCHEDULE_S3_URI = "s3://nba-gestalt-data/nba-gestalt/schedule"
 DEFAULT_SCHEDULE_DAYS_AHEAD = 7
+DEFAULT_ODDS_API_BOOKMAKERS = (
+    "draftkings",
+    "fanduel",
+    "betmgm",
+    "betrivers",
+    "espnbet",
+    "hardrockbet",
+    "betparx",
+    "ballybet",
+    "betonlineag",
+    "polymarket",
+)
 DEFAULT_STATS_V3_LAKE_URI = "s3://nba-gestalt-data/lake"
 DEFAULT_STATS_V3_SEASON = "2026-27"
 DEFAULT_STATS_V3_GRACE_MINUTES = 60
@@ -240,13 +252,7 @@ yesterday_finalization_schedule = ScheduleDefinition(
     config_schema={
         "bookmakers": Field(
             [str],
-            default_value=[
-                "draftkings",
-                "fanduel",
-                "betmgm",
-                "betrivers",
-                "polymarket",
-            ],
+            default_value=list(DEFAULT_ODDS_API_BOOKMAKERS),
         ),
         "markets": Field([str], default_value=["spreads", "h2h"]),
         "minimum_remaining_credits": Field(int, default_value=50),

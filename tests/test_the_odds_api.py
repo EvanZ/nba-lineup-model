@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import urllib.parse
 from datetime import UTC, datetime
 from email.message import Message
 
@@ -12,6 +13,7 @@ from nba_lineup_model.web_api.the_odds_api import (
     collect_nba_odds_snapshot,
     estimated_request_cost,
     normalize_bookmaker_lines,
+    normalize_market_consensus,
 )
 
 
@@ -94,6 +96,10 @@ def test_collect_snapshot_archives_quota_without_api_key(tmp_path, monkeypatch) 
     latest = (tmp_path / "odds-api" / "latest.json").read_text()
     assert "secret-key" not in latest
     assert "secret-key" in requested_urls[0]
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(requested_urls[0]).query)
+    assert query["bookmakers"] == [
+        "draftkings,fanduel,betmgm,betrivers,espnbet,hardrockbet,betparx,ballybet,betonlineag,polymarket"
+    ]
     assert not list((tmp_path / "pending" / "odds-api").glob("*.json"))
 
 
@@ -125,6 +131,127 @@ def test_normalize_draftkings_lines_by_game_date() -> None:
             "total_open": None,
         }
     }
+
+
+def test_normalize_market_consensus_uses_median_spread_and_devigged_books() -> None:
+    event = _events()[0]
+    event["bookmakers"] = [
+        *event["bookmakers"],
+        {
+            "key": "fanduel",
+            "title": "FanDuel",
+            "markets": [
+                {
+                    "key": "spreads",
+                    "last_update": "2026-10-27T18:02:00Z",
+                    "outcomes": [
+                        {"name": "Boston Celtics", "price": -110, "point": 3.5},
+                        {"name": "New York Knicks", "price": -110, "point": -3.5},
+                    ],
+                },
+                {
+                    "key": "h2h",
+                    "last_update": "2026-10-27T18:03:00Z",
+                    "outcomes": [
+                        {"name": "Boston Celtics", "price": 125},
+                        {"name": "New York Knicks", "price": -150},
+                    ],
+                },
+            ],
+        },
+        {
+            "key": "betmgm",
+            "title": "BetMGM",
+            "markets": [
+                {
+                    "key": "spreads",
+                    "outcomes": [
+                        {"name": "Boston Celtics", "price": -110, "point": 2.5},
+                        {"name": "New York Knicks", "price": -110, "point": -2.5},
+                    ],
+                },
+                {
+                    "key": "h2h",
+                    "outcomes": [
+                        {"name": "Boston Celtics", "price": 124},
+                        {"name": "New York Knicks", "price": -146},
+                    ],
+                },
+            ],
+        },
+        {
+            "key": "betrivers",
+            "title": "BetRivers",
+            "markets": [
+                {
+                    "key": "spreads",
+                    "outcomes": [
+                        {"name": "Boston Celtics", "price": -110, "point": 3.5},
+                        {"name": "New York Knicks", "price": -110, "point": -3.5},
+                    ],
+                },
+                {
+                    "key": "h2h",
+                    "outcomes": [
+                        {"name": "Boston Celtics", "price": 128},
+                        {"name": "New York Knicks", "price": -155},
+                    ],
+                },
+            ],
+        },
+        {
+            "key": "polymarket",
+            "title": "Polymarket",
+            "markets": [
+                {
+                    "key": "spreads",
+                    "outcomes": [
+                        {"name": "Boston Celtics", "price": -110, "point": 10.5},
+                        {"name": "New York Knicks", "price": -110, "point": -10.5},
+                    ],
+                },
+                {
+                    "key": "h2h",
+                    "outcomes": [
+                        {"name": "Boston Celtics", "price": 400},
+                        {"name": "New York Knicks", "price": -500},
+                    ],
+                },
+            ],
+        },
+    ]
+
+    lines = normalize_market_consensus(
+        {"collected_at": "2026-10-27T18:05:00Z", "events": [event]}
+    )
+
+    consensus = lines["2026-10-27|BOS@NYK"]
+    assert consensus["provider"] == "Market consensus"
+    assert consensus["provider_key"] == "market_consensus"
+    assert consensus["bookmaker_keys"] == [
+        "draftkings",
+        "fanduel",
+        "betmgm",
+        "betrivers",
+    ]
+    assert consensus["bookmaker_count"] == 4
+    assert consensus["bookmakers"][0] == {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "home_spread": -2.5,
+        "away_spread": 2.5,
+        "home_moneyline": -142,
+        "away_moneyline": 120,
+        "home_win_probability": pytest.approx(0.5634920634920635),
+        "away_win_probability": pytest.approx(0.4365079365079365),
+        "last_update": "2026-10-27T18:01:00Z",
+    }
+    assert consensus["home_spread"] == pytest.approx(-3.0)
+    assert consensus["away_spread"] == pytest.approx(3.0)
+    assert consensus["home_moneyline"] is None
+    assert consensus["away_moneyline"] is None
+    assert consensus["home_win_probability"] == pytest.approx(0.57238465)
+    assert consensus["away_win_probability"] == pytest.approx(0.42761535)
 
 
 def test_quota_guard_preserves_reserve_before_request(tmp_path, monkeypatch) -> None:
@@ -193,4 +320,7 @@ def test_retry_reuses_staged_response_instead_of_refetching(tmp_path, monkeypatc
 
 
 def test_default_request_cost_is_two_credits() -> None:
+    assert len(odds_api.DEFAULT_BOOKMAKERS) == 10
+    assert odds_api.CONSENSUS_BOOKMAKERS == odds_api.DEFAULT_BOOKMAKERS[:-1]
+    assert odds_api.DEFAULT_BOOKMAKERS[-1] == "polymarket"
     assert estimated_request_cost() == 2

@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
+from statistics import fmean, median
 from typing import Any
 
 from nba_lineup_model.season.slate_time import PACIFIC
@@ -23,9 +24,26 @@ DEFAULT_BOOKMAKERS = (
     "fanduel",
     "betmgm",
     "betrivers",
+    "espnbet",
+    "hardrockbet",
+    "betparx",
+    "ballybet",
+    "betonlineag",
     "polymarket",
 )
 DEFAULT_MARKETS = ("spreads", "h2h")
+CONSENSUS_BOOKMAKERS = (
+    "draftkings",
+    "fanduel",
+    "betmgm",
+    "betrivers",
+    "espnbet",
+    "hardrockbet",
+    "betparx",
+    "ballybet",
+    "betonlineag",
+)
+DEFAULT_MINIMUM_CONSENSUS_BOOKMAKERS = 2
 DEFAULT_MINIMUM_REMAINING_CREDITS = 50
 DEFAULT_STATE_DIR = Path("/var/lib/nba-gestalt/schedule")
 DEFAULT_S3_URI = "s3://nba-gestalt-data/nba-gestalt/schedule"
@@ -224,6 +242,187 @@ def normalize_bookmaker_lines(
             "total_open": None,
         }
     return result
+
+
+def normalize_market_consensus(
+    snapshot: dict[str, Any] | None,
+    *,
+    bookmaker_keys: tuple[str, ...] = CONSENSUS_BOOKMAKERS,
+    minimum_bookmakers: int = DEFAULT_MINIMUM_CONSENSUS_BOOKMAKERS,
+) -> dict[str, dict[str, Any]]:
+    """Build a fair multi-book spread and moneyline consensus by ``AWAY@HOME``.
+
+    Spreads use the median posted line. Win probabilities are the arithmetic
+    mean of each book's two-sided, de-vigged moneyline probability. Polymarket
+    remains archived in the raw snapshot but is intentionally not part of the
+    default sportsbook consensus.
+    """
+
+    if minimum_bookmakers < 2:
+        raise ValueError("Market consensus requires at least two bookmakers")
+    if not isinstance(snapshot, dict):
+        return {}
+    inverse_team_names = {
+        display_name: tricode
+        for tricode, display_name in TEAM_DISPLAY_NAMES.items()
+        if tricode not in {"NJN", "NOH", "NOK", "SEA", "VAN"}
+    }
+    result: dict[str, dict[str, Any]] = {}
+    allowed = set(bookmaker_keys)
+    for event in snapshot.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        home_name = str(event.get("home_team", ""))
+        away_name = str(event.get("away_team", ""))
+        home_team = inverse_team_names.get(home_name)
+        away_team = inverse_team_names.get(away_name)
+        game_date = _event_pacific_date(event)
+        if not home_team or not away_team or game_date is None:
+            continue
+
+        book_rows: list[dict[str, Any]] = []
+        for bookmaker in event.get("bookmakers", []):
+            if not isinstance(bookmaker, dict) or bookmaker.get("key") not in allowed:
+                continue
+            markets = {
+                str(row.get("key")): row
+                for row in bookmaker.get("markets", [])
+                if isinstance(row, dict)
+            }
+            spread = _outcomes_by_name(markets.get("spreads"))
+            moneyline = _outcomes_by_name(markets.get("h2h"))
+            home_moneyline = _integer(moneyline.get(home_name, {}).get("price"))
+            away_moneyline = _integer(moneyline.get(away_name, {}).get("price"))
+            probability = _no_vig_probability(home_moneyline, away_moneyline)
+            book_rows.append(
+                {
+                    "key": str(bookmaker["key"]),
+                    "title": str(bookmaker.get("title") or bookmaker["key"]),
+                    "home_spread": _number(spread.get(home_name, {}).get("point")),
+                    "away_spread": _number(spread.get(away_name, {}).get("point")),
+                    "home_moneyline": home_moneyline,
+                    "away_moneyline": away_moneyline,
+                    "home_probability": probability,
+                    "last_update": max(
+                        (
+                            str(row.get("last_update"))
+                            for row in markets.values()
+                            if row.get("last_update")
+                        ),
+                        default=str(bookmaker.get("last_update") or ""),
+                    ),
+                }
+            )
+
+        contributor_keys = [str(row["key"]) for row in book_rows]
+        if len(contributor_keys) < minimum_bookmakers:
+            continue
+        home_spreads = [
+            float(row["home_spread"])
+            for row in book_rows
+            if row["home_spread"] is not None
+        ]
+        away_spreads = [
+            float(row["away_spread"])
+            for row in book_rows
+            if row["away_spread"] is not None
+        ]
+        home_probabilities = [
+            float(row["home_probability"])
+            for row in book_rows
+            if row["home_probability"] is not None
+        ]
+        home_spread = (
+            float(median(home_spreads))
+            if len(home_spreads) >= minimum_bookmakers
+            else None
+        )
+        away_spread = (
+            float(median(away_spreads))
+            if len(away_spreads) >= minimum_bookmakers
+            else None
+        )
+        home_probability = (
+            float(fmean(home_probabilities))
+            if len(home_probabilities) >= minimum_bookmakers
+            else None
+        )
+        if home_spread is None and home_probability is None:
+            continue
+        result[f"{game_date}|{away_team}@{home_team}"] = {
+            "provider": "Market consensus",
+            "provider_key": "market_consensus",
+            "source": "The Odds API",
+            "source_event_id": str(event.get("id", "")),
+            "captured_at": snapshot.get("collected_at"),
+            "last_update": max(
+                (str(row["last_update"]) for row in book_rows if row["last_update"]),
+                default=None,
+            ),
+            "bookmaker_keys": contributor_keys,
+            "bookmaker_count": len(contributor_keys),
+            "bookmakers": [
+                {
+                    "key": row["key"],
+                    "title": row["title"],
+                    "home_spread": row["home_spread"],
+                    "away_spread": row["away_spread"],
+                    "home_moneyline": row["home_moneyline"],
+                    "away_moneyline": row["away_moneyline"],
+                    "home_win_probability": row["home_probability"],
+                    "away_win_probability": (
+                        1.0 - float(row["home_probability"])
+                        if row["home_probability"] is not None
+                        else None
+                    ),
+                    "last_update": row["last_update"] or None,
+                }
+                for row in book_rows
+            ],
+            "spread_bookmaker_count": len(home_spreads),
+            "probability_bookmaker_count": len(home_probabilities),
+            "home_spread": home_spread,
+            "away_spread": away_spread,
+            "home_spread_open": None,
+            "away_spread_open": None,
+            "home_moneyline": None,
+            "away_moneyline": None,
+            "home_moneyline_open": None,
+            "away_moneyline_open": None,
+            "home_win_probability": home_probability,
+            "away_win_probability": (
+                1.0 - home_probability if home_probability is not None else None
+            ),
+            "total": None,
+            "total_open": None,
+        }
+    return result
+
+
+def _event_pacific_date(event: dict[str, Any]) -> str | None:
+    commence_time = str(event.get("commence_time", ""))
+    try:
+        return (
+            datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+            .astimezone(PACIFIC)
+            .date()
+            .isoformat()
+        )
+    except ValueError:
+        return None
+
+
+def _no_vig_probability(home_price: int | None, away_price: int | None) -> float | None:
+    if home_price is None or away_price is None:
+        return None
+    home = _american_implied_probability(home_price)
+    away = _american_implied_probability(away_price)
+    total = home + away
+    return home / total if total > 0.0 else None
+
+
+def _american_implied_probability(price: int) -> float:
+    return -price / (-price + 100.0) if price < 0 else 100.0 / (price + 100.0)
 
 
 def _fetch_odds(

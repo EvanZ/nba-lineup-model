@@ -70,12 +70,12 @@ def test_current_season_records_use_immutable_regular_season_finals(tmp_path) ->
     ]
 
 
-def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
+def test_schedule_performance_scores_rolling_market_consensus(tmp_path) -> None:
     final_dir = tmp_path / "final"
     final_dir.mkdir()
     games = [
-        ("2026-10-23T23:00:00Z", 10.0, 6.0, 0.7, -4.0, -300, 300, 0.6, "win", 4.0),
-        ("2026-10-20T23:00:00Z", -5.0, 2.0, 0.6, -1.0, 300, -300, 0.55, "loss", 3.999),
+        ("2026-10-23T23:00:00Z", 10.0, 6.0, 0.7, -4.0, -300, 300, 0.75, "win", 4.0),
+        ("2026-10-20T23:00:00Z", -5.0, 2.0, 0.6, -1.0, 300, -300, 0.25, "loss", 3.999),
         ("2026-10-10T23:00:00Z", 3.0, 4.0, 0.55, 2.0, -120, 100, 0.52, "push", 2.0),
         ("2026-09-10T23:00:00Z", -2.0, -1.0, 0.45, -3.0, 110, -130, 0.4, "win", 1.999),
     ]
@@ -87,7 +87,7 @@ def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
         market_margin,
         home_moneyline,
         away_moneyline,
-        polymarket_probability,
+        market_probability,
         ats_result,
         model_edge_points,
     ) in enumerate(games, start=1):
@@ -113,11 +113,15 @@ def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
                     },
                     "pregame": {
                         "market": {
+                            "provider": "Market consensus",
+                            "provider_key": "market_consensus",
                             "home_moneyline": home_moneyline,
                             "away_moneyline": away_moneyline,
+                            "home_win_probability": market_probability,
+                            "away_win_probability": 1.0 - market_probability,
                         },
                         "prediction_market": {
-                            "home_probability": polymarket_probability,
+                            "home_probability": market_probability,
                         },
                     },
                     "retrospective": {
@@ -134,11 +138,21 @@ def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
     seven_days, thirty_days, season = payload["windows"]
     assert [seven_days["games"], thirty_days["games"], season["games"]] == [2, 3, 4]
     assert seven_days["probability"]["n"] == 2
+    assert seven_days["probability"]["gestalt"]["n"] == 2
+    assert seven_days["probability"]["market_consensus"]["n"] == 2
     assert seven_days["probability"]["gestalt"]["accuracy"] == pytest.approx(0.5)
     assert seven_days["probability"]["gestalt"]["brier"] == pytest.approx(0.225)
-    assert seven_days["probability"]["draftkings"]["accuracy"] == pytest.approx(1.0)
-    assert seven_days["probability"]["draftkings"]["brier"] == pytest.approx(0.0625)
-    assert seven_days["probability"]["polymarket"]["brier"] == pytest.approx(0.23125)
+    assert seven_days["probability"]["market_consensus"]["accuracy"] == pytest.approx(
+        1.0
+    )
+    assert seven_days["probability"]["market_consensus"]["brier"] == pytest.approx(
+        0.0625
+    )
+    assert seven_days["probability"]["polymarket"] == {
+        "n": 2,
+        "accuracy": pytest.approx(1.0),
+        "brier": pytest.approx(0.0625),
+    }
     assert seven_days["probability"]["actual_minutes"] == {
         "n": 2,
         "accuracy": pytest.approx(1.0),
@@ -147,7 +161,7 @@ def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
     assert seven_days["spread"] == {
         "n": 2,
         "gestalt_mae": pytest.approx(5.5),
-        "draftkings_mae": pytest.approx(9.0),
+        "market_consensus_mae": pytest.approx(9.0),
         "gestalt_advantage": pytest.approx(3.5),
         "actual_minutes_n": 2,
         "actual_minutes_mae": pytest.approx(2.0),
@@ -192,6 +206,68 @@ def test_schedule_performance_scores_rolling_matched_markets(tmp_path) -> None:
             "units_at_minus_110": pytest.approx(10.0 / 11.0),
         },
     ]
+
+
+def test_schedule_performance_includes_legacy_draftkings_games_as_market_benchmark(
+    tmp_path,
+) -> None:
+    final_dir = tmp_path / "final"
+    final_dir.mkdir()
+    (final_dir / "legacy.summary.json").write_text(
+        json.dumps(
+            {
+                "season": "2026-27",
+                "game_id": "0022600001",
+                "archived_at": "2026-10-24T05:00:00Z",
+                "start_time": "2026-10-23T23:00:00Z",
+                "final": {
+                    "actual_home_margin": 5.0,
+                    "status": {"completed": True},
+                },
+                "grading": {
+                    "projected_home_margin": 3.0,
+                    "projected_home_win_probability": 0.6,
+                    "market": {
+                        "market_implied_home_margin": 2.5,
+                        "model_ats_result": "win",
+                        "model_edge_points": 0.5,
+                    },
+                },
+                "pregame": {
+                    "market": {
+                        "provider": "Draft Kings",
+                        "home_spread": -2.5,
+                        "away_spread": 2.5,
+                        "home_moneyline": -140,
+                        "away_moneyline": 120,
+                    },
+                },
+            }
+        )
+    )
+
+    payload = read_schedule_performance(state_dir=tmp_path)
+    season = payload["windows"][-1]
+
+    assert season["games"] == 1
+    assert season["market_sources"] == {"draftkings": 1, "market_consensus": 0}
+    assert season["probability"]["n"] == 1
+    assert season["probability"]["gestalt"]["n"] == 1
+    assert season["probability"]["market_consensus"]["n"] == 1
+    assert season["probability"]["gestalt"]["brier"] == pytest.approx(0.16)
+    assert season["probability"]["market_consensus"]["brier"] == pytest.approx(
+        0.19180563695455263
+    )
+    assert season["probability"]["polymarket"] == {
+        "n": 0,
+        "accuracy": None,
+        "brier": None,
+    }
+    assert season["spread"]["n"] == 1
+    assert season["spread"]["gestalt_mae"] == pytest.approx(2.0)
+    assert season["spread"]["market_consensus_mae"] == pytest.approx(2.5)
+    assert season["ats"]["n"] == 1
+    assert season["ats"]["wins"] == 1
 
 
 def test_polymarket_moneyline_snapshot_uses_main_market_midpoints(monkeypatch) -> None:

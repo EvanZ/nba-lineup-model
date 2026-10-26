@@ -5,12 +5,44 @@ import type { MinutesProjectionPayload, WinProjectionPayload, WinProjectionSched
 
 type MarketLine = {
   provider: string;
+  provider_key?: string;
+  bookmaker_keys?: string[];
+  bookmaker_count?: number;
+  bookmakers?: BookmakerLineDetail[];
   home_spread: number | null;
   away_spread: number | null;
   total: number | null;
   away_moneyline: number | null;
   home_moneyline: number | null;
+  away_win_probability?: number | null;
+  home_win_probability?: number | null;
 };
+
+type BookmakerLineDetail = {
+  key: string;
+  title: string;
+  home_spread: number | null;
+  away_spread: number | null;
+  home_moneyline: number | null;
+  away_moneyline: number | null;
+  home_win_probability: number | null;
+  away_win_probability: number | null;
+  last_update: string | null;
+};
+
+const BOOKMAKER_BADGES: Record<string, { short: string; label: string }> = {
+  draftkings: { short: "DK", label: "DraftKings" },
+  fanduel: { short: "FD", label: "FanDuel" },
+  betmgm: { short: "MGM", label: "BetMGM" },
+  betrivers: { short: "BR", label: "BetRivers" },
+  espnbet: { short: "TS", label: "theScore Bet" },
+  hardrockbet: { short: "HR", label: "Hard Rock Bet" },
+  betparx: { short: "PX", label: "betPARX" },
+  ballybet: { short: "BB", label: "Bally Bet" },
+  betonlineag: { short: "BO", label: "BetOnline" },
+};
+
+const BOOKMAKER_ORDER = Object.keys(BOOKMAKER_BADGES);
 
 type PredictionMarket = {
   provider: string;
@@ -138,17 +170,21 @@ type PerformanceWindow = {
   start_date: string | null;
   end_date: string;
   games: number;
+  market_sources?: {
+    draftkings: number;
+    market_consensus: number;
+  };
   probability: {
     n: number;
-    gestalt: ProbabilityScore;
-    draftkings: ProbabilityScore;
-    polymarket: ProbabilityScore;
+    gestalt: ProbabilityScore & { n: number };
+    market_consensus: ProbabilityScore & { n: number };
+    polymarket: ProbabilityScore & { n: number };
     actual_minutes: ProbabilityScore & { n: number };
   };
   spread: {
     n: number;
     gestalt_mae: number | null;
-    draftkings_mae: number | null;
+    market_consensus_mae: number | null;
     gestalt_advantage: number | null;
     actual_minutes_n: number;
     actual_minutes_mae: number | null;
@@ -252,6 +288,21 @@ function formatSpread(value: number) {
 function formatMoneyline(value: number | null) {
   if (value === null) return "—";
   return `${value > 0 ? "+" : ""}${value}`;
+}
+
+function americanImpliedProbability(value: number | null) {
+  if (value === null || value === 0) return null;
+  return value > 0 ? 100 / (value + 100) : -value / (-value + 100);
+}
+
+function marketProbabilities(market: MarketLine) {
+  if (market.home_win_probability != null && market.away_win_probability != null) {
+    return { home: market.home_win_probability, away: market.away_win_probability };
+  }
+  const home = americanImpliedProbability(market.home_moneyline);
+  const away = americanImpliedProbability(market.away_moneyline);
+  if (home === null || away === null || home + away <= 0) return null;
+  return { home: home / (home + away), away: away / (home + away) };
 }
 
 function gameTime(value?: string) {
@@ -409,6 +460,39 @@ function metricSigned(value: number | null, suffix = "") {
   return value === null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(1)}${suffix}`;
 }
 
+function bookmakerTooltip(line: BookmakerLineDetail | undefined, awayTeam: string, homeTeam: string, fallbackLabel: string) {
+  if (!line) return fallbackLabel;
+  const awayLine = [
+    line.away_spread === null ? null : formatSpread(line.away_spread),
+    line.away_moneyline === null ? null : formatMoneyline(line.away_moneyline),
+  ].filter(Boolean).join(" · ");
+  const homeLine = [
+    line.home_spread === null ? null : formatSpread(line.home_spread),
+    line.home_moneyline === null ? null : formatMoneyline(line.home_moneyline),
+  ].filter(Boolean).join(" · ");
+  return `${line.title}\n${awayTeam} ${awayLine || "line unavailable"}\n${homeTeam} ${homeLine || "line unavailable"}`;
+}
+
+function BookmakerAvatars({ market, awayTeam, homeTeam }: { market?: MarketLine | null; awayTeam: string; homeTeam: string }) {
+  const bookmakerKeys = market?.bookmaker_keys;
+  if (!bookmakerKeys?.length) return null;
+  const uniqueKeys = [...new Set(bookmakerKeys)];
+  const orderedKeys = [
+    ...BOOKMAKER_ORDER.filter((key) => uniqueKeys.includes(key)),
+    ...uniqueKeys.filter((key) => !BOOKMAKER_BADGES[key]).sort(),
+  ];
+  const visibleKeys = orderedKeys.slice(0, 6);
+  const names = orderedKeys.map((key) => BOOKMAKER_BADGES[key]?.label ?? key);
+  const linesByKey = new Map((market?.bookmakers ?? []).map((line) => [line.key, line]));
+  return <div className="schedule-bookmaker-avatars" aria-label={`Contributing books: ${names.join(", ")}`}>
+    {visibleKeys.map((key) => {
+      const badge = BOOKMAKER_BADGES[key] ?? { short: key.slice(0, 2).toUpperCase(), label: key };
+      return <span key={key} className="schedule-bookmaker-avatar" data-bookmaker={key} title={bookmakerTooltip(linesByKey.get(key), awayTeam, homeTeam, badge.label)}>{badge.short}</span>;
+    })}
+    {orderedKeys.length > visibleKeys.length && <span className="schedule-bookmaker-avatar overflow" title={names.slice(visibleKeys.length).join(", ")}>+{orderedKeys.length - visibleKeys.length}</span>}
+  </div>;
+}
+
 function atsRecord(bucket: AtsEdgeBucket) {
   return `${bucket.wins}-${bucket.losses}${bucket.pushes ? `-${bucket.pushes}` : ""}`;
 }
@@ -416,7 +500,7 @@ function atsRecord(bucket: AtsEdgeBucket) {
 function PerformanceSummary({ window, asOf }: { window: PerformanceWindow; asOf: string | null }) {
   const brierScores = [
     window.probability.gestalt.brier,
-    window.probability.draftkings.brier,
+    window.probability.market_consensus.brier,
     window.probability.polymarket.brier,
   ].filter((value): value is number => value !== null);
   const bestBrier = brierScores.length ? Math.min(...brierScores) : null;
@@ -425,25 +509,27 @@ function PerformanceSummary({ window, asOf }: { window: PerformanceWindow; asOf:
   const ats = window.ats;
   const edgeBuckets = ats.edge_buckets ?? [];
   const record = `${ats.wins}-${ats.losses}${ats.pushes ? `-${ats.pushes}` : ""}`;
+  const draftKingsGames = window.market_sources?.draftkings ?? 0;
+  const consensusGames = window.market_sources?.market_consensus ?? 0;
   return <aside className="schedule-performance-card" aria-labelledby="schedule-performance-title">
     <div className="schedule-performance-card-heading">
       <div><span>Model check · {window.label}</span><strong id="schedule-performance-title">How we’re doing</strong></div>
       {window.games < 30 && <small>Early sample</small>}
     </div>
     <div className="schedule-performance-section">
-      <div className="schedule-performance-label"><span>{window.games} finals{asOf ? ` · through ${shortMonthDay(asOf)}` : ""}</span><small>Pregame n={window.probability.n}</small></div>
-      <div className="schedule-performance-columns schedule-performance-columns-header"><span></span><span>Gestalt</span><span>DK</span><span>Poly</span><span className="retrospective">Actual mins*</span></div>
-      <div className="schedule-performance-columns"><span>Accuracy</span><strong>{metricPercent(window.probability.gestalt.accuracy)}</strong><strong>{metricPercent(window.probability.draftkings.accuracy)}</strong><strong>{metricPercent(window.probability.polymarket.accuracy)}</strong><strong className="retrospective">{metricPercent(window.probability.actual_minutes.accuracy)}</strong></div>
-      <div className="schedule-performance-columns"><span>Brier ↓</span><strong className={brierClass(window.probability.gestalt.brier)}>{metricNumber(window.probability.gestalt.brier)}</strong><strong className={brierClass(window.probability.draftkings.brier)}>{metricNumber(window.probability.draftkings.brier)}</strong><strong className={brierClass(window.probability.polymarket.brier)}>{metricNumber(window.probability.polymarket.brier)}</strong><strong className="retrospective">{metricNumber(window.probability.actual_minutes.brier)}</strong></div>
+      <div className="schedule-performance-label"><span>{window.games} finals{asOf ? ` · through ${shortMonthDay(asOf)}` : ""}</span><small>Available frozen observations</small></div>
+      <div className="schedule-performance-columns schedule-performance-columns-header"><span></span><span>Gestalt<small>n={window.probability.gestalt.n}</small></span><span>Market*<small>n={window.probability.market_consensus.n}</small></span><span>Poly<small>n={window.probability.polymarket.n}</small></span><span className="retrospective">Actual mins†<small>n={window.probability.actual_minutes.n}</small></span></div>
+      <div className="schedule-performance-columns"><span>Accuracy</span><strong>{metricPercent(window.probability.gestalt.accuracy)}</strong><strong>{metricPercent(window.probability.market_consensus.accuracy)}</strong><strong>{metricPercent(window.probability.polymarket.accuracy)}</strong><strong className="retrospective">{metricPercent(window.probability.actual_minutes.accuracy)}</strong></div>
+      <div className="schedule-performance-columns"><span>Brier ↓</span><strong className={brierClass(window.probability.gestalt.brier)}>{metricNumber(window.probability.gestalt.brier)}</strong><strong className={brierClass(window.probability.market_consensus.brier)}>{metricNumber(window.probability.market_consensus.brier)}</strong><strong className={brierClass(window.probability.polymarket.brier)}>{metricNumber(window.probability.polymarket.brier)}</strong><strong className="retrospective">{metricNumber(window.probability.actual_minutes.brier)}</strong></div>
     </div>
     <div className="schedule-performance-section schedule-performance-bottom">
       <div>
         <span>Margin MAE</span>
         <strong>{metricNumber(window.spread.gestalt_mae, 1)} <small>pts</small></strong>
-        <small>DK {metricNumber(window.spread.draftkings_mae, 1)} · actual mins {metricNumber(window.spread.actual_minutes_mae, 1)}</small>
+        <small>Market {metricNumber(window.spread.market_consensus_mae, 1)} · actual mins {metricNumber(window.spread.actual_minutes_mae, 1)}</small>
       </div>
       <div>
-        <span>vs DK margin</span>
+        <span>vs market</span>
         <strong className={advantage !== null && advantage >= 0 ? "positive" : "negative"}>{metricSigned(advantage, " pts")}</strong>
         <small>Positive is better</small>
       </div>
@@ -463,7 +549,7 @@ function PerformanceSummary({ window, asOf }: { window: PerformanceWindow; asOf:
         </div>)}
       </div>
     </div>}
-    <p className="schedule-performance-footnote">* Actual mins is a postgame hindsight diagnostic (n={window.probability.actual_minutes.n}), not a pregame forecast. Lower Brier and margin MAE are better. ATS units assume −110.</p>
+    <p className="schedule-performance-footnote">Probability metrics use every immutable observation available for each source; sample sizes are shown by column. * Market uses DraftKings for earlier games (n={draftKingsGames}) and multi-book consensus once available (n={consensusGames}). † Actual mins is a postgame hindsight diagnostic, not a pregame forecast. Lower Brier and margin MAE are better. ATS units assume −110.</p>
   </aside>;
 }
 
@@ -474,6 +560,7 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
     ? { margin: pregame.projection.home_margin, winProbability: pregame.projection.home_win_probability }
     : liveProjection;
   const market = pregame?.market ?? archived?.market ?? null;
+  const marketProbability = market ? marketProbabilities(market) : null;
   const predictionMarket = pregame?.prediction_market ?? archived?.prediction_market ?? null;
   const injuryReport = archived?.injury_report ?? pregame?.injury_report;
   const projectedMinutes = pregame?.projected_minutes ?? archived?.projected_minutes;
@@ -547,24 +634,22 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
       <div className="schedule-market-panel">
         <div className="schedule-market-heading">
           <p>{market?.provider ?? "Market line"}</p>
-          <span>{pregame ? "Pregame" : "Live"}</span>
+          <div className="schedule-market-meta">
+            <span className="schedule-market-tag">{pregame ? "Pregame" : "Live"}{market?.bookmaker_count ? ` · ${market.bookmaker_count} books` : ""}</span>
+            <BookmakerAvatars market={market} awayTeam={game.away_team} homeTeam={game.home_team} />
+          </div>
         </div>
         {market ? <>
           <div className="schedule-market-teams">
-            <div><span>{game.away_team}</span><strong>{market.away_spread == null ? "—" : formatSpread(market.away_spread)}</strong><small>{formatMoneyline(market.away_moneyline)}</small></div>
-            <div><span>{game.home_team}</span><strong>{market.home_spread == null ? "—" : formatSpread(market.home_spread)}</strong><small>{formatMoneyline(market.home_moneyline)}</small></div>
+            <div><span>{game.away_team}</span><strong>{market.away_spread == null ? "—" : formatSpread(market.away_spread)}</strong><small>{marketProbability ? `${(marketProbability.away * 100).toFixed(1)}%` : formatMoneyline(market.away_moneyline)}</small></div>
+            <div><span>{game.home_team}</span><strong>{market.home_spread == null ? "—" : formatSpread(market.home_spread)}</strong><small>{marketProbability ? `${(marketProbability.home * 100).toFixed(1)}%` : formatMoneyline(market.home_moneyline)}</small></div>
           </div>
         </> : <p className="schedule-market-empty">No market line yet</p>}
-        <div className="schedule-polymarket">
-          <div>
-            {predictionMarket ? <a href={predictionMarket.url} target="_blank" rel="noreferrer">Polymarket</a> : <span>Polymarket</span>}
-            <small title={predictionMarket?.pricing_method}>{predictionMarket ? "Midpoint" : "Unavailable"}</small>
-          </div>
-          {predictionMarket && <div className="schedule-polymarket-prices" aria-label={`Polymarket probabilities: ${game.away_team} ${(predictionMarket.away_probability * 100).toFixed(1)} percent, ${game.home_team} ${(predictionMarket.home_probability * 100).toFixed(1)} percent`}>
-            <strong>{game.away_team} {(predictionMarket.away_probability * 100).toFixed(1)}%</strong>
-            <strong>{game.home_team} {(predictionMarket.home_probability * 100).toFixed(1)}%</strong>
-          </div>}
-        </div>
+        {predictionMarket && <a className="schedule-polymarket-row" href={predictionMarket.url} target="_blank" rel="noreferrer" aria-label={`Open Polymarket for ${game.away_team} at ${game.home_team}`}>
+          <span>Polymarket</span>
+          <small>{game.away_team} {(predictionMarket.away_probability * 100).toFixed(1)}%</small>
+          <small>{game.home_team} {(predictionMarket.home_probability * 100).toFixed(1)}%</small>
+        </a>}
       </div>
 
       <div className={`schedule-edge ${modelEdge === null || Math.abs(modelEdge) < 1 ? "muted" : ""}`}>
@@ -783,7 +868,7 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
           <p className="eyebrow">Daily board</p>
           <h2>{longDate(selectedDate)}</h2>
         </div>
-        <div className="schedule-source-note"><span>Lines, scores &amp; crowd</span><strong>ESPN · DraftKings · Polymarket</strong><small>{archiveAge(scheduleDay?.live_score_collected_at ?? scheduleDay?.collected_at)}</small></div>
+        <div className="schedule-source-note"><span>Scores &amp; market</span><strong>ESPN · Multi-book consensus</strong><small>{archiveAge(scheduleDay?.live_score_collected_at ?? scheduleDay?.collected_at)}</small></div>
       </div>
 
       {error ? <p className="error schedule-error"><CircleAlert size={16} /> {error}</p> : !forecast ? <p className="schedule-loading">Loading the schedule…</p> : games.length ? <div className="schedule-games">

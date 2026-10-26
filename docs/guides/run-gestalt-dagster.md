@@ -10,12 +10,15 @@ DuckDB for bounded analytical queries and S3 as durable storage.
   available ESPN boards, lines, official injury reports, projections, and
   immutable snapshots.
 - `nba_market_odds_game_day` archives league-wide DraftKings, FanDuel, BetMGM,
-  BetRivers, and Polymarket responses at 08:20, 12:20, and hourly from 15:20
+  BetRivers, theScore Bet, Hard Rock Bet, betPARX, Bally Bet, BetOnline, and
+  Polymarket responses at 08:20, 12:20, and hourly from 15:20
   through 19:20 America/Los_Angeles. The request is limited to spreads and
   moneylines, so the normal maximum is 14 credits per day and 434 credits in a
   31-day month. A 50-credit reserve is enforced from the provider's response
-  headers. DraftKings is the displayed benchmark; the complete response is
-  retained for consensus research.
+  headers. The displayed benchmark uses the median spread and mean de-vigged
+  moneyline probability from the nine sportsbooks when at least two books are
+  available. Polymarket remains outside the sportsbook consensus, while its
+  response and the complete raw bookmaker payload remain archived for research.
 - `yesterday_finalization_overnight` revisits yesterday's board from 04:00
   through 09:30 UTC.
 - `live_score_game_window` evaluates every 75 seconds but creates score-update
