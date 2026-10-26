@@ -21,6 +21,7 @@ from scipy.sparse.linalg import spsolve
 from scipy.special import expit, logit
 
 from nba_lineup_model.events.normalize import canonical_events
+from nba_lineup_model.ingest.nba_cdn import NbaCdnEndpoint
 from nba_lineup_model.lineups.reconstruct import lineup_stints_frame, reconstruct_lineups
 from nba_lineup_model.modeling.game_script_minutes import (
     DEFAULT_GAME_SCRIPT_CONFIG,
@@ -257,10 +258,23 @@ def apply_competitive_role_observations(
         boundary = competitive_boundary_seconds(events)
         game_end = max(float(event.elapsed_game_seconds) for event in events)
         roles = competitive_role_minutes(stints, boundary_seconds=boundary)
-        played = output.loc[output["played"], "player_id"].astype(int)
-        missing = sorted(set(played) - set(roles))
-        if missing:
-            raise ValueError(f"competitive stints omit played players: {missing}")
+        played = output.loc[output["played"]].copy()
+        missing = played.loc[
+            ~played["player_id"].astype(int).isin(roles),
+            ["player_id", "actual_minutes"],
+        ]
+        if not missing.empty:
+            # A player used only after the competitive boundary correctly has
+            # a zero-minute competitive role.  Fail closed only when their
+            # realized exposure could not fit entirely inside the detected
+            # garbage-time window, which indicates incomplete reconstruction.
+            garbage_minutes = max(0.0, game_end - boundary) / 60.0
+            impossible = missing.loc[
+                missing["actual_minutes"].astype(float).gt(garbage_minutes + 0.25)
+            ]
+            if not impossible.empty:
+                ids = sorted(impossible["player_id"].astype(int).tolist())
+                raise ValueError(f"competitive stints omit played players: {ids}")
         output["competitive_role_minutes"] = (
             output["player_id"].astype(int).map(roles).fillna(0.0).astype(float)
         )
@@ -344,8 +358,9 @@ def _load_cdn_play_by_play(
     if not digests:
         return None, None
     digest = str(digests[-1])
+    endpoint = NbaCdnEndpoint.PLAY_BY_PLAY.value
     uri = (
-        f"{lake_uri.rstrip('/')}/raw/cdn/play_by_play/season={SEASON}/"
+        f"{lake_uri.rstrip('/')}/raw/cdn/{endpoint}/season={SEASON}/"
         f"game_id={game_id}/{digest}.json"
     )
     result = subprocess.run(

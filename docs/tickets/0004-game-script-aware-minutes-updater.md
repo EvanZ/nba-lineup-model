@@ -1,68 +1,144 @@
-# Slice 6: game-script-aware in-season minutes updater
+# Slice 6: empirical early-game minutes updater
 
 GitHub: [#31](https://github.com/EvanZ/nba-lineup-model/issues/31)
 
 ## Objective
 
-Prevent realized blowout rotations from masquerading as durable player-role
-changes. Updated NAIL ratings remain fixed in the shadow evaluation so the only
-game-level experiment is frozen versus updated minutes.
+Determine whether a player's rotation share from the competitive-looking early
+portion of prior games predicts his next-game minutes better than the frozen
+preseason role projection. This remains a shadow study: no public projection,
+historical frozen snapshot, or site payload changes in this slice.
 
-## Implemented contract
+## Why the first implementation was rejected
 
-- A game becomes noncompetitive only in the fourth quarter, for at least 60
-  remaining seconds, when the eventual winner reaches a clock-dependent lead
-  (`max(10, 3 + 3 * ceiling(minutes remaining))`) and never again leads by
-  fewer than eight points.
-- Player exposure before that boundary is extrapolated to a 48-minute game.
-  This produces a 240-minute competitive-role distribution per team. Overtime
-  games remain competitive through their final event.
-- Played games and healthy coach/active DNPs update the role state. Official
-  medical, inactive/assignment, and unknown outcomes retain the existing
-  exclusion semantics.
-- Missing or invalid play-by-play fails closed to regulation-equivalent actual
-  minutes and is surfaced in report coverage rather than excluding the game.
-- Pregame expected blowout minutes use only the projected margin, a frozen
-  12-point residual standard deviation, and a 20-point blowout threshold. The
-  7.34-minute conditional duration is the 2025-26 mean among games finishing
-  at least 20 points apart. The
-  transform is applied identically to both A/B arms and iterated twice to
-  resolve the small minutes/margin feedback loop.
-- Zero-minute injury adjustments remain zero during the garbage-rotation
-  blend, so the game-script transform cannot reactivate an unavailable player.
+The first implementation defined a score-based fourth-quarter garbage-time
+boundary using a clock-dependent lead, an eventual-winner persistence rule,
+and a separate projected-margin transform for pregame forecasts. That design
+had three material problems:
 
-## Historical calibration
+1. The definition was too complicated to interpret and had not been reviewed
+   with the user before implementation.
+2. It classified 689 of 1,230 2025-26 games (56%) as containing garbage time,
+   raising an immediate question about whether the boundary was too permissive.
+3. The reported 2025-26 result was only a shrinkage calibration. It did not
+   provide the frozen-versus-updated full-season backtest needed to evaluate
+   the idea.
 
-The local 2025-26 regular-season marts supplied 1,230 games without an S3
-download. Competitive-role reconstruction identified at least one minute of
-garbage time in 689 games. It reconstructed 24,688 player-game role targets;
-1,955 played rows missing from the curated lineup stints used the documented
-regulation-equivalent fallback.
+The score-based boundary is therefore superseded. Its code is not eligible for
+deployment or promotion based on the prior evidence.
 
-The strictly prior-day replay still selected 0.1 equivalent prior games, with
-MAE 5.6581 versus 5.7860 at 2.0 games. This result is recorded, not treated as
-promotion evidence: 0.1 remains the lower grid boundary and requires a held-out
-season/role-stratified evaluation. Checksums and the full grid are in
-`docs/reports/game-script-minutes-calibration-v4.json`.
+## Replacement idea
 
-## Orchestration and artifacts
+For each cutoff `C` in 36, 40, 44, and 48 elapsed minutes, reconstruct each
+player's minutes before `C` from curated lineup stints and normalize them to a
+48-minute role:
 
-The minutes-shadow job reads the latest content-addressed CDN play-by-play for
-each completed game, incorporates its checksum into contribution lineage, and
-publishes reconstruction/fallback coverage. The Dagster sensor snapshot now
-includes the CDN coverage index, so a newly archived or revised play-by-play
-object can trigger a new idempotent report run.
+```text
+normalized_role(C) = minutes_played_before_C / C * 48
+```
 
-The HTML report shows only:
+When stint coverage is complete, the normalized player roles sum to exactly
+240 minutes per team. The 48-minute arm is the ordinary full-regulation-game
+control. The shorter cutoffs test whether excluding late-game rotation noise
+improves the next-game forecast without making any score- or margin-based
+garbage-time judgment.
 
-1. updated ratings plus frozen minutes; and
-2. updated ratings plus updated minutes.
+## Chronological updater
 
-Conditional player accuracy is scored against reconstructed competitive-role
-minutes. Unconditional accuracy remains scored against realized minutes after
-the pregame-only expected-game-script transform.
+For player `i` before game `t`, use only the last `K` eligible observations
+strictly before the current game date:
 
-## Promotion boundary
+```text
+forecast_i,t =
+    (w * preseason_role_i + sum(last K normalized roles_i))
+    / (w + observed eligible games)
+```
 
-This remains shadow-only. No public projection, historical frozen snapshot, or
-site payload changes in this slice.
+- `K`: 1, 2, 3, 5, 10, or all eligible games.
+- `w`: 0.1, 0.2, 0.5, 1, 2, 4, or 8 preseason-equivalent games.
+- Cutoff `C`: 36, 40, 44, or 48 minutes.
+- Medical absence, inactive/assignment, and unknown rows do not update the
+  role history or consume a lookback slot.
+- A player officially available but receiving a coach DNP contributes a
+  zero-minute role observation.
+- Games on the same date are scored before any observation from that date is
+  applied, preventing same-day leakage.
+
+The complete grid contains 168 configurations.
+
+## Study design
+
+1. Reconstruct cutoff-normalized roles for 2024-25 and 2025-26 using only the
+   local curated marts; do not copy training data from S3.
+2. Select one configuration on 2024-25 using conditional-minute MAE as the
+   primary metric and RMSE as the tie-breaker.
+3. Lock that configuration before reading the 2025-26 result.
+4. Evaluate it once on 2025-26 against the frozen preseason role baseline.
+5. Report MAE, RMSE, sample size, improvement percentage, performance by month
+   and prior-observation count, and representative player improvements and
+   regressions.
+6. Preserve the grid, selected configuration, input checksums, and holdout
+   results as immutable local study artifacts.
+
+The first study isolates conditional role accuracy for players whose official
+availability state is known. It does not use the obsolete participation model,
+and it does not claim a game-level win-probability improvement. A subsequent
+game-level experiment is warranted only if the held-out player-minute evidence
+supports the updater.
+
+## Acceptance criteria
+
+- Unit tests cover stint clipping at all four cutoffs, exact 240-minute team
+  conservation, lookback behavior, preseason weighting, coach DNPs, medical
+  exclusions, and same-day leakage prevention.
+- Hyperparameters are selected on 2024-25 and evaluated untouched on 2025-26.
+- The frozen baseline and selected updater are evaluated on identical holdout
+  rows.
+- The final response states the verified findings directly to the user,
+  including evidence against the updater; a report artifact alone is not a
+  completed deliverable.
+- No production minutes or projections are promoted in this slice.
+
+## Verified study result
+
+Completed 2026-10-26 using the frozen 2024-25 preseason projection for tuning
+and the frozen 2025-26 preseason projection for holdout. The former uses only
+history completed through 2023-24; the latter uses only history completed
+through 2024-25.
+
+The 2024-25 grid selected:
+
+- cutoff: first 44 elapsed minutes;
+- lookback: last 3 eligible games;
+- preseason weight: 0.2 equivalent games.
+
+Locked 2025-26 holdout results across 1,230 games and 31,154 eligible
+player-games:
+
+| Metric | Frozen preseason | Updated | Change |
+| --- | ---: | ---: | ---: |
+| MAE | 7.912 | 5.028 | -2.884 (-36.4%) |
+| RMSE | 10.227 | 6.944 | -3.283 |
+| Bias | +0.031 | -0.096 | -0.127 |
+
+The paired game bootstrap 95% interval for MAE improvement was 2.789 to 2.981
+minutes (2,000 samples). The updater improved MAE both for actual appearances
+(7.331 to 5.134, -30.0%) and known active/coach DNPs (11.349 to 4.401,
+a 61.2% reduction), so the result is not solely a DNP effect.
+
+The 44-minute observation beat the otherwise-identical 48-minute control by
+only 0.070 MAE on holdout (95% paired bootstrap interval 0.051 to 0.088).
+That supports excluding the last four minutes, but the practical edge is
+small. The updater's larger value comes from rapid recent-role adaptation,
+not from the cutoff itself.
+
+Stint data is authoritative for participation and actual minutes. The study
+overrode four incorrect 2024-25 absence labels where the lineup stints prove
+the player entered the game; it found no such mismatches in the 2025-26
+holdout. All 1,139 tuning games and 1,230 holdout games had complete coverage
+at every cutoff, and every reconstructed team-cutoff conserved 240 minutes.
+
+These results support continued shadow use. They do not yet support promotion
+to the public game model because this study evaluates player-level conditional
+role accuracy, not the final injury-conditioned, team-normalized 240-minute
+game allocation or downstream margin probabilities.

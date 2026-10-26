@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -22,6 +24,7 @@ from nba_lineup_model.modeling.in_season_minutes import (
     regulation_equivalent_minutes,
 )
 from nba_lineup_model.modeling.in_season_minutes_monitor import (
+    _load_cdn_play_by_play,
     apply_competitive_role_observations,
     build_game_observations,
 )
@@ -142,6 +145,137 @@ def test_missing_play_by_play_falls_back_to_realized_minutes() -> None:
         result["regulation_equivalent_minutes"].tolist()
     )
     assert result["game_script_status"].eq("fallback").all()
+
+
+def test_garbage_only_player_can_have_zero_competitive_role(monkeypatch) -> None:
+    observations = pd.DataFrame(
+        {
+            "player_id": [1, 2],
+            "played": [True, True],
+            "actual_minutes": [34.0, 4.0],
+            "regulation_equivalent_minutes": [34.0, 4.0],
+        }
+    )
+    events = [
+        SimpleNamespace(elapsed_game_seconds=0.0),
+        SimpleNamespace(elapsed_game_seconds=2880.0),
+    ]
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.canonical_events",
+        lambda payload: events,
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor._lineup_boxscore_from_espn",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.reconstruct_lineups",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.lineup_stints_frame",
+        lambda reconstruction: pd.DataFrame(),
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.competitive_boundary_seconds",
+        lambda frame: 2520.0,
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.competitive_role_minutes",
+        lambda frame, boundary_seconds: {1: 34.0},
+    )
+
+    result = apply_competitive_role_observations(
+        observations,
+        {"game_id": "001", "home_team": "AAA", "away_team": "BBB"},
+        {},
+        {"game": {}},
+        priors=_priors(),
+    ).set_index("player_id")
+
+    assert result["game_script_status"].eq("reconstructed").all()
+    assert result.loc[2, "competitive_role_minutes"] == 0.0
+
+
+def test_missing_competitive_player_fails_when_minutes_exceed_garbage_window(
+    monkeypatch,
+) -> None:
+    observations = pd.DataFrame(
+        {
+            "player_id": [1, 2],
+            "played": [True, True],
+            "actual_minutes": [34.0, 8.0],
+            "regulation_equivalent_minutes": [34.0, 8.0],
+        }
+    )
+    events = [
+        SimpleNamespace(elapsed_game_seconds=0.0),
+        SimpleNamespace(elapsed_game_seconds=2880.0),
+    ]
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.canonical_events",
+        lambda payload: events,
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor._lineup_boxscore_from_espn",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.reconstruct_lineups",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.lineup_stints_frame",
+        lambda reconstruction: pd.DataFrame(),
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.competitive_boundary_seconds",
+        lambda frame: 2520.0,
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.competitive_role_minutes",
+        lambda frame, boundary_seconds: {1: 34.0},
+    )
+
+    result = apply_competitive_role_observations(
+        observations,
+        {"game_id": "001", "home_team": "AAA", "away_team": "BBB"},
+        {},
+        {"game": {}},
+        priors=_priors(),
+    )
+
+    assert result["game_script_status"].eq("fallback").all()
+    assert result["game_script_reason"].str.contains("omit played players").all()
+
+
+def test_cdn_play_by_play_uses_archive_endpoint_value(monkeypatch) -> None:
+    raw = b'{"game":{"gameId":"0022600001"}}'
+    digest = hashlib.sha256(raw).hexdigest()
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        assert kwargs == {"capture_output": True, "check": True}
+        return SimpleNamespace(stdout=raw)
+
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_minutes_monitor.subprocess.run",
+        fake_run,
+    )
+
+    payload, observed_digest = _load_cdn_play_by_play(
+        "0022600001",
+        coverage={"0022600001": [digest]},
+        lake_uri="s3://nba-gestalt-data/lake",
+    )
+
+    assert payload == {"game": {"gameId": "0022600001"}}
+    assert observed_digest == digest
+    assert captured["command"][3] == (
+        "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/"
+        f"game_id=0022600001/{digest}.json"
+    )
 
 
 def test_inactive_player_updates_participation_only() -> None:
