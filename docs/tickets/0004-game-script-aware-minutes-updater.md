@@ -172,3 +172,22 @@ minutes beat updated ratings plus frozen minutes on every reported aggregate:
 Both exported minute allocations reconcile to exactly 240 minutes for every
 team-game. This small 36-game result is directional monitoring evidence, not
 promotion evidence.
+
+The deployed replay through 2026-10-25 expanded the sample to all 43 completed
+games. It had zero exclusions, reconstructed all 43 early-game roles from CDN
+play-by-play, and reconciled both arms to 240 minutes in all 86 team-games:
+
+| Metric | Updated ratings + frozen minutes | Updated ratings + updated minutes |
+| --- | ---: | ---: |
+| Margin MAE | 11.497 | 11.288 |
+| Margin RMSE | 15.373 | 15.372 |
+| Brier | 0.19381 | 0.19215 |
+| Log loss | 0.56835 | 0.56521 |
+| Winner accuracy | 67.4% | 67.4% |
+| ATS | 18-25 | 19-24 |
+
+At the player level, conditional-minute MAE improved from 6.474 to 4.889 and
+unconditional-minute MAE improved from 5.390 to 4.241. Updated minutes therefore
+improved the current shadow sample's margin accuracy, probability calibration,
+and ATS result without changing winner accuracy. Forty-three games remain far
+too few for production promotion.

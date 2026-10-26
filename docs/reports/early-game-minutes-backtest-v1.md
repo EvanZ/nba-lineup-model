@@ -112,3 +112,19 @@ All 36 early-role targets reconstructed successfully and both exported minute
 allocations sum to exactly 240 minutes for every team-game. The sample is too
 small for promotion; it confirms the shadow integration is operating as
 designed and currently points in the same direction as the historical study.
+
+The first deployed replay through 2026-10-25 covered all 43 completed games,
+with zero exclusions and 43 of 43 CDN play-by-play reconstructions:
+
+| Metric | Updated ratings + frozen minutes | Updated ratings + updated minutes |
+| --- | ---: | ---: |
+| Margin MAE | 11.497 | 11.288 |
+| Margin RMSE | 15.373 | 15.372 |
+| Brier | 0.19381 | 0.19215 |
+| Log loss | 0.56835 | 0.56521 |
+| Winner accuracy | 67.4% | 67.4% |
+| ATS | 18-25 | 19-24 |
+
+Conditional-minute MAE improved from 6.474 to 4.889; unconditional-minute MAE
+improved from 5.390 to 4.241. Both arms summed to exactly 240 minutes in all 86
+team-games. This remains a monitoring result rather than promotion evidence.
