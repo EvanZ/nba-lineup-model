@@ -244,6 +244,7 @@ def forecast_team_minutes(
     )
     prior_conditional = players["preseason_conditional_minutes_prior"].clip(lower=1e-6)
     forecast_probability: list[float] = []
+    explicit_status: list[bool] = []
     statuses: list[str] = []
     reasons: list[object] = []
     for row in players.itertuples(index=False):
@@ -252,6 +253,7 @@ def forecast_team_minutes(
             status = str(injury["status"])
             probability = STATUS_PROBABILITY[status]
             reason = injury.get("reason")
+            is_explicit = True
         elif injury_rows and report_status == "submitted":
             # The submitted official report is authoritative at the game
             # cutoff. An unlisted player has no reported medical restriction;
@@ -260,14 +262,18 @@ def forecast_team_minutes(
             status = "Unlisted"
             probability = 1.0
             reason = None
+            is_explicit = False
         else:
             status = "Report pending" if report_status != "submitted" else "Unlisted"
-            probability = float(row.current_participation_estimate)
+            probability = float("nan") if report_status != "submitted" else 1.0
             reason = None
+            is_explicit = False
         forecast_probability.append(probability)
+        explicit_status.append(is_explicit)
         statuses.append(status)
         reasons.append(reason)
     players["game_participation_probability"] = forecast_probability
+    players["has_explicit_injury_status"] = explicit_status
     players["injury_status"] = statuses
     players["injury_reason"] = reasons
     players["game_baseline_minutes"] = (
@@ -278,10 +284,15 @@ def forecast_team_minutes(
     players["pre_normalization_minutes"] = players["game_baseline_minutes"] * (
         current_conditional / prior_conditional
     )
-    if not has_game_baseline or report_status != "submitted":
-        players["pre_normalization_minutes"] *= (
-            players["game_participation_probability"] / prior_p
+    if not has_game_baseline:
+        status_multiplier = pd.Series(1.0, index=players.index, dtype=float)
+        status_multiplier.loc[players["has_explicit_injury_status"]] = (
+            players.loc[
+                players["has_explicit_injury_status"], "game_participation_probability"
+            ]
+            / prior_p.loc[players["has_explicit_injury_status"]]
         )
+        players["pre_normalization_minutes"] *= status_multiplier
     # A player with a preseason zero can enter only after actual participation
     # evidence. This preserves exact zero-evidence identity while supporting
     # late signings and rotation changes.
@@ -302,9 +313,11 @@ def forecast_team_minutes(
                 )
             )
         )
-    cold_entry = players["game_baseline_minutes"].le(0.0) & players[
-        "participation_played"
-    ].gt(0.0) & players["game_participation_probability"].gt(0.0)
+    cold_entry = (
+        players["game_baseline_minutes"].le(0.0)
+        & players["participation_played"].gt(0.0)
+        & players["game_participation_probability"].fillna(0.0).gt(0.0)
+    )
     players.loc[cold_entry, "pre_normalization_minutes"] = (
         team_scale
         * players.loc[cold_entry, "game_participation_probability"]

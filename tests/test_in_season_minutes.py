@@ -142,6 +142,10 @@ def test_report_pending_is_preserved_without_available_claim() -> None:
         config=_config(),
     )
     assert set(forecast["injury_status"]) == {"Report pending"}
+    assert forecast["game_participation_probability"].isna().all()
+    assert forecast.set_index("player_id").loc[1, "final_normalized_minutes"] == pytest.approx(
+        144.0
+    )
 
 
 def test_incremental_and_full_replay_match_and_duplicate_is_rejected() -> None:

@@ -360,21 +360,14 @@ def _game_metrics(frame: pd.DataFrame, prefix: str) -> dict[str, object]:
 
 
 def _player_metrics(frame: pd.DataFrame) -> dict[str, object]:
-    known = frame["outcome_classification"].ne(UNKNOWN)
     played = frame["played"].astype(bool)
-    actual_played = played.astype(float)
     result: dict[str, object] = {}
     for label, prefix in (("frozen", "frozen"), ("updated", "updated")):
-        probability = frame[f"{prefix}_participation_probability"].astype(float)
         conditional = frame.loc[played, f"{prefix}_conditional_minutes"].astype(float)
         actual_conditional = frame.loc[played, "regulation_equivalent_minutes"].astype(float)
         unconditional = frame[f"{prefix}_projected_minutes"].astype(float)
         actual = frame["regulation_equivalent_minutes"].astype(float)
         result[label] = {
-            "participation_n": int(known.sum()),
-            "participation_brier": float(
-                np.mean(np.square(probability.loc[known] - actual_played.loc[known]))
-            ),
             "conditional_minutes_n": int(played.sum()),
             "conditional_minutes_mae": float(np.mean(np.abs(conditional - actual_conditional))),
             "conditional_minutes_rmse": float(
