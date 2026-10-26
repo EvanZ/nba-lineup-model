@@ -1,6 +1,6 @@
 # Shadow in-season participation and minutes updater
 
-Status: implementation complete; production shadow deployment pending approval
+Status: implementation complete; production shadow monitoring active
 GitHub: [Issue #30](https://github.com/EvanZ/nba-lineup-model/issues/30)
 
 ## Model contract
@@ -9,13 +9,14 @@ The exact promoted 2026-27 preseason conditional-minutes and normalized-minute
 fields are the complete prior. The official injury report, not a learned
 in-season probability, determines game-specific eligibility and status.
 
-Played games update conditional role. Medical absences, coach DNPs, known
-inactive/assignment outcomes, and unknown DNPs never enter a zero into that
-role. Participation state may be retained as a research diagnostic, but it is
-not used to allocate game-day minutes and is not a promotion metric. Official
-pregame injury status remains authoritative, and a pending report is retained
-as pending rather than converted to an availability claim or learned
-probability adjustment.
+Appearances and healthy coach/active DNPs update conditional role. A healthy
+DNP is a zero-minute observation because the player was available but omitted
+from the rotation. Medical absences, known inactive/assignment outcomes, and
+unknown DNPs do not enter that role. The frozen official pregame injury status
+is authoritative when it conflicts with ESPN's box-score reason. Participation
+state remains a research diagnostic; it is not used to allocate game-day
+minutes or as a promotion metric. A pending report stays pending rather than
+being converted to an availability claim or learned probability adjustment.
 
 Actual team minutes are normalized to 240 before entering role state, including
 overtime games. Ejections and appearances under four minutes receive half
@@ -25,10 +26,16 @@ prior. Each game is applied only after every forecast on that date is emitted.
 
 ## Historical calibration
 
-A chronological 2025-26 replay using 2024-25 player state as the prior selected
-two equivalent prior games for conditional minutes. The grid covered 35,918
-matched player-games. Selected conditional-minutes MAE was 5.2854 after applying
-the same 12-minute robust clipping policy used by the live updater.
+A chronological 2025-26 replay now uses the exact 2025-26 forward conditional-
+minutes predictions as the preseason-prior analogue and the canonical
+availability mart as the outcome source. The corrected loss includes played
+games and healthy coach/active DNPs at zero minutes while excluding medical,
+inactive/assignment, and unknown outcomes. The grid covered 43,265 matched
+player-games and 31,154 available-player observations. It selected **0.1
+equivalent prior games** with conditional-minutes MAE 5.8410; the prior strength
+of 2.0 produced 5.9591. The replay is strictly prior-day and uses the same
+12-minute clipping policy as the live updater. Input checksums and the full grid
+are recorded in `docs/reports/in-season-minutes-calibration-v3.json`.
 
 ## Artifact and execution contract
 
@@ -47,28 +54,27 @@ the same 12-minute robust clipping policy used by the live updater.
 
 ## Bounded 2026-27 validation
 
-The local replay used the 36 immutable final summaries and box scores through
-October 25 (27.5 MiB) plus the 1.5 MiB #29 sufficient-state cache. It produced
-1,253 player-game rows with zero game exclusions. An immediate replay reused
-all 36 minutes contributions and created none.
+The corrected replay used all 43 immutable final summaries and box scores
+through October 25 plus the #29 sufficient-state cache. It produced 1,495
+player-game rows and 1,172 available-player observations with zero exclusions.
+An immediate replay reused all 43 minutes contributions and created none.
 
 Relative to the exact frozen pregame minutes, the updated shadow reduced:
 
-- conditional-minutes MAE from 5.4741 to 5.1208;
-- conditional-minutes RMSE from 7.0557 to 6.5480;
-- unconditional-minutes MAE from 5.3410 to 5.1308;
-- unconditional-minutes RMSE from 7.2012 to 6.8996.
+- conditional-minutes MAE from 6.5083 to 5.1302;
+- conditional-minutes RMSE from 8.2918 to 6.8580;
+- unconditional-minutes MAE from 5.3978 to 4.3226;
+- unconditional-minutes RMSE from 7.3010 to 6.2240.
 
-The downstream game sample is too small and remains mixed. Minutes-only margin
-MAE improved from 11.3129 to 11.2914, while RMSE worsened from 15.5347 to
-15.5902 and Brier was essentially flat at 0.19948 versus 0.19942. The #29
-ratings-only cell produced MAE 11.1680, RMSE 15.4342, and Brier 0.19592;
-combining the rating and conditional-minutes shadows produced MAE 11.1587,
-RMSE 15.4806, and Brier 0.19583. No promotion is recommended from 36 games.
+The downstream game sample is too small and remains mixed. Relative to the
+frozen/frozen production baseline, updated ratings plus updated minutes improve
+margin MAE from 11.6813 to 11.3918 and ATS from 18-25 to 19-24, but Brier moves
+from 0.19794 to 0.19610 versus 0.19381 for updated ratings with frozen minutes.
+Log loss is 0.57397 versus 0.56835 for that ratings-only cell. This is a genuine
+early-season result, not a reason to tune against 43 games. No promotion is
+recommended.
 
 ## Remaining issue work
 
-- Deploy the already-tested job and sensor to EC2 after explicit approval.
-- Publish the calibration and first live shadow artifacts to S3.
 - Accumulate the required live shadow period and write the final promotion
   recommendation before closing Issue #30 or changing public projections.

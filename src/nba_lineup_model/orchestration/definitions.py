@@ -53,7 +53,7 @@ DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS = 6000
 DEFAULT_IN_SEASON_MINUTES_ROOT = Path("/var/lib/nba-gestalt/in-season-minutes")
 DEFAULT_IN_SEASON_MINUTES_LAKE_URI = "s3://nba-gestalt-data/lake"
 DEFAULT_IN_SEASON_MINUTES_PARTICIPATION_PRIOR_GAMES = 4
-DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES = 2
+DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES = 0.1
 DEFAULT_HEALTHCHECK_PARQUET = (
     "s3://nba-gestalt-data/lake/analytical/box_score_prior_panel/"
     "season_cohort_summary.parquet"
@@ -731,7 +731,7 @@ in_season_nail_shadow_schedule = ScheduleDefinition(
             int, default_value=DEFAULT_IN_SEASON_MINUTES_PARTICIPATION_PRIOR_GAMES
         ),
         "conditional_prior_games": Field(
-            int, default_value=DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES
+            float, default_value=DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES
         ),
     },
     retry_policy=RetryPolicy(max_retries=1, delay=300),
@@ -773,6 +773,7 @@ def update_in_season_minutes_shadow_op(
     lake_uri = _in_season_minutes_lake_uri()
     published: dict[str, str] = {}
     for label in (
+        "report",
         "summary",
         "player_game_evaluation",
         "four_cell_game_evaluation",
@@ -870,6 +871,7 @@ def update_in_season_minutes_shadow_op(
             "created_contributions": int(result["created_contributions"]),
             "cached_contributions": int(result["cached_contributions"]),
             "publication": MetadataValue.url(publication_uri),
+            "report": MetadataValue.url(published["report"]),
         }
     )
     return {**result, "publication_uri": publication_uri, "published": published}

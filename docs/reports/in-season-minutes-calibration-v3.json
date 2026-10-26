@@ -1,0 +1,42 @@
+{
+  "calibration_season": "2025-26",
+  "conditional_clip_delta": 12.0,
+  "conditional_grid_mae": {
+    "0.1": 5.840958422980603,
+    "0.25": 5.847933642020926,
+    "0.5": 5.8626908207523325,
+    "1.0": 5.89598960166677,
+    "2.0": 5.9591438644111845,
+    "4.0": 6.067264035939834,
+    "8.0": 6.236442338156202,
+    "12.0": 6.3684933415541
+  },
+  "outcome_contract": {
+    "included": [
+      "played",
+      "available_dnp_coach",
+      "available_dnp_active"
+    ],
+    "zero_minute_role_observations": [
+      "available_dnp_coach",
+      "available_dnp_active"
+    ],
+    "excluded": [
+      "medical absence",
+      "inactive or assignment",
+      "unknown DNP"
+    ]
+  },
+  "preseason_prior": {
+    "path": "artifacts/rotation/forward_conditional_minutes/forward-conditional-minutes-20260912T183343Z-b7c2acc/2025-26_predictions.parquet",
+    "sha256": "83bb6b4e281222a43bf22474c964d15ad23987fd3c48b0bb387104b90bc4af8f"
+  },
+  "selected_conditional_prior_games": 0.1,
+  "target_available_player_games": 31154,
+  "target_player_games": 43265,
+  "target_source": {
+    "path": "data/curated/player_availability/2025-26/part-00000.parquet",
+    "sha256": "7006c5c9c2df8f77057020072c54e1507a452955d5630a8b91cdc301efa4ef5a"
+  },
+  "updater_version": "available_role_shrinkage_v3"
+}

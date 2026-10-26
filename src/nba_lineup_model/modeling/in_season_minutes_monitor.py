@@ -21,6 +21,7 @@ from scipy.special import expit, logit
 
 from nba_lineup_model.modeling.in_season_minutes import (
     COACH_DNP,
+    CONDITIONAL_OUTCOMES,
     INACTIVE,
     MEDICAL_ABSENCE,
     PLAYED,
@@ -32,11 +33,14 @@ from nba_lineup_model.modeling.in_season_minutes import (
     publish_minutes_contribution,
     regulation_equivalent_minutes,
 )
+from nba_lineup_model.modeling.in_season_minutes_report import (
+    render_minutes_shadow_report,
+)
 from nba_lineup_model.modeling.in_season_nail import read_game_contribution
 from nba_lineup_model.season.slate_time import summary_slate_date
 
 SEASON = "2026-27"
-UPDATER_VERSION = "participation_conditional_shrinkage_v1"
+UPDATER_VERSION = "available_role_shrinkage_v3"
 ESPN_TEAM_ALIASES = {
     "GS": "GSW",
     "NY": "NYK",
@@ -46,17 +50,8 @@ ESPN_TEAM_ALIASES = {
     "UTAH": "UTA",
     "WSH": "WAS",
 }
-MEDICAL_TOKENS = (
-    "INJURY",
-    "ILLNESS",
-    "CONCUSSION",
-    "SORE",
-    "SPRAIN",
-    "STRAIN",
-    "SURGERY",
-    "RECOVERY",
-)
 INACTIVE_TOKENS = ("G LEAGUE", "ASSIGNMENT", "TWO-WAY", "SUSPENSION", "PERSONAL")
+INJURY_REPORT_STATUSES = frozenset({"OUT", "DOUBTFUL", "QUESTIONABLE", "PROBABLE"})
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -100,17 +95,17 @@ def _classification(
     did_not_play: bool,
     espn_reason: object,
     injury_status: object,
-    injury_reason: object,
 ) -> str:
     if minutes > 0.0:
         return PLAYED
-    text = " ".join(
-        str(value or "") for value in (espn_reason, injury_status, injury_reason)
-    ).upper()
-    if any(token in text for token in MEDICAL_TOKENS):
+    status = str(injury_status or "").strip().upper()
+    if status in INJURY_REPORT_STATUSES:
         return MEDICAL_ABSENCE
+    text = str(espn_reason or "").upper()
     if any(token in text for token in INACTIVE_TOKENS):
         return INACTIVE
+    if status == "AVAILABLE":
+        return COACH_DNP
     if "COACH" in text or (did_not_play and "DNP" in text):
         return COACH_DNP
     return UNKNOWN
@@ -182,7 +177,6 @@ def build_game_observations(
                     did_not_play=bool(athlete_row.get("didNotPlay")),
                     espn_reason=athlete_row.get("reason"),
                     injury_status=injury_row.get("status"),
-                    injury_reason=injury_row.get("reason"),
                 )
                 weight = 0.5 if bool(athlete_row.get("ejected")) or 0.0 < minutes < 4.0 else 1.0
                 team_rows.append(
@@ -196,7 +190,9 @@ def build_game_observations(
                         "actual_minutes": minutes,
                         "played": minutes > 0.0,
                         "outcome_classification": classification,
-                        "conditional_observation_weight": weight if minutes > 0.0 else 0.0,
+                        "conditional_observation_weight": (
+                            weight if classification in CONDITIONAL_OUTCOMES else 0.0
+                        ),
                         "espn_reason": athlete_row.get("reason"),
                         "ejected": bool(athlete_row.get("ejected")),
                         "injury_status": injury_row.get("status"),
@@ -361,15 +357,17 @@ def _game_metrics(frame: pd.DataFrame, prefix: str) -> dict[str, object]:
 
 
 def _player_metrics(frame: pd.DataFrame) -> dict[str, object]:
-    played = frame["played"].astype(bool)
+    available = frame["outcome_classification"].isin(CONDITIONAL_OUTCOMES)
     result: dict[str, object] = {}
     for label, prefix in (("frozen", "frozen"), ("updated", "updated")):
-        conditional = frame.loc[played, f"{prefix}_conditional_minutes"].astype(float)
-        actual_conditional = frame.loc[played, "regulation_equivalent_minutes"].astype(float)
+        conditional = frame.loc[available, f"{prefix}_conditional_minutes"].astype(float)
+        actual_conditional = frame.loc[
+            available, "regulation_equivalent_minutes"
+        ].astype(float)
         unconditional = frame[f"{prefix}_projected_minutes"].astype(float)
         actual = frame["regulation_equivalent_minutes"].astype(float)
         result[label] = {
-            "conditional_minutes_n": int(played.sum()),
+            "conditional_minutes_n": int(available.sum()),
             "conditional_minutes_mae": float(np.mean(np.abs(conditional - actual_conditional))),
             "conditional_minutes_rmse": float(
                 np.sqrt(np.mean(np.square(conditional - actual_conditional)))
@@ -641,7 +639,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     games.to_csv(output / "four_cell_game_evaluation.csv", index=False)
     state.to_parquet(output / "player_state.parquet", index=False)
     (output / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
+    render_minutes_shadow_report(
+        summary=result,
+        evaluation=evaluation,
+        games=games,
+        state=state,
+        output_path=output / "report.html",
+    )
     result["local_artifacts"] = {
+        "report": str(output / "report.html"),
         "summary": str(output / "summary.json"),
         "player_game_evaluation": str(output / "player_game_evaluation.parquet"),
         "four_cell_game_evaluation": str(output / "four_cell_game_evaluation.csv"),

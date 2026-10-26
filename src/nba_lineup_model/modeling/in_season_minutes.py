@@ -2,8 +2,9 @@
 
 The promoted preseason availability and conditional-minutes forecasts are the
 complete prior. Completed games contribute compact player observations. Injury
-and other absences update participation without being interpreted as zero
-minutes of conditional role, while unknown DNP rows update neither state.
+and inactive-list absences are excluded from the available-player role update,
+healthy coach DNPs contribute zero minutes, and unknown DNP rows update neither
+state.
 """
 
 from __future__ import annotations
@@ -28,7 +29,20 @@ INACTIVE = "inactive_or_assignment"
 UNKNOWN = "unknown"
 
 PARTICIPATION_OUTCOMES = frozenset({PLAYED, MEDICAL_ABSENCE, COACH_DNP, INACTIVE})
-CONDITIONAL_OUTCOMES = frozenset({PLAYED})
+CONDITIONAL_OUTCOMES = frozenset({PLAYED, COACH_DNP})
+HISTORICAL_AVAILABILITY_MAP = {
+    "played": PLAYED,
+    "available_dnp_coach": COACH_DNP,
+    "available_dnp_active": COACH_DNP,
+    "available_g_league_assignment": INACTIVE,
+    "unavailable_injury_or_illness": MEDICAL_ABSENCE,
+    "unavailable_rest": MEDICAL_ABSENCE,
+    "unavailable_personal_or_not_with_team": MEDICAL_ABSENCE,
+    "unavailable_suspension": INACTIVE,
+    "unavailable_ineligible": INACTIVE,
+    "unavailable_inactive_unspecified": INACTIVE,
+    "unknown_dnp_reason": UNKNOWN,
+}
 STATUS_PROBABILITY = {
     "Out": 0.0,
     "Doubtful": 0.25,
@@ -178,11 +192,15 @@ def advance_minutes_state(
                 raise ValueError("Conditional observation weight must lie in [0, 1]")
             observed = float(row.regulation_equivalent_minutes)
             prior = float(output.at[player_id, "preseason_conditional_minutes_prior"])
-            clipped = float(
-                np.clip(
-                    observed,
-                    max(0.0, prior - config.conditional_clip_delta),
-                    min(48.0, prior + config.conditional_clip_delta),
+            clipped = (
+                0.0
+                if classification == COACH_DNP
+                else float(
+                    np.clip(
+                        observed,
+                        max(0.0, prior - config.conditional_clip_delta),
+                        min(48.0, prior + config.conditional_clip_delta),
+                    )
                 )
             )
             output.at[player_id, "conditional_observations"] += 1
@@ -361,8 +379,10 @@ def calibrate_prior_games(
         missing = sorted(required - set(frame))
         if missing:
             raise ValueError(f"{label} calibration frame lacks: {', '.join(missing)}")
-    prior = _historical_player_priors(prior_season)
-    target = _regulation_equivalent_history(target_season)
+    prior = _historical_player_priors(_normalize_historical_availability(prior_season))
+    target = _regulation_equivalent_history(
+        _normalize_historical_availability(target_season)
+    )
     target = target.merge(prior, on="player_id", how="inner", validate="many_to_one")
     target = target.sort_values(["game_date", "game_id", "player_id"], kind="stable")
     participation_scores = {
@@ -386,6 +406,75 @@ def calibrate_prior_games(
         "conditional_grid_mae": {str(key): value for key, value in conditional_scores.items()},
         "target_player_games": int(len(target)),
     }
+
+
+def calibrate_conditional_prior_games(
+    preseason_priors: pd.DataFrame,
+    target_season: pd.DataFrame,
+    *,
+    conditional_grid: tuple[float, ...] = (0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0),
+    conditional_clip_delta: float = 12.0,
+) -> dict[str, object]:
+    """Calibrate role shrinkage against an exact preseason-prior analogue.
+
+    The target includes appearances and healthy coach/active DNPs. Medical,
+    inactive-list, assignment, and unknown outcomes are excluded from the role
+    loss and update.
+    """
+
+    required_target = {
+        "game_id",
+        "game_date",
+        "team",
+        "player_id",
+        "minutes",
+        "availability_state",
+    }
+    missing = sorted(required_target - set(target_season))
+    if missing:
+        raise ValueError("target calibration frame lacks: " + ", ".join(missing))
+    prior = preseason_priors.copy()
+    if "preseason_conditional_minutes_prior" not in prior:
+        source = "predicted_minutes_per_available_game"
+        if source not in prior:
+            raise ValueError(
+                "preseason priors require preseason_conditional_minutes_prior "
+                "or predicted_minutes_per_available_game"
+            )
+        prior = prior.rename(columns={source: "preseason_conditional_minutes_prior"})
+    prior = prior[["player_id", "preseason_conditional_minutes_prior"]].copy()
+    if prior["player_id"].duplicated().any():
+        raise ValueError("preseason priors contain duplicate player IDs")
+    prior["preseason_conditional_minutes_prior"] = pd.to_numeric(
+        prior["preseason_conditional_minutes_prior"], errors="raise"
+    ).astype(float)
+    target = _regulation_equivalent_history(
+        _normalize_historical_availability(target_season)
+    )
+    target = target.merge(prior, on="player_id", how="inner", validate="many_to_one")
+    target = target.sort_values(["game_date", "game_id", "player_id"], kind="stable")
+    scores = {
+        strength: _sequential_conditional_mae(
+            target, strength, clip_delta=conditional_clip_delta
+        )
+        for strength in conditional_grid
+    }
+    selected = min(scores, key=scores.get)
+    available = target["availability_state"].isin(CONDITIONAL_OUTCOMES)
+    return {
+        "conditional_prior_games": float(selected),
+        "conditional_grid_mae": {str(key): value for key, value in scores.items()},
+        "target_player_games": int(len(target)),
+        "target_available_player_games": int(available.sum()),
+    }
+
+
+def _normalize_historical_availability(frame: pd.DataFrame) -> pd.DataFrame:
+    output = frame.copy()
+    states = output["availability_state"].astype("string")
+    normalized = states.map(HISTORICAL_AVAILABILITY_MAP)
+    output["availability_state"] = normalized.fillna(states).fillna(UNKNOWN)
+    return output
 
 
 def contribution_sha256(observations: pd.DataFrame, metadata: dict[str, object]) -> str:
@@ -451,8 +540,9 @@ def _historical_player_priors(frame: pd.DataFrame) -> pd.DataFrame:
         .groupby("player_id", as_index=False)
         .agg(preseason_participation_prior=("played", "mean"))
     )
+    available = history["availability_state"].isin(CONDITIONAL_OUTCOMES)
     conditional = (
-        history.loc[history["played"]]
+        history.loc[available]
         .groupby("player_id", as_index=False)
         .agg(preseason_conditional_minutes_prior=("regulation_equivalent_minutes", "mean"))
     )
@@ -500,23 +590,29 @@ def _sequential_conditional_mae(
     count: dict[int, int] = {}
     errors: list[float] = []
     for _date, day in frame.groupby("game_date", sort=True):
-        for row in day.loc[day["played"]].itertuples(index=False):
+        available = day["availability_state"].isin(CONDITIONAL_OUTCOMES)
+        for row in day.loc[available].itertuples(index=False):
             player_id = int(row.player_id)
             prediction = (
                 strength * float(row.preseason_conditional_minutes_prior)
                 + total.get(player_id, 0.0)
             ) / (strength + count.get(player_id, 0))
             errors.append(abs(prediction - float(row.regulation_equivalent_minutes)))
-        for row in day.loc[day["played"]].itertuples(index=False):
+        for row in day.loc[available].itertuples(index=False):
             player_id = int(row.player_id)
             prior = float(row.preseason_conditional_minutes_prior)
-            total[player_id] = total.get(player_id, 0.0) + float(
-                np.clip(
-                    row.regulation_equivalent_minutes,
-                    max(0.0, prior - clip_delta),
-                    min(48.0, prior + clip_delta),
+            observed = (
+                0.0
+                if str(row.availability_state) == COACH_DNP
+                else float(
+                    np.clip(
+                        row.regulation_equivalent_minutes,
+                        max(0.0, prior - clip_delta),
+                        min(48.0, prior + clip_delta),
+                    )
                 )
             )
+            total[player_id] = total.get(player_id, 0.0) + observed
             count[player_id] = count.get(player_id, 0) + 1
     return float(np.mean(errors))
 

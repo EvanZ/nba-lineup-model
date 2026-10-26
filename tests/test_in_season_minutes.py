@@ -13,6 +13,7 @@ from nba_lineup_model.modeling.in_season_minutes import (
     UNKNOWN,
     InSeasonMinutesConfig,
     advance_minutes_state,
+    calibrate_conditional_prior_games,
     calibrate_prior_games,
     contribution_sha256,
     forecast_team_minutes,
@@ -108,12 +109,11 @@ def test_injury_absence_does_not_erase_conditional_role() -> None:
     assert updated.loc[3, "current_participation_estimate"] == pytest.approx(0.5)
 
 
-@pytest.mark.parametrize("classification", [COACH_DNP, INACTIVE])
-def test_known_nonparticipants_update_participation_only(classification: str) -> None:
+def test_inactive_player_updates_participation_only() -> None:
     state = initialize_minutes_state(_priors(), season="2026-27", config=_config())
     observation = _observations().iloc[[0]].copy()
     observation["player_id"] = 2
-    observation["outcome_classification"] = classification
+    observation["outcome_classification"] = INACTIVE
     observation["played"] = False
     observation["regulation_equivalent_minutes"] = 0.0
     updated = advance_minutes_state(
@@ -121,6 +121,23 @@ def test_known_nonparticipants_update_participation_only(classification: str) ->
     ).set_index("player_id")
     assert updated.loc[2, "current_participation_estimate"] < 0.9
     assert updated.loc[2, "current_conditional_minutes_estimate"] == pytest.approx(20.0)
+
+
+def test_available_coach_dnp_updates_conditional_role_with_zero_minutes() -> None:
+    state = initialize_minutes_state(_priors(), season="2026-27", config=_config())
+    observation = _observations().iloc[[0]].copy()
+    observation["player_id"] = 2
+    observation["outcome_classification"] = COACH_DNP
+    observation["played"] = False
+    observation["regulation_equivalent_minutes"] = 0.0
+    observation["conditional_observation_weight"] = 1.0
+    updated = advance_minutes_state(
+        state, observation, config=_config(), contribution_sha256="c" * 64
+    ).set_index("player_id")
+
+    assert updated.loc[2, "current_conditional_minutes_estimate"] == pytest.approx(16.0)
+    assert updated.loc[2, "conditional_observations"] == 1
+    assert updated.loc[2, "effective_conditional_weight"] == 1.0
 
 
 def test_overtime_minutes_are_regulation_equivalent() -> None:
@@ -255,7 +272,41 @@ def test_calibration_replay_is_strictly_prior_day() -> None:
     assert json.loads(json.dumps(result)) == result
 
 
-def test_final_boxscore_classifies_injury_and_coach_dnp_without_role_zero() -> None:
+def test_conditional_calibration_accepts_canonical_availability_states() -> None:
+    priors = pd.DataFrame(
+        {
+            "player_id": [1, 2],
+            "predicted_minutes_per_available_game": [30.0, 18.0],
+        }
+    )
+    target = pd.DataFrame(
+        {
+            "game_id": ["g1", "g1", "g2", "g2"],
+            "game_date": pd.to_datetime(
+                ["2026-01-01", "2026-01-01", "2026-01-02", "2026-01-02"], utc=True
+            ),
+            "team": ["AAA"] * 4,
+            "player_id": [1, 2, 1, 2],
+            "minutes": [36.0, 0.0, 34.0, 20.0],
+            "availability_state": [
+                "played",
+                "available_dnp_coach",
+                "played",
+                "played",
+            ],
+        }
+    )
+
+    result = calibrate_conditional_prior_games(
+        priors, target, conditional_grid=(0.1, 4.0)
+    )
+
+    assert result["target_available_player_games"] == 4
+    assert result["conditional_prior_games"] in {0.1, 4.0}
+    assert json.loads(json.dumps(result)) == result
+
+
+def test_final_boxscore_uses_frozen_injury_status_for_available_player_role() -> None:
     priors = _priors()
     summary = {
         "game_id": "001",
@@ -266,10 +317,20 @@ def test_final_boxscore_classifies_injury_and_coach_dnp_without_role_zero() -> N
             "projected_minutes": {
                 "home": [
                     {
+                        "player_id": 1,
+                        "status": "Available",
+                        "reason": None,
+                    },
+                    {
                         "player_id": 2,
                         "status": "Out",
                         "reason": "Injury/Illness - Ankle",
-                    }
+                    },
+                    {
+                        "player_id": 3,
+                        "status": "Available",
+                        "reason": None,
+                    },
                 ],
                 "away": [],
             }
@@ -301,7 +362,7 @@ def test_final_boxscore_classifies_injury_and_coach_dnp_without_role_zero() -> N
                                     "athlete": {"displayName": "Three"},
                                     "stats": ["0"],
                                     "didNotPlay": True,
-                                    "reason": "COACH'S DECISION",
+                                    "reason": None,
                                     "ejected": False,
                                 },
                             ],
@@ -317,4 +378,6 @@ def test_final_boxscore_classifies_injury_and_coach_dnp_without_role_zero() -> N
     assert observations.loc[1, "outcome_classification"] == PLAYED
     assert observations.loc[2, "outcome_classification"] == MEDICAL_ABSENCE
     assert observations.loc[3, "outcome_classification"] == COACH_DNP
+    assert observations.loc[2, "conditional_observation_weight"] == 0.0
+    assert observations.loc[3, "conditional_observation_weight"] == 1.0
     assert observations.loc[1, "regulation_equivalent_minutes"] == pytest.approx(240.0)
