@@ -425,9 +425,18 @@ function WinLossEnvelopeChart({
       .map((point) => point.game),
   );
   const final = envelope.points.at(-1)!;
-  const actualUpperTail = actualWinsUpperTail(envelope, currentRecord);
-  const actualDescription = currentRecord && actualUpperTail !== null
-    ? `${currentRecord.wins}-${currentRecord.losses} actual through ${currentRecord.last_game_date} · ${(actualUpperTail * 100).toFixed(1)}% of model paths had ≥${currentRecord.wins} wins`
+  const forecastTeam = forecast.teams.find((item) => item.team === team);
+  const observedGameCount = forecastTeam?.completed_games ?? 0;
+  const modeledGameCount = envelope.gameCount - observedGameCount;
+  const isConditionedOnActualResults = observedGameCount > 0;
+  const gameCoverageDescription = isConditionedOnActualResults
+    ? `${observedGameCount} observed games + ${modeledGameCount} modeled remaining games`
+    : `${envelope.gameCount} modeled games`;
+  const actualUpperTail = isConditionedOnActualResults
+    ? null
+    : actualWinsUpperTail(envelope, currentRecord);
+  const actualDescription = currentRecord
+    ? `${currentRecord.wins}-${currentRecord.losses} actual through ${currentRecord.last_game_date}${actualUpperTail === null ? "" : ` · ${(actualUpperTail * 100).toFixed(1)}% of preseason model paths had ≥${currentRecord.wins} wins`}`
     : null;
   const actualPoint = currentRecord && currentRecord.games <= envelope.gameCount
     ? {
@@ -478,7 +487,7 @@ function WinLossEnvelopeChart({
         <rect width="1200" height="800" fill="#f8f6ef"/>
         <text class="export-brand" x="44" y="50">NBA GESTALT</text>
         <text class="export-title" x="44" y="87">${escapeSvg(team)} Win-Loss Envelope</text>
-        <text class="export-subtitle" x="44" y="114">${escapeSvg(forecast.season)} outlook · ${envelope.gameCount} modeled games · ${ENVELOPE_TRIALS.toLocaleString()} trials${actualDescription ? ` · ${escapeSvg(actualDescription)}` : ""}</text>
+        <text class="export-subtitle" x="44" y="114">${escapeSvg(forecast.season)} outlook · ${escapeSvg(gameCoverageDescription)} · ${ENVELOPE_TRIALS.toLocaleString()} trials${actualDescription ? ` · ${escapeSvg(actualDescription)}` : ""}</text>
         <g class="export-legend" transform="translate(620 43)">
           <rect x="0" y="0" width="24" height="13" fill="#c9e0d4" opacity="0.32"/><text x="31" y="11" font-size="12">P1–P99</text>
           <rect x="132" y="0" width="24" height="13" fill="#c9e0d4" opacity="0.78"/><text x="163" y="11" font-size="12">P5–P95</text>
@@ -511,7 +520,7 @@ function WinLossEnvelopeChart({
     <div className="win-loss-envelope-heading">
       <div><p className="eyebrow">{team} outlook</p><h2 id="win-loss-envelope-title">Win-Loss Envelope.</h2></div>
       <div className="win-loss-envelope-meta">
-        <p>{actualDescription ? `${actualDescription} · ` : ""}{envelope.gameCount} modeled games · {ENVELOPE_TRIALS.toLocaleString()} trials</p>
+        <p>{actualDescription ? `${actualDescription} · ` : ""}{gameCoverageDescription} · {ENVELOPE_TRIALS.toLocaleString()} trials</p>
         <button type="button" className="win-loss-envelope-download" disabled={isExporting} onClick={() => void downloadPng()}>
           {isExporting ? <LoaderCircle className="spin" size={13} /> : <Download size={13} />}
           <span>{isExporting ? "Building PNG" : "Download PNG"}</span>
@@ -519,7 +528,7 @@ function WinLossEnvelopeChart({
       </div>
     </div>
     {exportError && <p className="win-loss-envelope-export-error"><CircleAlert size={14} /> {exportError}</p>}
-    <svg ref={chartRef} className="win-loss-envelope-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${team} cumulative wins through ${envelope.gameCount} known games, with 1st to 99th and 5th to 95th percentile prediction intervals`}>
+    <svg ref={chartRef} className="win-loss-envelope-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${team} cumulative wins through an ${envelope.gameCount}-game season, with 1st to 99th and 5th to 95th percentile prediction intervals`}>
       {yTicks.map((tick) => <g key={`y-${tick}`}>
         <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} />
         <text x={margin.left - 7} y={y(tick) + 4} textAnchor="end">{tick}</text>
@@ -1069,7 +1078,7 @@ export function WinProjectionsPage() {
               {([
                 ["team", "Team"],
                 ["current_record", "Current W-L"],
-                ["current_wins_upper_tail", "P(≥ Current W)"],
+                ["current_wins_upper_tail", "Preseason P(≥ W)"],
                 ["team_strength", "Strength"],
                 ["betmgm_win_total", "BetMGM"],
                 ["projected_wins", "Projected Wins"],
@@ -1096,7 +1105,7 @@ export function WinProjectionsPage() {
               return <tr key={item.team} className={rowClassName}>
                 <th><button className="win-forecast-team-link" type="button" aria-controls="team-minutes" aria-pressed={item.team === team} onClick={() => selectForecastTeam(item.team)} aria-label={`Select ${item.team}`} title={`Select ${item.team}`}><span className="lineup-team-mark"><img src={teamLogoUrl(item.team)} alt="" aria-hidden="true" loading="lazy" /><small>{item.team}</small></span></button></th>
                 <td className="win-forecast-current-record" title={currentRecord ? `Through ${currentRecord.last_game_date}` : "No completed games"}>{currentRecord ? `${currentRecord.wins}-${currentRecord.losses}` : "0-0"}</td>
-                <td className="win-forecast-upper-tail" title={currentRecord && currentWinsUpperTail !== undefined ? `${(currentWinsUpperTail * 100).toFixed(1)}% of ${ENVELOPE_TRIALS.toLocaleString()} simulated paths had at least ${currentRecord.wins} ${currentRecord.wins === 1 ? "win" : "wins"} after ${currentRecord.games} games` : "No completed games"}>{currentWinsUpperTail === undefined ? "-" : `${(currentWinsUpperTail * 100).toFixed(1)}%`}</td>
+                <td className="win-forecast-upper-tail" title={currentRecord && currentWinsUpperTail !== undefined ? `${(currentWinsUpperTail * 100).toFixed(1)}% of ${ENVELOPE_TRIALS.toLocaleString()} frozen preseason paths had at least ${currentRecord.wins} ${currentRecord.wins === 1 ? "win" : "wins"} after ${currentRecord.games} games` : "No completed games"}>{currentWinsUpperTail === undefined ? "-" : `${(currentWinsUpperTail * 100).toFixed(1)}%`}</td>
                 <td className={item.team_strength < 0 ? "negative" : "positive"}>{formatRating(item.team_strength)}</td>
                 <td title={marketIntervalDescription(item)}>{item.betmgm_win_total?.toFixed(1) ?? "-"}</td>
                 <td className="win-forecast-wins">{item.projected_wins.toFixed(1)}</td>
