@@ -396,6 +396,88 @@ def _cached_game_contribution(
     return None, None
 
 
+def build_player_game_trajectory(
+    contributions_by_date: dict[date, list[Any]],
+    *,
+    player_ids: tuple[int, ...],
+    preseason_nail: dict[int, float],
+    prior_possessions: float,
+) -> pd.DataFrame:
+    """Return the exact cumulative rating after each player appearance.
+
+    Updates remain slate-batched, matching the shadow updater's no-leakage
+    contract.  A player receives one row for every game in which their
+    on-court exposure is positive; every row uses the cumulative solve after
+    that game's full slate has been incorporated.
+    """
+
+    columns = [
+        "season",
+        "updater_version",
+        "player_id",
+        "game_number",
+        "game_id",
+        "game_date",
+        "game_time_utc",
+        "preseason_rating",
+        "in_season_delta",
+        "updated_rating",
+        "game_on_court_possessions",
+        "cumulative_on_court_possessions",
+        "effective_information",
+        "evidence_weight",
+    ]
+    if not contributions_by_date:
+        return pd.DataFrame(columns=columns)
+
+    prior = np.asarray([preseason_nail[player_id] for player_id in player_ids], dtype=float)
+    prior_precision = sparse.eye(len(player_ids), format="csr") * prior_possessions
+    gram = sparse.csr_matrix((len(player_ids), len(player_ids)), dtype=float)
+    score = np.zeros(len(player_ids), dtype=float)
+    exposure = np.zeros(len(player_ids), dtype=float)
+    game_numbers = np.zeros(len(player_ids), dtype=int)
+    rows: list[dict[str, object]] = []
+
+    for game_date in sorted(contributions_by_date):
+        day = sorted(
+            contributions_by_date[game_date],
+            key=lambda contribution: (contribution.game_time_utc, contribution.game_id),
+        )
+        if not day:
+            continue
+        for contribution in day:
+            gram = gram + contribution.xtwx
+            score += contribution.xtwy
+            exposure += contribution.on_court_possessions
+        adjustment = np.asarray(spsolve(gram + prior_precision, score), dtype=float)
+        information = np.asarray(gram.diagonal(), dtype=float)
+        evidence_weight = information / (information + prior_possessions)
+
+        for contribution in day:
+            participants = np.flatnonzero(contribution.on_court_possessions > 0)
+            for index in participants:
+                game_numbers[index] += 1
+                rows.append(
+                    {
+                        "season": SEASON,
+                        "updater_version": UPDATER_VERSION,
+                        "player_id": player_ids[index],
+                        "game_number": int(game_numbers[index]),
+                        "game_id": contribution.game_id,
+                        "game_date": game_date.isoformat(),
+                        "game_time_utc": contribution.game_time_utc.isoformat(),
+                        "preseason_rating": prior[index],
+                        "in_season_delta": adjustment[index],
+                        "updated_rating": prior[index] + adjustment[index],
+                        "game_on_court_possessions": contribution.on_court_possessions[index],
+                        "cumulative_on_court_possessions": exposure[index],
+                        "effective_information": information[index],
+                        "evidence_weight": evidence_weight[index],
+                    }
+                )
+    return pd.DataFrame(rows, columns=columns)
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     summary_paths = sorted(args.state_dir.glob("final/*.summary.json"))
     summaries = [_load_json(path) for path in summary_paths]
@@ -600,6 +682,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         cutoff_game_id=(str(summaries[-1]["game_id"]) if summaries else None),
     )
     player_state_path, player_state_created = publish_player_state(state, player_state_root)
+    player_game_trajectory = build_player_game_trajectory(
+        contributions_by_date,
+        player_ids=player_ids,
+        preseason_nail=preseason,
+        prior_possessions=float(args.prior_possessions),
+    )
     result = {
         "season": SEASON,
         "through_date": max(grouped).isoformat() if grouped else None,
@@ -621,6 +709,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "state_sha256": player_state_path.name.removeprefix("state_sha256="),
             "cutoff_time": generated_at.isoformat().replace("+00:00", "Z"),
             "created": player_state_created,
+        },
+        "player_game_trajectory": {
+            "rows": len(player_game_trajectory),
+            "players": int(player_game_trajectory["player_id"].nunique()),
         },
         "metrics": metrics,
         "comparison": {
@@ -647,11 +739,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)
     predictions.to_csv(args.output_dir / "game_predictions.csv", index=False)
+    player_game_trajectory.to_parquet(
+        args.output_dir / "player_game_trajectory.parquet",
+        index=False,
+    )
     (args.output_dir / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
     result["local_artifacts"] = {
         "summary": str(args.output_dir / "summary.json"),
         "game_predictions": str(args.output_dir / "game_predictions.csv"),
         "player_state": str(player_state_path / "player_state.parquet"),
+        "player_game_trajectory": str(
+            args.output_dir / "player_game_trajectory.parquet"
+        ),
         "contribution_directories": [
             str(path) for path in dict.fromkeys(contribution_paths)
         ],

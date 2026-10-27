@@ -140,12 +140,17 @@ export type Player = {
   }>;
   current_season_trajectory?: Array<{
     source: "preseason" | "in_season";
+    point_kind?: "preseason" | "postgame" | "current";
+    game_number?: number | null;
+    game_id?: string;
+    game_date?: string;
     evidence_through_date?: string | null;
     as_of_cutoff_time?: string | null;
     rating: number;
     preseason_rating?: number;
     in_season_delta?: number;
     raw_on_court_possessions?: number;
+    game_on_court_possessions?: number;
     evidence_weight?: number;
     posterior_standard_error?: number | null;
     bundle_sha256?: string | null;

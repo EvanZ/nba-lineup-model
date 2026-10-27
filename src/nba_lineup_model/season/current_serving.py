@@ -26,6 +26,7 @@ from nba_lineup_model.season.schema import validate_season
 SERVING_SCHEMA_VERSION = 1
 POINTER_SCHEMA_VERSION = 1
 SERVING_STATE_FILENAME = "serving_state.parquet"
+RATING_TRAJECTORY_FILENAME = "rating_trajectory.parquet"
 MANIFEST_FILENAME = "manifest.json"
 REPORT_FILENAME = "report.html"
 
@@ -266,6 +267,8 @@ def publish_serving_bundle(
     config: ServingPromotionConfig,
     rating_source_uri: str,
     minutes_source_uri: str,
+    rating_trajectory_path: Path | str | None = None,
+    rating_trajectory_source_uri: str | None = None,
     generated_at: datetime | None = None,
 ) -> PublishedServingBundle:
     """Write one immutable serving bundle and return its validated identity."""
@@ -274,6 +277,20 @@ def publish_serving_bundle(
     minutes_path = Path(minutes_state_path)
     rating_state = pd.read_parquet(rating_path)
     minutes_state = pd.read_parquet(minutes_path)
+    trajectory_path = (
+        Path(rating_trajectory_path) if rating_trajectory_path is not None else None
+    )
+    if (trajectory_path is None) != (rating_trajectory_source_uri is None):
+        raise ValueError("Rating trajectory path and source URI must be provided together")
+    rating_trajectory = (
+        pd.read_parquet(trajectory_path) if trajectory_path is not None else None
+    )
+    if rating_trajectory is not None:
+        _validate_rating_trajectory(
+            rating_trajectory,
+            season=season,
+            rating_state=rating_state,
+        )
     serving, audit = build_serving_state(
         rating_state,
         minutes_state,
@@ -289,6 +306,11 @@ def publish_serving_bundle(
         state_path = staging / SERVING_STATE_FILENAME
         serving.to_parquet(state_path, index=False)
         state_sha = _file_sha256(state_path)
+        trajectory_sha = None
+        if rating_trajectory is not None:
+            serving_trajectory_path = staging / RATING_TRAJECTORY_FILENAME
+            rating_trajectory.to_parquet(serving_trajectory_path, index=False)
+            trajectory_sha = _file_sha256(serving_trajectory_path)
         report_path = staging / REPORT_FILENAME
         report_path.write_text(_render_report(serving, audit, config), encoding="utf-8")
         report_sha = _file_sha256(report_path)
@@ -344,6 +366,14 @@ def publish_serving_bundle(
                 REPORT_FILENAME: report_sha,
             },
         }
+        if trajectory_path is not None and rating_trajectory_source_uri is not None:
+            identity["sources"]["rating_trajectory"] = {
+                "uri": rating_trajectory_source_uri,
+                "sha256": _file_sha256(trajectory_path),
+                "row_count": len(rating_trajectory),
+                "player_count": int(rating_trajectory["player_id"].nunique()),
+            }
+            identity["files"][RATING_TRAJECTORY_FILENAME] = trajectory_sha
         bundle_sha = hashlib.sha256(_canonical_json(identity)).hexdigest()
         manifest = {
             "bundle_sha256": bundle_sha,
@@ -391,12 +421,21 @@ def verify_serving_bundle(path: Path | str) -> dict[str, Any]:
     files = identity.get("files")
     if not isinstance(files, dict):
         raise ValueError("Serving manifest file inventory is missing")
-    for filename in (SERVING_STATE_FILENAME, REPORT_FILENAME):
+    required_files = [SERVING_STATE_FILENAME, REPORT_FILENAME]
+    if RATING_TRAJECTORY_FILENAME in files:
+        required_files.append(RATING_TRAJECTORY_FILENAME)
+    for filename in required_files:
         expected = files.get(filename)
         if not isinstance(expected, str) or _file_sha256(root / filename) != expected:
             raise ValueError(f"Serving bundle file checksum changed: {filename}")
     state = pd.read_parquet(root / SERVING_STATE_FILENAME)
     _validate_serving_frame(state, identity)
+    if RATING_TRAJECTORY_FILENAME in files:
+        _validate_rating_trajectory(
+            pd.read_parquet(root / RATING_TRAJECTORY_FILENAME),
+            season=str(identity["season"]),
+            rating_state=state,
+        )
     return manifest
 
 
@@ -530,6 +569,63 @@ def _validate_serving_frame(state: pd.DataFrame, identity: dict[str, Any]) -> No
         atol=1e-12,
     ):
         raise ValueError("Serving-state NAIL arithmetic failed validation")
+
+
+def _validate_rating_trajectory(
+    trajectory: pd.DataFrame,
+    *,
+    season: str,
+    rating_state: pd.DataFrame,
+) -> None:
+    required = {
+        "season",
+        "updater_version",
+        "player_id",
+        "game_number",
+        "game_id",
+        "game_date",
+        "preseason_rating",
+        "in_season_delta",
+        "updated_rating",
+        "game_on_court_possessions",
+        "cumulative_on_court_possessions",
+        "effective_information",
+        "evidence_weight",
+    }
+    missing = sorted(required - set(trajectory.columns))
+    if missing:
+        raise ValueError("Rating trajectory is missing columns: " + ", ".join(missing))
+    if trajectory.empty:
+        raise ValueError("Rating trajectory cannot be empty")
+    if not trajectory["season"].astype(str).eq(validate_season(season)).all():
+        raise ValueError("Rating trajectory season does not match its serving state")
+    if trajectory.duplicated(["player_id", "game_number"]).any():
+        raise ValueError("Rating trajectory contains duplicate player game numbers")
+    ordered = trajectory.sort_values(["player_id", "game_number"], kind="stable")
+    game_numbers = ordered.groupby("player_id", sort=False)["game_number"]
+    if not game_numbers.apply(
+        lambda values: values.astype(int).tolist() == list(range(1, len(values) + 1))
+    ).all():
+        raise ValueError("Rating trajectory game numbers must be contiguous per player")
+    if not np.allclose(
+        trajectory["updated_rating"],
+        trajectory["preseason_rating"] + trajectory["in_season_delta"],
+        atol=1e-12,
+    ):
+        raise ValueError("Rating trajectory arithmetic failed validation")
+    if (trajectory["game_on_court_possessions"] <= 0).any():
+        raise ValueError("Rating trajectory games require positive on-court possessions")
+    if not trajectory["evidence_weight"].between(0.0, 1.0).all():
+        raise ValueError("Rating trajectory evidence weights must lie in [0, 1]")
+    baselines = rating_state.set_index("player_id")["frozen_preseason_nail"]
+    expected = trajectory["player_id"].astype(int).map(baselines)
+    known = expected.notna()
+    if not np.allclose(
+        trajectory.loc[known, "preseason_rating"],
+        expected.loc[known],
+        atol=1e-12,
+    ):
+        raise ValueError("Rating trajectory preseason ratings changed")
 
 
 def _render_report(

@@ -14,6 +14,7 @@ from nba_lineup_model.modeling.in_season_nail_monitor import (
     SEASON,
     _b2b_flags,
     _cached_game_contribution,
+    build_player_game_trajectory,
 )
 
 
@@ -88,3 +89,50 @@ def test_shadow_monitor_back_to_back_flags_are_date_batched() -> None:
     assert flags["1"] == (False, False)
     assert flags["2"] == (True, False)
     assert flags["3"] == (True, False)
+
+
+def test_player_game_trajectory_has_one_cumulative_point_per_appearance() -> None:
+    first = _contribution()
+    second_stints = pd.DataFrame(
+        {
+            "game_id": ["0022600002"],
+            "home_player_ids": [(1, 3)],
+            "away_player_ids": [(2, 4)],
+            "target_home_net_rating": [2.0],
+            "possessions": [30.0],
+        }
+    )
+    second = build_game_contribution(
+        second_stints,
+        season=SEASON,
+        game_id="0022600002",
+        game_time_utc=datetime(2026, 10, 22, 23, 0, tzinfo=UTC),
+        finalized_at=datetime(2026, 10, 23, 2, 0, tzinfo=UTC),
+        source_sha256="b" * 64,
+        source_uri="s3://nba-gestalt-data/lake/raw/cdn/game-2.json",
+        core_model_version=CORE_MODEL_VERSION,
+        context_model_version="frozen-context",
+        player_ids=(1, 2, 3, 4),
+        preseason_nail={1: 1.0, 2: 0.5, 3: -0.5, 4: -1.0},
+        fixed_context_offset=0.0,
+    )
+
+    trajectory = build_player_game_trajectory(
+        {
+            first.game_time_utc.date(): [first],
+            second.game_time_utc.date(): [second],
+        },
+        player_ids=(1, 2, 3, 4),
+        preseason_nail={1: 1.0, 2: 0.5, 3: -0.5, 4: -1.0},
+        prior_possessions=6000.0,
+    )
+
+    assert len(trajectory) == 8
+    player = trajectory.loc[trajectory["player_id"].eq(1)].reset_index(drop=True)
+    assert player["game_number"].tolist() == [1, 2]
+    assert player["game_id"].tolist() == ["0022600001", "0022600002"]
+    assert player["game_on_court_possessions"].tolist() == [20.0, 30.0]
+    assert player["cumulative_on_court_possessions"].tolist() == [20.0, 50.0]
+    assert player["updated_rating"].iloc[-1] == (
+        player["preseason_rating"].iloc[-1] + player["in_season_delta"].iloc[-1]
+    )

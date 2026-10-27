@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from nba_lineup_model.season.current_serving import (
+    RATING_TRAJECTORY_FILENAME,
     SERVING_STATE_FILENAME,
     resolve_latest_bundle,
     resolve_pointer,
@@ -79,10 +80,21 @@ def load_current_season_serving_catalog(
         latest_manifest=latest_manifest,
         explicit_bundle=bool(configured_bundle),
     )
-    trajectories = _rating_trajectories(
-        rankings,
-        history_paths,
-        current_bundle_sha=str(latest_manifest["bundle_sha256"]),
+    trajectory_path = latest_bundle / RATING_TRAJECTORY_FILENAME
+    trajectories = (
+        _player_game_rating_trajectories(
+            rankings,
+            pd.read_parquet(trajectory_path),
+            current_bundle_sha=str(latest_manifest["bundle_sha256"]),
+            evidence_through_date=str(identity["evidence_through_date"]),
+            as_of_cutoff_time=str(identity["as_of_cutoff_time"]),
+        )
+        if trajectory_path.is_file()
+        else _rating_trajectories(
+            rankings,
+            history_paths,
+            current_bundle_sha=str(latest_manifest["bundle_sha256"]),
+        )
     )
     coverage = identity["coverage"]
     metadata = {
@@ -301,4 +313,110 @@ def _rating_trajectories(
                     "is_current": str(manifest["bundle_sha256"]) == current_bundle_sha,
                 }
             )
+    return trajectories
+
+
+def _player_game_rating_trajectories(
+    rankings: pd.DataFrame,
+    trajectory: pd.DataFrame,
+    *,
+    current_bundle_sha: str,
+    evidence_through_date: str,
+    as_of_cutoff_time: str,
+) -> dict[int, list[dict[str, Any]]]:
+    """Build player-page trajectories from immutable postgame updater states."""
+
+    trajectories: dict[int, list[dict[str, Any]]] = {}
+    current_by_player = rankings.assign(
+        player_id=rankings["player_id"].astype(int)
+    ).set_index("player_id")
+    grouped = {
+        int(player_id): group.sort_values("game_number", kind="stable")
+        for player_id, group in trajectory.groupby("player_id", sort=False)
+    }
+    for player_id, current in current_by_player.iterrows():
+        baseline = float(current["preseason_nail"])
+        points: list[dict[str, Any]] = [
+            {
+                "source": "preseason",
+                "point_kind": "preseason",
+                "evidence_through_date": None,
+                "as_of_cutoff_time": None,
+                "rating": baseline,
+                "preseason_rating": baseline,
+                "in_season_delta": 0.0,
+                "raw_on_court_possessions": 0.0,
+                "evidence_weight": 0.0,
+                "posterior_standard_error": None,
+                "bundle_sha256": None,
+            }
+        ]
+        player_games = grouped.get(int(player_id), pd.DataFrame())
+        for row in player_games.itertuples(index=False):
+            points.append(
+                {
+                    "source": "in_season",
+                    "point_kind": "postgame",
+                    "game_number": int(row.game_number),
+                    "game_id": str(row.game_id),
+                    "game_date": str(row.game_date),
+                    "evidence_through_date": str(row.game_date),
+                    "as_of_cutoff_time": str(row.game_time_utc),
+                    "rating": float(row.updated_rating),
+                    "preseason_rating": float(row.preseason_rating),
+                    "in_season_delta": float(row.in_season_delta),
+                    "game_on_court_possessions": float(
+                        row.game_on_court_possessions
+                    ),
+                    "raw_on_court_possessions": float(
+                        row.cumulative_on_court_possessions
+                    ),
+                    "evidence_weight": float(row.evidence_weight),
+                    "posterior_standard_error": None,
+                    "bundle_sha256": current_bundle_sha,
+                }
+            )
+
+        current_rating = float(current["rapm"])
+        current_possessions = float(current["current_season_possessions"])
+        last = points[-1]
+        matches_latest_game = (
+            last["point_kind"] == "postgame"
+            and np.isclose(float(last["rating"]), current_rating, atol=1e-10)
+            and np.isclose(
+                float(last["raw_on_court_possessions"]),
+                current_possessions,
+                atol=1e-10,
+            )
+        )
+        if matches_latest_game:
+            last["is_current"] = True
+            last["posterior_standard_error"] = float(
+                current["rating_posterior_standard_error"]
+            )
+        elif current_possessions > 0 or len(points) > 1:
+            points.append(
+                {
+                    "source": "in_season",
+                    "point_kind": "current",
+                    "game_number": (
+                        int(points[-1]["game_number"])
+                        if points[-1].get("game_number") is not None
+                        else None
+                    ),
+                    "evidence_through_date": evidence_through_date,
+                    "as_of_cutoff_time": as_of_cutoff_time,
+                    "rating": current_rating,
+                    "preseason_rating": baseline,
+                    "in_season_delta": float(current["in_season_delta"]),
+                    "raw_on_court_possessions": current_possessions,
+                    "evidence_weight": float(current["rating_evidence_weight"]),
+                    "posterior_standard_error": float(
+                        current["rating_posterior_standard_error"]
+                    ),
+                    "bundle_sha256": current_bundle_sha,
+                    "is_current": True,
+                }
+            )
+        trajectories[int(player_id)] = points
     return trajectories

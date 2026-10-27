@@ -197,8 +197,9 @@ def test_cdn_sensor_uses_stable_retryable_pending_set_key(
     assert retry.run_key == f"cdn-pbp:{digest}:attempt-1"
 
 
-def _write_current_season_child_publications(root: Path) -> tuple[str, str]:
+def _write_current_season_child_publications(root: Path) -> tuple[str, str, str]:
     rating_uri = "s3://example/player_state-" + "a" * 64 + ".parquet"
+    trajectory_uri = "s3://example/player_game_trajectory-" + "c" * 64 + ".parquet"
     minutes_uri = "s3://example/player_state-" + "b" * 64 + ".parquet"
     rating_root = root / "rating"
     minutes_root = root / "minutes"
@@ -209,19 +210,29 @@ def _write_current_season_child_publications(root: Path) -> tuple[str, str]:
         "coverage": {"excluded": 0},
     }
     (rating_root / "latest.json").write_text(
-        json.dumps({**common, "artifacts": {"player_state": rating_uri}})
+        json.dumps(
+            {
+                **common,
+                "artifacts": {
+                    "player_state": rating_uri,
+                    "player_game_trajectory": trajectory_uri,
+                },
+            }
+        )
     )
     (minutes_root / "latest.json").write_text(
         json.dumps({**common, "artifacts": {"player_state": minutes_uri}})
     )
-    return rating_uri, minutes_uri
+    return rating_uri, trajectory_uri, minutes_uri
 
 
 def test_current_season_serving_sensor_uses_child_state_identity(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    rating_uri, minutes_uri = _write_current_season_child_publications(tmp_path)
+    rating_uri, trajectory_uri, minutes_uri = _write_current_season_child_publications(
+        tmp_path
+    )
     monkeypatch.setenv("GESTALT_IN_SEASON_NAIL_ROOT", str(tmp_path / "rating"))
     monkeypatch.setenv("GESTALT_IN_SEASON_MINUTES_ROOT", str(tmp_path / "minutes"))
     monkeypatch.setenv(
@@ -232,7 +243,9 @@ def test_current_season_serving_sensor_uses_child_state_identity(
         build_sensor_context(instance=DagsterInstance.ephemeral())
     )
 
-    snapshot = hashlib.sha256(f"{rating_uri}:{minutes_uri}".encode()).hexdigest()[:16]
+    snapshot = hashlib.sha256(
+        f"{rating_uri}:{trajectory_uri}:{minutes_uri}".encode()
+    ).hexdigest()[:16]
     assert result.run_key == f"current-season-serving:2026-10-26:{snapshot}"
     assert result.tags["gestalt/serving_snapshot"] == snapshot
 
@@ -241,13 +254,17 @@ def test_current_season_serving_sensor_suppresses_equivalent_inflight_run(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    rating_uri, minutes_uri = _write_current_season_child_publications(tmp_path)
+    rating_uri, trajectory_uri, minutes_uri = _write_current_season_child_publications(
+        tmp_path
+    )
     monkeypatch.setenv("GESTALT_IN_SEASON_NAIL_ROOT", str(tmp_path / "rating"))
     monkeypatch.setenv("GESTALT_IN_SEASON_MINUTES_ROOT", str(tmp_path / "minutes"))
     monkeypatch.setenv(
         "GESTALT_CURRENT_SEASON_SERVING_ROOT", str(tmp_path / "serving")
     )
-    snapshot = hashlib.sha256(f"{rating_uri}:{minutes_uri}".encode()).hexdigest()[:16]
+    snapshot = hashlib.sha256(
+        f"{rating_uri}:{trajectory_uri}:{minutes_uri}".encode()
+    ).hexdigest()[:16]
     instance = DagsterInstance.ephemeral()
     queued = instance.create_run_for_job(
         promote_current_season_serving_job,

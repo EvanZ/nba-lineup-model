@@ -388,6 +388,7 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
   const y = (rating: number) => top + ((maximum - rating) / span) * (height - top - bottom);
   const path = points.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.rating)}`).join(" ");
   const baseline = points[0].rating;
+  const postgameCount = points.filter((point) => point.point_kind === "postgame").length;
   return (
     <figure className="current-rating-trajectory">
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${player.player_name} 2026-27 NAIL trajectory`}>
@@ -396,19 +397,38 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
         <text className="current-rating-axis-label" x={left - 9} y={y(baseline) + 4} textAnchor="end">{formatChartRating(baseline)}</text>
         <path className="current-rating-line" d={path} />
         {points.map((point, index) => {
-          const label = point.source === "preseason"
-            ? "Preseason"
-            : point.evidence_through_date?.slice(5) ?? `Update ${index}`;
-          return <g key={`${point.source}-${point.evidence_through_date ?? index}`}>
+          const label = point.point_kind === "current"
+            ? "Current"
+            : point.point_kind === "postgame" && point.game_number
+              ? `G${point.game_number}`
+              : point.source === "preseason"
+                ? "Preseason"
+                : point.evidence_through_date?.slice(5) ?? `Update ${index}`;
+          const showAxisLabel = points.length <= 12
+            || index === 0
+            || index === points.length - 1
+            || (point.game_number !== null && point.game_number !== undefined && point.game_number % 5 === 0);
+          const showValue = points.length <= 8 || index === 0 || index === points.length - 1;
+          const detail = [
+            `${label}: ${formatRating(point.rating)}`,
+            point.game_date,
+            point.game_on_court_possessions === undefined
+              ? null
+              : `${wholeNumber.format(point.game_on_court_possessions)} possessions in game`,
+            point.raw_on_court_possessions === undefined
+              ? null
+              : `${wholeNumber.format(point.raw_on_court_possessions)} cumulative possessions`,
+          ].filter(Boolean).join(" · ");
+          return <g key={`${point.point_kind ?? point.source}-${point.game_id ?? point.evidence_through_date ?? index}`}>
             <circle className={point.is_current ? "current-rating-point latest" : "current-rating-point"} cx={x(index)} cy={y(point.rating)} r={point.is_current ? 5 : 4}>
-              <title>{`${label}: ${formatRating(point.rating)}${point.raw_on_court_possessions === undefined ? "" : ` · ${wholeNumber.format(point.raw_on_court_possessions)} possessions`}`}</title>
+              <title>{detail}</title>
             </circle>
-            <text className="current-rating-value" x={x(index)} y={Math.max(15, y(point.rating) - 11)} textAnchor="middle">{formatRating(point.rating)}</text>
-            <text className="current-rating-date" x={x(index)} y={height - 18} textAnchor="middle">{label}</text>
+            {showValue && <text className="current-rating-value" x={x(index)} y={Math.max(15, y(point.rating) - 11)} textAnchor="middle">{formatRating(point.rating)}</text>}
+            {showAxisLabel && <text className="current-rating-date" x={x(index)} y={height - 18} textAnchor="middle">{label}</text>}
           </g>;
         })}
       </svg>
-      <figcaption>Each point is an immutable promoted state. The dashed line is the frozen preseason baseline.</figcaption>
+      <figcaption>{postgameCount} postgame {postgameCount === 1 ? "update" : "updates"}. Each game point is the slate-batched updater state after that appearance; the dashed line is the frozen preseason baseline.</figcaption>
     </figure>
   );
 }

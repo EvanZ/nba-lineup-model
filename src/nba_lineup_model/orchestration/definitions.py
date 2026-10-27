@@ -768,7 +768,12 @@ def update_in_season_nail_shadow_op(context: OpExecutionContext) -> dict[str, ob
     store = AwsCliImmutableObjectStore()
     lake_uri = _in_season_nail_lake_uri()
     published: dict[str, str] = {}
-    for label in ("summary", "game_predictions", "player_state"):
+    for label in (
+        "summary",
+        "game_predictions",
+        "player_state",
+        "player_game_trajectory",
+    ):
         path = Path(str(local_artifacts[label]))
         payload = path.read_bytes()
         digest = hashlib.sha256(payload).hexdigest()
@@ -1244,16 +1249,24 @@ def _current_season_child_state_paths(
     through_date: str,
     rating_publication: dict[str, object],
     minutes_publication: dict[str, object],
-) -> tuple[Path, Path, str, str]:
+) -> tuple[Path, Path, Path, str, str, str]:
     """Resolve exact local child states and verify their published checksums."""
 
     rating_uri = _published_artifact_uri(rating_publication, "player_state")
+    trajectory_uri = _published_artifact_uri(
+        rating_publication, "player_game_trajectory"
+    )
     minutes_uri = _published_artifact_uri(minutes_publication, "player_state")
     rating_digest = _published_file_digest(
         rating_uri, label="player_state", suffix=".parquet"
     )
     minutes_digest = _published_file_digest(
         minutes_uri, label="player_state", suffix=".parquet"
+    )
+    trajectory_digest = _published_file_digest(
+        trajectory_uri,
+        label="player_game_trajectory",
+        suffix=".parquet",
     )
     rating_matches = list(
         _in_season_nail_root().glob(
@@ -1279,7 +1292,28 @@ def _current_season_child_state_paths(
         raise ValueError(f"Local minutes state is missing: {minutes_path}")
     if hashlib.sha256(minutes_path.read_bytes()).hexdigest() != minutes_digest:
         raise ValueError("Local minutes state does not match its published checksum")
-    return rating_matches[0], minutes_path, rating_uri, minutes_uri
+    rating_run_id = rating_publication.get("dagster_run_id")
+    if not isinstance(rating_run_id, str) or not rating_run_id:
+        raise ValueError("Rating publication Dagster run ID is missing")
+    trajectory_path = (
+        _in_season_nail_root()
+        / "runs"
+        / f"through_date={through_date}"
+        / rating_run_id
+        / "player_game_trajectory.parquet"
+    )
+    if not trajectory_path.is_file():
+        raise ValueError(f"Local player-game trajectory is missing: {trajectory_path}")
+    if hashlib.sha256(trajectory_path.read_bytes()).hexdigest() != trajectory_digest:
+        raise ValueError("Local player-game trajectory does not match its published checksum")
+    return (
+        rating_matches[0],
+        minutes_path,
+        trajectory_path,
+        rating_uri,
+        minutes_uri,
+        trajectory_uri,
+    )
 
 
 def _preseason_release_run_id() -> str:
@@ -1305,6 +1339,7 @@ def promote_current_season_serving_op(
 
     from nba_lineup_model.season.current_serving import (
         MANIFEST_FILENAME,
+        RATING_TRAJECTORY_FILENAME,
         REPORT_FILENAME,
         SERVING_STATE_FILENAME,
         ServingPromotionConfig,
@@ -1335,7 +1370,14 @@ def promote_current_season_serving_op(
         coverage = publication.get("coverage")
         if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) != 0:
             raise ValueError(f"{label.title()} publication has exclusions or invalid coverage")
-    rating_path, minutes_path, rating_uri, minutes_uri = (
+    (
+        rating_path,
+        minutes_path,
+        rating_trajectory_path,
+        rating_uri,
+        minutes_uri,
+        rating_trajectory_uri,
+    ) = (
         _current_season_child_state_paths(
             through_date,
             rating_publication,
@@ -1370,6 +1412,8 @@ def promote_current_season_serving_op(
         config=config,
         rating_source_uri=rating_uri,
         minutes_source_uri=minutes_uri,
+        rating_trajectory_path=rating_trajectory_path,
+        rating_trajectory_source_uri=rating_trajectory_uri,
     )
     store = AwsCliImmutableObjectStore()
     base_uri = _join_s3_uri(
@@ -1381,7 +1425,12 @@ def promote_current_season_serving_op(
         f"bundle_sha256={bundle.manifest['bundle_sha256']}",
     )
     published: dict[str, str] = {}
-    for filename in (SERVING_STATE_FILENAME, MANIFEST_FILENAME, REPORT_FILENAME):
+    for filename in (
+        SERVING_STATE_FILENAME,
+        RATING_TRAJECTORY_FILENAME,
+        MANIFEST_FILENAME,
+        REPORT_FILENAME,
+    ):
         uri = f"{base_uri}/{filename}"
         store.put_bytes(uri, (bundle.path / filename).read_bytes())
         published[filename] = uri
@@ -1476,9 +1525,17 @@ def current_season_serving_sensor(
         coverage = publication.get("coverage")
         if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) != 0:
             return SkipReason(f"{label.title()} publication is not exclusion-free")
-    rating_uri = _published_artifact_uri(rating_publication, "player_state")
-    minutes_uri = _published_artifact_uri(minutes_publication, "player_state")
-    snapshot = hashlib.sha256(f"{rating_uri}:{minutes_uri}".encode()).hexdigest()[:16]
+    try:
+        rating_uri = _published_artifact_uri(rating_publication, "player_state")
+        trajectory_uri = _published_artifact_uri(
+            rating_publication, "player_game_trajectory"
+        )
+        minutes_uri = _published_artifact_uri(minutes_publication, "player_state")
+    except ValueError as error:
+        return SkipReason(str(error))
+    snapshot = hashlib.sha256(
+        f"{rating_uri}:{trajectory_uri}:{minutes_uri}".encode()
+    ).hexdigest()[:16]
     inflight = context.instance.get_runs(
         filters=RunsFilter(
             job_name="promote_current_season_serving",
@@ -1506,6 +1563,7 @@ def current_season_serving_sensor(
             sources = manifest["identity"]["sources"]
             if (
                 sources["rating_state"]["uri"] == rating_uri
+                and sources["rating_trajectory"]["uri"] == trajectory_uri
                 and sources["minutes_state"]["uri"] == minutes_uri
             ):
                 return SkipReason("Current-season serving state is already promoted")

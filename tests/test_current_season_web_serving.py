@@ -109,6 +109,7 @@ def _publish_day(
     games: list[str],
     deltas: list[float],
     minutes: list[float],
+    include_trajectory: bool = False,
 ) -> Path:
     cutoff = datetime.combine(through_date, datetime.min.time(), tzinfo=UTC).replace(hour=8)
     sources.mkdir(parents=True, exist_ok=True)
@@ -116,6 +117,39 @@ def _publish_day(
     minute = sources / f"minutes-{through_date}.parquet"
     _rating_state(cutoff=cutoff, games=games, deltas=deltas).to_parquet(rating, index=False)
     _minutes_state(cutoff=cutoff, games=games, minutes=minutes).to_parquet(minute, index=False)
+    trajectory = sources / f"trajectory-{through_date}.parquet"
+    if include_trajectory:
+        pd.DataFrame(
+            {
+                "season": [SEASON] * len(games),
+                "updater_version": ["in-season-nail-v1"] * len(games),
+                "player_id": [1] * len(games),
+                "game_number": list(range(1, len(games) + 1)),
+                "game_id": games,
+                "game_date": [through_date.isoformat()] * len(games),
+                "game_time_utc": [cutoff.isoformat()] * len(games),
+                "preseason_rating": [3.0] * len(games),
+                "in_season_delta": [
+                    deltas[0] * game_number / len(games)
+                    for game_number in range(1, len(games) + 1)
+                ],
+                "updated_rating": [
+                    3.0 + deltas[0] * game_number / len(games)
+                    for game_number in range(1, len(games) + 1)
+                ],
+                "game_on_court_possessions": [100.0] * len(games),
+                "cumulative_on_court_possessions": [
+                    100.0 * game_number for game_number in range(1, len(games) + 1)
+                ],
+                "effective_information": [
+                    50.0 * game_number for game_number in range(1, len(games) + 1)
+                ],
+                "evidence_weight": [
+                    (50.0 * game_number) / (6000.0 + 50.0 * game_number)
+                    for game_number in range(1, len(games) + 1)
+                ],
+            }
+        ).to_parquet(trajectory, index=False)
     bundle = publish_serving_bundle(
         rating,
         minute,
@@ -126,6 +160,10 @@ def _publish_day(
         config=CONFIG,
         rating_source_uri=f"s3://example/{rating.name}",
         minutes_source_uri=f"s3://example/{minute.name}",
+        rating_trajectory_path=trajectory if include_trajectory else None,
+        rating_trajectory_source_uri=(
+            f"s3://example/{trajectory.name}" if include_trajectory else None
+        ),
     )
     promote_serving_bundle(bundle.path, root=root, promoted_at=cutoff)
     return bundle.path
@@ -205,6 +243,37 @@ def test_current_catalog_rejects_a_changed_preseason_baseline(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="do not match"):
         load_current_season_serving_catalog(rankings, bundle_path=bundle)
+
+
+def test_current_catalog_uses_postgame_rating_trajectory_when_published(
+    tmp_path: Path,
+) -> None:
+    bundle = _publish_day(
+        tmp_path / "serving",
+        tmp_path / "sources",
+        through_date=date(2026, 10, 26),
+        games=["1", "2"],
+        deltas=[0.2, 0.0],
+        minutes=[36.0, 18.0],
+        include_trajectory=True,
+    )
+
+    catalog = load_current_season_serving_catalog(
+        _preseason_rankings(),
+        root=tmp_path / "serving",
+        bundle_path=bundle,
+    )
+
+    assert catalog is not None
+    points = catalog.trajectories[1]
+    assert [point["point_kind"] for point in points] == [
+        "preseason",
+        "postgame",
+        "postgame",
+    ]
+    assert [point.get("game_number") for point in points] == [None, 1, 2]
+    assert [point["rating"] for point in points] == pytest.approx([3.0, 3.1, 3.2])
+    assert points[-1]["is_current"] is True
 
 
 def test_missing_promotion_keeps_preseason_state(tmp_path: Path) -> None:
