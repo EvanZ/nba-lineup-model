@@ -12,6 +12,7 @@ Environment=PYTHONPATH=/opt/nba-gestalt-dev/current/src
 Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt-dev/current-season-serving
 Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt-dev/current-season-lineups
 Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule
+Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt-dev/catalog/games.parquet
 ExecStart=/opt/nba-gestalt/current/.venv/bin/uvicorn nba_lineup_model.web_api.app:app --host 127.0.0.1 --port 8011 --workers 1
 Restart=on-failure
 RestartSec=5

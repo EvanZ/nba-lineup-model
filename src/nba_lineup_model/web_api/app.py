@@ -114,6 +114,12 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 minutes_payload=current_minutes,
                 preseason_forecast=win_projection,
                 state_dir=schedule_state_dir,
+                catalog_path=Path(
+                    os.environ.get(
+                        "GESTALT_GAME_CATALOG_PATH",
+                        "data/catalog/games.parquet",
+                    )
+                ),
             )
             return {
                 **current_minutes,
@@ -140,14 +146,14 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 model_artifact=MODEL_ARTIFACT,
                 run_id=get_evaluator().run_id,
             )
-            if {"minutes", "win_projection"}.issubset(cached):
-                minutes = cached["minutes"]
-                win_projection = cached["win_projection"]
-                if not isinstance(minutes, dict) or not isinstance(win_projection, dict):
-                    raise ValueError("Invalid combined win projection cache payload")
-                return with_current_state(minutes, win_projection)
         except FileNotFoundError:
             cached = None
+        if cached is not None and {"minutes", "win_projection"}.issubset(cached):
+            minutes = cached["minutes"]
+            win_projection = cached["win_projection"]
+            if not isinstance(minutes, dict) or not isinstance(win_projection, dict):
+                raise ValueError("Invalid combined win projection cache payload")
+            return with_current_state(minutes, win_projection)
 
         # Keep local development self-contained and tolerate an older cache.
         # The release publisher writes the combined payload above, so production

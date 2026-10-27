@@ -17,7 +17,9 @@ state.
 
 Current-season serving and lineup materialization run on EC2 against the existing
 updater states, CDN lake, and final-game archive. Only their compact derived
-artifacts are written under the dev state root.
+artifacts are written under the dev state root. The 2026-27 Wins overlay also
+syncs the compact schedule catalog from `s3://nba-gestalt-data/lake/catalog/`
+directly to EC2; it never passes through the laptop.
 
 ## Deploy a review branch
 
