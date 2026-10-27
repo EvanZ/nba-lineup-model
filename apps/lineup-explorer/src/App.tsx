@@ -3651,8 +3651,10 @@ function LineupRankingsPage({
                   </span>
                 </th>
                 <td className={lineup.gestalt_score < 0 ? "negative numeric rating-cell edge-rating" : "positive numeric rating-cell edge-rating"}>{formatRating(lineup.gestalt_score)}</td>
-                <td className={optionalRatingClass(lineup.offensive_edge)}>{formatOptionalRating(lineup.offensive_edge)}</td>
-                <td className={optionalRatingClass(lineup.defensive_edge)}>{formatOptionalRating(lineup.defensive_edge)}</td>
+                {selectedSeason !== "2026-27" && <>
+                  <td className={optionalRatingClass(lineup.offensive_edge)}>{formatOptionalRating(lineup.offensive_edge)}</td>
+                  <td className={optionalRatingClass(lineup.defensive_edge)}>{formatOptionalRating(lineup.defensive_edge)}</td>
+                </>}
                 <td className={lineup.player_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.player_edge)}</td>
                 <td className={lineup.context_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.context_edge)}</td>
                 <td className={lineup.actual_net_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.actual_net_rating)}</td>
