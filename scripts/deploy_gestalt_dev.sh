@@ -39,6 +39,10 @@ ln -sfn \
   "$SOURCE_REPO/apps/lineup-explorer/node_modules" \
   "$RELEASE_ROOT/apps/lineup-explorer/node_modules"
 
+# Model and web loaders intentionally resolve the immutable artifacts/data
+# bundle relative to the release root, just as the production service does.
+cd "$RELEASE_ROOT"
+
 PYTHONPATH="$RELEASE_ROOT/src" \
   "$PROD_RELEASE/.venv/bin/python" \
   -m nba_lineup_model.modeling.current_season_serving_materialization \
