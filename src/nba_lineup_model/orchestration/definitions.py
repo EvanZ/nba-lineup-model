@@ -68,6 +68,10 @@ DEFAULT_IN_SEASON_MINUTES_PARTICIPATION_PRIOR_GAMES = 4
 DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES = 0.2
 DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_LOOKBACK_GAMES = 3
 DEFAULT_IN_SEASON_MINUTES_ROLE_CUTOFF_MINUTES = 44
+DEFAULT_CURRENT_SEASON_SERVING_ROOT = Path(
+    "/var/lib/nba-gestalt/current-season-serving"
+)
+DEFAULT_CURRENT_SEASON_SERVING_LAKE_URI = "s3://nba-gestalt-data/lake"
 DEFAULT_RELEASE_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HEALTHCHECK_PARQUET = (
     "s3://nba-gestalt-data/lake/analytical/box_score_prior_panel/"
@@ -167,6 +171,22 @@ def _in_season_minutes_root() -> Path:
 def _in_season_minutes_lake_uri() -> str:
     return os.environ.get(
         "GESTALT_IN_SEASON_MINUTES_LAKE_URI", DEFAULT_IN_SEASON_MINUTES_LAKE_URI
+    ).rstrip("/")
+
+
+def _current_season_serving_root() -> Path:
+    return Path(
+        os.environ.get(
+            "GESTALT_CURRENT_SEASON_SERVING_ROOT",
+            DEFAULT_CURRENT_SEASON_SERVING_ROOT,
+        )
+    )
+
+
+def _current_season_serving_lake_uri() -> str:
+    return os.environ.get(
+        "GESTALT_CURRENT_SEASON_SERVING_LAKE_URI",
+        DEFAULT_CURRENT_SEASON_SERVING_LAKE_URI,
     ).rstrip("/")
 
 
@@ -1169,6 +1189,327 @@ def in_season_minutes_shadow_sensor(
     )
 
 
+def _current_season_child_publications() -> tuple[dict[str, object], dict[str, object]]:
+    """Load the locally mirrored immutable child-state publication manifests."""
+
+    paths = (
+        _in_season_nail_root() / "latest.json",
+        _in_season_minutes_root() / "latest.json",
+    )
+    payloads: list[dict[str, object]] = []
+    for path in paths:
+        if not path.is_file():
+            raise ValueError(f"Current-season child publication is missing: {path}")
+        payload = json.loads(path.read_text())
+        if not isinstance(payload, dict):
+            raise ValueError(f"Current-season child publication is invalid: {path}")
+        payloads.append(payload)
+    return payloads[0], payloads[1]
+
+
+def _published_artifact_uri(publication: dict[str, object], label: str) -> str:
+    artifacts = publication.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise ValueError("Child publication artifact inventory is missing")
+    uri = artifacts.get(label)
+    if not isinstance(uri, str) or not uri.startswith("s3://"):
+        raise ValueError(f"Child publication artifact is invalid: {label}")
+    return uri
+
+
+def _published_file_digest(uri: str, *, label: str, suffix: str) -> str:
+    filename = uri.rsplit("/", 1)[-1]
+    prefix = f"{label}-"
+    if not filename.startswith(prefix) or not filename.endswith(suffix):
+        raise ValueError(f"Published artifact name is invalid: {uri}")
+    digest = filename[len(prefix) : -len(suffix)]
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError(f"Published artifact checksum is invalid: {uri}")
+    return digest
+
+
+def _current_season_child_state_paths(
+    through_date: str,
+    rating_publication: dict[str, object],
+    minutes_publication: dict[str, object],
+) -> tuple[Path, Path, str, str]:
+    """Resolve exact local child states and verify their published checksums."""
+
+    rating_uri = _published_artifact_uri(rating_publication, "player_state")
+    minutes_uri = _published_artifact_uri(minutes_publication, "player_state")
+    rating_digest = _published_file_digest(
+        rating_uri, label="player_state", suffix=".parquet"
+    )
+    minutes_digest = _published_file_digest(
+        minutes_uri, label="player_state", suffix=".parquet"
+    )
+    rating_matches = list(
+        _in_season_nail_root().glob(
+            f"player_states/season={_cdn_season()}/cutoff=*/"
+            f"state_sha256={rating_digest}/player_state.parquet"
+        )
+    )
+    if len(rating_matches) != 1:
+        raise ValueError(
+            f"Expected one local rating state for {rating_digest}, found {len(rating_matches)}"
+        )
+    minutes_run_id = minutes_publication.get("dagster_run_id")
+    if not isinstance(minutes_run_id, str) or not minutes_run_id:
+        raise ValueError("Minutes publication Dagster run ID is missing")
+    minutes_path = (
+        _in_season_minutes_root()
+        / "runs"
+        / f"through_date={through_date}"
+        / minutes_run_id
+        / "player_state.parquet"
+    )
+    if not minutes_path.is_file():
+        raise ValueError(f"Local minutes state is missing: {minutes_path}")
+    if hashlib.sha256(minutes_path.read_bytes()).hexdigest() != minutes_digest:
+        raise ValueError("Local minutes state does not match its published checksum")
+    return rating_matches[0], minutes_path, rating_uri, minutes_uri
+
+
+def _preseason_release_run_id() -> str:
+    release_path = _release_root() / "release.json"
+    if not release_path.is_file():
+        raise ValueError(f"Release metadata is missing: {release_path}")
+    payload = json.loads(release_path.read_text())
+    run_id = payload.get("run_id") if isinstance(payload, dict) else None
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ValueError("Release metadata has no promoted preseason run ID")
+    return run_id
+
+
+@op(
+    name="publish_current_season_serving_state",
+    config_schema={"through_date": str},
+    retry_policy=RetryPolicy(max_retries=1, delay=300),
+)
+def promote_current_season_serving_op(
+    context: OpExecutionContext,
+) -> dict[str, object]:
+    """Publish and atomically promote one synchronized current-season state."""
+
+    from nba_lineup_model.season.current_serving import (
+        MANIFEST_FILENAME,
+        REPORT_FILENAME,
+        SERVING_STATE_FILENAME,
+        ServingPromotionConfig,
+        promote_serving_bundle,
+        publish_serving_bundle,
+    )
+    from nba_lineup_model.season.stats_v3_lake import (
+        AwsCliImmutableObjectStore,
+        _join_s3_uri,
+    )
+
+    through_date = str(context.op_config["through_date"])
+    datetime.fromisoformat(through_date)
+    rating_publication, minutes_publication = _current_season_child_publications()
+    child_dates = {
+        str(rating_publication.get("through_date")),
+        str(minutes_publication.get("through_date")),
+    }
+    if child_dates != {through_date}:
+        raise ValueError(
+            "Rating and minutes publications must match the requested through date: "
+            + ", ".join(sorted(child_dates))
+        )
+    for label, publication in (
+        ("rating", rating_publication),
+        ("minutes", minutes_publication),
+    ):
+        coverage = publication.get("coverage")
+        if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) != 0:
+            raise ValueError(f"{label.title()} publication has exclusions or invalid coverage")
+    rating_path, minutes_path, rating_uri, minutes_uri = (
+        _current_season_child_state_paths(
+            through_date,
+            rating_publication,
+            minutes_publication,
+        )
+    )
+    next_midnight_pacific = datetime.fromisoformat(
+        f"{through_date}T00:00:00"
+    ).replace(tzinfo=PACIFIC) + timedelta(days=1)
+    config = ServingPromotionConfig(
+        preseason_run_id=_preseason_release_run_id(),
+        rating_prior_possessions=float(DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS),
+        minutes_participation_prior_games=(
+            DEFAULT_IN_SEASON_MINUTES_PARTICIPATION_PRIOR_GAMES
+        ),
+        minutes_conditional_prior_games=(
+            DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES
+        ),
+        minutes_conditional_lookback_games=(
+            DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_LOOKBACK_GAMES
+        ),
+        minutes_role_cutoff_minutes=DEFAULT_IN_SEASON_MINUTES_ROLE_CUTOFF_MINUTES,
+    )
+    root = _current_season_serving_root()
+    bundle = publish_serving_bundle(
+        rating_path,
+        minutes_path,
+        root=root,
+        season=_cdn_season(),
+        evidence_through_date=next_midnight_pacific.date() - timedelta(days=1),
+        as_of_cutoff_time=next_midnight_pacific,
+        config=config,
+        rating_source_uri=rating_uri,
+        minutes_source_uri=minutes_uri,
+    )
+    store = AwsCliImmutableObjectStore()
+    base_uri = _join_s3_uri(
+        _current_season_serving_lake_uri(),
+        "serving",
+        "current_season",
+        f"season={_cdn_season()}",
+        f"through_date={through_date}",
+        f"bundle_sha256={bundle.manifest['bundle_sha256']}",
+    )
+    published: dict[str, str] = {}
+    for filename in (SERVING_STATE_FILENAME, MANIFEST_FILENAME, REPORT_FILENAME):
+        uri = f"{base_uri}/{filename}"
+        store.put_bytes(uri, (bundle.path / filename).read_bytes())
+        published[filename] = uri
+    pointer, promoted = promote_serving_bundle(bundle.path, root=root)
+    pointer_payload = {
+        **pointer,
+        "dagster_run_id": context.run_id,
+        "artifacts": published,
+    }
+    pointer_bytes = (json.dumps(pointer_payload, indent=2, sort_keys=True) + "\n").encode()
+    pointer_uri = _join_s3_uri(
+        _current_season_serving_lake_uri(),
+        "serving",
+        "current_season",
+        "pointers",
+        f"{bundle.manifest['bundle_sha256']}.json",
+    )
+    store.put_bytes(pointer_uri, pointer_bytes)
+    coverage = bundle.manifest["identity"]["coverage"]
+    context.add_output_metadata(
+        {
+            "through_date": through_date,
+            "bundle_sha256": str(bundle.manifest["bundle_sha256"]),
+            "players": int(coverage["serving_player_count"]),
+            "teams": int(coverage["team_count"]),
+            "games": int(coverage["game_count"]),
+            "created": bundle.created,
+            "promoted": promoted,
+            "manifest": MetadataValue.url(published[MANIFEST_FILENAME]),
+            "report": MetadataValue.url(published[REPORT_FILENAME]),
+            "pointer": MetadataValue.url(pointer_uri),
+        }
+    )
+    return {
+        "through_date": through_date,
+        "bundle_path": str(bundle.path),
+        "bundle_sha256": bundle.manifest["bundle_sha256"],
+        "created": bundle.created,
+        "promoted": promoted,
+        "published": published,
+        "pointer_uri": pointer_uri,
+    }
+
+
+@job(
+    name="promote_current_season_serving",
+    executor_def=in_process_executor,
+    tags={WORKLOAD_TAG: "current_season_serving"},
+)
+def promote_current_season_serving_job() -> None:
+    promote_current_season_serving_op()
+
+
+def _current_season_serving_config(through_date: str) -> dict[str, object]:
+    return {
+        "ops": {
+            "publish_current_season_serving_state": {
+                "config": {"through_date": through_date}
+            }
+        }
+    }
+
+
+@sensor(
+    name="current_season_serving_ready",
+    job=promote_current_season_serving_job,
+    minimum_interval_seconds=1800,
+    default_status=SENSOR_DEFAULT_STATUS,
+    description=(
+        "Promote one current-season serving bundle after matching, exclusion-free "
+        "ratings and minutes shadow publications are complete."
+    ),
+)
+def current_season_serving_sensor(
+    context: SensorEvaluationContext,
+) -> RunRequest | SkipReason:
+    try:
+        rating_publication, minutes_publication = _current_season_child_publications()
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        return SkipReason(str(error))
+    rating_date = str(rating_publication.get("through_date", ""))
+    minutes_date = str(minutes_publication.get("through_date", ""))
+    if not rating_date or rating_date != minutes_date:
+        return SkipReason(
+            f"Current-season child dates do not match: {rating_date or '-'} / "
+            f"{minutes_date or '-'}"
+        )
+    for label, publication in (
+        ("ratings", rating_publication),
+        ("minutes", minutes_publication),
+    ):
+        coverage = publication.get("coverage")
+        if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) != 0:
+            return SkipReason(f"{label.title()} publication is not exclusion-free")
+    rating_uri = _published_artifact_uri(rating_publication, "player_state")
+    minutes_uri = _published_artifact_uri(minutes_publication, "player_state")
+    snapshot = hashlib.sha256(f"{rating_uri}:{minutes_uri}".encode()).hexdigest()[:16]
+    inflight = context.instance.get_runs(
+        filters=RunsFilter(
+            job_name="promote_current_season_serving",
+            statuses=(
+                DagsterRunStatus.QUEUED,
+                DagsterRunStatus.STARTING,
+                DagsterRunStatus.STARTED,
+                DagsterRunStatus.CANCELING,
+            ),
+            tags={"gestalt/serving_snapshot": snapshot},
+        ),
+        limit=1,
+    )
+    if inflight:
+        return SkipReason(
+            "Equivalent current-season serving promotion already queued or running: "
+            f"{inflight[0].run_id}"
+        )
+    latest_path = _current_season_serving_root() / "latest.json"
+    if latest_path.is_file():
+        try:
+            latest = json.loads(latest_path.read_text())
+            bundle_path = _current_season_serving_root() / str(latest["bundle_path"])
+            manifest = json.loads((bundle_path / "manifest.json").read_text())
+            sources = manifest["identity"]["sources"]
+            if (
+                sources["rating_state"]["uri"] == rating_uri
+                and sources["minutes_state"]["uri"] == minutes_uri
+            ):
+                return SkipReason("Current-season serving state is already promoted")
+        except (KeyError, OSError, json.JSONDecodeError, TypeError):
+            pass
+    return RunRequest(
+        run_key=f"current-season-serving:{rating_date}:{snapshot}",
+        run_config=_current_season_serving_config(rating_date),
+        tags={
+            WORKLOAD_TAG: "current_season_serving",
+            "gestalt/through_date": rating_date,
+            "gestalt/serving_snapshot": snapshot,
+        },
+    )
+
+
 @op(
     name="archive_completed_stats_v3",
     config_schema={
@@ -1351,6 +1692,7 @@ defs = Definitions(
         ingest_completed_cdn_play_by_play_job,
         update_in_season_nail_shadow_job,
         update_in_season_minutes_shadow_job,
+        promote_current_season_serving_job,
         ingest_completed_stats_v3_job,
         daily_lake_health_job,
     ],
@@ -1368,6 +1710,7 @@ defs = Definitions(
         live_score_sensor,
         completed_game_cdn_play_by_play_sensor,
         in_season_minutes_shadow_sensor,
+        current_season_serving_sensor,
         completed_game_stats_v3_sensor,
     ],
 )

@@ -22,12 +22,14 @@ from nba_lineup_model.orchestration.definitions import (
     cdn_morning_reconciliation_schedule,
     completed_game_cdn_play_by_play_sensor,
     completed_game_stats_v3_sensor,
+    current_season_serving_sensor,
     defs,
     final_game_archive_morning_reconciliation_schedule,
     in_season_nail_shadow_schedule,
     ingest_completed_cdn_play_by_play_job,
     live_score_sensor,
     nba_market_odds_schedule,
+    promote_current_season_serving_job,
     schedule_refresh_schedule,
     stats_v3_morning_reconciliation_schedule,
     update_live_scores_job,
@@ -193,6 +195,77 @@ def test_cdn_sensor_uses_stable_retryable_pending_set_key(
     assert retry.run_key == f"cdn-pbp:{digest}:attempt-1"
 
 
+def _write_current_season_child_publications(root: Path) -> tuple[str, str]:
+    rating_uri = "s3://example/player_state-" + "a" * 64 + ".parquet"
+    minutes_uri = "s3://example/player_state-" + "b" * 64 + ".parquet"
+    rating_root = root / "rating"
+    minutes_root = root / "minutes"
+    rating_root.mkdir(parents=True)
+    minutes_root.mkdir(parents=True)
+    common = {
+        "through_date": "2026-10-26",
+        "coverage": {"excluded": 0},
+    }
+    (rating_root / "latest.json").write_text(
+        json.dumps({**common, "artifacts": {"player_state": rating_uri}})
+    )
+    (minutes_root / "latest.json").write_text(
+        json.dumps({**common, "artifacts": {"player_state": minutes_uri}})
+    )
+    return rating_uri, minutes_uri
+
+
+def test_current_season_serving_sensor_uses_child_state_identity(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    rating_uri, minutes_uri = _write_current_season_child_publications(tmp_path)
+    monkeypatch.setenv("GESTALT_IN_SEASON_NAIL_ROOT", str(tmp_path / "rating"))
+    monkeypatch.setenv("GESTALT_IN_SEASON_MINUTES_ROOT", str(tmp_path / "minutes"))
+    monkeypatch.setenv(
+        "GESTALT_CURRENT_SEASON_SERVING_ROOT", str(tmp_path / "serving")
+    )
+
+    result = current_season_serving_sensor(
+        build_sensor_context(instance=DagsterInstance.ephemeral())
+    )
+
+    snapshot = hashlib.sha256(f"{rating_uri}:{minutes_uri}".encode()).hexdigest()[:16]
+    assert result.run_key == f"current-season-serving:2026-10-26:{snapshot}"
+    assert result.tags["gestalt/serving_snapshot"] == snapshot
+
+
+def test_current_season_serving_sensor_suppresses_equivalent_inflight_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    rating_uri, minutes_uri = _write_current_season_child_publications(tmp_path)
+    monkeypatch.setenv("GESTALT_IN_SEASON_NAIL_ROOT", str(tmp_path / "rating"))
+    monkeypatch.setenv("GESTALT_IN_SEASON_MINUTES_ROOT", str(tmp_path / "minutes"))
+    monkeypatch.setenv(
+        "GESTALT_CURRENT_SEASON_SERVING_ROOT", str(tmp_path / "serving")
+    )
+    snapshot = hashlib.sha256(f"{rating_uri}:{minutes_uri}".encode()).hexdigest()[:16]
+    instance = DagsterInstance.ephemeral()
+    queued = instance.create_run_for_job(
+        promote_current_season_serving_job,
+        run_config={
+            "ops": {
+                "publish_current_season_serving_state": {
+                    "config": {"through_date": "2026-10-26"}
+                }
+            }
+        },
+        status=DagsterRunStatus.STARTED,
+        tags={"gestalt/serving_snapshot": snapshot},
+    )
+
+    result = current_season_serving_sensor(build_sensor_context(instance=instance))
+
+    assert "already queued or running" in result.skip_message
+    assert queued.run_id in result.skip_message
+
+
 def test_definitions_are_loadable_and_automations_default_stopped() -> None:
     Definitions.validate_loadable(defs)
     assert DEFAULT_ODDS_API_BOOKMAKERS == DEFAULT_BOOKMAKERS
@@ -222,3 +295,4 @@ def test_definitions_are_loadable_and_automations_default_stopped() -> None:
         is DefaultSensorStatus.STOPPED
     )
     assert completed_game_stats_v3_sensor.default_status is DefaultSensorStatus.STOPPED
+    assert current_season_serving_sensor.default_status is DefaultSensorStatus.STOPPED

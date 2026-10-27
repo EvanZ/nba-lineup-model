@@ -15,6 +15,7 @@ sudo install -d -o "$USER" -g "$(id -gn)" "$APP_ROOT/releases"
 sudo install -d -o "$USER" -g "$(id -gn)" /var/lib/nba-gestalt/cdn
 sudo install -d -o "$USER" -g "$(id -gn)" /var/lib/nba-gestalt/in-season-nail
 sudo install -d -o "$USER" -g "$(id -gn)" /var/lib/nba-gestalt/in-season-minutes
+sudo install -d -o "$USER" -g "$(id -gn)" /var/lib/nba-gestalt/current-season-serving
 mkdir -p "$RELEASE_ROOT"
 aws s3 sync --delete --exclude '.venv/*' --exclude '*/__pycache__/*' --exclude '*.pyc' \
   "s3://${BUCKET}/nba-gestalt/releases/${RELEASE_ID}/" "$RELEASE_ROOT/"
