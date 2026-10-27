@@ -2663,7 +2663,7 @@ function TeamSeasonPage({
                 <h1 id="team-page-title">{displayName}.</h1>
               </div>
             <p>{isCurrentSeason
-              ? `Current roster, updated predictive NAIL, and observed five-man units through ${payload?.rating_state?.evidence_through_date ?? "the latest promoted slate"}. Minutes are expected if available.`
+              ? `Current roster, updated predictive NAIL, and observed five-man units through ${payload?.rating_state?.evidence_through_date ?? "the latest promoted slate"}.`
               : "Season-end roster assignment, completed-fit player ratings, and observed five-man units ranked by actual net rating."}
             </p>
           </div>
@@ -2714,14 +2714,11 @@ function TeamSeasonPage({
                   <th scope="col" className="numeric">Rank</th>
                   <th scope="col">Player</th>
                   <th scope="col">Pos</th>
-                  <th scope="col" className="numeric">{isCurrentSeason ? "Current NAIL" : "NAIL"}</th>
-                  {isCurrentSeason && <th scope="col" className="numeric">Preseason</th>}
-                  {isCurrentSeason && <th scope="col" className="numeric">Δ</th>}
-                  {isCurrentSeason && <th scope="col" className="numeric">Exp. min</th>}
-                  {!isCurrentSeason && <th scope="col" className="numeric">Off</th>}
-                  {!isCurrentSeason && <th scope="col" className="numeric">Def</th>}
+                  <th scope="col" className="numeric">NAIL</th>
+                  <th scope="col" className="numeric">Off</th>
+                  <th scope="col" className="numeric">Def</th>
                   <th scope="col" className="numeric">Poss</th>
-                  {!isCurrentSeason && <th scope="col" className="numeric">Games</th>}
+                  <th scope="col" className="numeric">Games</th>
                 </tr>
               </thead>
               <tbody>
@@ -2730,13 +2727,10 @@ function TeamSeasonPage({
                   <th scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>
                   <td>{player.position}</td>
                   <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
-                  {isCurrentSeason && <td className={optionalRatingClass(player.preseason_nail)}>{formatOptionalRating(player.preseason_nail)}</td>}
-                  {isCurrentSeason && <td className={optionalRatingClass(player.in_season_delta)}>{formatOptionalRating(player.in_season_delta)}</td>}
-                  {isCurrentSeason && <td className="numeric quantity-cell">{player.current_expected_minutes_if_available?.toFixed(1) ?? "—"}</td>}
-                  {!isCurrentSeason && <td className={optionalRatingClass(player.offense_rating)}>{formatOptionalRating(player.offense_rating)}</td>}
-                  {!isCurrentSeason && <td className={optionalRatingClass(player.defense_rating)}>{formatOptionalRating(player.defense_rating)}</td>}
+                  <td className={optionalRatingClass(player.offense_rating)}>{formatOptionalRating(player.offense_rating)}</td>
+                  <td className={optionalRatingClass(player.defense_rating)}>{formatOptionalRating(player.defense_rating)}</td>
                   <td className="numeric quantity-cell">{wholeNumber.format(player.possessions)}</td>
-                  {!isCurrentSeason && <td className="numeric quantity-cell">{player.games}</td>}
+                  <td className="numeric quantity-cell">{player.games}</td>
                 </tr>)}
               </tbody>
             </table>
@@ -2758,13 +2752,10 @@ function TeamSeasonPage({
                 </span>
               </div>
               <dl className="mobile-metric-grid team-roster-mobile-metrics">
-                {isCurrentSeason && <div><dt>Preseason</dt><dd>{formatOptionalRating(player.preseason_nail)}</dd></div>}
-                {isCurrentSeason && <div><dt>Change</dt><dd>{formatOptionalRating(player.in_season_delta)}</dd></div>}
-                {isCurrentSeason && <div><dt>Expected minutes</dt><dd>{player.current_expected_minutes_if_available?.toFixed(1) ?? "—"}</dd></div>}
-                {!isCurrentSeason && <div><dt>Offense</dt><dd>{formatOptionalRating(player.offense_rating)}</dd></div>}
-                {!isCurrentSeason && <div><dt>Defense</dt><dd>{formatOptionalRating(player.defense_rating)}</dd></div>}
+                <div><dt>Offense</dt><dd>{formatOptionalRating(player.offense_rating)}</dd></div>
+                <div><dt>Defense</dt><dd>{formatOptionalRating(player.defense_rating)}</dd></div>
                 <div><dt>Possessions</dt><dd>{wholeNumber.format(player.possessions)}</dd></div>
-                {!isCurrentSeason && <div><dt>Games</dt><dd>{player.games}</dd></div>}
+                <div><dt>Games</dt><dd>{player.games}</dd></div>
               </dl>
             </li>)}
           </ol>}
