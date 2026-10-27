@@ -33,15 +33,16 @@ if [[ ! -d "$RELEASE_ROOT" ]]; then
   git -C "$SOURCE_REPO" worktree add --detach "$RELEASE_ROOT" "$DEV_REF"
 fi
 
-ln -sfn "$PROD_RELEASE/artifacts" "$RELEASE_ROOT/artifacts"
-ln -sfn "$PROD_RELEASE/data" "$RELEASE_ROOT/data"
 ln -sfn \
   "$SOURCE_REPO/apps/lineup-explorer/node_modules" \
   "$RELEASE_ROOT/apps/lineup-explorer/node_modules"
 
 # Model and web loaders intentionally resolve the immutable artifacts/data
-# bundle relative to the release root, just as the production service does.
-cd "$RELEASE_ROOT"
+# bundle relative to the working directory. Run them from production's
+# read-only release while importing the dev code through PYTHONPATH; this
+# avoids copying the bundle or trying to replace Git-tracked placeholders in
+# the dev worktree.
+cd "$PROD_RELEASE"
 
 PYTHONPATH="$RELEASE_ROOT/src" \
   "$PROD_RELEASE/.venv/bin/python" \

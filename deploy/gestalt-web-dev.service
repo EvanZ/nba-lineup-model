@@ -6,7 +6,7 @@ After=network.target gestalt-web.service
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/opt/nba-gestalt-dev/current
+WorkingDirectory=/opt/nba-gestalt/current
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/opt/nba-gestalt-dev/current/src
 Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt-dev/current-season-serving
