@@ -1347,6 +1347,91 @@ def test_preseason_projection_state_is_available_to_the_matchup_lab() -> None:
     assert payload["unit"]["players"][0]["rapm"] == pytest.approx(0.1)
 
 
+def test_promoted_current_season_state_drives_rankings_player_and_lab() -> None:
+    evaluator = _evaluator(compiled_linear=True)
+    historical_before = evaluator.rankings(evaluator.season)
+    ranking_columns = [
+        "player_id", "player_name", "team", "position", "draft_year", "draft_round",
+        "draft_number", "is_undrafted", "draft_class_year", "age", "rapm", "possessions",
+        "games", "profile_source", "rookie_season",
+    ]
+    preseason = evaluator.players.loc[:, ranking_columns].copy()
+    preseason.insert(0, "season", "2026-27")
+    current = preseason.copy()
+    current["preseason_nail"] = current["rapm"]
+    current["in_season_delta"] = 0.0
+    current.loc[current["player_id"].eq(1), "in_season_delta"] = 0.25
+    current["rapm"] = current["preseason_nail"] + current["in_season_delta"]
+    current["current_season_possessions"] = 120.0
+    current["rating_effective_information"] = 60.0
+    current["rating_prior_weight"] = 0.98
+    current["rating_evidence_weight"] = 0.02
+    current["rating_posterior_standard_error"] = 0.1
+    current["current_expected_minutes_if_available"] = 34.5
+    current["preseason_expected_minutes_if_available"] = 33.0
+    current["minutes_role_observations"] = 2
+    current["minutes_effective_observation_weight"] = 2.0
+    current["rating_evidence_through_date"] = "2026-10-26"
+    current["rating_as_of_cutoff_time"] = "2026-10-27T07:00:00Z"
+    current["rating_bundle_sha256"] = "a" * 64
+    current["rating_state"] = "in_season_updated"
+    current["additive_profile_state"] = "frozen_preseason"
+    current["offense_defense_state"] = "unavailable"
+    current["offense_rating"] = None
+    current["defense_rating"] = None
+    profiles = evaluator.profiles.assign(usage_pct=20.0)
+    profiles.insert(0, "season", "2026-27")
+    trajectory = [
+        {"source": "preseason", "rating": float(current.iloc[0]["preseason_nail"])},
+        {"source": "in_season", "rating": float(current.iloc[0]["rapm"])},
+    ]
+    evaluator = replace(
+        evaluator,
+        preseason_rankings=preseason,
+        preseason_profiles=profiles,
+        current_season_rankings=current,
+        current_season_metadata={
+            "kind": "in_season_updated",
+            "season": "2026-27",
+            "evidence_through_date": "2026-10-26",
+        },
+        current_season_trajectories={1: trajectory},
+    )
+    client = TestClient(create_app(evaluator))
+
+    rankings = client.get("/api/rankings", params={"season": "2026-27"})
+    assert rankings.status_code == 200
+    assert rankings.json()["rating_state"]["kind"] == "in_season_updated"
+    ranked_player = next(
+        player for player in rankings.json()["players"] if player["player_id"] == 1
+    )
+    assert ranked_player["rapm"] == pytest.approx(
+        ranked_player["preseason_nail"] + 0.25
+    )
+    assert ranked_player["offense_rating"] is None
+    assert ranked_player["defense_rating"] is None
+
+    player = client.get("/api/players/1")
+    assert player.status_code == 200
+    assert player.json()["rating_state"] == "in_season_updated"
+    assert player.json()["current_expected_minutes_if_available"] == pytest.approx(34.5)
+    assert player.json()["current_season_trajectory"] == trajectory
+
+    search = client.get("/api/players", params={"q": "Jokic", "season": "2026-27"})
+    assert search.status_code == 200
+    assert search.json()["players"][0]["rapm"] == pytest.approx(
+        current.loc[current["player_id"].eq(1), "rapm"].iloc[0]
+    )
+
+    historical = client.get("/api/rankings", params={"season": evaluator.season})
+    assert historical.status_code == 200
+    assert historical.json()["rating_state"] == {
+        "kind": "completed_fit",
+        "season": evaluator.season,
+    }
+    assert historical.json()["players"] == historical_before
+
+
 def test_preseason_draft_history_normalizes_string_player_ids() -> None:
     draft = pd.DataFrame(
         {

@@ -23,6 +23,23 @@ export type Player = {
   }>;
   observed_context_exposure: number | null;
   rating_season?: string;
+  rating_state?: "completed_fit" | "preseason_preview" | "in_season_updated";
+  preseason_nail?: number | null;
+  in_season_delta?: number | null;
+  current_season_possessions?: number | null;
+  rating_effective_information?: number | null;
+  rating_prior_weight?: number | null;
+  rating_evidence_weight?: number | null;
+  rating_posterior_standard_error?: number | null;
+  current_expected_minutes_if_available?: number | null;
+  preseason_expected_minutes_if_available?: number | null;
+  minutes_role_observations?: number | null;
+  minutes_effective_observation_weight?: number | null;
+  rating_evidence_through_date?: string | null;
+  rating_as_of_cutoff_time?: string | null;
+  rating_bundle_sha256?: string | null;
+  additive_profile_state?: "frozen_preseason" | null;
+  offense_defense_state?: "unavailable" | null;
   possessions: number;
   games: number;
   profile_source: string;
@@ -120,6 +137,19 @@ export type Player = {
     rating: number;
     player_id: number;
     player_name: string;
+  }>;
+  current_season_trajectory?: Array<{
+    source: "preseason" | "in_season";
+    evidence_through_date?: string | null;
+    as_of_cutoff_time?: string | null;
+    rating: number;
+    preseason_rating?: number;
+    in_season_delta?: number;
+    raw_on_court_possessions?: number;
+    evidence_weight?: number;
+    posterior_standard_error?: number | null;
+    bundle_sha256?: string | null;
+    is_current?: boolean;
   }>;
 };
 

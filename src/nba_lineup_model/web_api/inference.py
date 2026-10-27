@@ -33,6 +33,9 @@ from nba_lineup_model.modeling.matchup_contextual import (
 )
 from nba_lineup_model.modeling.stints import read_rapm_stints
 from nba_lineup_model.season.schedule import SeasonScheduleCache
+from nba_lineup_model.web_api.current_season_serving import (
+    load_current_season_serving_catalog,
+)
 
 if TYPE_CHECKING:
     from nba_lineup_model.modeling.contextual_profiles import ProfilePaddingContract
@@ -387,6 +390,9 @@ class LineupEvaluator:
     constrained_split_context_allocations: pd.DataFrame = field(default_factory=pd.DataFrame)
     preseason_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
     preseason_profiles: pd.DataFrame = field(default_factory=pd.DataFrame)
+    current_season_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
+    current_season_metadata: dict[str, Any] = field(default_factory=dict)
+    current_season_trajectories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     observed_lineups: pd.DataFrame = field(default_factory=pd.DataFrame)
     historical_coefficients: pd.DataFrame = field(default_factory=pd.DataFrame)
     seasonal_ratings: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -521,6 +527,7 @@ class LineupEvaluator:
             if preseason_profile_cache_path.is_file()
             else pd.DataFrame()
         )
+        current_season = load_current_season_serving_catalog(preseason_rankings)
         player_rating_histories = _player_rating_histories(
             seasonal_ratings,
             panel_path=Path(panel_path),
@@ -685,6 +692,15 @@ class LineupEvaluator:
             constrained_split_context_allocations=constrained_split_context_allocations,
             preseason_rankings=preseason_rankings,
             preseason_profiles=preseason_profiles,
+            current_season_rankings=(
+                current_season.rankings if current_season is not None else pd.DataFrame()
+            ),
+            current_season_metadata=(
+                current_season.metadata if current_season is not None else {}
+            ),
+            current_season_trajectories=(
+                current_season.trajectories if current_season is not None else {}
+            ),
             observed_lineups=observed_lineups,
             historical_coefficients=historical_coefficients,
             seasonal_ratings=seasonal_ratings,
@@ -951,7 +967,8 @@ class LineupEvaluator:
     def _ranking_catalog(self) -> pd.DataFrame:
         """Return every published player-season ranking, including the preseason preview."""
 
-        sources = [frame for frame in (self.historical_rankings, self.preseason_rankings) if not frame.empty]
+        forecast = self._active_current_season_rankings()
+        sources = [frame for frame in (self.historical_rankings, forecast) if not frame.empty]
         if sources:
             return pd.concat(sources, ignore_index=True)
         return self.players.assign(season=self.season)
@@ -986,12 +1003,20 @@ class LineupEvaluator:
             if "player_id" in self.preseason_rankings
             else pd.DataFrame()
         )
+        current_row = (
+            self.current_season_rankings.loc[
+                self.current_season_rankings["player_id"].eq(player_id)
+            ]
+            if "player_id" in self.current_season_rankings
+            else pd.DataFrame()
+        )
+        forecast_row = current_row if not current_row.empty else preseason_row
         row = self.players.loc[self.players["player_id"].eq(player_id)]
         if not row.empty:
             player = _records(row)[0]
-            if not preseason_row.empty:
-                preview = _records(preseason_row)[0]
-                for column in (
+            if not forecast_row.empty:
+                preview = _records(forecast_row)[0]
+                overlay_columns = (
                     "team",
                     "position",
                     "draft_year",
@@ -1007,15 +1032,40 @@ class LineupEvaluator:
                     "additive_profile_breakdown",
                     "rookie_season",
                     "profile_source",
-                ):
+                    "preseason_nail",
+                    "in_season_delta",
+                    "current_season_possessions",
+                    "rating_effective_information",
+                    "rating_prior_weight",
+                    "rating_evidence_weight",
+                    "rating_posterior_standard_error",
+                    "current_expected_minutes_if_available",
+                    "preseason_expected_minutes_if_available",
+                    "minutes_role_observations",
+                    "minutes_effective_observation_weight",
+                    "rating_evidence_through_date",
+                    "rating_as_of_cutoff_time",
+                    "rating_bundle_sha256",
+                    "rating_state",
+                    "additive_profile_state",
+                    "offense_defense_state",
+                )
+                for column in overlay_columns:
+                    if column not in preview:
+                        continue
                     if column == "rookie_season" and preview[column] is None:
                         continue
                     player[column] = preview[column]
                 player["offense_rating"] = None
                 player["defense_rating"] = None
                 player["rating_season"] = PRESEASON_PREVIEW_SEASON
+                player["current_season_trajectory"] = self.current_season_trajectories.get(
+                    player_id, []
+                )
             player.setdefault("draft_class_year", None)
             player.setdefault("rating_season", self.season)
+            player.setdefault("rating_state", "completed_fit")
+            player.setdefault("current_season_trajectory", [])
             player["league_leader_history"] = self.player_league_leader_histories.get(
                 player_id, player.get("league_leader_history", [])
             )
@@ -1030,14 +1080,15 @@ class LineupEvaluator:
             else pd.DataFrame()
         )
         if historical_rows.empty:
-            if preseason_row.empty:
+            if forecast_row.empty:
                 raise LineupEvaluationError(
                     f"Player {player_id} is not available in published fits"
                 )
-            preview = _records(preseason_row)[0]
+            preview = _records(forecast_row)[0]
             return {
                 **preview,
                 "rating_season": PRESEASON_PREVIEW_SEASON,
+                "rating_state": preview.get("rating_state", "preseason_preview"),
                 "profile_imputed": None,
                 "profile_replacement_weight": None,
                 "three_pa_per_100": None,
@@ -1055,6 +1106,9 @@ class LineupEvaluator:
                 "rotation_history": self.player_rotation_histories.get(player_id, []),
                 "four_factor_history": self.player_four_factor_histories.get(player_id, []),
                 "league_leader_history": [],
+                "current_season_trajectory": self.current_season_trajectories.get(
+                    player_id, []
+                ),
             }
         latest = historical_rows.sort_values("season", ascending=False, kind="stable").iloc[0]
         latest_history = history[-1] if history else {}
@@ -1092,6 +1146,8 @@ class LineupEvaluator:
             "rotation_history": self.player_rotation_histories.get(player_id, []),
             "four_factor_history": self.player_four_factor_histories.get(player_id, []),
             "league_leader_history": self.player_league_leader_histories.get(player_id, []),
+            "rating_state": "completed_fit",
+            "current_season_trajectory": [],
         }
 
     def available_ranking_seasons(self) -> list[str]:
@@ -1104,6 +1160,8 @@ class LineupEvaluator:
             seasons.add(self.season)
         if not self.preseason_rankings.empty:
             seasons.update(self.preseason_rankings["season"].astype(str).unique())
+        if not self.current_season_rankings.empty:
+            seasons.update(self.current_season_rankings["season"].astype(str).unique())
         return sorted(seasons, reverse=True)
 
     def rankings(self, season: str | None = None) -> list[dict[str, Any]]:
@@ -1111,6 +1169,13 @@ class LineupEvaluator:
 
         selected_season = season or self.season
         if (
+            not self.current_season_rankings.empty
+            and self.current_season_rankings["season"].eq(selected_season).any()
+        ):
+            rows = self.current_season_rankings.loc[
+                self.current_season_rankings["season"].eq(selected_season)
+            ]
+        elif (
             not self.preseason_rankings.empty
             and self.preseason_rankings["season"].eq(selected_season).any()
         ):
@@ -1150,6 +1215,15 @@ class LineupEvaluator:
         ).reset_index(drop=True)
         ranked.insert(0, "rank", np.arange(1, len(ranked) + 1, dtype=int))
         return _records(ranked)
+
+    def ranking_state_metadata(self, season: str) -> dict[str, Any]:
+        """Describe whether a ranking table is current, preseason, or completed."""
+
+        if season == PRESEASON_PREVIEW_SEASON and self.current_season_metadata:
+            return dict(self.current_season_metadata)
+        if season == PRESEASON_PREVIEW_SEASON:
+            return {"kind": "preseason_preview", "season": season}
+        return {"kind": "completed_fit", "season": season}
 
     def lineups(
         self,
@@ -1759,11 +1833,21 @@ class LineupEvaluator:
     def _has_preseason_lab_state(self) -> bool:
         """Return whether the published forecast includes profiles for Lab scoring."""
 
-        if self.preseason_rankings.empty or self.preseason_profiles.empty:
+        rankings = self._active_current_season_rankings()
+        if rankings.empty or self.preseason_profiles.empty:
             return False
-        ranking_ids = set(self.preseason_rankings.get("player_id", pd.Series(dtype=int)).astype(int))
-        profile_ids = set(self.preseason_profiles.get("player_id", pd.Series(dtype=int)).astype(int))
-        return bool(ranking_ids) and ranking_ids == profile_ids
+        ranking_ids = set(rankings.get("player_id", pd.Series(dtype=int)).astype(int))
+        profile_ids = set(
+            self.preseason_profiles.get("player_id", pd.Series(dtype=int)).astype(int)
+        )
+        return bool(ranking_ids) and ranking_ids.issubset(profile_ids)
+
+    def _active_current_season_rankings(self) -> pd.DataFrame:
+        """Return promoted in-season rows, falling back to the frozen forecast."""
+
+        if not self.current_season_rankings.empty:
+            return self.current_season_rankings
+        return self.preseason_rankings
 
     def _preseason_lab_state(self) -> SeasonLineupState:
         """Build the frozen 2026-27 player pool using 2025-26 context terms."""
@@ -1773,9 +1857,8 @@ class LineupEvaluator:
                 "The 2026-27 forecast profiles are unavailable for the Matchup Lab"
             )
         season = PRESEASON_PREVIEW_SEASON
-        rankings = self.preseason_rankings.loc[
-            self.preseason_rankings["season"].astype(str).eq(season)
-        ].copy()
+        active_rankings = self._active_current_season_rankings()
+        rankings = active_rankings.loc[active_rankings["season"].astype(str).eq(season)].copy()
         profiles = self.preseason_profiles.loc[
             self.preseason_profiles["season"].astype(str).eq(season)
         ].copy()

@@ -432,10 +432,20 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-additive-profile-grid .additive-profile-effect { color: #68716a; font-size: 12px; }
 .player-additive-profile-grid .additive-profile-effect.negative { color: #b33b25; }
 .player-forecast-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); max-width: 960px; }
+.player-current-season-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 960px; }
 .player-forecast-total { padding-left: 16px !important; border-left: 2px solid #17201c; }
 .player-stat-grid div { padding: 15px 14px 12px 0; border-bottom: 1px solid #e2dfd7; }
 .player-stat-grid dt { color: #68716a; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .player-stat-grid dd { margin: 7px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 21px; font-weight: 700; }
+.current-rating-trajectory { max-width: 760px; margin: 26px 0 18px; padding: 18px 0 12px; border-top: 1px solid #d9d6ce; border-bottom: 1px solid #d9d6ce; }
+.current-rating-trajectory svg { display: block; width: 100%; height: auto; overflow: visible; }
+.current-rating-baseline { stroke: #7f8780; stroke-width: 1; stroke-dasharray: 5 4; }
+.current-rating-line { fill: none; stroke: #245a47; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.current-rating-point { fill: #fffefa; stroke: #245a47; stroke-width: 2.2; }
+.current-rating-point.latest { fill: #e8502f; stroke: #fffefa; stroke-width: 2; }
+.current-rating-axis-label, .current-rating-date, .current-rating-value { fill: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
+.current-rating-value { fill: #17201c; }
+.current-rating-trajectory figcaption { margin: 9px 0 0; color: #68716a; font-size: 12px; line-height: 1.45; }
 .player-history-table-wrap { overflow-x: auto; }
 .player-rating-path-note { color: #68716a; font-size: 13px; line-height: 1.45; margin: 0 0 14px; max-width: 720px; }
 .player-aging-chart { max-width: 760px; margin: 0 0 26px; padding: 18px 0 16px; border-top: 1px solid #d9d6ce; border-bottom: 1px solid #d9d6ce; }

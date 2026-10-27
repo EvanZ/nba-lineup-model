@@ -155,6 +155,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             ),
             "player_count": len(state.players),
             "lab_seasons": state.available_lab_seasons(),
+            "current_season_state": state.current_season_metadata or None,
         }
 
     @app.get("/api/players")
@@ -293,6 +294,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 "season": selected_season,
                 "run_id": state.run_id,
                 "available_seasons": state.available_ranking_seasons(),
+                "rating_state": state.ranking_state_metadata(selected_season),
                 "players": state.rankings(selected_season),
             }
         except LineupEvaluationError as error:
