@@ -435,6 +435,7 @@ def verify_serving_bundle(path: Path | str) -> dict[str, Any]:
             pd.read_parquet(root / RATING_TRAJECTORY_FILENAME),
             season=str(identity["season"]),
             rating_state=state,
+            allow_legacy=True,
         )
     return manifest
 
@@ -576,6 +577,7 @@ def _validate_rating_trajectory(
     *,
     season: str,
     rating_state: pd.DataFrame,
+    allow_legacy: bool = False,
 ) -> None:
     required = {
         "season",
@@ -597,7 +599,9 @@ def _validate_rating_trajectory(
         "evidence_weight",
     }
     missing = sorted(required - set(trajectory.columns))
-    if missing:
+    legacy_columns = {"appearance_number", "team", "opponent", "played"}
+    is_legacy = bool(missing) and allow_legacy and set(missing).issubset(legacy_columns)
+    if missing and not is_legacy:
         raise ValueError("Rating trajectory is missing columns: " + ", ".join(missing))
     if trajectory.empty:
         raise ValueError("Rating trajectory cannot be empty")
@@ -605,11 +609,14 @@ def _validate_rating_trajectory(
         raise ValueError("Rating trajectory season does not match its serving state")
     if trajectory.duplicated(["player_id", "game_number"]).any():
         raise ValueError("Rating trajectory contains duplicate player game numbers")
-    if trajectory[["team", "opponent"]].isna().any().any() or (
-        trajectory[["team", "opponent"]].astype(str).apply(lambda values: values.str.strip())
-        == ""
-    ).any().any():
-        raise ValueError("Rating trajectory team and opponent must be populated")
+    if not is_legacy:
+        if trajectory[["team", "opponent"]].isna().any().any() or (
+            trajectory[["team", "opponent"]]
+            .astype(str)
+            .apply(lambda values: values.str.strip())
+            == ""
+        ).any().any():
+            raise ValueError("Rating trajectory team and opponent must be populated")
     ordered = trajectory.sort_values(["player_id", "game_number"], kind="stable")
     game_numbers = ordered.groupby("player_id", sort=False)["game_number"]
     if not game_numbers.apply(
@@ -622,7 +629,11 @@ def _validate_rating_trajectory(
         atol=1e-12,
     ):
         raise ValueError("Rating trajectory arithmetic failed validation")
-    played = trajectory["played"].astype(bool)
+    played = (
+        trajectory["played"].astype(bool)
+        if not is_legacy
+        else pd.Series(True, index=trajectory.index)
+    )
     if (trajectory.loc[played, "game_on_court_possessions"] <= 0).any():
         raise ValueError("Played trajectory games require positive on-court possessions")
     if (trajectory.loc[~played, "game_on_court_possessions"] != 0).any():

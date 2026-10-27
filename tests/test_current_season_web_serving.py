@@ -9,6 +9,7 @@ import pytest
 
 from nba_lineup_model.season.current_serving import (
     ServingPromotionConfig,
+    _validate_rating_trajectory,
     promote_serving_bundle,
     publish_serving_bundle,
 )
@@ -341,6 +342,41 @@ def test_current_catalog_marks_latest_skipped_team_game_as_current(
     assert points[-1]["pregame_status"] == "Out"
     assert points[-1]["pregame_reason"] == "Rest"
     assert points[-1]["is_current"] is True
+
+
+def test_legacy_trajectory_is_readable_but_not_publishable() -> None:
+    cutoff = datetime(2026, 10, 27, 7, tzinfo=UTC)
+    rating_state = _rating_state(cutoff=cutoff, games=["1"], deltas=[0.1, 0.0])
+    legacy = pd.DataFrame(
+        {
+            "season": [SEASON],
+            "updater_version": ["in-season-nail-v1"],
+            "player_id": [1],
+            "game_number": [1],
+            "game_id": ["1"],
+            "game_date": ["2026-10-26"],
+            "preseason_rating": [3.0],
+            "in_season_delta": [0.1],
+            "updated_rating": [3.1],
+            "game_on_court_possessions": [100.0],
+            "cumulative_on_court_possessions": [100.0],
+            "effective_information": [50.0],
+            "evidence_weight": [0.02],
+        }
+    )
+
+    with pytest.raises(ValueError, match="missing columns"):
+        _validate_rating_trajectory(
+            legacy,
+            season=SEASON,
+            rating_state=rating_state,
+        )
+    _validate_rating_trajectory(
+        legacy,
+        season=SEASON,
+        rating_state=rating_state,
+        allow_legacy=True,
+    )
 
 
 def test_missing_promotion_keeps_preseason_state(tmp_path: Path) -> None:
