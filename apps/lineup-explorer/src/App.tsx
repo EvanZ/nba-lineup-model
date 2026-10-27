@@ -2303,7 +2303,7 @@ function RankingsPage() {
     setSortDirection(column === "player_name" || column === "team" || column === "position" ? "ascending" : "descending");
   }
 
-  const historicalColumns: Array<{ key: RankingColumn; label: string; numeric?: boolean }> = [
+  const columns: Array<{ key: RankingColumn; label: string; numeric?: boolean }> = [
     { key: "player_name", label: "Player" },
     { key: "team", label: "Team" },
     { key: "position", label: "Pos" },
@@ -2315,25 +2315,12 @@ function RankingsPage() {
     { key: "ffapr_offense", label: "FF Off", numeric: true },
     { key: "ffapr_defense", label: "FF Def", numeric: true },
     { key: "prior_rating", label: "Prior", numeric: true },
-    { key: "season_update", label: "Season update", numeric: true },
+    { key: "season_update", label: "Season change", numeric: true },
     { key: "additive_profile_adjustment", label: "Additive profile", numeric: true },
     { key: "observed_context_exposure", label: "Non-Additive Lineup Edge", numeric: true },
     { key: "possessions", label: "Possessions", numeric: true },
     { key: "games", label: "Games", numeric: true },
   ];
-  const currentColumns: Array<{ key: RankingColumn; label: string; numeric?: boolean }> = [
-    { key: "player_name", label: "Player" },
-    { key: "team", label: "Team" },
-    { key: "position", label: "Pos" },
-    { key: "draft_number", label: "Pick", numeric: true },
-    { key: "rapm", label: "Current NAIL", numeric: true },
-    { key: "preseason_nail", label: "Preseason", numeric: true },
-    { key: "in_season_delta", label: "Season delta", numeric: true },
-    { key: "possessions", label: "Possessions", numeric: true },
-    { key: "current_expected_minutes_if_available", label: "MPG if available", numeric: true },
-    { key: "additive_profile_adjustment", label: "Frozen additive", numeric: true },
-  ];
-  const columns = isCurrentSeason ? currentColumns : historicalColumns;
 
   return (
     <article className="rankings-page" aria-labelledby="rankings-title">
@@ -2342,9 +2329,8 @@ function RankingsPage() {
         <h1 id="rankings-title">Player rankings.</h1>
         {isCurrentSeason ? (
           <p>
-            Current scalar NAIL ratings through {ratingState?.evidence_through_date ?? "the latest finalized games"},
-            compared with the frozen preseason baseline. Expected MPG is conditional on availability; additive
-            inputs remain frozen, and offense/defense splits are intentionally not shown as updated.
+            Current NAIL ratings, possessions, and games through {ratingState?.evidence_through_date ?? "the latest finalized games"}.
+            Select a player for rating history, model inputs, and updater details.
           </p>
         ) : isPreseasonPreview ? (
           <p>
@@ -2489,40 +2475,24 @@ function RankingsPage() {
               {visiblePlayers.map((player) => <tr key={player.player_id}>
                 <td className="rank-number">{rankByPlayerId.get(player.player_id) ?? "-"}</td>
                 <th scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>
-                <td>{selectedSeason === "2026-27" ? (
-                  <span className="lineup-team-mark">
-                    <img src={teamLogoUrl(player.team)} alt="" aria-hidden="true" loading="lazy" />
-                    <small>{player.team}</small>
-                  </span>
-                ) : (
-                  <a className="lineup-team-mark" href={teamSeasonHref(player.team, selectedSeason)} aria-label={`View ${player.team} in ${selectedSeason}`} title={`View ${player.team} team page`}>
-                    <img src={teamLogoUrl(player.team)} alt="" aria-hidden="true" loading="lazy" />
-                    <small>{player.team}</small>
-                  </a>
-                )}</td>
+                <td><a className="lineup-team-mark" href={teamSeasonHref(player.team, selectedSeason)} aria-label={`View ${player.team} in ${selectedSeason}`} title={`View ${player.team} team page`}>
+                  <img src={teamLogoUrl(player.team)} alt="" aria-hidden="true" loading="lazy" />
+                  <small>{player.team}</small>
+                </a></td>
                 <td>{player.position}</td>
                 <td className="numeric quantity-cell">{formatDraftPick(player)}</td>
-                {isCurrentSeason ? <>
-                  <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
-                  <td className={optionalRatingClass(player.preseason_nail)}>{formatOptionalRating(player.preseason_nail)}</td>
-                  <td className={optionalRatingClass(player.in_season_delta)}>{formatOptionalRating(player.in_season_delta)}</td>
-                  <td className="numeric quantity-cell">{wholeNumber.format(player.current_season_possessions ?? 0)}</td>
-                  <td className="numeric quantity-cell">{player.current_expected_minutes_if_available === null || player.current_expected_minutes_if_available === undefined ? "-" : number.format(player.current_expected_minutes_if_available)}</td>
-                  <td className={player.additive_profile_adjustment === null || player.additive_profile_adjustment === undefined ? "numeric" : player.additive_profile_adjustment < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.additive_profile_adjustment === null || player.additive_profile_adjustment === undefined ? "-" : formatRating(player.additive_profile_adjustment)}</td>
-                </> : <>
-                  <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
-                  <td className={player.offense_rating === null || player.offense_rating === undefined ? "numeric" : player.offense_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.offense_rating === null || player.offense_rating === undefined ? "-" : formatRating(player.offense_rating)}</td>
-                  <td className={player.defense_rating === null || player.defense_rating === undefined ? "numeric" : player.defense_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.defense_rating === null || player.defense_rating === undefined ? "-" : formatRating(player.defense_rating)}</td>
-                  <td className={player.ffapr === null || player.ffapr === undefined ? "numeric" : player.ffapr < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.ffapr === null || player.ffapr === undefined ? "-" : formatRating(player.ffapr)}</td>
-                  <td className={player.ffapr_offense === null || player.ffapr_offense === undefined ? "numeric" : player.ffapr_offense < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.ffapr_offense === null || player.ffapr_offense === undefined ? "-" : formatRating(player.ffapr_offense)}</td>
-                  <td className={player.ffapr_defense === null || player.ffapr_defense === undefined ? "numeric" : player.ffapr_defense < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.ffapr_defense === null || player.ffapr_defense === undefined ? "-" : formatRating(player.ffapr_defense)}</td>
-                  <td className={player.prior_rating === null ? "numeric" : player.prior_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.prior_rating === null ? "-" : formatRating(player.prior_rating)}</td>
-                  <td className={player.season_update === null ? "numeric" : player.season_update < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.season_update === null ? "-" : formatRating(player.season_update)}</td>
-                  <td className={player.additive_profile_adjustment === null ? "numeric" : player.additive_profile_adjustment < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.additive_profile_adjustment === null ? "-" : formatRating(player.additive_profile_adjustment)}</td>
-                  <td className={player.observed_context_exposure === null ? "numeric" : player.observed_context_exposure < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.observed_context_exposure === null ? "-" : formatRating(player.observed_context_exposure)}</td>
-                  <td className="numeric quantity-cell">{wholeNumber.format(player.possessions)}</td>
-                  <td className="numeric quantity-cell">{player.games}</td>
-                </>}
+                <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
+                <td className={optionalRatingClass(player.offense_rating)}>{formatOptionalRating(player.offense_rating)}</td>
+                <td className={optionalRatingClass(player.defense_rating)}>{formatOptionalRating(player.defense_rating)}</td>
+                <td className={optionalRatingClass(player.ffapr)}>{formatOptionalRating(player.ffapr)}</td>
+                <td className={optionalRatingClass(player.ffapr_offense)}>{formatOptionalRating(player.ffapr_offense)}</td>
+                <td className={optionalRatingClass(player.ffapr_defense)}>{formatOptionalRating(player.ffapr_defense)}</td>
+                <td className={optionalRatingClass(player.prior_rating)}>{formatOptionalRating(player.prior_rating)}</td>
+                <td className={optionalRatingClass(player.season_update)}>{formatOptionalRating(player.season_update)}</td>
+                <td className={optionalRatingClass(player.additive_profile_adjustment)}>{formatOptionalRating(player.additive_profile_adjustment)}</td>
+                <td className={optionalRatingClass(player.observed_context_exposure)}>{formatOptionalRating(player.observed_context_exposure)}</td>
+                <td className="numeric quantity-cell">{wholeNumber.format(player.possessions)}</td>
+                <td className="numeric quantity-cell">{player.games}</td>
               </tr>)}
             </tbody>
           </table>
@@ -2543,23 +2513,16 @@ function RankingsPage() {
                 <Rating value={player.rapm} />
               </span>
             </div>
-            {isCurrentSeason ? <dl className="mobile-metric-grid mobile-player-metrics">
-              <div><dt>Preseason</dt><dd>{player.preseason_nail === null || player.preseason_nail === undefined ? "-" : <Rating value={player.preseason_nail} />}</dd></div>
-              <div><dt>Season delta</dt><dd>{player.in_season_delta === null || player.in_season_delta === undefined ? "-" : <Rating value={player.in_season_delta} />}</dd></div>
-              <div><dt>MPG if available</dt><dd>{player.current_expected_minutes_if_available === null || player.current_expected_minutes_if_available === undefined ? "-" : number.format(player.current_expected_minutes_if_available)}</dd></div>
-              <div><dt>Frozen additive</dt><dd>{player.additive_profile_adjustment === null || player.additive_profile_adjustment === undefined ? "-" : <Rating value={player.additive_profile_adjustment} />}</dd></div>
-            </dl> : <dl className="mobile-metric-grid mobile-player-metrics">
+            <dl className="mobile-metric-grid mobile-player-metrics">
               <div><dt>Offense</dt><dd>{player.offense_rating === null || player.offense_rating === undefined ? "-" : <Rating value={player.offense_rating} />}</dd></div>
               <div><dt>Defense</dt><dd>{player.defense_rating === null || player.defense_rating === undefined ? "-" : <Rating value={player.defense_rating} />}</dd></div>
               <div className="mobile-player-four-factor-ranks"><dt>Four Factors</dt><dd>{player.ffapr === null || player.ffapr === undefined ? "-" : `All ${formatRating(player.ffapr)} · Off ${formatOptionalRating(player.ffapr_offense)} · Def ${formatOptionalRating(player.ffapr_defense)}`}</dd></div>
-              <div><dt>Prior</dt><dd>{player.prior_rating === null ? "-" : <Rating value={player.prior_rating} />}</dd></div>
-              <div><dt>Season update</dt><dd>{player.season_update === null ? "-" : <Rating value={player.season_update} />}</dd></div>
-              <div><dt>Additive profile</dt><dd>{player.additive_profile_adjustment === null ? "-" : <Rating value={player.additive_profile_adjustment} />}</dd></div>
-              <div><dt>Non-additive edge</dt><dd>{player.observed_context_exposure === null ? "-" : <Rating value={player.observed_context_exposure} />}</dd></div>
-            </dl>}
-            <p className="mobile-card-meta">{isCurrentSeason
-              ? `${wholeNumber.format(player.current_season_possessions ?? 0)} current-season possessions · updated through ${ratingState?.evidence_through_date ?? "latest final"}`
-              : `${wholeNumber.format(player.possessions)} possessions · ${player.games} games`}</p>
+              <div><dt>Prior</dt><dd>{player.prior_rating === null || player.prior_rating === undefined ? "-" : <Rating value={player.prior_rating} />}</dd></div>
+              <div><dt>Season change</dt><dd>{player.season_update === null || player.season_update === undefined ? "-" : <Rating value={player.season_update} />}</dd></div>
+              <div><dt>Additive profile</dt><dd>{player.additive_profile_adjustment === null || player.additive_profile_adjustment === undefined ? "-" : <Rating value={player.additive_profile_adjustment} />}</dd></div>
+              <div><dt>Non-additive edge</dt><dd>{player.observed_context_exposure === null || player.observed_context_exposure === undefined ? "-" : <Rating value={player.observed_context_exposure} />}</dd></div>
+            </dl>
+            <p className="mobile-card-meta">{wholeNumber.format(player.possessions)} possessions · {player.games} games</p>
           </li>)}
         </ol>}
       </section>

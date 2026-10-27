@@ -1408,6 +1408,16 @@ def test_promoted_current_season_state_drives_rankings_player_and_lab() -> None:
             "actual_defensive_rating": [111.0],
         }
     )
+    current_exposure = pd.DataFrame(
+        {
+            "season": ["2026-27"],
+            "team_id": [1],
+            "team": ["TST"],
+            "player_id": [1],
+            "possessions": [120.0],
+            "games": [2],
+        }
+    )
     evaluator = replace(
         evaluator,
         preseason_rankings=preseason,
@@ -1420,6 +1430,7 @@ def test_promoted_current_season_state_drives_rankings_player_and_lab() -> None:
         },
         current_season_trajectories={1: trajectory},
         current_season_lineups=current_lineups,
+        current_season_player_team_exposure=current_exposure,
         current_season_lineup_metadata={
             "season": "2026-27",
             "evidence_through_date": "2026-10-26",
@@ -1439,6 +1450,8 @@ def test_promoted_current_season_state_drives_rankings_player_and_lab() -> None:
     )
     assert ranked_player["offense_rating"] is None
     assert ranked_player["defense_rating"] is None
+    assert ranked_player["season_update"] == pytest.approx(0.25)
+    assert ranked_player["games"] == 2
 
     player = client.get("/api/players/1")
     assert player.status_code == 200

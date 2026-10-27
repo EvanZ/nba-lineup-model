@@ -1039,11 +1039,10 @@ class LineupEvaluator:
             if "player_id" in self.preseason_rankings
             else pd.DataFrame()
         )
+        current_rankings = self._active_current_season_rankings()
         current_row = (
-            self.current_season_rankings.loc[
-                self.current_season_rankings["player_id"].eq(player_id)
-            ]
-            if "player_id" in self.current_season_rankings
+            current_rankings.loc[current_rankings["player_id"].eq(player_id)]
+            if "player_id" in current_rankings
             else pd.DataFrame()
         )
         forecast_row = current_row if not current_row.empty else preseason_row
@@ -1208,9 +1207,8 @@ class LineupEvaluator:
             not self.current_season_rankings.empty
             and self.current_season_rankings["season"].eq(selected_season).any()
         ):
-            rows = self.current_season_rankings.loc[
-                self.current_season_rankings["season"].eq(selected_season)
-            ]
+            current_rankings = self._active_current_season_rankings()
+            rows = current_rankings.loc[current_rankings["season"].eq(selected_season)]
         elif (
             not self.preseason_rankings.empty
             and self.preseason_rankings["season"].eq(selected_season).any()
@@ -1889,7 +1887,18 @@ class LineupEvaluator:
         """Return promoted in-season rows, falling back to the frozen forecast."""
 
         if not self.current_season_rankings.empty:
-            return self.current_season_rankings
+            rankings = self.current_season_rankings.copy()
+            if "in_season_delta" in rankings:
+                rankings["season_update"] = rankings["in_season_delta"]
+            exposure = self.current_season_player_team_exposure
+            if not exposure.empty and {"player_id", "games"}.issubset(exposure):
+                player_games = exposure.groupby("player_id", sort=False)["games"].sum()
+                rankings["games"] = (
+                    rankings["player_id"].map(player_games).fillna(0).astype(int)
+                )
+            else:
+                rankings["games"] = 0
+            return rankings
         return self.preseason_rankings
 
     def _preseason_lab_state(self) -> SeasonLineupState:
