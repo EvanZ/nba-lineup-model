@@ -37,6 +37,10 @@ The script creates a detached Git worktree, reuses production's immutable model
 bundle and Python environment, materializes current lineups into the dev state
 root, builds the branch frontend, and restarts only `gestalt-web-dev`.
 
+If Node/npm is not installed on EC2, build the frontend locally, copy the small
+`dist/` directory to EC2, and set `GESTALT_DEV_FRONTEND_DIST` to that remote
+directory. Raw and model data still remain on EC2 and in S3.
+
 ## DNS and TLS
 
 Create an A record for `gestalt-dev.toplines.app` pointing at the existing EC2

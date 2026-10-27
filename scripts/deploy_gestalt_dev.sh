@@ -13,6 +13,7 @@ PROD_APP_ROOT="${GESTALT_PROD_APP_ROOT:-/opt/nba-gestalt}"
 DEV_APP_ROOT="${GESTALT_DEV_APP_ROOT:-/opt/nba-gestalt-dev}"
 DEV_STATE_ROOT="${GESTALT_DEV_STATE_ROOT:-/var/lib/nba-gestalt-dev}"
 DEV_WEB_ROOT="${GESTALT_DEV_WEB_ROOT:-/var/www/nba-gestalt-dev}"
+FRONTEND_DIST="${GESTALT_DEV_FRONTEND_DIST:-}"
 RELEASE_ID="${GESTALT_DEV_RELEASE_ID:-$(git -C "$SOURCE_REPO" rev-parse --short=12 "$DEV_REF")}"
 RELEASE_ROOT="$DEV_APP_ROOT/releases/$RELEASE_ID"
 PROD_RELEASE="$PROD_APP_ROOT/current"
@@ -63,9 +64,17 @@ GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule \
   --coverage-path /var/lib/nba-gestalt/cdn/coverage.json \
   --output-root "$DEV_STATE_ROOT/current-season-lineups"
 
-npm --prefix "$RELEASE_ROOT/apps/lineup-explorer" run build
+if [[ -n "$FRONTEND_DIST" ]]; then
+  test -f "$FRONTEND_DIST/index.html"
+elif command -v npm >/dev/null 2>&1; then
+  npm --prefix "$RELEASE_ROOT/apps/lineup-explorer" run build
+  FRONTEND_DIST="$RELEASE_ROOT/apps/lineup-explorer/dist"
+else
+  printf 'npm is unavailable; set GESTALT_DEV_FRONTEND_DIST to a prebuilt dist directory\n' >&2
+  exit 1
+fi
 sudo install -d "$DEV_WEB_ROOT"
-sudo rsync -a --delete "$RELEASE_ROOT/apps/lineup-explorer/dist/" "$DEV_WEB_ROOT/"
+sudo rsync -a --delete "$FRONTEND_DIST/" "$DEV_WEB_ROOT/"
 
 sudo ln -sfn "$RELEASE_ROOT" "$DEV_APP_ROOT/current"
 sudo install -m 0644 \
