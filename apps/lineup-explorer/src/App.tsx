@@ -530,7 +530,6 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
           <div><dt>In-season delta</dt><dd>{player.in_season_delta === null || player.in_season_delta === undefined ? "-" : <Rating value={player.in_season_delta} />}</dd></div>
           <div className="player-forecast-total"><dt>Current NAIL</dt><dd><Rating value={player.rapm} /></dd></div>
           <div><dt>Possessions</dt><dd>{wholeNumber.format(player.current_season_possessions ?? 0)}</dd></div>
-          <div><dt>Posterior uncertainty</dt><dd>{player.rating_posterior_standard_error === null || player.rating_posterior_standard_error === undefined ? "-" : `±${player.rating_posterior_standard_error.toFixed(2)}`}</dd></div>
           <div><dt>Expected MPG if available</dt><dd>{player.current_expected_minutes_if_available === null || player.current_expected_minutes_if_available === undefined ? "-" : number.format(player.current_expected_minutes_if_available)}</dd></div>
           <div><dt>Minutes role observations</dt><dd>{player.minutes_role_observations ?? 0}</dd></div>
         </dl>
@@ -2126,7 +2125,7 @@ function AboutPage() {
   );
 }
 
-type RankingColumn = "player_name" | "team" | "position" | "draft_number" | "rapm" | "offense_rating" | "defense_rating" | "ffapr" | "ffapr_offense" | "ffapr_defense" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games" | "preseason_nail" | "in_season_delta" | "rating_posterior_standard_error" | "current_expected_minutes_if_available";
+type RankingColumn = "player_name" | "team" | "position" | "draft_number" | "rapm" | "offense_rating" | "defense_rating" | "ffapr" | "ffapr_offense" | "ffapr_defense" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games" | "preseason_nail" | "in_season_delta" | "current_expected_minutes_if_available";
 
 type RankingStateMetadata = {
   kind: "completed_fit" | "preseason_preview" | "in_season_updated";
@@ -2267,7 +2266,7 @@ function RankingsPage() {
       "draft_number", "offense_rating", "defense_rating", "prior_rating", "season_update",
       "additive_profile_adjustment", "observed_context_exposure", "possessions", "games",
       "preseason_nail", "in_season_delta",
-      "rating_posterior_standard_error", "current_expected_minutes_if_available",
+      "current_expected_minutes_if_available",
     ]);
     if (!rankableColumns.has(sortColumn)) {
       return new Map(players.map((player) => [player.player_id, player.rank]));
@@ -2332,7 +2331,6 @@ function RankingsPage() {
     { key: "preseason_nail", label: "Preseason", numeric: true },
     { key: "in_season_delta", label: "Season delta", numeric: true },
     { key: "possessions", label: "Possessions", numeric: true },
-    { key: "rating_posterior_standard_error", label: "Uncertainty", numeric: true },
     { key: "current_expected_minutes_if_available", label: "MPG if available", numeric: true },
     { key: "additive_profile_adjustment", label: "Frozen additive", numeric: true },
   ];
@@ -2510,7 +2508,6 @@ function RankingsPage() {
                   <td className={optionalRatingClass(player.preseason_nail)}>{formatOptionalRating(player.preseason_nail)}</td>
                   <td className={optionalRatingClass(player.in_season_delta)}>{formatOptionalRating(player.in_season_delta)}</td>
                   <td className="numeric quantity-cell">{wholeNumber.format(player.current_season_possessions ?? 0)}</td>
-                  <td className="numeric quantity-cell">{player.rating_posterior_standard_error === null || player.rating_posterior_standard_error === undefined ? "-" : `±${player.rating_posterior_standard_error.toFixed(2)}`}</td>
                   <td className="numeric quantity-cell">{player.current_expected_minutes_if_available === null || player.current_expected_minutes_if_available === undefined ? "-" : number.format(player.current_expected_minutes_if_available)}</td>
                   <td className={player.additive_profile_adjustment === null || player.additive_profile_adjustment === undefined ? "numeric" : player.additive_profile_adjustment < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{player.additive_profile_adjustment === null || player.additive_profile_adjustment === undefined ? "-" : formatRating(player.additive_profile_adjustment)}</td>
                 </> : <>
@@ -2550,7 +2547,6 @@ function RankingsPage() {
             {isCurrentSeason ? <dl className="mobile-metric-grid mobile-player-metrics">
               <div><dt>Preseason</dt><dd>{player.preseason_nail === null || player.preseason_nail === undefined ? "-" : <Rating value={player.preseason_nail} />}</dd></div>
               <div><dt>Season delta</dt><dd>{player.in_season_delta === null || player.in_season_delta === undefined ? "-" : <Rating value={player.in_season_delta} />}</dd></div>
-              <div><dt>Uncertainty</dt><dd>{player.rating_posterior_standard_error === null || player.rating_posterior_standard_error === undefined ? "-" : `±${player.rating_posterior_standard_error.toFixed(2)}`}</dd></div>
               <div><dt>MPG if available</dt><dd>{player.current_expected_minutes_if_available === null || player.current_expected_minutes_if_available === undefined ? "-" : number.format(player.current_expected_minutes_if_available)}</dd></div>
               <div><dt>Frozen additive</dt><dd>{player.additive_profile_adjustment === null || player.additive_profile_adjustment === undefined ? "-" : <Rating value={player.additive_profile_adjustment} />}</dd></div>
             </dl> : <dl className="mobile-metric-grid mobile-player-metrics">
