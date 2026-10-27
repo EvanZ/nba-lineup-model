@@ -17,6 +17,7 @@ from dagster import (
 from nba_lineup_model.orchestration.definitions import (
     DEFAULT_ODDS_API_BOOKMAKERS,
     EASTERN,
+    _release_root,
     active_live_game_date,
     cdn_morning_reconciliation_schedule,
     completed_game_cdn_play_by_play_sensor,
@@ -76,6 +77,18 @@ def test_live_window_only_returns_unfinished_active_slate(tmp_path: Path) -> Non
         state="post",
     )
     assert active_live_game_date(state_dir=tmp_path, now=now) is None
+
+
+def test_release_root_does_not_depend_on_process_working_directory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    release = tmp_path / "immutable-release"
+    release.mkdir()
+    monkeypatch.setenv("GESTALT_RELEASE_ROOT", str(release))
+    monkeypatch.chdir(tmp_path)
+
+    assert _release_root() == release.resolve()
 
 
 def test_live_window_does_not_poll_all_day(tmp_path: Path) -> None:

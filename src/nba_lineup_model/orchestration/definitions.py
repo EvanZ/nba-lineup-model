@@ -68,6 +68,7 @@ DEFAULT_IN_SEASON_MINUTES_PARTICIPATION_PRIOR_GAMES = 4
 DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES = 0.2
 DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_LOOKBACK_GAMES = 3
 DEFAULT_IN_SEASON_MINUTES_ROLE_CUTOFF_MINUTES = 44
+DEFAULT_RELEASE_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HEALTHCHECK_PARQUET = (
     "s3://nba-gestalt-data/lake/analytical/box_score_prior_panel/"
     "season_cohort_summary.parquet"
@@ -104,6 +105,12 @@ ODDS_API_SCHEDULE_DEFAULT_STATUS = (
 
 def _state_dir() -> Path:
     return Path(os.environ.get("GESTALT_SCHEDULE_STATE_DIR", DEFAULT_SCHEDULE_STATE_DIR))
+
+
+def _release_root() -> Path:
+    """Return the artifact-bearing release root independently of process CWD."""
+
+    return Path(os.environ.get("GESTALT_RELEASE_ROOT", DEFAULT_RELEASE_ROOT)).resolve()
 
 
 def _schedule_s3_uri() -> str | None:
@@ -714,7 +721,7 @@ def update_in_season_nail_shadow_op(context: OpExecutionContext) -> dict[str, ob
         argparse.Namespace(
             state_dir=_state_dir(),
             coverage_path=_cdn_coverage_path(),
-            release_root=Path.cwd(),
+            release_root=_release_root(),
             cdn_s3_prefix=(f"{_cdn_lake_uri()}/raw/cdn/playbyplay"),
             matchup_url=os.environ.get(
                 "GESTALT_MATCHUP_API_URL", "http://127.0.0.1:8010/api/matchups"
@@ -906,7 +913,7 @@ def update_in_season_minutes_shadow_op(
     result = run(
         argparse.Namespace(
             state_dir=_state_dir(),
-            release_root=Path.cwd(),
+            release_root=_release_root(),
             through_date=through_date,
             participation_prior_games=float(
                 context.op_config["participation_prior_games"]
