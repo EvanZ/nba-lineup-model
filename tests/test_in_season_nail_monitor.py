@@ -107,7 +107,14 @@ def test_player_game_context_uses_frozen_roster_for_players_missing_box_score() 
                             "reason": "Right knee injury management",
                         }
                     ],
-                    "home": [],
+                    "home": [
+                        {
+                            "player_id": 2,
+                            "player_name": "Devin Booker",
+                            "status": "Available",
+                            "reason": "-",
+                        }
+                    ],
                 }
             },
         },
@@ -121,6 +128,7 @@ def test_player_game_context_uses_frozen_roster_for_players_missing_box_score() 
         "pregame_status": "Out",
         "pregame_reason": "Right knee injury management",
     }
+    assert context[2]["pregame_reason"] is None
 
 
 def test_player_game_trajectory_includes_missed_team_games() -> None:

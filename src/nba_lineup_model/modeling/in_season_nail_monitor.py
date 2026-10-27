@@ -67,6 +67,13 @@ def _name_aliases(value: object) -> tuple[str, ...]:
     return tuple(dict.fromkeys((normalized, suffixless)))
 
 
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return None if text.casefold() in {"", "-", "none", "null"} else text
+
+
 def _parse_time(value: object) -> datetime:
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
@@ -173,8 +180,8 @@ def _player_game_context(
             context[int(player_id)] = {
                 "team": team,
                 "opponent": opponent,
-                "pregame_status": player.get("status"),
-                "pregame_reason": player.get("reason"),
+                "pregame_status": _optional_text(player.get("status")),
+                "pregame_reason": _optional_text(player.get("reason")),
             }
 
     for team, team_row in _espn_team_rows(espn).items():
