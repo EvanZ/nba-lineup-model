@@ -204,6 +204,20 @@ export type TeamSeasonPayload = {
   display_name: string;
   season: string;
   available_seasons: string[];
+  rating_state?: {
+    kind: "completed_fit" | "preseason_preview" | "in_season_updated";
+    season: string;
+    evidence_through_date?: string;
+    as_of_cutoff_time?: string;
+    bundle_sha256?: string;
+  };
+  lineup_state?: {
+    season?: string;
+    evidence_through_date?: string;
+    as_of_cutoff_time?: string;
+    serving_bundle_sha256?: string;
+    bundle_sha256?: string;
+  };
   players: RankedPlayer[];
   minimum_possessions: number;
   win_history: Array<{
@@ -318,6 +332,9 @@ export type MinutesProjectionPayload = {
   initial_rotation_size: number;
   regulation_team_minutes: number;
   contract: string;
+  state_kind?: "preseason_preview" | "in_season_updated";
+  as_of?: string;
+  serving_bundle_sha256?: string;
   teams: string[];
   players: MinutesProjectionPlayer[];
   incumbent_team_strength?: IncumbentTeamStrength;
@@ -336,6 +353,8 @@ export type MinutesProjectionPayload = {
     }>;
   };
   win_projection?: WinProjectionPayload;
+  preseason_minutes?: MinutesProjectionPayload;
+  preseason_win_projection?: WinProjectionPayload;
 };
 
 export type WinProjectionTeam = {
@@ -352,6 +371,11 @@ export type WinProjectionTeam = {
   unassigned_wins: number;
   projected_wins: number;
   projected_losses: number;
+  completed_games?: number;
+  actual_wins?: number;
+  actual_losses?: number;
+  remaining_scheduled_games?: number;
+  remaining_scheduled_wins?: number;
 };
 
 export type WinProjectionScheduledGame = {
@@ -381,6 +405,10 @@ export type CurrentSeasonRecordsPayload = {
 
 export type WinProjectionPayload = {
   model: string;
+  state_kind?: "preseason_preview" | "in_season_updated";
+  as_of?: string;
+  serving_bundle_sha256?: string;
+  remaining_scheduled_game_count?: number;
   season: string;
   scheduled_game_count: number;
   scheduled_games_per_team: number;

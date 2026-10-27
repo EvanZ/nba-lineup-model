@@ -33,6 +33,9 @@ from nba_lineup_model.modeling.matchup_contextual import (
 )
 from nba_lineup_model.modeling.stints import read_rapm_stints
 from nba_lineup_model.season.schedule import SeasonScheduleCache
+from nba_lineup_model.web_api.current_season_lineups import (
+    load_current_season_lineup_catalog,
+)
 from nba_lineup_model.web_api.current_season_serving import (
     load_current_season_serving_catalog,
 )
@@ -393,6 +396,10 @@ class LineupEvaluator:
     current_season_rankings: pd.DataFrame = field(default_factory=pd.DataFrame)
     current_season_metadata: dict[str, Any] = field(default_factory=dict)
     current_season_trajectories: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    current_season_lineups: pd.DataFrame = field(default_factory=pd.DataFrame)
+    current_season_stints: pd.DataFrame = field(default_factory=pd.DataFrame)
+    current_season_player_team_exposure: pd.DataFrame = field(default_factory=pd.DataFrame)
+    current_season_lineup_metadata: dict[str, Any] = field(default_factory=dict)
     observed_lineups: pd.DataFrame = field(default_factory=pd.DataFrame)
     historical_coefficients: pd.DataFrame = field(default_factory=pd.DataFrame)
     seasonal_ratings: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -528,6 +535,13 @@ class LineupEvaluator:
             else pd.DataFrame()
         )
         current_season = load_current_season_serving_catalog(preseason_rankings)
+        current_lineups = (
+            load_current_season_lineup_catalog(
+                serving_metadata=current_season.metadata,
+            )
+            if current_season is not None
+            else None
+        )
         player_rating_histories = _player_rating_histories(
             seasonal_ratings,
             panel_path=Path(panel_path),
@@ -701,6 +715,20 @@ class LineupEvaluator:
             current_season_trajectories=(
                 current_season.trajectories if current_season is not None else {}
             ),
+            current_season_lineups=(
+                current_lineups.lineups if current_lineups is not None else pd.DataFrame()
+            ),
+            current_season_stints=(
+                current_lineups.stints if current_lineups is not None else pd.DataFrame()
+            ),
+            current_season_player_team_exposure=(
+                current_lineups.player_team_exposure
+                if current_lineups is not None
+                else pd.DataFrame()
+            ),
+            current_season_lineup_metadata=(
+                current_lineups.metadata if current_lineups is not None else {}
+            ),
             observed_lineups=observed_lineups,
             historical_coefficients=historical_coefficients,
             seasonal_ratings=seasonal_ratings,
@@ -812,8 +840,6 @@ class LineupEvaluator:
         if not normalized:
             return []
         catalog = self._ranking_catalog()
-        completed_seasons = set(self.available_lineup_seasons())
-        catalog = catalog.loc[catalog["season"].astype(str).isin(completed_seasons)].copy()
         if catalog.empty or "team" not in catalog:
             return []
         grouped = (
@@ -859,8 +885,6 @@ class LineupEvaluator:
 
         normalized_team = team.strip().upper()
         catalog = self._ranking_catalog()
-        completed_seasons = set(self.available_lineup_seasons())
-        catalog = catalog.loc[catalog["season"].astype(str).isin(completed_seasons)].copy()
         if catalog.empty:
             raise LineupEvaluationError("Team-season rankings are unavailable")
         team_rows = catalog.loc[catalog["team"].astype(str).str.upper().eq(normalized_team)].copy()
@@ -902,6 +926,12 @@ class LineupEvaluator:
             "display_name": _team_display_name(normalized_team),
             "season": selected_season,
             "available_seasons": available_seasons,
+            "rating_state": self.ranking_state_metadata(selected_season),
+            "lineup_state": (
+                dict(self.current_season_lineup_metadata)
+                if selected_season == PRESEASON_PREVIEW_SEASON
+                else {"kind": "completed_fit", "season": selected_season}
+            ),
             "players": players,
             "minimum_possessions": minimum_possessions,
             "win_history": self.team_win_histories.get(normalized_team, []),
@@ -935,8 +965,10 @@ class LineupEvaluator:
             raise LineupEvaluationError(
                 "Rotation map ordering must use on-court similarity or floor correlation"
             )
-        if selected_season == PRESEASON_PREVIEW_SEASON:
-            raise LineupEvaluationError("Observed rotation data is unavailable for preseason rosters")
+        if selected_season == PRESEASON_PREVIEW_SEASON and self.current_season_stints.empty:
+            raise LineupEvaluationError(
+                "Observed rotation data is unavailable until current-season lineups are materialized"
+            )
 
         # Rotation structure is an observed-data view. Do not require the
         # selected season's scoring state (or its optional O/D sidecar) just
@@ -953,7 +985,11 @@ class LineupEvaluator:
                 strict=True,
             )
         )
-        stints = read_rapm_stints(selected_season)
+        stints = (
+            self.current_season_stints
+            if selected_season == PRESEASON_PREVIEW_SEASON
+            else read_rapm_stints(selected_season)
+        )
         return _build_team_rotation_map(
             stints,
             team=normalized_team,
@@ -1237,7 +1273,12 @@ class LineupEvaluator:
         if minimum_possessions < 0:
             raise LineupEvaluationError("Minimum possessions cannot be negative")
         selected_season = season or self.season
-        if selected_season == self.season:
+        if (
+            selected_season == PRESEASON_PREVIEW_SEASON
+            and not self.current_season_lineups.empty
+        ):
+            source = self.current_season_lineups
+        elif selected_season == self.season:
             source = self.observed_lineups
         elif self.lineup_rankings_root is not None:
             path = self.lineup_rankings_root / f"{selected_season}.parquet"
@@ -1272,6 +1313,8 @@ class LineupEvaluator:
         """Return materialized completed-fit lineup-ranking seasons, newest first."""
 
         seasons = {self.season} if not self.observed_lineups.empty else set()
+        if not self.current_season_lineups.empty:
+            seasons.add(PRESEASON_PREVIEW_SEASON)
         if self.lineup_rankings_root is not None and self.lineup_rankings_root.is_dir():
             seasons.update(path.stem for path in self.lineup_rankings_root.glob("*.parquet"))
         return sorted(seasons, reverse=True)
@@ -4068,6 +4111,7 @@ def build_observed_lineup_rankings(
     constrained_split_ratings: pd.DataFrame | None = None,
     constrained_split_context_allocations: pd.DataFrame | None = None,
     analytical_dir: Path | str = Path("data/analytical"),
+    stints: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Materialize regular-season five-man ratings against actual opponents.
 
@@ -4076,7 +4120,11 @@ def build_observed_lineup_rankings(
     that unit actually faced, weighted by stint possessions.
     """
 
-    stints = read_rapm_stints(season, analytical_dir=analytical_dir)
+    stints = (
+        read_rapm_stints(season, analytical_dir=analytical_dir)
+        if stints is None
+        else stints.copy()
+    )
     required = {
         "game_id",
         "home_team_id",

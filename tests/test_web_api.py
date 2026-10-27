@@ -32,8 +32,8 @@ from nba_lineup_model.web_api.inference import (
     _historical_ranking_catalog,
     _load_team_gestalt_win_history_cache,
     _observed_lineup_side_rows,
-    _player_latest_teams_by_season,
     _player_four_factor_histories,
+    _player_latest_teams_by_season,
     _player_league_leader_histories,
     _player_rating_histories,
     _player_team_splits_by_season,
@@ -1293,9 +1293,10 @@ def test_preseason_rankings_include_returners_and_cold_starts(tmp_path) -> None:
 
     team_search = client.get("/api/search", params={"q": "TST"})
     assert team_search.status_code == 200
-    assert team_search.json()["teams"][0]["latest_season"] == "2025-26"
+    assert team_search.json()["teams"][0]["latest_season"] == "2026-27"
     preseason_team_page = client.get("/api/teams/TST", params={"season": "2026-27"})
-    assert preseason_team_page.status_code == 404
+    assert preseason_team_page.status_code == 200
+    assert preseason_team_page.json()["rating_state"]["kind"] == "preseason_preview"
 
     rookie = client.get("/api/players/99")
     assert rookie.status_code == 200
@@ -1385,6 +1386,28 @@ def test_promoted_current_season_state_drives_rankings_player_and_lab() -> None:
         {"source": "preseason", "rating": float(current.iloc[0]["preseason_nail"])},
         {"source": "in_season", "rating": float(current.iloc[0]["rapm"])},
     ]
+    current_lineups = pd.DataFrame(
+        {
+            "team_id": [1],
+            "team": ["TST"],
+            "lineup_key": ["1|2|3|4|5"],
+            "player_ids": [[1, 2, 3, 4, 5]],
+            "player_names": [["Nikola Jokić", "Player 2", "Player 3", "Player 4", "Player 5"]],
+            "lineup_label": ["Nikola Jokić, Player 2, Player 3, Player 4, Player 5"],
+            "possessions": [25.0],
+            "games": [2],
+            "player_rating": [1.0],
+            "player_edge": [0.5],
+            "composition_rating": [0.2],
+            "composition_edge": [0.1],
+            "matchup_bonus": [0.1],
+            "context_edge": [0.2],
+            "gestalt_score": [0.7],
+            "actual_net_rating": [4.0],
+            "actual_offensive_rating": [115.0],
+            "actual_defensive_rating": [111.0],
+        }
+    )
     evaluator = replace(
         evaluator,
         preseason_rankings=preseason,
@@ -1396,6 +1419,12 @@ def test_promoted_current_season_state_drives_rankings_player_and_lab() -> None:
             "evidence_through_date": "2026-10-26",
         },
         current_season_trajectories={1: trajectory},
+        current_season_lineups=current_lineups,
+        current_season_lineup_metadata={
+            "season": "2026-27",
+            "evidence_through_date": "2026-10-26",
+            "serving_bundle_sha256": "a" * 64,
+        },
     )
     client = TestClient(create_app(evaluator))
 
@@ -1422,6 +1451,22 @@ def test_promoted_current_season_state_drives_rankings_player_and_lab() -> None:
     assert search.json()["players"][0]["rapm"] == pytest.approx(
         current.loc[current["player_id"].eq(1), "rapm"].iloc[0]
     )
+
+    team = client.get(
+        "/api/teams/TST",
+        params={"season": "2026-27", "minimum_possessions": 0},
+    )
+    assert team.status_code == 200
+    assert team.json()["rating_state"]["kind"] == "in_season_updated"
+    assert team.json()["players"][0]["current_expected_minutes_if_available"] == 34.5
+    assert team.json()["lineups"][0]["actual_net_rating"] == 4.0
+
+    lineups = client.get(
+        "/api/lineups", params={"season": "2026-27", "minimum_possessions": 0}
+    )
+    assert lineups.status_code == 200
+    assert lineups.json()["available_seasons"][0] == "2026-27"
+    assert lineups.json()["lineup_state"]["serving_bundle_sha256"] == "a" * 64
 
     historical = client.get("/api/rankings", params={"season": evaluator.season})
     assert historical.status_code == 200

@@ -2143,7 +2143,7 @@ function RankingsPage() {
   const [ratingState, setRatingState] = useState<RankingStateMetadata | null>(null);
   const [query, setQuery] = useState("");
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([]);
-  const [minimumPossessions, setMinimumPossessions] = useState(50);
+  const [minimumPossessions, setMinimumPossessions] = useState(10);
   const [teamFilter, setTeamFilter] = useState("all");
   const [draftClassFilter, setDraftClassFilter] = useState("all");
   const [sortColumn, setSortColumn] = useState<RankingColumn>("rapm");
@@ -2610,7 +2610,7 @@ function TeamSeasonPage({
   const [lineupQuery, setLineupQuery] = useState("");
   const [lineupSort, setLineupSort] = useState<TeamLineupSort>("actual_net_rating");
   const [lineupSortDirection, setLineupSortDirection] = useState<"ascending" | "descending">("descending");
-  const selectedSeason = season ?? payload?.season ?? "2025-26";
+  const selectedSeason = season ?? payload?.season ?? "2026-27";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2639,12 +2639,14 @@ function TeamSeasonPage({
 
   useEffect(() => {
     setLineupQuery("");
+    setMinimumPossessions(selectedSeason === "2026-27" ? 10 : 50);
   }, [selectedSeason, team]);
 
   const displayName = payload?.display_name ?? team;
   const players = payload?.players ?? [];
   const lineups = payload?.lineups ?? [];
   const winHistory = payload?.win_history ?? [];
+  const isCurrentSeason = payload?.rating_state?.kind === "in_season_updated";
   const visibleLineups = useMemo(() => {
     const tokens = lineupQuery.split(",").map((token) => token.trim().toLocaleLowerCase()).filter(Boolean);
     const matchingLineups = tokens.length
@@ -2691,14 +2693,15 @@ function TeamSeasonPage({
       <section className="rankings-hero team-page-hero">
           <div className="team-page-hero-content">
             <div className="team-page-branding">
-              <p className="eyebrow">{selectedSeason} team season</p>
+              <p className="eyebrow">{selectedSeason} {isCurrentSeason ? "current state" : "team season"}</p>
               <div className="team-page-title-row">
                 <img className="team-page-watermark" src={teamLogoUrl(team)} alt="" aria-hidden="true" />
                 <span aria-hidden="true">{team}</span>
                 <h1 id="team-page-title">{displayName}.</h1>
               </div>
-            <p>
-              Season-end roster assignment, completed-fit player ratings, and observed five-man units ranked by actual net rating.
+            <p>{isCurrentSeason
+              ? `Current roster, updated predictive NAIL, and observed five-man units through ${payload?.rating_state?.evidence_through_date ?? "the latest promoted slate"}. Minutes are expected if available.`
+              : "Season-end roster assignment, completed-fit player ratings, and observed five-man units ranked by actual net rating."}
             </p>
           </div>
           <TeamWinHistoryChart team={team} history={winHistory} />
@@ -2748,11 +2751,14 @@ function TeamSeasonPage({
                   <th scope="col" className="numeric">Rank</th>
                   <th scope="col">Player</th>
                   <th scope="col">Pos</th>
-                  <th scope="col" className="numeric">NAIL</th>
-                  <th scope="col" className="numeric">Off</th>
-                  <th scope="col" className="numeric">Def</th>
+                  <th scope="col" className="numeric">{isCurrentSeason ? "Current NAIL" : "NAIL"}</th>
+                  {isCurrentSeason && <th scope="col" className="numeric">Preseason</th>}
+                  {isCurrentSeason && <th scope="col" className="numeric">Δ</th>}
+                  {isCurrentSeason && <th scope="col" className="numeric">Exp. min</th>}
+                  {!isCurrentSeason && <th scope="col" className="numeric">Off</th>}
+                  {!isCurrentSeason && <th scope="col" className="numeric">Def</th>}
                   <th scope="col" className="numeric">Poss</th>
-                  <th scope="col" className="numeric">Games</th>
+                  {!isCurrentSeason && <th scope="col" className="numeric">Games</th>}
                 </tr>
               </thead>
               <tbody>
@@ -2761,10 +2767,13 @@ function TeamSeasonPage({
                   <th scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>
                   <td>{player.position}</td>
                   <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
-                  <td className={optionalRatingClass(player.offense_rating)}>{formatOptionalRating(player.offense_rating)}</td>
-                  <td className={optionalRatingClass(player.defense_rating)}>{formatOptionalRating(player.defense_rating)}</td>
+                  {isCurrentSeason && <td className={optionalRatingClass(player.preseason_nail)}>{formatOptionalRating(player.preseason_nail)}</td>}
+                  {isCurrentSeason && <td className={optionalRatingClass(player.in_season_delta)}>{formatOptionalRating(player.in_season_delta)}</td>}
+                  {isCurrentSeason && <td className="numeric quantity-cell">{player.current_expected_minutes_if_available?.toFixed(1) ?? "—"}</td>}
+                  {!isCurrentSeason && <td className={optionalRatingClass(player.offense_rating)}>{formatOptionalRating(player.offense_rating)}</td>}
+                  {!isCurrentSeason && <td className={optionalRatingClass(player.defense_rating)}>{formatOptionalRating(player.defense_rating)}</td>}
                   <td className="numeric quantity-cell">{wholeNumber.format(player.possessions)}</td>
-                  <td className="numeric quantity-cell">{player.games}</td>
+                  {!isCurrentSeason && <td className="numeric quantity-cell">{player.games}</td>}
                 </tr>)}
               </tbody>
             </table>
@@ -2786,10 +2795,13 @@ function TeamSeasonPage({
                 </span>
               </div>
               <dl className="mobile-metric-grid team-roster-mobile-metrics">
-                <div><dt>Offense</dt><dd>{formatOptionalRating(player.offense_rating)}</dd></div>
-                <div><dt>Defense</dt><dd>{formatOptionalRating(player.defense_rating)}</dd></div>
+                {isCurrentSeason && <div><dt>Preseason</dt><dd>{formatOptionalRating(player.preseason_nail)}</dd></div>}
+                {isCurrentSeason && <div><dt>Change</dt><dd>{formatOptionalRating(player.in_season_delta)}</dd></div>}
+                {isCurrentSeason && <div><dt>Expected minutes</dt><dd>{player.current_expected_minutes_if_available?.toFixed(1) ?? "—"}</dd></div>}
+                {!isCurrentSeason && <div><dt>Offense</dt><dd>{formatOptionalRating(player.offense_rating)}</dd></div>}
+                {!isCurrentSeason && <div><dt>Defense</dt><dd>{formatOptionalRating(player.defense_rating)}</dd></div>}
                 <div><dt>Possessions</dt><dd>{wholeNumber.format(player.possessions)}</dd></div>
-                <div><dt>Games</dt><dd>{player.games}</dd></div>
+                {!isCurrentSeason && <div><dt>Games</dt><dd>{player.games}</dd></div>}
               </dl>
             </li>)}
           </ol>}
@@ -2807,10 +2819,10 @@ function TeamSeasonPage({
                   <span>Min. possessions</span>
                   <input
                     type="number"
-                    min="50"
-                    step="50"
+                    min="0"
+                    step={selectedSeason === "2026-27" ? "10" : "50"}
                     value={minimumPossessions}
-                    onChange={(event) => setMinimumPossessions(Math.max(50, Number(event.target.value) || 50))}
+                    onChange={(event) => setMinimumPossessions(Math.max(0, Number(event.target.value) || 0))}
                   />
                 </label>
                 <div className="rankings-search lineup-player-search team-lineup-search">
@@ -3442,9 +3454,10 @@ function LineupRankingsPage({
 }) {
   const isCompact = useMediaQuery("(max-width: 720px)");
   const [lineups, setLineups] = useState<RankedLineup[]>([]);
-  const [selectedSeason, setSelectedSeason] = useState("2025-26");
+  const [selectedSeason, setSelectedSeason] = useState("2026-27");
   const [availableSeasons, setAvailableSeasons] = useState<string[]>([]);
-  const [minimumPossessions, setMinimumPossessions] = useState(500);
+  const [minimumPossessions, setMinimumPossessions] = useState(10);
+  const [lineupAsOf, setLineupAsOf] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState("all");
   const [sortColumn, setSortColumn] = useState<LineupRankingColumn>("context_edge");
@@ -3466,9 +3479,11 @@ function LineupRankingsPage({
         if (!response.ok) throw new Error("Observed lineup rankings are unavailable.");
         const payload = (await response.json()) as {
           available_seasons: string[];
+          lineup_state?: { evidence_through_date?: string };
           lineups: RankedLineup[];
         };
         setAvailableSeasons(payload.available_seasons);
+        setLineupAsOf(payload.lineup_state?.evidence_through_date ?? null);
         setLineups(payload.lineups);
       } catch (lineupError) {
         if ((lineupError as Error).name !== "AbortError") setError((lineupError as Error).message);
@@ -3482,6 +3497,7 @@ function LineupRankingsPage({
   useEffect(() => {
     setTeamFilter("all");
     setQuery("");
+    setMinimumPossessions(selectedSeason === "2026-27" ? 10 : 500);
   }, [selectedSeason]);
 
   const teams = useMemo(() => [...new Set(lineups.map((lineup) => lineup.team))].sort(), [lineups]);
@@ -3523,8 +3539,10 @@ function LineupRankingsPage({
     { key: "rank", label: "Rank", tooltip: "Ranked by Context, then possessions. Sorting another column changes the display order, not this rank.", numeric: true },
     { key: "team", label: "Team", tooltip: "Team that used this five-man unit." },
     { key: "gestalt_score", label: "Edge", tooltip: "Expected edge per 100 possessions against the opponents this unit actually faced: NAIL plus Context.", numeric: true },
-    { key: "offensive_edge", label: "Off", tooltip: "Offensive allocation of Edge: this unit's offense minus the possession-weighted defense of the opponents it actually faced, including the corresponding non-additive lineup context. Off plus Def equals Edge.", numeric: true },
-    { key: "defensive_edge", label: "Def", tooltip: "Defensive allocation of Edge: this unit's defense minus the possession-weighted offense of the opponents it actually faced, including the corresponding non-additive lineup context. Off plus Def equals Edge.", numeric: true },
+    ...(selectedSeason === "2026-27" ? [] : [
+      { key: "offensive_edge" as const, label: "Off", tooltip: "Offensive allocation of Edge: this unit's offense minus the possession-weighted defense of the opponents it actually faced, including the corresponding non-additive lineup context. Off plus Def equals Edge.", numeric: true },
+      { key: "defensive_edge" as const, label: "Def", tooltip: "Defensive allocation of Edge: this unit's defense minus the possession-weighted offense of the opponents it actually faced, including the corresponding non-additive lineup context. Off plus Def equals Edge.", numeric: true },
+    ]),
     { key: "player_edge", label: "NAIL", tooltip: "Difference in the summed NAIL-RAPM ratings of this unit and its actual opponents, per 100 possessions.", numeric: true },
     { key: "context_edge", label: "Context", tooltip: "Residual non-additive lineup effect beyond the five players' NAIL ratings, against actual opponents, per 100 possessions.", numeric: true },
     { key: "actual_net_rating", label: "Net Rating", tooltip: "Observed points scored minus points allowed per 100 possessions while this unit played.", numeric: true },
@@ -3535,11 +3553,12 @@ function LineupRankingsPage({
   return (
     <article className="rankings-page lineup-rankings-page" aria-labelledby="lineups-title">
       <section className="rankings-hero">
-        <p className="eyebrow">{MODEL_LABEL} · {selectedSeason} completed fit</p>
+        <p className="eyebrow">{MODEL_LABEL} · {selectedSeason} {selectedSeason === "2026-27" ? "current state" : "completed fit"}</p>
         <h1 id="lineups-title">Lineup contexts.</h1>
         <p>
           Observed regular-season five-man units, scored against the opponents they actually faced. Edge combines
-          NAIL player value with the residual lineup-context effect.
+          {selectedSeason === "2026-27" ? " updated predictive NAIL with the frozen preseason lineup-context model" : " NAIL player value with the residual lineup-context effect"}.
+          {selectedSeason === "2026-27" && ` Actual net rating is descriptive and remains separate from the model score${lineupAsOf ? `; data through ${lineupAsOf}` : ""}.`}
         </p>
       </section>
 

@@ -262,6 +262,9 @@ function percentileFromHistogram(
 }
 
 function simulateWinLossEnvelope(forecast: WinProjectionPayload, team: string): WinLossEnvelope | null {
+  const forecastTeam = forecast.teams.find((item) => item.team === team);
+  const startingGames = forecastTeam?.completed_games ?? 0;
+  const startingWins = forecastTeam?.actual_wins ?? 0;
   const teamStrength = new Map(forecast.teams.map((item) => [item.team, item.team_strength]));
   const scheduledGames: WinLossEnvelopeGame[] = forecast.scheduled_games
     .filter((game) => game.home_team === team || game.away_team === team)
@@ -303,11 +306,12 @@ function simulateWinLossEnvelope(forecast: WinProjectionPayload, team: string): 
   const probabilities = games.map((game) => game.winProbability);
   if (!probabilities.length) return null;
 
-  const binCount = probabilities.length + 1;
+  const finalGameCount = startingGames + probabilities.length;
+  const binCount = finalGameCount + 1;
   const histogram = new Uint32Array(probabilities.length * binCount);
   const random = seededRandom(hashSeed(`${team}:${probabilities.map((value) => value.toFixed(6)).join(",")}`));
   for (let trial = 0; trial < ENVELOPE_TRIALS; trial += 1) {
-    let wins = 0;
+    let wins = startingWins;
     for (let game = 0; game < probabilities.length; game += 1) {
       if (random() < probabilities[game]) wins += 1;
       histogram[game * binCount + wins] += 1;
@@ -315,14 +319,14 @@ function simulateWinLossEnvelope(forecast: WinProjectionPayload, team: string): 
   }
 
   const points: WinLossEnvelopePoint[] = [{
-    game: 0, month: null, opponent: "", opponentTeam: null, backToBack: false, winProbability: 0, p1: 0, p5: 0, median: 0, p95: 0, p99: 0,
+    game: startingGames, month: null, opponent: "", opponentTeam: null, backToBack: false, winProbability: 0, p1: startingWins, p5: startingWins, median: startingWins, p95: startingWins, p99: startingWins,
   }];
   for (let game = 0; game < probabilities.length; game += 1) {
     const offset = game * binCount;
     const currentMonth = games[game].gameDate.slice(0, 7);
     const previousMonth = games[game - 1]?.gameDate.slice(0, 7);
     points.push({
-      game: game + 1,
+      game: startingGames + game + 1,
       month: currentMonth === previousMonth ? null : monthLabel(games[game].gameDate),
       opponent: games[game].opponent,
       opponentTeam: games[game].opponentTeam,
@@ -337,7 +341,7 @@ function simulateWinLossEnvelope(forecast: WinProjectionPayload, team: string): 
   }
   return {
     points,
-    gameCount: probabilities.length,
+    gameCount: finalGameCount,
     histogram,
     binCount,
     trials: ENVELOPE_TRIALS,
@@ -793,7 +797,10 @@ function calculateProjection(
     const teamStrength = strength.get(team) ?? 0;
     const scheduled = scheduledWins.get(team) ?? 0;
     const unassigned = (rawUnassignedWins.get(team) ?? 0) - rawUnassignedMean + neutralUnassignedWins;
-    const wins = scheduled + unassigned;
+    const actualWins = baselineTeam.actual_wins ?? 0;
+    const actualLosses = baselineTeam.actual_losses ?? 0;
+    const completedGames = baselineTeam.completed_games ?? 0;
+    const wins = actualWins + scheduled + unassigned;
     return {
       team,
       team_strength: teamStrength,
@@ -803,11 +810,20 @@ function calculateProjection(
       win_total_p50: baselineTeam.win_total_p50,
       win_total_p95: baselineTeam.win_total_p95,
       win_total_p99: baselineTeam.win_total_p99,
-      scheduled_wins: scheduled,
-      scheduled_games: baseline.scheduled_games_per_team,
+      scheduled_wins: actualWins + scheduled,
+      scheduled_games: completedGames + baseline.scheduled_games.filter(
+        (game) => game.home_team === team || game.away_team === team,
+      ).length,
       unassigned_wins: unassigned,
       projected_wins: wins,
       projected_losses: 82 - wins,
+      completed_games: completedGames,
+      actual_wins: actualWins,
+      actual_losses: actualLosses,
+      remaining_scheduled_games: baseline.scheduled_games.filter(
+        (game) => game.home_team === team || game.away_team === team,
+      ).length,
+      remaining_scheduled_wins: scheduled,
     };
   });
   teams.sort((left, right) => right.projected_wins - left.projected_wins || left.team.localeCompare(right.team));
@@ -816,6 +832,7 @@ function calculateProjection(
 
 export function WinProjectionsPage() {
   const [payload, setPayload] = useState<MinutesProjectionPayload | null>(null);
+  const [forecastMode, setForecastMode] = useState<"current" | "preseason">("current");
   const [currentRecords, setCurrentRecords] = useState<CurrentSeasonRecordsPayload | null>(null);
   const [team, setTeam] = useState("");
   const [overrides, setOverrides] = useState<Overrides>(readOverrides);
@@ -864,21 +881,31 @@ export function WinProjectionsPage() {
     return () => window.clearTimeout(timeout);
   }, [overrides]);
 
+  const activePayload = useMemo(() => {
+    if (!payload) return null;
+    if (forecastMode === "preseason" && payload.preseason_minutes) {
+      return {
+        ...payload.preseason_minutes,
+        win_projection: payload.preseason_win_projection,
+      };
+    }
+    return payload;
+  }, [forecastMode, payload]);
   const players = useMemo(() => (
-    payload?.players.filter((player) => player.team === team) ?? []
-  ), [payload, team]);
+    activePayload?.players.filter((player) => player.team === team) ?? []
+  ), [activePayload, team]);
   const allocation = useMemo(() => (
-    payload
+    activePayload
       ? minuteAllocation(
         players,
         appliedOverrides,
-        payload.regulation_team_minutes,
-        payload.initial_rotation_size,
-        payload,
+        activePayload.regulation_team_minutes,
+        activePayload.initial_rotation_size,
+        activePayload,
       )
       : { minutes: new Map<number, number>(), inputs: new Map<number, PlayerInputs>(), rotationPlayerIds: new Set<number>(), totalRawMinutes: 0 }
-  ), [appliedOverrides, payload, players]);
-  const hasInvalidOverrides = payload !== null && allocation.totalRawMinutes <= 0;
+  ), [activePayload, appliedOverrides, players]);
+  const hasInvalidOverrides = activePayload !== null && allocation.totalRawMinutes <= 0;
   const minutes = allocation.minutes;
   const orderedPlayers = useMemo(() => (
     [...players].sort((left, right) => (
@@ -887,18 +914,19 @@ export function WinProjectionsPage() {
       || left.player_id - right.player_id
     ))
   ), [minutes, players]);
-  const forecast = calculatedForecast ?? payload?.win_projection ?? null;
+  const forecast = calculatedForecast ?? activePayload?.win_projection ?? null;
   const currentRecordByTeam = useMemo(() => new Map(
     currentRecords?.teams.map((record) => [record.team, record]) ?? [],
   ), [currentRecords]);
   const currentWinsUpperTailByTeam = useMemo(() => {
-    if (!forecast || !currentRecords) return new Map<string, number>();
+    const comparisonForecast = payload?.preseason_win_projection ?? forecast;
+    if (!comparisonForecast || !currentRecords) return new Map<string, number>();
     return new Map(currentRecords.teams.flatMap((record) => {
-      const envelope = simulateWinLossEnvelope(forecast, record.team);
+      const envelope = simulateWinLossEnvelope(comparisonForecast, record.team);
       const upperTail = envelope ? actualWinsUpperTail(envelope, record) : null;
       return upperTail === null ? [] : [[record.team, upperTail] as const];
     }));
-  }, [currentRecords, forecast]);
+  }, [currentRecords, forecast, payload?.preseason_win_projection]);
   const sortedForecastTeams = useMemo(() => {
     if (!forecast) return [];
     const direction = forecastSortDirection === "ascending" ? 1 : -1;
@@ -991,11 +1019,11 @@ export function WinProjectionsPage() {
 
   if (error) return <p className="error win-projections-error"><CircleAlert size={16} /> {error}</p>;
   if (!payload) return <div className="profile-loading"><LoaderCircle className="spin" size={20} /> Loading preseason minutes</div>;
-  const baselineForecast = payload.win_projection;
+  const baselineForecast = activePayload?.win_projection;
   const calculateForecast = () => {
-    if (!baselineForecast || hasInvalidOverrides) return;
+    if (!activePayload || !baselineForecast || hasInvalidOverrides) return;
     setAppliedOverrides(overrides);
-    setCalculatedForecast(calculateProjection(payload, baselineForecast, overrides));
+    setCalculatedForecast(calculateProjection(activePayload, baselineForecast, overrides));
     setForecastNeedsUpdate(false);
   };
   const resetTeam = () => {
@@ -1004,8 +1032,8 @@ export function WinProjectionsPage() {
     );
     setOverrides(nextOverrides);
     setAppliedOverrides(nextOverrides);
-    if (baselineForecast) {
-      setCalculatedForecast(calculateProjection(payload, baselineForecast, nextOverrides));
+    if (activePayload && baselineForecast) {
+      setCalculatedForecast(calculateProjection(activePayload, baselineForecast, nextOverrides));
     }
     setForecastNeedsUpdate(false);
   };
@@ -1013,9 +1041,13 @@ export function WinProjectionsPage() {
   return (
     <article className="win-projections-page" aria-labelledby="win-projections-title">
       <section className="win-projections-hero">
-        <p className="eyebrow">{payload.season} preseason planning</p>
+        <p className="eyebrow">{payload.season} {forecastMode === "current" && payload.state_kind === "in_season_updated" ? `current forecast${payload.as_of ? ` · through ${payload.as_of}` : ""}` : "preseason baseline"}</p>
         <h1 id="win-projections-title">Win projections.</h1>
-        <p>Adjust medical availability and conditional playing time, then recalculate. The top {payload.initial_rotation_size} override-adjusted raw projections form the baseline rotation; pins can retain additional players.</p>
+        <p>Adjust medical availability and conditional playing time, then recalculate. The top {activePayload?.initial_rotation_size ?? payload.initial_rotation_size} override-adjusted raw projections form the baseline rotation; pins can retain additional players.</p>
+        {payload.preseason_minutes && <div className="team-rotation-toggle" role="radiogroup" aria-label="Win projection state">
+          <button type="button" className={forecastMode === "current" ? "active" : ""} aria-pressed={forecastMode === "current"} onClick={() => { setForecastMode("current"); setCalculatedForecast(null); setForecastNeedsUpdate(false); }}>Current</button>
+          <button type="button" className={forecastMode === "preseason" ? "active" : ""} aria-pressed={forecastMode === "preseason"} onClick={() => { setForecastMode("preseason"); setCalculatedForecast(null); setForecastNeedsUpdate(false); }}>Preseason</button>
+        </div>}
         <a
           className="win-projections-doc-link"
           href={WIN_PROJECTIONS_DOCUMENTATION_URL}
@@ -1030,7 +1062,7 @@ export function WinProjectionsPage() {
         {forecast && <section className="win-forecast" aria-labelledby="win-forecast-title">
           <div className="win-forecast-heading">
             <div><p className="eyebrow">{calculatedForecast && !forecastNeedsUpdate ? "Custom forecast" : "Baseline forecast"}</p><h2 id="win-forecast-title">Projected wins.</h2></div>
-            <p>{forecast.scheduled_games_per_team} scheduled games + {forecast.unassigned_regular_games_per_team} modeled NBA Cup games. {currentRecords?.as_of ? `Current W-L records as of ${currentRecords.as_of}. P(≥ Current W) is the share of 10,000 model paths with at least that many wins after the same number of games.` : "Current W-L records unavailable."}</p>
+            <p>{forecast.state_kind === "in_season_updated" ? `Actual results through ${forecast.as_of ?? "the latest completed slate"} plus the remaining schedule` : `${forecast.scheduled_games_per_team} scheduled games`} + {forecast.unassigned_regular_games_per_team} modeled NBA Cup games. {currentRecords?.as_of ? `Current W-L records as of ${currentRecords.as_of}. P(≥ Current W) remains the frozen preseason upper-tail comparison.` : "Current W-L records unavailable."}</p>
           </div>
           <div className="win-forecast-table-wrap"><table className="win-forecast-table">
             <thead><tr>
@@ -1085,7 +1117,7 @@ export function WinProjectionsPage() {
           <label className="win-projections-team-filter">
             <span>Team</span>
             <select value={team} onChange={(event) => setTeam(event.target.value)}>
-              {payload.teams.map((item) => <option key={item} value={item}>{item}</option>)}
+              {activePayload?.teams.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
           </label>
           <button className="win-projections-reset" type="button" onClick={resetTeam} disabled={activeOverrides === 0} title="Reset this team to its baseline availability, conditional minutes, rating inputs, and rotation pins">
@@ -1151,7 +1183,7 @@ export function WinProjectionsPage() {
             </li>;
           })}
         </ul>
-        <p className="win-projections-note">Baseline: {payload.model}. {payload.contract}</p>
+        <p className="win-projections-note">Baseline: {activePayload?.model}. {activePayload?.contract}</p>
         </section>
       </section>
     </article>

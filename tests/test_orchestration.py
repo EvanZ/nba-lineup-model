@@ -22,12 +22,14 @@ from nba_lineup_model.orchestration.definitions import (
     cdn_morning_reconciliation_schedule,
     completed_game_cdn_play_by_play_sensor,
     completed_game_stats_v3_sensor,
+    current_season_lineups_sensor,
     current_season_serving_sensor,
     defs,
     final_game_archive_morning_reconciliation_schedule,
     in_season_nail_shadow_schedule,
     ingest_completed_cdn_play_by_play_job,
     live_score_sensor,
+    materialize_current_season_lineups_job,
     nba_market_odds_schedule,
     promote_current_season_serving_job,
     schedule_refresh_schedule,
@@ -261,6 +263,62 @@ def test_current_season_serving_sensor_suppresses_equivalent_inflight_run(
     )
 
     result = current_season_serving_sensor(build_sensor_context(instance=instance))
+
+    assert "already queued or running" in result.skip_message
+    assert queued.run_id in result.skip_message
+
+
+def test_current_season_lineups_sensor_tracks_serving_bundle(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    serving_root = tmp_path / "serving"
+    lineup_root = tmp_path / "lineups"
+    serving_root.mkdir()
+    serving_sha = "c" * 64
+    (serving_root / "latest.json").write_text(
+        json.dumps({"bundle_sha256": serving_sha})
+    )
+    monkeypatch.setenv("GESTALT_CURRENT_SEASON_SERVING_ROOT", str(serving_root))
+    monkeypatch.setenv("GESTALT_CURRENT_SEASON_LINEUPS_ROOT", str(lineup_root))
+
+    result = current_season_lineups_sensor(
+        build_sensor_context(instance=DagsterInstance.ephemeral())
+    )
+
+    assert result.run_key == f"current-season-lineups:{serving_sha}"
+    assert result.tags["gestalt/serving_bundle"] == serving_sha[:16]
+
+    lineup_root.mkdir()
+    (lineup_root / "latest.json").write_text(
+        json.dumps({"serving_bundle_sha256": serving_sha})
+    )
+    skipped = current_season_lineups_sensor(
+        build_sensor_context(instance=DagsterInstance.ephemeral())
+    )
+    assert "already match" in skipped.skip_message
+
+
+def test_current_season_lineups_sensor_suppresses_equivalent_inflight_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    serving_root = tmp_path / "serving"
+    serving_root.mkdir()
+    serving_sha = "d" * 64
+    (serving_root / "latest.json").write_text(
+        json.dumps({"bundle_sha256": serving_sha})
+    )
+    monkeypatch.setenv("GESTALT_CURRENT_SEASON_SERVING_ROOT", str(serving_root))
+    monkeypatch.setenv("GESTALT_CURRENT_SEASON_LINEUPS_ROOT", str(tmp_path / "lineups"))
+    instance = DagsterInstance.ephemeral()
+    queued = instance.create_run_for_job(
+        materialize_current_season_lineups_job,
+        status=DagsterRunStatus.STARTED,
+        tags={"gestalt/serving_bundle": serving_sha[:16]},
+    )
+
+    result = current_season_lineups_sensor(build_sensor_context(instance=instance))
 
     assert "already queued or running" in result.skip_message
     assert queued.run_id in result.skip_message

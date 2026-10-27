@@ -94,6 +94,7 @@ def load_current_season_serving_catalog(
         "preseason_run_id": str(identity["preseason_run_id"]),
         "game_count": int(coverage["game_count"]),
         "player_count": int(coverage["serving_player_count"]),
+        "source_game_ids": [str(game_id) for game_id in coverage["source_game_ids"]],
         "rating_updater_version": str(identity["sources"]["rating_state"]["updater_version"]),
         "minutes_updater_version": str(identity["sources"]["minutes_state"]["updater_version"]),
         "additive_profiles": "frozen_preseason",

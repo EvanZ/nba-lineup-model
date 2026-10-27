@@ -1,0 +1,26 @@
+[Unit]
+Description=NBA GESTALT development API
+After=network.target gestalt-web.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/nba-gestalt-dev/current
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/nba-gestalt-dev/current/src
+Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt-dev/current-season-serving
+Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt-dev/current-season-lineups
+Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule
+ExecStart=/opt/nba-gestalt/current/.venv/bin/uvicorn nba_lineup_model.web_api.app:app --host 127.0.0.1 --port 8011 --workers 1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadOnlyPaths=/var/lib/nba-gestalt
+ReadWritePaths=/var/lib/nba-gestalt-dev
+
+[Install]
+WantedBy=multi-user.target

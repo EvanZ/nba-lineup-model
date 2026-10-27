@@ -72,6 +72,9 @@ DEFAULT_CURRENT_SEASON_SERVING_ROOT = Path(
     "/var/lib/nba-gestalt/current-season-serving"
 )
 DEFAULT_CURRENT_SEASON_SERVING_LAKE_URI = "s3://nba-gestalt-data/lake"
+DEFAULT_CURRENT_SEASON_LINEUPS_ROOT = Path(
+    "/var/lib/nba-gestalt/current-season-lineups"
+)
 DEFAULT_RELEASE_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HEALTHCHECK_PARQUET = (
     "s3://nba-gestalt-data/lake/analytical/box_score_prior_panel/"
@@ -188,6 +191,15 @@ def _current_season_serving_lake_uri() -> str:
         "GESTALT_CURRENT_SEASON_SERVING_LAKE_URI",
         DEFAULT_CURRENT_SEASON_SERVING_LAKE_URI,
     ).rstrip("/")
+
+
+def _current_season_lineups_root() -> Path:
+    return Path(
+        os.environ.get(
+            "GESTALT_CURRENT_SEASON_LINEUPS_ROOT",
+            DEFAULT_CURRENT_SEASON_LINEUPS_ROOT,
+        )
+    )
 
 
 def _scheduled_time(context: object) -> datetime:
@@ -1511,6 +1523,105 @@ def current_season_serving_sensor(
 
 
 @op(
+    name="materialize_current_season_lineups",
+    retry_policy=RetryPolicy(max_retries=1, delay=300),
+)
+def materialize_current_season_lineups_op(
+    context: OpExecutionContext,
+) -> dict[str, object]:
+    """Publish observed current lineups tied to the promoted serving checksum."""
+
+    from nba_lineup_model.modeling.current_season_lineup_materialization import (
+        materialize_current_season_lineups,
+    )
+    from nba_lineup_model.web_api.inference import LineupEvaluator
+
+    path = materialize_current_season_lineups(
+        evaluator=LineupEvaluator.from_latest_artifact(),
+        schedule_state_dir=_state_dir(),
+        coverage_path=_cdn_coverage_path(),
+        cdn_s3_prefix=f"{_cdn_lake_uri()}/raw/cdn/playbyplay",
+        output_root=_current_season_lineups_root(),
+    )
+    manifest = json.loads((path / "manifest.json").read_text())
+    identity = manifest["identity"]
+    result = {
+        "bundle_path": str(path),
+        "bundle_sha256": str(manifest["bundle_sha256"]),
+        "serving_bundle_sha256": str(identity["serving_bundle_sha256"]),
+        "game_count": len(identity["source_game_ids"]),
+        "lineup_count": int(identity["lineup_count"]),
+    }
+    context.add_output_metadata(result)
+    return result
+
+
+@job(
+    name="materialize_promoted_current_season_lineups",
+    executor_def=in_process_executor,
+    tags={WORKLOAD_TAG: "current_season_lineups"},
+)
+def materialize_current_season_lineups_job() -> None:
+    materialize_current_season_lineups_op()
+
+
+@sensor(
+    name="promoted_current_season_lineups_ready",
+    job=materialize_current_season_lineups_job,
+    minimum_interval_seconds=1800,
+    default_status=SENSOR_DEFAULT_STATUS,
+    description=(
+        "Materialize observed lineups after a new synchronized current-season "
+        "rating/minutes serving state is promoted."
+    ),
+)
+def current_season_lineups_sensor(
+    context: SensorEvaluationContext,
+) -> RunRequest | SkipReason:
+    serving_path = _current_season_serving_root() / "latest.json"
+    if not serving_path.is_file():
+        return SkipReason("No promoted current-season serving state")
+    try:
+        serving = json.loads(serving_path.read_text())
+        serving_sha = str(serving["bundle_sha256"])
+    except (KeyError, OSError, json.JSONDecodeError, TypeError) as error:
+        return SkipReason(f"Invalid current-season serving pointer: {error}")
+    lineup_path = _current_season_lineups_root() / "latest.json"
+    if lineup_path.is_file():
+        try:
+            lineup = json.loads(lineup_path.read_text())
+            if str(lineup.get("serving_bundle_sha256")) == serving_sha:
+                return SkipReason("Current-season lineups already match the serving state")
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    inflight = context.instance.get_runs(
+        filters=RunsFilter(
+            job_name="materialize_promoted_current_season_lineups",
+            statuses=(
+                DagsterRunStatus.QUEUED,
+                DagsterRunStatus.STARTING,
+                DagsterRunStatus.STARTED,
+                DagsterRunStatus.CANCELING,
+            ),
+            tags={"gestalt/serving_bundle": serving_sha[:16]},
+        ),
+        limit=1,
+    )
+    if inflight:
+        return SkipReason(
+            "Equivalent current-season lineup materialization already queued or running: "
+            f"{inflight[0].run_id}"
+        )
+    return RunRequest(
+        run_key=f"current-season-lineups:{serving_sha}",
+        tags={
+            WORKLOAD_TAG: "current_season_lineups",
+            "gestalt/serving_bundle": serving_sha[:16],
+        },
+    )
+
+
+@op(
     name="archive_completed_stats_v3",
     config_schema={
         "season": Field(str, default_value=DEFAULT_STATS_V3_SEASON),
@@ -1693,6 +1804,7 @@ defs = Definitions(
         update_in_season_nail_shadow_job,
         update_in_season_minutes_shadow_job,
         promote_current_season_serving_job,
+        materialize_current_season_lineups_job,
         ingest_completed_stats_v3_job,
         daily_lake_health_job,
     ],
@@ -1711,6 +1823,7 @@ defs = Definitions(
         completed_game_cdn_play_by_play_sensor,
         in_season_minutes_shadow_sensor,
         current_season_serving_sensor,
+        current_season_lineups_sensor,
         completed_game_stats_v3_sensor,
     ],
 )

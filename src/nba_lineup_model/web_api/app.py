@@ -28,6 +28,8 @@ from nba_lineup_model.web_api.preseason_minutes import (
 )
 from nba_lineup_model.web_api.roster_movements import build_roster_movement_payload
 from nba_lineup_model.web_api.win_projections import (
+    build_current_season_minutes_payload,
+    build_current_season_win_projection_payload,
     build_win_projection_payload,
     read_current_season_records,
     read_schedule_day,
@@ -90,6 +92,36 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
 
     @lru_cache(maxsize=1)
     def get_win_projection_payload() -> dict[str, object]:
+        def with_current_state(
+            minutes: dict[str, object],
+            win_projection: dict[str, object],
+        ) -> dict[str, object]:
+            state = get_evaluator()
+            if state.current_season_rankings.empty:
+                return {**minutes, "win_projection": win_projection}
+            current_minutes = build_current_season_minutes_payload(
+                evaluator=state,
+                preseason_minutes_payload=minutes,
+            )
+            schedule_state_dir = Path(
+                os.environ.get(
+                    "GESTALT_SCHEDULE_STATE_DIR",
+                    "/var/lib/nba-gestalt/schedule",
+                )
+            )
+            current_projection = build_current_season_win_projection_payload(
+                evaluator=state,
+                minutes_payload=current_minutes,
+                preseason_forecast=win_projection,
+                state_dir=schedule_state_dir,
+            )
+            return {
+                **current_minutes,
+                "win_projection": current_projection,
+                "preseason_minutes": minutes,
+                "preseason_win_projection": win_projection,
+            }
+
         preview_path = os.environ.get("GESTALT_WIN_PROJECTION_CACHE_PATH")
         if preview_path:
             path = Path(preview_path)
@@ -102,7 +134,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             win_projection = preview["win_projection"]
             if not isinstance(minutes, dict) or not isinstance(win_projection, dict):
                 raise ValueError(f"Invalid local preview cache payload: {path}")
-            return {**minutes, "win_projection": win_projection}
+            return with_current_state(minutes, win_projection)
         try:
             cached = read_win_projection_cache(
                 model_artifact=MODEL_ARTIFACT,
@@ -113,10 +145,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 win_projection = cached["win_projection"]
                 if not isinstance(minutes, dict) or not isinstance(win_projection, dict):
                     raise ValueError("Invalid combined win projection cache payload")
-                return {
-                    **minutes,
-                    "win_projection": win_projection,
-                }
+                return with_current_state(minutes, win_projection)
         except FileNotFoundError:
             cached = None
 
@@ -133,10 +162,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 evaluator=get_evaluator(), minutes_payload=minutes
             )
         )
-        return {
-            **minutes,
-            "win_projection": win_projection,
-        }
+        return with_current_state(minutes, win_projection)
 
     @app.get("/api/health")
     def health() -> dict[str, object]:
@@ -313,6 +339,12 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 "season": selected_season,
                 "run_id": state.run_id,
                 "available_seasons": state.available_lineup_seasons(),
+                "rating_state": state.ranking_state_metadata(selected_season),
+                "lineup_state": (
+                    state.current_season_lineup_metadata
+                    if selected_season == "2026-27"
+                    else {"kind": "completed_fit", "season": selected_season}
+                ),
                 "minimum_possessions": minimum_possessions,
                 "lineups": state.lineups(
                     season=selected_season,

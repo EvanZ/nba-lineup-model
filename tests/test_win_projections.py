@@ -20,6 +20,8 @@ from nba_lineup_model.web_api.win_projections import (
     _game_rotation,
     _parse_official_injury_report,
     _team_win_totals,
+    build_current_season_minutes_payload,
+    build_current_season_win_projection_payload,
     fit_win_probability_scale,
     read_current_season_records,
     read_schedule_day,
@@ -30,6 +32,184 @@ from nba_lineup_model.web_api.win_projections import (
     score_win_probabilities,
     simulate_baseline_win_total_intervals,
 )
+
+
+def test_current_minutes_payload_uses_promoted_ratings_and_roles() -> None:
+    baseline = {
+        "season": "2026-27",
+        "completed_season": "2025-26",
+        "model": "preseason",
+        "initial_rotation_size": 2,
+        "regulation_team_minutes": 240.0,
+        "contract": "frozen",
+        "teams": ["AAA"],
+        "players": [
+            {
+                "player_id": 1,
+                "player_name": "One",
+                "position": "G",
+                "age": 25.0,
+                "team": "AAA",
+                "prior_season_minutes": 1000.0,
+                "availability_probability": 0.9,
+                "conditional_minutes_per_game": 30.0,
+                "projected_nail": 1.0,
+            },
+            {
+                "player_id": 2,
+                "player_name": "Two",
+                "position": "F",
+                "age": 24.0,
+                "team": "AAA",
+                "prior_season_minutes": 800.0,
+                "availability_probability": 0.8,
+                "conditional_minutes_per_game": 20.0,
+                "projected_nail": 0.0,
+            },
+            {
+                "player_id": 3,
+                "player_name": "Three",
+                "position": "C",
+                "age": 23.0,
+                "team": "AAA",
+                "prior_season_minutes": 400.0,
+                "availability_probability": 0.7,
+                "conditional_minutes_per_game": 10.0,
+                "projected_nail": -1.0,
+            },
+        ],
+    }
+    evaluator = SimpleNamespace(
+        current_season_rankings=pd.DataFrame(
+            {
+                "player_id": [1, 2, 3],
+                "player_name": ["One", "Two", "Three"],
+                "team": ["AAA", "AAA", "AAA"],
+                "position": ["G", "F", "C"],
+                "age": [25.0, 24.0, 23.0],
+                "rapm": [1.5, 0.25, -0.5],
+                "preseason_nail": [1.0, 0.0, -1.0],
+                "current_expected_minutes_if_available": [34.0, 24.0, 12.0],
+                "preseason_expected_minutes_if_available": [30.0, 20.0, 10.0],
+                "current_participation_estimate": [1.0, 1.0, 1.0],
+            }
+        ),
+        current_season_metadata={
+            "evidence_through_date": "2026-10-26",
+            "bundle_sha256": "a" * 64,
+        },
+    )
+
+    payload = build_current_season_minutes_payload(
+        evaluator=evaluator,
+        preseason_minutes_payload=baseline,
+    )
+
+    by_id = {row["player_id"]: row for row in payload["players"]}
+    assert payload["state_kind"] == "in_season_updated"
+    assert payload["as_of"] == "2026-10-26"
+    assert by_id[1]["projected_nail"] == 1.5
+    assert by_id[1]["conditional_minutes_per_game"] == 34.0
+    assert by_id[3]["baseline_minutes_per_game"] == 0.0
+    assert sum(row["baseline_minutes_per_game"] for row in payload["players"]) == pytest.approx(
+        240.0
+    )
+
+
+def test_current_win_projection_fixes_actual_wins_and_scores_remaining_schedule(
+    tmp_path, monkeypatch
+) -> None:
+    catalog = pd.DataFrame(
+        {
+            "game_id": ["0022600001", "0022600002"],
+            "season": ["2026-27", "2026-27"],
+            "season_type": ["regular", "regular"],
+            "game_date": pd.to_datetime(["2026-10-21", "2026-10-23"]),
+            "home_team_id": [1, 2],
+            "away_team_id": [2, 1],
+            "home_team_tricode": ["AAA", "BBB"],
+            "away_team_tricode": ["BBB", "AAA"],
+        }
+    )
+    catalog_path = tmp_path / "games.parquet"
+    catalog.to_parquet(catalog_path, index=False)
+    final_dir = tmp_path / "schedule" / "final"
+    final_dir.mkdir(parents=True)
+    (final_dir / "401.summary.json").write_text(
+        json.dumps(
+            {
+                "season": "2026-27",
+                "game_id": "0022600001",
+                "archived_at": "2026-10-22T06:00:00Z",
+                "start_time": "2026-10-21T23:00:00Z",
+                "away_team": "BBB",
+                "home_team": "AAA",
+                "final": {
+                    "away_score": 100,
+                    "home_score": 110,
+                    "status": {"completed": True},
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(
+        win_projections,
+        "simulate_current_win_total_intervals",
+        lambda _games, *, team_strength, **_kwargs: pd.DataFrame(
+            {
+                "team": team_strength.index,
+                "win_total_p1": [30.0, 20.0],
+                "win_total_p5": [32.0, 22.0],
+                "win_total_p50": [40.0, 30.0],
+                "win_total_p95": [48.0, 38.0],
+                "win_total_p99": [50.0, 40.0],
+            }
+        ),
+    )
+    evaluator = SimpleNamespace(
+        current_season_metadata={
+            "evidence_through_date": "2026-10-22",
+            "bundle_sha256": "b" * 64,
+        }
+    )
+    minutes = {
+        "teams": ["AAA", "BBB"],
+        "players": [
+            {"team": "AAA", "baseline_minutes_per_game": 48.0, "projected_nail": 1.0},
+            {"team": "BBB", "baseline_minutes_per_game": 48.0, "projected_nail": -1.0},
+        ],
+    }
+    preseason = {
+        "model": "preseason",
+        "season": "2026-27",
+        "win_probability_scale": 0.2,
+        "home_court": 2.0,
+        "back_to_back": -1.0,
+        "unassigned_regular_games_per_team": 2,
+        "calibration": {},
+        "teams": [
+            {"team": "AAA", "betmgm_win_total": 45.5},
+            {"team": "BBB", "betmgm_win_total": 35.5},
+        ],
+        "scheduled_games": [],
+        "contract": "frozen",
+    }
+
+    payload = build_current_season_win_projection_payload(
+        evaluator=evaluator,
+        minutes_payload=minutes,
+        preseason_forecast=preseason,
+        state_dir=tmp_path / "schedule",
+        catalog_path=catalog_path,
+    )
+
+    by_team = {row["team"]: row for row in payload["teams"]}
+    assert payload["state_kind"] == "in_season_updated"
+    assert payload["serving_bundle_sha256"] == "b" * 64
+    assert [game["game_id"] for game in payload["scheduled_games"]] == ["0022600002"]
+    assert by_team["AAA"]["actual_wins"] == 1
+    assert by_team["AAA"]["completed_games"] == 1
+    assert by_team["AAA"]["projected_wins"] > by_team["AAA"]["remaining_scheduled_wins"]
 
 
 def test_current_season_records_use_immutable_regular_season_finals(tmp_path) -> None:

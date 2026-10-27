@@ -163,6 +163,261 @@ def build_win_projection_payload(
     }
 
 
+def build_current_season_minutes_payload(
+    *,
+    evaluator: LineupEvaluator,
+    preseason_minutes_payload: dict[str, object],
+) -> dict[str, object]:
+    """Overlay the promoted rating and role state onto the frozen roster payload.
+
+    The result remains a forward-looking allocation: current participation and
+    conditional-minutes estimates choose and weight a 15-player rotation, then
+    each team is normalized to 240 minutes.  Daily injury reports still replace
+    participation assumptions when an individual game is materialized.
+    """
+
+    current = evaluator.current_season_rankings.copy()
+    if current.empty:
+        return dict(preseason_minutes_payload)
+    required = {
+        "player_id",
+        "player_name",
+        "team",
+        "rapm",
+        "current_expected_minutes_if_available",
+        "current_participation_estimate",
+    }
+    missing = sorted(required - set(current))
+    if missing:
+        raise ValueError("Current serving state lacks minutes fields: " + ", ".join(missing))
+
+    baseline_rows = {
+        int(row["player_id"]): row
+        for row in preseason_minutes_payload.get("players", [])
+        if isinstance(row, dict) and row.get("player_id") is not None
+    }
+    rows: list[dict[str, object]] = []
+    for row in current.itertuples(index=False):
+        player_id = int(row.player_id)
+        baseline = baseline_rows.get(player_id, {})
+        availability = _finite_or_default(
+            row.current_participation_estimate,
+            baseline.get("availability_probability", 1.0),
+        )
+        conditional = _finite_or_default(
+            row.current_expected_minutes_if_available,
+            baseline.get("conditional_minutes_per_game", 0.0),
+        )
+        availability = min(1.0, max(0.0, availability))
+        conditional = min(48.0, max(0.0, conditional))
+        rows.append(
+            {
+                **baseline,
+                "player_id": player_id,
+                "player_name": str(row.player_name),
+                "position": str(getattr(row, "position", baseline.get("position", ""))),
+                "age": _none_if_not_finite(getattr(row, "age", baseline.get("age"))),
+                "team": str(row.team),
+                "prior_season_minutes": float(baseline.get("prior_season_minutes", 0.0)),
+                "is_rating_fallback": False,
+                "has_prior_availability_state": bool(
+                    baseline.get("has_prior_availability_state", False)
+                ),
+                "has_prior_minutes_state": bool(
+                    baseline.get("has_prior_minutes_state", False)
+                ),
+                "availability_probability": availability,
+                "conditional_minutes_per_game": conditional,
+                "raw_expected_total_minutes": 82.0 * availability * conditional,
+                "projected_nail": float(row.rapm),
+                "rating_source": "in-season updater",
+                "preseason_projected_nail": _finite_or_default(
+                    getattr(row, "preseason_nail", None),
+                    baseline.get("projected_nail", 0.0),
+                ),
+                "preseason_conditional_minutes_per_game": _finite_or_default(
+                    getattr(row, "preseason_expected_minutes_if_available", None),
+                    baseline.get("conditional_minutes_per_game", 0.0),
+                ),
+            }
+        )
+
+    players = pd.DataFrame.from_records(rows)
+    if players.empty:
+        raise ValueError("Current serving state produced no player minutes")
+    players["is_baseline_rotation_candidate"] = False
+    players["baseline_minutes_per_game"] = 0.0
+    players["baseline_minute_share"] = 0.0
+    rotation_size = int(preseason_minutes_payload.get("initial_rotation_size", 15))
+    for _team, index in players.groupby("team", sort=True).groups.items():
+        ordered = players.loc[index].sort_values(
+            ["raw_expected_total_minutes", "player_name", "player_id"],
+            ascending=[False, True, True],
+            kind="stable",
+        )
+        selected = ordered.head(rotation_size).index
+        total = float(players.loc[selected, "raw_expected_total_minutes"].sum())
+        if total <= 0.0:
+            raise ValueError(f"Current minutes state produced no rotation for {_team}")
+        players.loc[selected, "is_baseline_rotation_candidate"] = True
+        players.loc[selected, "baseline_minute_share"] = (
+            players.loc[selected, "raw_expected_total_minutes"] / total
+        )
+        players.loc[selected, "baseline_minutes_per_game"] = (
+            240.0 * players.loc[selected, "raw_expected_total_minutes"] / total
+        )
+
+    players = players.sort_values(
+        ["team", "baseline_minutes_per_game", "player_name", "player_id"],
+        ascending=[True, False, True, True],
+        kind="stable",
+    )
+    metadata = evaluator.current_season_metadata
+    return {
+        **{
+            key: value
+            for key, value in preseason_minutes_payload.items()
+            if key not in {"players", "teams", "contract", "model", "win_projection"}
+        },
+        "season": PROJECTION_SEASON,
+        "completed_season": preseason_minutes_payload.get("completed_season", HOLDOUT_SEASON),
+        "model": "In-season NAIL + conditional-minutes updater",
+        "state_kind": "in_season_updated",
+        "as_of": metadata.get("evidence_through_date"),
+        "serving_bundle_sha256": metadata.get("bundle_sha256"),
+        "initial_rotation_size": rotation_size,
+        "regulation_team_minutes": 240.0,
+        "contract": (
+            "Current NAIL ratings and current role estimates are normalized to 240 "
+            "minutes per team. Official game injury reports supersede the participation "
+            "estimate when Schedule projections are frozen."
+        ),
+        "teams": sorted(players["team"].astype(str).unique().tolist()),
+        "players": players.to_dict(orient="records"),
+    }
+
+
+def build_current_season_win_projection_payload(
+    *,
+    evaluator: LineupEvaluator,
+    minutes_payload: dict[str, object],
+    preseason_forecast: dict[str, object],
+    state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    catalog_path: Path | str = DEFAULT_CATALOG_PATH,
+) -> dict[str, object]:
+    """Project final wins from actual results plus the remaining current schedule."""
+
+    metadata = evaluator.current_season_metadata
+    if not metadata:
+        return dict(preseason_forecast)
+    through_date = str(metadata["evidence_through_date"])
+    records_payload = read_current_season_records(
+        state_dir=state_dir,
+        season=PROJECTION_SEASON,
+        through_date=through_date,
+    )
+    records = pd.DataFrame(records_payload["teams"])
+    if records.empty:
+        records = pd.DataFrame(
+            {
+                "team": minutes_payload["teams"],
+                "games": 0,
+                "wins": 0,
+                "losses": 0,
+            }
+        )
+    else:
+        records = records.loc[:, ["team", "games", "wins", "losses"]]
+
+    catalog = pd.read_parquet(catalog_path)
+    all_games = _season_games(catalog, PROJECTION_SEASON)
+    completed_game_ids = {
+        str(game_id) for game_id in records_payload.get("completed_game_ids", [])
+    }
+    remaining_games = all_games.loc[
+        ~all_games["game_id"].astype(str).isin(completed_game_ids)
+    ].copy()
+    strength = _current_team_strength(minutes_payload)
+    beta = float(preseason_forecast["win_probability_scale"])
+    home_court = float(preseason_forecast["home_court"])
+    back_to_back = float(preseason_forecast["back_to_back"])
+    game_rows = _score_games(
+        remaining_games,
+        team_strength=strength,
+        beta=beta,
+        home_court=home_court,
+        back_to_back=back_to_back,
+    )
+    remaining = _team_win_totals(
+        game_rows,
+        team_strength=strength,
+        beta=beta,
+        home_court=home_court,
+    ).rename(
+        columns={
+            "scheduled_wins": "remaining_scheduled_wins",
+            "scheduled_games": "remaining_scheduled_games",
+        }
+    )
+    teams = remaining.merge(records, on="team", how="left", validate="one_to_one")
+    for column in ("games", "wins", "losses"):
+        teams[column] = teams[column].fillna(0).astype(int)
+    teams["scheduled_wins"] = teams["wins"] + teams["remaining_scheduled_wins"]
+    teams["scheduled_games"] = teams["games"] + teams["remaining_scheduled_games"]
+    teams["projected_wins"] = teams["scheduled_wins"] + teams["unassigned_wins"]
+    teams["projected_losses"] = 82.0 - teams["projected_wins"]
+    teams = teams.rename(
+        columns={
+            "games": "completed_games",
+            "wins": "actual_wins",
+            "losses": "actual_losses",
+        }
+    )
+    market = {
+        str(row["team"]): row.get("betmgm_win_total")
+        for row in preseason_forecast.get("teams", [])
+        if isinstance(row, dict)
+    }
+    teams["betmgm_win_total"] = teams["team"].map(market)
+    intervals = simulate_current_win_total_intervals(
+        game_rows,
+        team_strength=strength,
+        records=teams.set_index("team")[["completed_games", "actual_wins"]],
+        beta=beta,
+        home_court=home_court,
+    )
+    teams = teams.drop(
+        columns=["win_total_p1", "win_total_p5", "win_total_p50", "win_total_p95", "win_total_p99"],
+        errors="ignore",
+    ).merge(intervals, on="team", how="left", validate="one_to_one")
+    teams = teams.sort_values(
+        ["projected_wins", "team"], ascending=[False, True], kind="stable"
+    ).reset_index(drop=True)
+
+    return {
+        **{
+            key: value
+            for key, value in preseason_forecast.items()
+            if key not in {"teams", "scheduled_games", "contract", "model"}
+        },
+        "model": "Current NAIL + current minutes",
+        "state_kind": "in_season_updated",
+        "as_of": through_date,
+        "serving_bundle_sha256": metadata.get("bundle_sha256"),
+        "actual_results_source": records_payload.get("source"),
+        "scheduled_game_count": int(len(all_games)),
+        "scheduled_games_per_team": int(len(all_games) * 2 / len(strength)),
+        "remaining_scheduled_game_count": int(len(remaining_games)),
+        "teams": teams.to_dict(orient="records"),
+        "scheduled_games": _public_scheduled_games(game_rows),
+        "contract": (
+            f"Actual wins through {through_date} are fixed. Remaining games use the "
+            "latest promoted player ratings and role estimates, plus the frozen "
+            "home-court, back-to-back, and win-calibration layers."
+        ),
+    }
+
+
 def win_projection_cache_path(model_artifact: str, run_id: str) -> Path:
     """Return the immutable release path for a baseline W0 payload."""
 
@@ -278,6 +533,115 @@ def simulate_baseline_win_total_intervals(
             }
         )
     return pd.DataFrame.from_records(rows)
+
+
+def simulate_current_win_total_intervals(
+    games: pd.DataFrame,
+    *,
+    team_strength: pd.Series,
+    records: pd.DataFrame,
+    beta: float,
+    home_court: float,
+    trials: int = WIN_TOTAL_INTERVAL_TRIALS,
+    seed: int = WIN_TOTAL_INTERVAL_SEED,
+) -> pd.DataFrame:
+    """Simulate final totals conditional on already observed wins and losses."""
+
+    if trials <= 0:
+        raise ValueError("Win-total interval trials must be positive")
+    probabilities: dict[str, list[float]] = {str(team): [] for team in team_strength.index}
+    for row in games.loc[
+        :, ["home_team_tricode", "away_team_tricode", "home_win_probability"]
+    ].itertuples(index=False):
+        home_team = str(row.home_team_tricode)
+        away_team = str(row.away_team_tricode)
+        home_probability = float(row.home_win_probability)
+        probabilities[home_team].append(home_probability)
+        probabilities[away_team].append(1.0 - home_probability)
+    for team, strength in team_strength.items():
+        probabilities[str(team)].extend(
+            [
+                float(_sigmoid(beta * (float(strength) + home_court))),
+                float(_sigmoid(beta * (float(strength) - home_court))),
+            ]
+        )
+
+    rows: list[dict[str, float | str]] = []
+    for team in sorted(probabilities):
+        completed_games = int(records.loc[team, "completed_games"]) if team in records.index else 0
+        actual_wins = int(records.loc[team, "actual_wins"]) if team in records.index else 0
+        team_probabilities = np.asarray(probabilities[team], dtype=float)
+        modeled_final_games = completed_games + len(team_probabilities)
+        if modeled_final_games != 82:
+            raise ValueError(
+                f"Expected 82 observed-plus-modeled games for {team}; "
+                f"found {modeled_final_games}"
+            )
+        team_seed = seed + sum(
+            (index + 1) * ord(character) for index, character in enumerate(team)
+        )
+        generator = np.random.default_rng(team_seed)
+        totals = actual_wins + (
+            generator.random((trials, len(team_probabilities))) < team_probabilities
+        ).sum(axis=1)
+        ordered = np.sort(totals)
+        rows.append(
+            {
+                "team": team,
+                "win_total_p1": float(_empirical_quantile(ordered, 0.01)),
+                "win_total_p5": float(_empirical_quantile(ordered, 0.05)),
+                "win_total_p50": float(_empirical_quantile(ordered, 0.50)),
+                "win_total_p95": float(_empirical_quantile(ordered, 0.95)),
+                "win_total_p99": float(_empirical_quantile(ordered, 0.99)),
+            }
+        )
+    return pd.DataFrame.from_records(rows)
+
+
+def _public_scheduled_games(games: pd.DataFrame) -> list[dict[str, object]]:
+    return (
+        games.assign(
+            game_date=lambda frame: pd.to_datetime(frame["game_date"]).dt.strftime("%Y-%m-%d"),
+            home_back_to_back=lambda frame: frame["home_back_to_back"].astype(int),
+            away_back_to_back=lambda frame: frame["away_back_to_back"].astype(int),
+        )
+        .loc[
+            :,
+            [
+                "game_id",
+                "game_date",
+                "home_team_tricode",
+                "away_team_tricode",
+                "home_back_to_back",
+                "away_back_to_back",
+            ],
+        ]
+        .rename(
+            columns={
+                "home_team_tricode": "home_team",
+                "away_team_tricode": "away_team",
+            }
+        )
+        .to_dict(orient="records")
+    )
+
+
+def _finite_or_default(value: object, default: object) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = float(default)
+    if not np.isfinite(parsed):
+        parsed = float(default)
+    return parsed
+
+
+def _none_if_not_finite(value: object) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if np.isfinite(parsed) else None
 
 
 def _empirical_quantile(ordered_values: np.ndarray, probability: float) -> int:
@@ -721,10 +1085,12 @@ def read_current_season_records(
     *,
     state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
     season: str = PROJECTION_SEASON,
+    through_date: str | None = None,
 ) -> dict[str, object]:
     """Aggregate current regular-season records from immutable final audits."""
 
     records: dict[str, dict[str, object]] = {}
+    completed_game_ids: list[str] = []
     latest_game_date: str | None = None
     latest_archive_time: str | None = None
     final_dir = Path(state_dir) / "final"
@@ -755,6 +1121,9 @@ def read_current_season_records(
                 game_date = pacific_date(start_time).isoformat()
             except ValueError:
                 continue
+            if through_date is not None and game_date > through_date:
+                continue
+            completed_game_ids.append(game_id)
             winner = home_team if home_score > away_score else away_team
             for team in (away_team, home_team):
                 record = records.setdefault(
@@ -780,8 +1149,10 @@ def read_current_season_records(
     return {
         "season": season,
         "as_of": latest_game_date,
+        "through_date": through_date,
         "updated_at": latest_archive_time,
         "source": "Immutable completed-game archive (ESPN scoreboard)",
+        "completed_game_ids": sorted(set(completed_game_ids)),
         "teams": sorted(records.values(), key=lambda item: str(item["team"])),
     }
 
@@ -1170,6 +1541,9 @@ def refresh_schedule_archive(
     )
     if injury_artifact is not None:
         payload["injury_report_artifact"] = injury_artifact
+        for game in payload["games"]:
+            if isinstance(game, dict) and isinstance(game.get("injury_report"), dict):
+                game["injury_report"]["artifact_sha256"] = injury_artifact.get("sha256")
     previous_games = {
         str(game.get("espn_game_id")): game
         for game in (previous or {}).get("games", [])
@@ -1893,6 +2267,9 @@ def _normalize_espn_schedule(
                 },
                 "projection": {
                     "model": forecast.get("model"),
+                    "state_kind": forecast.get("state_kind", "preseason_preview"),
+                    "rating_as_of": forecast.get("as_of"),
+                    "serving_bundle_sha256": forecast.get("serving_bundle_sha256"),
                     "home_margin": margin,
                     "home_win_probability": float(1.0 / (1.0 + np.exp(-beta * margin))),
                 },
@@ -1932,6 +2309,11 @@ def _normalize_espn_schedule(
         "collected_at": collected_at.isoformat().replace("+00:00", "Z"),
         "source": "ESPN scoreboard API",
         "prediction_market_source": "Polymarket public Gamma and CLOB APIs",
+        "projection_state": {
+            "kind": forecast.get("state_kind", "preseason_preview"),
+            "rating_as_of": forecast.get("as_of"),
+            "serving_bundle_sha256": forecast.get("serving_bundle_sha256"),
+        },
         "injury_report": {
             "source": "NBA official injury report",
             "source_url": injury_report.get("source_url"),
