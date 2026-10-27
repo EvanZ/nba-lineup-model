@@ -14,6 +14,7 @@ from nba_lineup_model.modeling.in_season_nail_monitor import (
     SEASON,
     _b2b_flags,
     _cached_game_contribution,
+    _player_game_context,
     build_player_game_trajectory,
 )
 
@@ -91,12 +92,43 @@ def test_shadow_monitor_back_to_back_flags_are_date_batched() -> None:
     assert flags["3"] == (True, False)
 
 
-def test_player_game_trajectory_has_one_cumulative_point_per_appearance() -> None:
+def test_player_game_context_uses_frozen_roster_for_players_missing_box_score() -> None:
+    context = _player_game_context(
+        summary={
+            "home_team": "PHX",
+            "away_team": "GSW",
+            "pregame": {
+                "projected_minutes": {
+                    "away": [
+                        {
+                            "player_id": 1,
+                            "player_name": "Stephen Curry",
+                            "status": "Out",
+                            "reason": "Right knee injury management",
+                        }
+                    ],
+                    "home": [],
+                }
+            },
+        },
+        espn={"boxscore": {"players": []}},
+        name_to_player_id={"stephen curry": 1},
+    )
+
+    assert context[1] == {
+        "team": "GSW",
+        "opponent": "PHX",
+        "pregame_status": "Out",
+        "pregame_reason": "Right knee injury management",
+    }
+
+
+def test_player_game_trajectory_includes_missed_team_games() -> None:
     first = _contribution()
     second_stints = pd.DataFrame(
         {
             "game_id": ["0022600002"],
-            "home_player_ids": [(1, 3)],
+            "home_player_ids": [(3,)],
             "away_player_ids": [(2, 4)],
             "target_home_net_rating": [2.0],
             "possessions": [30.0],
@@ -130,7 +162,12 @@ def test_player_game_trajectory_has_one_cumulative_point_per_appearance() -> Non
             ("0022600001", 2): {"team": "BOS", "opponent": "NYK"},
             ("0022600001", 3): {"team": "NYK", "opponent": "BOS"},
             ("0022600001", 4): {"team": "NYK", "opponent": "BOS"},
-            ("0022600002", 1): {"team": "BOS", "opponent": "MIA"},
+            ("0022600002", 1): {
+                "team": "BOS",
+                "opponent": "MIA",
+                "pregame_status": "Out",
+                "pregame_reason": "Rest",
+            },
             ("0022600002", 2): {"team": "MIA", "opponent": "BOS"},
             ("0022600002", 3): {"team": "BOS", "opponent": "MIA"},
             ("0022600002", 4): {"team": "MIA", "opponent": "BOS"},
@@ -140,10 +177,14 @@ def test_player_game_trajectory_has_one_cumulative_point_per_appearance() -> Non
     assert len(trajectory) == 8
     player = trajectory.loc[trajectory["player_id"].eq(1)].reset_index(drop=True)
     assert player["game_number"].tolist() == [1, 2]
+    assert player["appearance_number"].tolist()[0] == 1
+    assert pd.isna(player["appearance_number"].tolist()[1])
     assert player["game_id"].tolist() == ["0022600001", "0022600002"]
     assert player["opponent"].tolist() == ["NYK", "MIA"]
-    assert player["game_on_court_possessions"].tolist() == [20.0, 30.0]
-    assert player["cumulative_on_court_possessions"].tolist() == [20.0, 50.0]
+    assert player["played"].tolist() == [True, False]
+    assert player["pregame_status"].tolist() == [None, "Out"]
+    assert player["game_on_court_possessions"].tolist() == [20.0, 0.0]
+    assert player["cumulative_on_court_possessions"].tolist() == [20.0, 20.0]
     assert player["updated_rating"].iloc[-1] == (
         player["preseason_rating"].iloc[-1] + player["in_season_delta"].iloc[-1]
     )

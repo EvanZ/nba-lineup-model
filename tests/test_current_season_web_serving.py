@@ -20,7 +20,13 @@ SEASON = "2026-27"
 CONFIG = ServingPromotionConfig(preseason_run_id="preseason-release")
 
 
-def _rating_state(*, cutoff: datetime, games: list[str], deltas: list[float]) -> pd.DataFrame:
+def _rating_state(
+    *,
+    cutoff: datetime,
+    games: list[str],
+    deltas: list[float],
+    player_one_possessions: float | None = None,
+) -> pd.DataFrame:
     baselines = [3.0, -1.0]
     return pd.DataFrame(
         {
@@ -37,7 +43,12 @@ def _rating_state(*, cutoff: datetime, games: list[str], deltas: list[float]) ->
             "updated_nail": [
                 baseline + delta for baseline, delta in zip(baselines, deltas, strict=True)
             ],
-            "raw_on_court_possessions": [100.0 * len(games), 0.0],
+            "raw_on_court_possessions": [
+                100.0 * len(games)
+                if player_one_possessions is None
+                else player_one_possessions,
+                0.0,
+            ],
             "effective_information": [50.0 * len(games), 0.0],
             "prior_equivalent_possessions": [6000.0] * 2,
             "prior_weight": [0.98, 1.0],
@@ -110,12 +121,19 @@ def _publish_day(
     deltas: list[float],
     minutes: list[float],
     include_trajectory: bool = False,
+    trajectory_played: list[bool] | None = None,
 ) -> Path:
     cutoff = datetime.combine(through_date, datetime.min.time(), tzinfo=UTC).replace(hour=8)
     sources.mkdir(parents=True, exist_ok=True)
     rating = sources / f"rating-{through_date}.parquet"
     minute = sources / f"minutes-{through_date}.parquet"
-    _rating_state(cutoff=cutoff, games=games, deltas=deltas).to_parquet(rating, index=False)
+    played = trajectory_played or [True] * len(games)
+    _rating_state(
+        cutoff=cutoff,
+        games=games,
+        deltas=deltas,
+        player_one_possessions=100.0 * sum(played),
+    ).to_parquet(rating, index=False)
     _minutes_state(cutoff=cutoff, games=games, minutes=minutes).to_parquet(minute, index=False)
     trajectory = sources / f"trajectory-{through_date}.parquet"
     if include_trajectory:
@@ -125,11 +143,22 @@ def _publish_day(
                 "updater_version": ["in-season-nail-v1"] * len(games),
                 "player_id": [1] * len(games),
                 "game_number": list(range(1, len(games) + 1)),
+                "appearance_number": [
+                    sum(played[: index + 1]) if did_play else None
+                    for index, did_play in enumerate(played)
+                ],
                 "game_id": games,
                 "game_date": [through_date.isoformat()] * len(games),
                 "game_time_utc": [cutoff.isoformat()] * len(games),
                 "team": ["GSW"] * len(games),
                 "opponent": ["LAL"] * len(games),
+                "played": played,
+                "pregame_status": [
+                    "Available" if did_play else "Out" for did_play in played
+                ],
+                "pregame_reason": [
+                    None if did_play else "Rest" for did_play in played
+                ],
                 "preseason_rating": [3.0] * len(games),
                 "in_season_delta": [
                     deltas[0] * game_number / len(games)
@@ -139,9 +168,12 @@ def _publish_day(
                     3.0 + deltas[0] * game_number / len(games)
                     for game_number in range(1, len(games) + 1)
                 ],
-                "game_on_court_possessions": [100.0] * len(games),
+                "game_on_court_possessions": [
+                    100.0 if did_play else 0.0 for did_play in played
+                ],
                 "cumulative_on_court_possessions": [
-                    100.0 * game_number for game_number in range(1, len(games) + 1)
+                    100.0 * sum(played[:game_number])
+                    for game_number in range(1, len(games) + 1)
                 ],
                 "effective_information": [
                     50.0 * game_number for game_number in range(1, len(games) + 1)
@@ -275,6 +307,39 @@ def test_current_catalog_uses_postgame_rating_trajectory_when_published(
     ]
     assert [point.get("game_number") for point in points] == [None, 1, 2]
     assert [point["rating"] for point in points] == pytest.approx([3.0, 3.1, 3.2])
+    assert points[-1]["is_current"] is True
+
+
+def test_current_catalog_marks_latest_skipped_team_game_as_current(
+    tmp_path: Path,
+) -> None:
+    bundle = _publish_day(
+        tmp_path / "serving",
+        tmp_path / "sources",
+        through_date=date(2026, 10, 26),
+        games=["1", "2"],
+        deltas=[0.2, 0.0],
+        minutes=[36.0, 18.0],
+        include_trajectory=True,
+        trajectory_played=[True, False],
+    )
+
+    catalog = load_current_season_serving_catalog(
+        _preseason_rankings(),
+        root=tmp_path / "serving",
+        bundle_path=bundle,
+    )
+
+    assert catalog is not None
+    points = catalog.trajectories[1]
+    assert [point["point_kind"] for point in points] == [
+        "preseason",
+        "postgame",
+        "skipped_game",
+    ]
+    assert points[-1]["played"] is False
+    assert points[-1]["pregame_status"] == "Out"
+    assert points[-1]["pregame_reason"] == "Rest"
     assert points[-1]["is_current"] is True
 
 

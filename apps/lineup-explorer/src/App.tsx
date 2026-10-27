@@ -375,11 +375,11 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
   const points = player.current_season_trajectory ?? [];
   if (points.length < 2) return null;
   const width = Math.max(1100, points.length * 42);
-  const height = 238;
+  const height = 252;
   const left = 58;
   const right = 24;
   const top = 28;
-  const bottom = 48;
+  const bottom = 72;
   const values = points.map((point) => point.rating);
   const minimum = Math.floor((Math.min(...values) - 0.35) * 2) / 2;
   const maximum = Math.ceil((Math.max(...values) + 0.35) * 2) / 2;
@@ -388,7 +388,8 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
   const y = (rating: number) => top + ((maximum - rating) / span) * (height - top - bottom);
   const path = points.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.rating)}`).join(" ");
   const baseline = points[0].rating;
-  const postgameCount = points.filter((point) => point.point_kind === "postgame").length;
+  const appearanceCount = points.filter((point) => point.point_kind === "postgame").length;
+  const skippedCount = points.filter((point) => point.point_kind === "skipped_game").length;
   return (
     <figure className="current-rating-trajectory">
       <svg style={{ width: `max(100%, ${width}px)` }} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${player.player_name} 2026-27 NAIL trajectory`}>
@@ -405,8 +406,11 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
               : "Current";
           const showValue = points.length <= 8 || index === 0 || index === points.length - 1;
           const detail = [
-            `${label}: ${formatRating(point.rating)}`,
+            `${point.is_current ? "Current · " : ""}${label}: ${formatRating(point.rating)}`,
             point.opponent ? `vs. ${point.opponent}` : null,
+            point.point_kind === "skipped_game" ? "Did not play" : null,
+            point.pregame_status ? `Pregame: ${point.pregame_status}` : null,
+            point.pregame_reason ?? null,
             point.game_on_court_possessions === undefined
               ? null
               : `${wholeNumber.format(point.game_on_court_possessions)} possessions in game`,
@@ -414,17 +418,23 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
               ? null
               : `${wholeNumber.format(point.raw_on_court_possessions)} cumulative possessions`,
           ].filter(Boolean).join(" · ");
+          const pointClassName = [
+            "current-rating-point",
+            point.point_kind === "skipped_game" ? "skipped" : "",
+            point.is_current ? "latest" : "",
+          ].filter(Boolean).join(" ");
           return <g key={`${point.point_kind ?? point.source}-${point.game_id ?? point.evidence_through_date ?? index}`}>
-            <circle className={point.is_current ? "current-rating-point latest" : "current-rating-point"} cx={x(index)} cy={y(point.rating)} r={point.is_current ? 5 : 4}>
+            <circle className={pointClassName} cx={x(index)} cy={y(point.rating)} r={point.is_current ? 5 : point.point_kind === "skipped_game" ? 3.5 : 4}>
               <title>{detail}</title>
             </circle>
             {showValue && <text className="current-rating-value" x={x(index)} y={Math.max(15, y(point.rating) - 11)} textAnchor="middle">{formatRating(point.rating)}</text>}
-            {point.opponent && <image className="current-rating-opponent-logo" href={teamLogoUrl(point.opponent)} x={x(index) - 10} y={height - 44} width="20" height="20" preserveAspectRatio="xMidYMid meet" />}
-            <text className="current-rating-date" x={x(index)} y={height - 10} textAnchor="middle">{label}</text>
+            {point.is_current && <text className="current-rating-current-label" x={x(index)} y={height - 50} textAnchor="middle">Current</text>}
+            {point.opponent && <image className={`current-rating-opponent-logo${point.point_kind === "skipped_game" ? " skipped" : ""}`} href={teamLogoUrl(point.opponent)} x={x(index) - 10} y={height - 41} width="20" height="20" preserveAspectRatio="xMidYMid meet" />}
+            <text className="current-rating-date" x={x(index)} y={height - 8} textAnchor="middle">{label}</text>
           </g>;
         })}
       </svg>
-      <figcaption>{postgameCount} postgame {postgameCount === 1 ? "update" : "updates"}. Each dated logo marks the opponent and the slate-batched updater state after that appearance; the dashed line is the frozen preseason baseline.</figcaption>
+      <figcaption>{appearanceCount} {appearanceCount === 1 ? "appearance" : "appearances"}{skippedCount > 0 ? ` · ${skippedCount} missed ${skippedCount === 1 ? "game" : "games"}` : ""}. Each dated logo marks the opponent and the slate-batched updater state after that team game; faded logos and hollow points are games not played. The dashed line is the frozen preseason baseline.</figcaption>
     </figure>
   );
 }

@@ -582,10 +582,12 @@ def _validate_rating_trajectory(
         "updater_version",
         "player_id",
         "game_number",
+        "appearance_number",
         "game_id",
         "game_date",
         "team",
         "opponent",
+        "played",
         "preseason_rating",
         "in_season_delta",
         "updated_rating",
@@ -620,8 +622,11 @@ def _validate_rating_trajectory(
         atol=1e-12,
     ):
         raise ValueError("Rating trajectory arithmetic failed validation")
-    if (trajectory["game_on_court_possessions"] <= 0).any():
-        raise ValueError("Rating trajectory games require positive on-court possessions")
+    played = trajectory["played"].astype(bool)
+    if (trajectory.loc[played, "game_on_court_possessions"] <= 0).any():
+        raise ValueError("Played trajectory games require positive on-court possessions")
+    if (trajectory.loc[~played, "game_on_court_possessions"] != 0).any():
+        raise ValueError("Skipped trajectory games require zero on-court possessions")
     if not trajectory["evidence_weight"].between(0.0, 1.0).all():
         raise ValueError("Rating trajectory evidence weights must lie in [0, 1]")
     baselines = rating_state.set_index("player_id")["frozen_preseason_nail"]

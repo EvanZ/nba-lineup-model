@@ -150,13 +150,36 @@ def _player_game_context(
     summary: dict[str, Any],
     espn: dict[str, Any],
     name_to_player_id: dict[str, int],
-) -> dict[int, dict[str, str]]:
-    """Map box-score players to the team and opponent for this exact game."""
+) -> dict[int, dict[str, object]]:
+    """Map the frozen pregame roster to its exact team and opponent.
+
+    Projected minutes are the primary source because they include players who
+    were ruled out and therefore never appear in the final box score.  ESPN's
+    athlete rows remain a fallback for unexpected participants.
+    """
 
     home_team = str(summary["home_team"])
     away_team = str(summary["away_team"])
-    context: dict[int, dict[str, str]] = {}
+    context: dict[int, dict[str, object]] = {}
+    projected_minutes = summary.get("pregame", {}).get("projected_minutes", {})
+    for side, team, opponent in (
+        ("home", home_team, away_team),
+        ("away", away_team, home_team),
+    ):
+        for player in projected_minutes.get(side, []):
+            player_id = player.get("player_id")
+            if player_id is None:
+                continue
+            context[int(player_id)] = {
+                "team": team,
+                "opponent": opponent,
+                "pregame_status": player.get("status"),
+                "pregame_reason": player.get("reason"),
+            }
+
     for team, team_row in _espn_team_rows(espn).items():
+        if team not in {home_team, away_team}:
+            continue
         opponent = away_team if team == home_team else home_team
         for statistic in team_row.get("statistics", []):
             for athlete_row in statistic.get("athletes", []):
@@ -170,7 +193,8 @@ def _player_game_context(
                     None,
                 )
                 if player_id is not None:
-                    context[player_id] = {"team": team, "opponent": opponent}
+                    player_context = context.setdefault(player_id, {})
+                    player_context.update({"team": team, "opponent": opponent})
     return context
 
 
@@ -431,14 +455,14 @@ def build_player_game_trajectory(
     player_ids: tuple[int, ...],
     preseason_nail: dict[int, float],
     prior_possessions: float,
-    game_player_context: dict[tuple[str, int], dict[str, str]],
+    game_player_context: dict[tuple[str, int], dict[str, object]],
 ) -> pd.DataFrame:
-    """Return the exact cumulative rating after each player appearance.
+    """Return the exact cumulative rating after each player team game.
 
     Updates remain slate-batched, matching the shadow updater's no-leakage
-    contract.  A player receives one row for every game in which their
-    on-court exposure is positive; every row uses the cumulative solve after
-    that game's full slate has been incorporated.
+    contract. A player receives one row for every frozen-roster team game,
+    including games missed through injury or DNP. Every row uses the cumulative
+    solve after that game's full slate has been incorporated.
     """
 
     columns = [
@@ -446,11 +470,15 @@ def build_player_game_trajectory(
         "updater_version",
         "player_id",
         "game_number",
+        "appearance_number",
         "game_id",
         "game_date",
         "game_time_utc",
         "team",
         "opponent",
+        "played",
+        "pregame_status",
+        "pregame_reason",
         "preseason_rating",
         "in_season_delta",
         "updated_rating",
@@ -468,6 +496,10 @@ def build_player_game_trajectory(
     score = np.zeros(len(player_ids), dtype=float)
     exposure = np.zeros(len(player_ids), dtype=float)
     game_numbers = np.zeros(len(player_ids), dtype=int)
+    appearance_numbers = np.zeros(len(player_ids), dtype=int)
+    player_to_index = {
+        player_id: index for index, player_id in enumerate(player_ids)
+    }
     rows: list[dict[str, object]] = []
 
     for game_date in sorted(contributions_by_date):
@@ -486,27 +518,44 @@ def build_player_game_trajectory(
         evidence_weight = information / (information + prior_possessions)
 
         for contribution in day:
-            participants = np.flatnonzero(contribution.on_court_possessions > 0)
-            for index in participants:
-                player_id = player_ids[index]
-                context = game_player_context.get((contribution.game_id, player_id))
-                if context is None:
-                    raise ValueError(
-                        "Missing team/opponent context for "
-                        f"player {player_id} in game {contribution.game_id}"
-                    )
+            game_context = {
+                player_id: context
+                for (game_id, player_id), context in game_player_context.items()
+                if game_id == contribution.game_id and player_id in player_to_index
+            }
+            participants = {
+                player_ids[index]
+                for index in np.flatnonzero(contribution.on_court_possessions > 0)
+            }
+            missing_context = sorted(participants - set(game_context))
+            if missing_context:
+                raise ValueError(
+                    "Missing team/opponent context for players "
+                    f"{missing_context} in game {contribution.game_id}"
+                )
+            for player_id, context in sorted(game_context.items()):
+                index = player_to_index[player_id]
+                played = player_id in participants
                 game_numbers[index] += 1
+                if played:
+                    appearance_numbers[index] += 1
                 rows.append(
                     {
                         "season": SEASON,
                         "updater_version": UPDATER_VERSION,
                         "player_id": player_id,
                         "game_number": int(game_numbers[index]),
+                        "appearance_number": (
+                            int(appearance_numbers[index]) if played else None
+                        ),
                         "game_id": contribution.game_id,
                         "game_date": game_date.isoformat(),
                         "game_time_utc": contribution.game_time_utc.isoformat(),
                         "team": context["team"],
                         "opponent": context["opponent"],
+                        "played": played,
+                        "pregame_status": context.get("pregame_status"),
+                        "pregame_reason": context.get("pregame_reason"),
                         "preseason_rating": prior[index],
                         "in_season_delta": adjustment[index],
                         "updated_rating": prior[index] + adjustment[index],
@@ -567,7 +616,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     cached_contribution_count = 0
     created_contribution_paths: list[Path] = []
     contribution_paths: list[Path] = []
-    game_player_context: dict[tuple[str, int], dict[str, str]] = {}
+    game_player_context: dict[tuple[str, int], dict[str, object]] = {}
 
     grouped: dict[date, list[dict[str, Any]]] = defaultdict(list)
     for summary in summaries:

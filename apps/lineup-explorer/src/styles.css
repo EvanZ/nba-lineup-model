@@ -442,10 +442,13 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .current-rating-baseline { stroke: #7f8780; stroke-width: 1; stroke-dasharray: 5 4; }
 .current-rating-line { fill: none; stroke: #245a47; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .current-rating-point { fill: #fffefa; stroke: #245a47; stroke-width: 2.2; }
+.current-rating-point.skipped { fill: #f6f3ec; stroke: #8a918b; stroke-dasharray: 2 2; }
 .current-rating-point.latest { fill: #e8502f; stroke: #fffefa; stroke-width: 2; }
 .current-rating-opponent-logo { opacity: 0.96; }
+.current-rating-opponent-logo.skipped { opacity: 0.4; }
 .current-rating-axis-label, .current-rating-date, .current-rating-value { fill: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
 .current-rating-value { fill: #17201c; }
+.current-rating-current-label { fill: #e8502f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; font-weight: 800; text-transform: uppercase; }
 .current-rating-trajectory figcaption { margin: 9px 0 0; color: #68716a; font-size: 12px; line-height: 1.45; }
 .player-history-table-wrap { overflow-x: auto; }
 .player-rating-path-note { color: #68716a; font-size: 13px; line-height: 1.45; margin: 0 0 14px; max-width: 720px; }

@@ -356,12 +356,28 @@ def _player_game_rating_trajectories(
             points.append(
                 {
                     "source": "in_season",
-                    "point_kind": "postgame",
+                    "point_kind": "postgame" if bool(row.played) else "skipped_game",
                     "game_number": int(row.game_number),
+                    "appearance_number": (
+                        int(row.appearance_number)
+                        if pd.notna(row.appearance_number)
+                        else None
+                    ),
                     "game_id": str(row.game_id),
                     "game_date": str(row.game_date),
                     "team": str(row.team),
                     "opponent": str(row.opponent),
+                    "played": bool(row.played),
+                    "pregame_status": (
+                        str(row.pregame_status)
+                        if pd.notna(row.pregame_status)
+                        else None
+                    ),
+                    "pregame_reason": (
+                        str(row.pregame_reason)
+                        if pd.notna(row.pregame_reason)
+                        else None
+                    ),
                     "evidence_through_date": str(row.game_date),
                     "as_of_cutoff_time": str(row.game_time_utc),
                     "rating": float(row.updated_rating),
@@ -383,7 +399,7 @@ def _player_game_rating_trajectories(
         current_possessions = float(current["current_season_possessions"])
         last = points[-1]
         matches_latest_game = (
-            last["point_kind"] == "postgame"
+            last["point_kind"] in {"postgame", "skipped_game"}
             and np.isclose(float(last["rating"]), current_rating, atol=1e-10)
             and np.isclose(
                 float(last["raw_on_court_possessions"]),
