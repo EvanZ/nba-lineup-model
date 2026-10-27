@@ -531,7 +531,6 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
           <div className="player-forecast-total"><dt>Current NAIL</dt><dd><Rating value={player.rapm} /></dd></div>
           <div><dt>Possessions</dt><dd>{wholeNumber.format(player.current_season_possessions ?? 0)}</dd></div>
           <div><dt>Expected MPG if available</dt><dd>{player.current_expected_minutes_if_available === null || player.current_expected_minutes_if_available === undefined ? "-" : number.format(player.current_expected_minutes_if_available)}</dd></div>
-          <div><dt>Minutes role observations</dt><dd>{player.minutes_role_observations ?? 0}</dd></div>
         </dl>
         <CurrentSeasonRatingTrajectory player={player} />
         <p className="player-rating-path-note">Updated NAIL uses 2026-27 possession evidence through {player.rating_evidence_through_date ?? "the latest final game"}. Expected MPG is conditional on the player being available; it is not an injury or game-status prediction. Additive profile inputs remain frozen from the preseason, and no updated offense/defense split is shown.</p>
