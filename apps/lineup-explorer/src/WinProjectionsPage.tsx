@@ -20,7 +20,7 @@ type PlayerInputOverride = {
 
 type Overrides = Record<string, PlayerInputOverride>;
 type NumericOverrideField = Exclude<keyof PlayerInputOverride, "rotationPinned">;
-type ForecastSortColumn = "team" | "current_record" | "team_strength" | "betmgm_win_total" | "projected_wins" | "delta";
+type ForecastSortColumn = "team" | "current_record" | "current_wins_upper_tail" | "team_strength" | "betmgm_win_total" | "projected_wins" | "delta";
 type SortDirection = "ascending" | "descending";
 
 type MinuteAllocation = {
@@ -891,6 +891,14 @@ export function WinProjectionsPage() {
   const currentRecordByTeam = useMemo(() => new Map(
     currentRecords?.teams.map((record) => [record.team, record]) ?? [],
   ), [currentRecords]);
+  const currentWinsUpperTailByTeam = useMemo(() => {
+    if (!forecast || !currentRecords) return new Map<string, number>();
+    return new Map(currentRecords.teams.flatMap((record) => {
+      const envelope = simulateWinLossEnvelope(forecast, record.team);
+      const upperTail = envelope ? actualWinsUpperTail(envelope, record) : null;
+      return upperTail === null ? [] : [[record.team, upperTail] as const];
+    }));
+  }, [currentRecords, forecast]);
   const sortedForecastTeams = useMemo(() => {
     if (!forecast) return [];
     const direction = forecastSortDirection === "ascending" ? 1 : -1;
@@ -901,11 +909,15 @@ export function WinProjectionsPage() {
         ? marketDelta(left)
         : forecastSortColumn === "current_record"
           ? (leftRecord?.games ? leftRecord.wins / leftRecord.games : 0)
+          : forecastSortColumn === "current_wins_upper_tail"
+            ? currentWinsUpperTailByTeam.get(left.team)
           : left[forecastSortColumn];
       const rightValue = forecastSortColumn === "delta"
         ? marketDelta(right)
         : forecastSortColumn === "current_record"
           ? (rightRecord?.games ? rightRecord.wins / rightRecord.games : 0)
+          : forecastSortColumn === "current_wins_upper_tail"
+            ? currentWinsUpperTailByTeam.get(right.team)
           : right[forecastSortColumn];
       if (leftValue === null || leftValue === undefined) return 1;
       if (rightValue === null || rightValue === undefined) return -1;
@@ -914,7 +926,7 @@ export function WinProjectionsPage() {
       }
       return direction * String(leftValue).localeCompare(String(rightValue)) || left.team.localeCompare(right.team);
     });
-  }, [currentRecordByTeam, forecast, forecastSortColumn, forecastSortDirection]);
+  }, [currentRecordByTeam, currentWinsUpperTailByTeam, forecast, forecastSortColumn, forecastSortDirection]);
   const activeOverrides = players.filter((player) => (
     overrides[overrideKey(player.team, player.player_id)] !== undefined
   )).length;
@@ -1018,13 +1030,14 @@ export function WinProjectionsPage() {
         {forecast && <section className="win-forecast" aria-labelledby="win-forecast-title">
           <div className="win-forecast-heading">
             <div><p className="eyebrow">{calculatedForecast && !forecastNeedsUpdate ? "Custom forecast" : "Baseline forecast"}</p><h2 id="win-forecast-title">Projected wins.</h2></div>
-            <p>{forecast.scheduled_games_per_team} scheduled games + {forecast.unassigned_regular_games_per_team} modeled NBA Cup games. {currentRecords?.as_of ? `Current W-L records as of ${currentRecords.as_of}.` : "Current W-L records unavailable."}</p>
+            <p>{forecast.scheduled_games_per_team} scheduled games + {forecast.unassigned_regular_games_per_team} modeled NBA Cup games. {currentRecords?.as_of ? `Current W-L records as of ${currentRecords.as_of}. P(≥ Current W) is the share of 10,000 model paths with at least that many wins after the same number of games.` : "Current W-L records unavailable."}</p>
           </div>
           <div className="win-forecast-table-wrap"><table className="win-forecast-table">
             <thead><tr>
               {([
                 ["team", "Team"],
                 ["current_record", "Current W-L"],
+                ["current_wins_upper_tail", "P(≥ Current W)"],
                 ["team_strength", "Strength"],
                 ["betmgm_win_total", "BetMGM"],
                 ["projected_wins", "Projected Wins"],
@@ -1039,6 +1052,7 @@ export function WinProjectionsPage() {
             <tbody>{sortedForecastTeams.map((item) => {
               const delta = marketDelta(item);
               const currentRecord = currentRecordByTeam.get(item.team);
+              const currentWinsUpperTail = currentWinsUpperTailByTeam.get(item.team);
               const direction = marketDirection(item.projected_wins, item.betmgm_win_total);
               const directionClass = delta !== null && delta < 0 ? "negative" : "positive";
               const intervalPosition = marketIntervalPosition(item);
@@ -1050,6 +1064,7 @@ export function WinProjectionsPage() {
               return <tr key={item.team} className={rowClassName}>
                 <th><button className="win-forecast-team-link" type="button" aria-controls="team-minutes" aria-pressed={item.team === team} onClick={() => selectForecastTeam(item.team)} aria-label={`Select ${item.team}`} title={`Select ${item.team}`}><span className="lineup-team-mark"><img src={teamLogoUrl(item.team)} alt="" aria-hidden="true" loading="lazy" /><small>{item.team}</small></span></button></th>
                 <td className="win-forecast-current-record" title={currentRecord ? `Through ${currentRecord.last_game_date}` : "No completed games"}>{currentRecord ? `${currentRecord.wins}-${currentRecord.losses}` : "0-0"}</td>
+                <td className="win-forecast-upper-tail" title={currentRecord && currentWinsUpperTail !== undefined ? `${(currentWinsUpperTail * 100).toFixed(1)}% of ${ENVELOPE_TRIALS.toLocaleString()} simulated paths had at least ${currentRecord.wins} ${currentRecord.wins === 1 ? "win" : "wins"} after ${currentRecord.games} games` : "No completed games"}>{currentWinsUpperTail === undefined ? "-" : `${(currentWinsUpperTail * 100).toFixed(1)}%`}</td>
                 <td className={item.team_strength < 0 ? "negative" : "positive"}>{formatRating(item.team_strength)}</td>
                 <td title={marketIntervalDescription(item)}>{item.betmgm_win_total?.toFixed(1) ?? "-"}</td>
                 <td className="win-forecast-wins">{item.projected_wins.toFixed(1)}</td>
