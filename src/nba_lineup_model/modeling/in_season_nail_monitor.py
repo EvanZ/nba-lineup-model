@@ -145,6 +145,35 @@ def _espn_team_rows(espn: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def _player_game_context(
+    *,
+    summary: dict[str, Any],
+    espn: dict[str, Any],
+    name_to_player_id: dict[str, int],
+) -> dict[int, dict[str, str]]:
+    """Map box-score players to the team and opponent for this exact game."""
+
+    home_team = str(summary["home_team"])
+    away_team = str(summary["away_team"])
+    context: dict[int, dict[str, str]] = {}
+    for team, team_row in _espn_team_rows(espn).items():
+        opponent = away_team if team == home_team else home_team
+        for statistic in team_row.get("statistics", []):
+            for athlete_row in statistic.get("athletes", []):
+                player_name = athlete_row.get("athlete", {}).get("displayName")
+                player_id = next(
+                    (
+                        name_to_player_id[alias]
+                        for alias in _name_aliases(player_name)
+                        if alias in name_to_player_id
+                    ),
+                    None,
+                )
+                if player_id is not None:
+                    context[player_id] = {"team": team, "opponent": opponent}
+    return context
+
+
 def _native_starter_boxscore(
     *,
     summary: dict[str, Any],
@@ -402,6 +431,7 @@ def build_player_game_trajectory(
     player_ids: tuple[int, ...],
     preseason_nail: dict[int, float],
     prior_possessions: float,
+    game_player_context: dict[tuple[str, int], dict[str, str]],
 ) -> pd.DataFrame:
     """Return the exact cumulative rating after each player appearance.
 
@@ -419,6 +449,8 @@ def build_player_game_trajectory(
         "game_id",
         "game_date",
         "game_time_utc",
+        "team",
+        "opponent",
         "preseason_rating",
         "in_season_delta",
         "updated_rating",
@@ -456,16 +488,25 @@ def build_player_game_trajectory(
         for contribution in day:
             participants = np.flatnonzero(contribution.on_court_possessions > 0)
             for index in participants:
+                player_id = player_ids[index]
+                context = game_player_context.get((contribution.game_id, player_id))
+                if context is None:
+                    raise ValueError(
+                        "Missing team/opponent context for "
+                        f"player {player_id} in game {contribution.game_id}"
+                    )
                 game_numbers[index] += 1
                 rows.append(
                     {
                         "season": SEASON,
                         "updater_version": UPDATER_VERSION,
-                        "player_id": player_ids[index],
+                        "player_id": player_id,
                         "game_number": int(game_numbers[index]),
                         "game_id": contribution.game_id,
                         "game_date": game_date.isoformat(),
                         "game_time_utc": contribution.game_time_utc.isoformat(),
+                        "team": context["team"],
+                        "opponent": context["opponent"],
                         "preseason_rating": prior[index],
                         "in_season_delta": adjustment[index],
                         "updated_rating": prior[index] + adjustment[index],
@@ -526,6 +567,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     cached_contribution_count = 0
     created_contribution_paths: list[Path] = []
     contribution_paths: list[Path] = []
+    game_player_context: dict[tuple[str, int], dict[str, str]] = {}
 
     grouped: dict[date, list[dict[str, Any]]] = defaultdict(list)
     for summary in summaries:
@@ -574,6 +616,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 espn_path = args.state_dir / "final" / f"{summary['espn_game_id']}.espn.json"
                 espn_bytes = espn_path.read_bytes()
                 espn = json.loads(espn_bytes)
+                for player_id, player_context in _player_game_context(
+                    summary=summary,
+                    espn=espn,
+                    name_to_player_id=name_lookup,
+                ).items():
+                    game_player_context[(game_id, player_id)] = player_context
                 source_versions = coverage.get("games", {}).get(game_id, [])
                 if not source_versions:
                     raise ValueError("No CDN play-by-play checksum in coverage manifest")
@@ -687,6 +735,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         player_ids=player_ids,
         preseason_nail=preseason,
         prior_possessions=float(args.prior_possessions),
+        game_player_context=game_player_context,
     )
     result = {
         "season": SEASON,

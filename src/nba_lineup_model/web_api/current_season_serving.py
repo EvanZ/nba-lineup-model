@@ -360,6 +360,8 @@ def _player_game_rating_trajectories(
                     "game_number": int(row.game_number),
                     "game_id": str(row.game_id),
                     "game_date": str(row.game_date),
+                    "team": str(row.team),
+                    "opponent": str(row.opponent),
                     "evidence_through_date": str(row.game_date),
                     "as_of_cutoff_time": str(row.game_time_utc),
                     "rating": float(row.updated_rating),

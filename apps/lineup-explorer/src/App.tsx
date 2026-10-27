@@ -374,7 +374,7 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
 function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
   const points = player.current_season_trajectory ?? [];
   if (points.length < 2) return null;
-  const width = 760;
+  const width = Math.max(1100, points.length * 42);
   const height = 238;
   const left = 58;
   const right = 24;
@@ -391,27 +391,22 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
   const postgameCount = points.filter((point) => point.point_kind === "postgame").length;
   return (
     <figure className="current-rating-trajectory">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${player.player_name} 2026-27 NAIL trajectory`}>
+      <svg style={{ width: `max(100%, ${width}px)` }} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${player.player_name} 2026-27 NAIL trajectory`}>
         <title>{player.player_name} 2026-27 NAIL trajectory</title>
         <line className="current-rating-baseline" x1={left} x2={width - right} y1={y(baseline)} y2={y(baseline)} />
         <text className="current-rating-axis-label" x={left - 9} y={y(baseline) + 4} textAnchor="end">{formatChartRating(baseline)}</text>
         <path className="current-rating-line" d={path} />
         {points.map((point, index) => {
-          const label = point.point_kind === "current"
-            ? "Current"
-            : point.point_kind === "postgame" && point.game_number
-              ? `G${point.game_number}`
-              : point.source === "preseason"
-                ? "Preseason"
-                : point.evidence_through_date?.slice(5) ?? `Update ${index}`;
-          const showAxisLabel = points.length <= 12
-            || index === 0
-            || index === points.length - 1
-            || (point.game_number !== null && point.game_number !== undefined && point.game_number % 5 === 0);
+          const date = point.game_date ?? point.evidence_through_date;
+          const label = point.source === "preseason"
+            ? "Preseason"
+            : date
+              ? `${date.slice(5, 7)}/${date.slice(8, 10)}`
+              : "Current";
           const showValue = points.length <= 8 || index === 0 || index === points.length - 1;
           const detail = [
             `${label}: ${formatRating(point.rating)}`,
-            point.game_date,
+            point.opponent ? `vs. ${point.opponent}` : null,
             point.game_on_court_possessions === undefined
               ? null
               : `${wholeNumber.format(point.game_on_court_possessions)} possessions in game`,
@@ -424,11 +419,12 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
               <title>{detail}</title>
             </circle>
             {showValue && <text className="current-rating-value" x={x(index)} y={Math.max(15, y(point.rating) - 11)} textAnchor="middle">{formatRating(point.rating)}</text>}
-            {showAxisLabel && <text className="current-rating-date" x={x(index)} y={height - 18} textAnchor="middle">{label}</text>}
+            {point.opponent && <image className="current-rating-opponent-logo" href={teamLogoUrl(point.opponent)} x={x(index) - 10} y={height - 44} width="20" height="20" preserveAspectRatio="xMidYMid meet" />}
+            <text className="current-rating-date" x={x(index)} y={height - 10} textAnchor="middle">{label}</text>
           </g>;
         })}
       </svg>
-      <figcaption>{postgameCount} postgame {postgameCount === 1 ? "update" : "updates"}. Each game point is the slate-batched updater state after that appearance; the dashed line is the frozen preseason baseline.</figcaption>
+      <figcaption>{postgameCount} postgame {postgameCount === 1 ? "update" : "updates"}. Each dated logo marks the opponent and the slate-batched updater state after that appearance; the dashed line is the frozen preseason baseline.</figcaption>
     </figure>
   );
 }

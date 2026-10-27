@@ -584,6 +584,8 @@ def _validate_rating_trajectory(
         "game_number",
         "game_id",
         "game_date",
+        "team",
+        "opponent",
         "preseason_rating",
         "in_season_delta",
         "updated_rating",
@@ -601,6 +603,11 @@ def _validate_rating_trajectory(
         raise ValueError("Rating trajectory season does not match its serving state")
     if trajectory.duplicated(["player_id", "game_number"]).any():
         raise ValueError("Rating trajectory contains duplicate player game numbers")
+    if trajectory[["team", "opponent"]].isna().any().any() or (
+        trajectory[["team", "opponent"]].astype(str).apply(lambda values: values.str.strip())
+        == ""
+    ).any().any():
+        raise ValueError("Rating trajectory team and opponent must be populated")
     ordered = trajectory.sort_values(["player_id", "game_number"], kind="stable")
     game_numbers = ordered.groupby("player_id", sort=False)["game_number"]
     if not game_numbers.apply(

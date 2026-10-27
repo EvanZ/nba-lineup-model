@@ -128,6 +128,8 @@ def _publish_day(
                 "game_id": games,
                 "game_date": [through_date.isoformat()] * len(games),
                 "game_time_utc": [cutoff.isoformat()] * len(games),
+                "team": ["GSW"] * len(games),
+                "opponent": ["LAL"] * len(games),
                 "preseason_rating": [3.0] * len(games),
                 "in_season_delta": [
                     deltas[0] * game_number / len(games)

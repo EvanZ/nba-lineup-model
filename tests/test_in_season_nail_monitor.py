@@ -125,12 +125,23 @@ def test_player_game_trajectory_has_one_cumulative_point_per_appearance() -> Non
         player_ids=(1, 2, 3, 4),
         preseason_nail={1: 1.0, 2: 0.5, 3: -0.5, 4: -1.0},
         prior_possessions=6000.0,
+        game_player_context={
+            ("0022600001", 1): {"team": "BOS", "opponent": "NYK"},
+            ("0022600001", 2): {"team": "BOS", "opponent": "NYK"},
+            ("0022600001", 3): {"team": "NYK", "opponent": "BOS"},
+            ("0022600001", 4): {"team": "NYK", "opponent": "BOS"},
+            ("0022600002", 1): {"team": "BOS", "opponent": "MIA"},
+            ("0022600002", 2): {"team": "MIA", "opponent": "BOS"},
+            ("0022600002", 3): {"team": "BOS", "opponent": "MIA"},
+            ("0022600002", 4): {"team": "MIA", "opponent": "BOS"},
+        },
     )
 
     assert len(trajectory) == 8
     player = trajectory.loc[trajectory["player_id"].eq(1)].reset_index(drop=True)
     assert player["game_number"].tolist() == [1, 2]
     assert player["game_id"].tolist() == ["0022600001", "0022600002"]
+    assert player["opponent"].tolist() == ["NYK", "MIA"]
     assert player["game_on_court_possessions"].tolist() == [20.0, 30.0]
     assert player["cumulative_on_court_possessions"].tolist() == [20.0, 50.0]
     assert player["updated_rating"].iloc[-1] == (

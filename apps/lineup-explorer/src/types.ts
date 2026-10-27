@@ -144,6 +144,8 @@ export type Player = {
     game_number?: number | null;
     game_id?: string;
     game_date?: string;
+    team?: string;
+    opponent?: string;
     evidence_through_date?: string | null;
     as_of_cutoff_time?: string | null;
     rating: number;
