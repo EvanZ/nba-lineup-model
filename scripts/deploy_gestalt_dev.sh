@@ -23,6 +23,7 @@ test -d "$PROD_RELEASE/artifacts"
 test -d "$PROD_RELEASE/data"
 
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_APP_ROOT/releases"
+sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/current-season-serving"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/current-season-lineups"
 if systemctl cat gestalt-web-dev >/dev/null 2>&1; then
