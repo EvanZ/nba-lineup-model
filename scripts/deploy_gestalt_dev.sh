@@ -100,9 +100,10 @@ if [[ ! -f /etc/nginx/gestalt-dev.htpasswd ]]; then
   password="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)"
   password_hash="$(openssl passwd -6 "$password")"
   printf 'gestalt:%s\n' "$password_hash" | sudo tee /etc/nginx/gestalt-dev.htpasswd >/dev/null
-  sudo chmod 0640 /etc/nginx/gestalt-dev.htpasswd
   printf 'GESTALT_DEV_USERNAME=gestalt\nGESTALT_DEV_PASSWORD=%s\n' "$password"
 fi
+sudo chown root:www-data /etc/nginx/gestalt-dev.htpasswd
+sudo chmod 0640 /etc/nginx/gestalt-dev.htpasswd
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now gestalt-web-dev
