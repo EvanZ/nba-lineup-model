@@ -611,11 +611,11 @@ def test_player_game_trajectory_uses_frozen_minutes_and_archived_box_score(
                         {
                             "statistics": [
                                 {
-                                    "labels": ["MIN", "PTS", "REB", "AST", "TO", "STL", "BLK", "+/-"],
+                                    "labels": ["MIN", "FG", "3PT", "FT", "PTS", "REB", "AST", "TO", "STL", "BLK", "+/-"],
                                     "athletes": [
                                         {
                                             "athlete": {"displayName": "Stephen Curry"},
-                                            "stats": ["21", "23", "2", "1", "4", "2", "1", "-22"],
+                                            "stats": ["21", "9-17", "4-9", "1-1", "23", "2", "1", "4", "2", "1", "-22"],
                                             "didNotPlay": False,
                                         }
                                     ],
@@ -659,6 +659,12 @@ def test_player_game_trajectory_uses_frozen_minutes_and_archived_box_score(
         "turnovers": 4,
         "steals": 2,
         "blocks": 1,
+        "two_points_made": 5,
+        "two_points_attempted": 8,
+        "three_points_made": 4,
+        "three_points_attempted": 9,
+        "free_throws_made": 1,
+        "free_throws_attempted": 1,
         "plus_minus": -22,
     }
 

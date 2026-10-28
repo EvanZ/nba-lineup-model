@@ -170,6 +170,12 @@ export type Player = {
       turnovers?: number | null;
       steals?: number | null;
       blocks?: number | null;
+      two_points_made?: number | null;
+      two_points_attempted?: number | null;
+      three_points_made?: number | null;
+      three_points_attempted?: number | null;
+      free_throws_made?: number | null;
+      free_throws_attempted?: number | null;
       plus_minus?: number | null;
     };
     evidence_weight?: number;

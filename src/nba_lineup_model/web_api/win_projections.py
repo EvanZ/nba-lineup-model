@@ -1339,6 +1339,20 @@ def _player_box_score(
                             return candidate
                     return None
 
+                field_goals_made, field_goals_attempted = _made_attempted(value("FG"))
+                threes_made, threes_attempted = _made_attempted(value("3PT"))
+                free_throws_made, free_throws_attempted = _made_attempted(value("FT"))
+                twos_made = (
+                    field_goals_made - threes_made
+                    if field_goals_made is not None and threes_made is not None
+                    else None
+                )
+                twos_attempted = (
+                    field_goals_attempted - threes_attempted
+                    if field_goals_attempted is not None and threes_attempted is not None
+                    else None
+                )
+
                 return {
                     "points": _integer_or_none(value("PTS")),
                     "rebounds": _integer_or_none(value("REB")),
@@ -1346,6 +1360,12 @@ def _player_box_score(
                     "turnovers": _integer_or_none(first_value("TO", "TOV")),
                     "steals": _integer_or_none(value("STL")),
                     "blocks": _integer_or_none(value("BLK")),
+                    "two_points_made": twos_made,
+                    "two_points_attempted": twos_attempted,
+                    "three_points_made": threes_made,
+                    "three_points_attempted": threes_attempted,
+                    "free_throws_made": free_throws_made,
+                    "free_throws_attempted": free_throws_attempted,
                     "plus_minus": _signed_integer_or_none(value("+/-")),
                 }
     return None
@@ -1356,6 +1376,15 @@ def _float_or_none(value: object) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _made_attempted(value: object) -> tuple[int | None, int | None]:
+    if value is None:
+        return None, None
+    parts = str(value).strip().split("-", maxsplit=1)
+    if len(parts) != 2:
+        return None, None
+    return _integer_or_none(parts[0]), _integer_or_none(parts[1])
 
 
 def _signed_integer_or_none(value: object) -> int | None:
