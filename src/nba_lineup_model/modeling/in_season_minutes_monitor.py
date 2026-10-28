@@ -138,6 +138,19 @@ def _pregame_rows(summary: dict[str, Any], team: str) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)]
 
 
+def _pregame_roster_player_ids(summary: dict[str, Any], team: str) -> set[int]:
+    """Return the immutable roster support known at the game's forecast cutoff."""
+
+    player_ids = {
+        int(row["player_id"])
+        for row in _pregame_rows(summary, team)
+        if row.get("player_id") is not None
+    }
+    if not player_ids:
+        raise ValueError(f"Frozen pregame roster has no player IDs for {team}")
+    return player_ids
+
+
 def _report_status(summary: dict[str, Any], team: str) -> str:
     rows = _pregame_rows(summary, team)
     if rows and all(str(row.get("status")) == "Report pending" for row in rows):
@@ -172,9 +185,17 @@ def build_game_observations(
 ) -> pd.DataFrame:
     """Normalize an immutable ESPN final into sufficient player observations."""
 
-    name_to_id = {
+    team_name_to_id = {
         (str(row.team), _normalize_name(row.player_name)): int(row.player_id)
         for row in priors.itertuples(index=False)
+    }
+    name_candidates: dict[str, set[int]] = defaultdict(set)
+    for row in priors.itertuples(index=False):
+        name_candidates[_normalize_name(row.player_name)].add(int(row.player_id))
+    unique_name_to_id = {
+        name: next(iter(player_ids))
+        for name, player_ids in name_candidates.items()
+        if len(player_ids) == 1
     }
     injury = {
         int(row["player_id"]): row
@@ -202,8 +223,26 @@ def build_game_observations(
                     continue
                 athlete = athlete_row.get("athlete", {})
                 name = str(athlete.get("displayName", "")) if isinstance(athlete, dict) else ""
-                player_id = name_to_id.get((team, _normalize_name(name)))
+                normalized_name = _normalize_name(name)
+                player_id = team_name_to_id.get((team, normalized_name))
+                identity_match_source = "team_name"
                 if player_id is None:
+                    # A player's state follows their stable NBA identity across
+                    # organizations.  This fallback is safe only when the name
+                    # identifies exactly one player in the prior vocabulary.
+                    player_id = unique_name_to_id.get(normalized_name)
+                    identity_match_source = "unique_name_transfer"
+                if player_id is None:
+                    stats = athlete_row.get("stats", [])
+                    minutes = (
+                        _parse_minutes(stats[minute_index])
+                        if isinstance(stats, list) and len(stats) > minute_index
+                        else 0.0
+                    )
+                    if minutes > 0.0:
+                        raise ValueError(
+                            f"Could not map played ESPN athlete {name!r} for {team}"
+                        )
                     continue
                 stats = athlete_row.get("stats", [])
                 minutes = (
@@ -228,6 +267,7 @@ def build_game_observations(
                         "team": team,
                         "player_id": player_id,
                         "player_name": name,
+                        "identity_match_source": identity_match_source,
                         "actual_minutes": minutes,
                         "played": minutes > 0.0,
                         "outcome_classification": classification,
@@ -326,9 +366,17 @@ def _lineup_boxscore_from_espn(
 ) -> dict[str, Any]:
     """Adapt ESPN starters to the minimal shape required by reconstruction."""
 
-    name_to_id = {
+    team_name_to_id = {
         (str(row.team), _normalize_name(row.player_name)): int(row.player_id)
         for row in priors.itertuples(index=False)
+    }
+    name_candidates: dict[str, set[int]] = defaultdict(set)
+    for row in priors.itertuples(index=False):
+        name_candidates[_normalize_name(row.player_name)].add(int(row.player_id))
+    unique_name_to_id = {
+        name: next(iter(player_ids))
+        for name, player_ids in name_candidates.items()
+        if len(player_ids) == 1
     }
     team_ids: dict[str, int] = {}
     for event in events:
@@ -349,7 +397,10 @@ def _lineup_boxscore_from_espn(
                     continue
                 athlete = athlete_row.get("athlete", {})
                 name = str(athlete.get("displayName", "")) if isinstance(athlete, dict) else ""
-                player_id = name_to_id.get((team, _normalize_name(name)))
+                normalized_name = _normalize_name(name)
+                player_id = team_name_to_id.get((team, normalized_name))
+                if player_id is None:
+                    player_id = unique_name_to_id.get(normalized_name)
                 if player_id is None:
                     continue
                 starter = athlete_row.get("starter")
@@ -697,6 +748,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         injury_rows=_pregame_rows(summary, team),
                         report_status=_report_status(summary, team),
                         config=config,
+                        roster_player_ids=_pregame_roster_player_ids(summary, team),
                     )
                     _validate_forecast_distribution(
                         forecasts[team], team=team, game_id=game_id
@@ -825,6 +877,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                             bool(actual_row["played"])
                                             if actual_row is not None
                                             else False
+                                        ),
+                                        "identity_match_source": (
+                                            str(actual_row["identity_match_source"])
+                                            if actual_row is not None
+                                            else "missing_player"
                                         ),
                                         "regulation_equivalent_minutes": (
                                             float(actual_row["regulation_equivalent_minutes"])
@@ -970,6 +1027,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     state["cutoff_time"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     state["prior_participation_weight"] = config.participation_prior_games
     state["prior_conditional_weight"] = config.conditional_prior_games
+    identity_matches = (
+        evaluation.loc[evaluation["identity_match_source"].ne("missing_player")]
+        ["identity_match_source"]
+        .value_counts()
+        .sort_index()
+        .to_dict()
+        if not evaluation.empty
+        else {}
+    )
     result = {
         "schema_version": 3,
         "season": SEASON,
@@ -999,6 +1065,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "reconstructed_games": reconstructed_games,
             "fallback_games": int(len(games) - reconstructed_games),
             "cutoff_minutes": role_cutoff_minutes,
+        },
+        "player_identity_coverage": {
+            "matched_player_game_rows": int(sum(identity_matches.values())),
+            "match_source_counts": {
+                str(key): int(value) for key, value in identity_matches.items()
+            },
         },
     }
     output = Path(args.output_dir)

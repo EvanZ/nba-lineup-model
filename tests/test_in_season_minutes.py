@@ -28,6 +28,7 @@ from nba_lineup_model.modeling.in_season_minutes import (
 from nba_lineup_model.modeling.in_season_minutes_monitor import (
     _classification,
     _load_cdn_play_by_play,
+    _pregame_roster_player_ids,
     _projection_margin,
     _validate_non_replayed_source,
     apply_early_game_role_observations,
@@ -116,6 +117,43 @@ def test_zero_evidence_reproduces_frozen_preseason_distribution() -> None:
     assert forecast.loc[2, "final_normalized_minutes"] == pytest.approx(96.0)
     assert forecast.loc[3, "final_normalized_minutes"] == pytest.approx(0.0)
     assert forecast["final_normalized_minutes"].sum() == pytest.approx(240.0)
+
+
+def test_historical_forecast_uses_frozen_roster_across_team_change() -> None:
+    priors = _priors()
+    priors.loc[priors["player_id"].eq(1), "team"] = "BBB"
+    state = initialize_minutes_state(priors, season="2026-27", config=_config())
+
+    forecast = forecast_team_minutes(
+        state,
+        team="AAA",
+        game_id="001",
+        forecast_cutoff="2026-10-20T00:00:00Z",
+        injury_rows=[],
+        report_status="submitted",
+        config=_config(),
+        roster_player_ids={1, 2},
+    )
+
+    assert set(forecast["player_id"]) == {1, 2}
+    assert set(forecast["team"]) == {"AAA"}
+    assert forecast["final_normalized_minutes"].sum() == pytest.approx(240.0)
+
+
+def test_pregame_roster_ids_are_game_scoped_not_current_team_scoped() -> None:
+    summary = {
+        "home_team": "AAA",
+        "away_team": "BBB",
+        "pregame": {
+            "projected_minutes": {
+                "home": [{"player_id": 1}, {"player_id": 2}],
+                "away": [{"player_id": 3}],
+            }
+        },
+    }
+
+    assert _pregame_roster_player_ids(summary, "AAA") == {1, 2}
+    assert _pregame_roster_player_ids(summary, "BBB") == {3}
 
 
 def test_injury_absence_does_not_erase_conditional_role() -> None:
@@ -724,3 +762,58 @@ def test_final_boxscore_uses_frozen_injury_status_for_available_player_role() ->
     assert observations.loc[2, "conditional_observation_weight"] == 0.0
     assert observations.loc[3, "conditional_observation_weight"] == 1.0
     assert observations.loc[1, "regulation_equivalent_minutes"] == pytest.approx(240.0)
+
+
+def test_final_boxscore_follows_unique_player_identity_across_team_change() -> None:
+    priors = _priors()
+    priors.loc[priors["player_id"].eq(1), "team"] = "NEW"
+    priors.loc[priors["player_id"].eq(2), "team"] = "OLD"
+    summary = {
+        "game_id": "001",
+        "game_date": "2026-10-20",
+        "home_team": "OLD",
+        "away_team": "BBB",
+        "pregame": {
+            "projected_minutes": {
+                "home": [],
+                "away": [],
+            }
+        },
+    }
+    espn = {
+        "boxscore": {
+            "players": [
+                {
+                    "team": {"abbreviation": "OLD"},
+                    "statistics": [
+                        {
+                            "labels": ["MIN"],
+                            "athletes": [
+                                {
+                                    "athlete": {"displayName": "One"},
+                                    "stats": ["0"],
+                                    "didNotPlay": True,
+                                    "reason": "COACH'S DECISION",
+                                    "ejected": False,
+                                },
+                                {
+                                    "athlete": {"displayName": "Two"},
+                                    "stats": ["48"],
+                                    "didNotPlay": False,
+                                    "ejected": False,
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+
+    observations = build_game_observations(summary, espn, priors=priors).set_index(
+        "player_id"
+    )
+
+    assert observations.loc[1, "team"] == "OLD"
+    assert observations.loc[1, "outcome_classification"] == COACH_DNP
+    assert observations.loc[1, "identity_match_source"] == "unique_name_transfer"

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -301,11 +302,28 @@ def forecast_team_minutes(
     injury_rows: list[dict[str, object]] | None,
     report_status: str,
     config: InSeasonMinutesConfig,
+    roster_player_ids: Collection[int] | None = None,
 ) -> pd.DataFrame:
-    """Build one coherent shadow distribution from pre-tip state and status."""
+    """Build one coherent shadow distribution from pre-tip state and status.
+
+    ``state.team`` is the player's current serving team and therefore cannot be
+    used to reconstruct an earlier game after a trade or waiver.  A historical
+    replay supplies the immutable pregame roster IDs instead; the learned
+    player state follows those IDs across teams while the forecast allocation
+    remains tied to the roster that was knowable before that game.
+    """
 
     config.validate()
-    players = state.loc[state["team"].astype(str).eq(team)].copy()
+    if roster_player_ids is None:
+        players = state.loc[state["team"].astype(str).eq(team)].copy()
+    else:
+        roster_ids = {int(player_id) for player_id in roster_player_ids}
+        if not roster_ids:
+            raise ValueError(f"Frozen pregame roster is empty for {team}/{game_id}")
+        players = state.loc[state["player_id"].astype(int).isin(roster_ids)].copy()
+        # The state may carry the player's later/current organization.  The
+        # game-scoped roster is authoritative for this forecast only.
+        players["team"] = team
     if players.empty:
         raise ValueError(f"Minutes state has no roster for {team}")
     injury_by_id = {
