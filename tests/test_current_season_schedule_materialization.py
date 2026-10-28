@@ -208,6 +208,17 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
         rating_root=ratings,
         minutes_root=minutes,
         output_root=output,
+        current_forecast_response={
+            "players": [],
+            "win_projection": {
+                "as_of": through_date,
+                "serving_bundle_sha256": "test-serving-bundle",
+                "win_probability_scale": 0.1,
+                "home_court": 2.0,
+                "back_to_back": -1.0,
+                "scheduled_games": [],
+            },
+        },
     )
 
     assert (output / "current").resolve() == release.resolve()

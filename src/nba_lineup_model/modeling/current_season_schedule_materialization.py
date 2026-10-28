@@ -267,6 +267,9 @@ def _build_release(
         reasons = "; ".join(
             f"{row['game_id']}: {row['reason']}" for row in skipped[:10]
         )
+        raise ValueError(
+            f"Strict-forward Schedule replay skipped {len(skipped)} games: {reasons}"
+        )
 
     boundary_reforecasts: list[dict[str, Any]] = []
     if current_forecast_response is not None:
@@ -277,9 +280,6 @@ def _build_release(
             forecast_response=current_forecast_response,
             through_date=str(minutes_publication["through_date"]),
             identity=identity,
-        )
-        raise ValueError(
-            f"Strict-forward Schedule replay skipped {len(skipped)} games: {reasons}"
         )
 
     manifest = {
