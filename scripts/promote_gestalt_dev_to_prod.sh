@@ -22,6 +22,7 @@ CODE_ROOT="${GESTALT_CODE_ROOT:-/opt/nba-gestalt-code}"
 STATE_ROOT="${GESTALT_STATE_ROOT:-/var/lib/nba-gestalt}"
 WEB_RELEASE_ROOT="${GESTALT_WEB_RELEASE_ROOT:-/var/www/nba-gestalt-releases}"
 PROD_RELEASE="$APP_ROOT/current"
+DEV_RELEASE="${GESTALT_DEV_RELEASE:-/opt/nba-gestalt-dev/current}"
 RELEASE_ID="${GESTALT_PROD_RELEASE_ID:-$(git -C "$SOURCE_REPO" rev-parse --short=12 "$PROD_REF")}"
 RELEASE_ROOT="$CODE_ROOT/releases/$RELEASE_ID"
 FRONTEND_DIST="${GESTALT_PROD_FRONTEND_DIST:-}"
@@ -30,6 +31,20 @@ test -d "$SOURCE_REPO/.git"
 test -x "$PROD_RELEASE/.venv/bin/python"
 test -d "$PROD_RELEASE/artifacts"
 test -d "$PROD_RELEASE/data"
+test -d "$DEV_RELEASE"
+
+prod_commit="$(git -C "$SOURCE_REPO" rev-parse "$PROD_REF^{commit}")"
+dev_commit="$(git -C "$DEV_RELEASE" rev-parse HEAD)"
+if [[ "$dev_commit" != "$prod_commit" ]]; then
+  printf 'Production promotion blocked: dev is %s but requested ref is %s\n' \
+    "$dev_commit" "$prod_commit" >&2
+  exit 1
+fi
+"$DEV_RELEASE/scripts/validate_gestalt_serving_contract.sh" \
+  http://127.0.0.1:8011
+"$DEV_RELEASE/scripts/compare_gestalt_data_coverage.sh" \
+  http://127.0.0.1:8011 \
+  http://127.0.0.1:8010
 
 sudo install -d -o "$USER" -g "$(id -gn)" "$CODE_ROOT/releases"
 sudo install -d -o "$USER" -g "$(id -gn)" "$STATE_ROOT/catalog"
@@ -145,5 +160,9 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   --projection-url http://127.0.0.1:8010/api/win-projections \
   --days-ahead 7 \
   --no-s3
+
+
+"$RELEASE_ROOT/scripts/validate_gestalt_serving_contract.sh" \
+  http://127.0.0.1:8010
 
 printf 'Promoted NBA GESTALT production code release %s from %s\n' "$RELEASE_ID" "$PROD_REF"

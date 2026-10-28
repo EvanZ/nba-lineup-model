@@ -160,4 +160,10 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   --projection-url http://127.0.0.1:8011/api/win-projections \
   --days-ahead 7 \
   --no-s3
+
+"$RELEASE_ROOT/scripts/validate_gestalt_serving_contract.sh" \
+  http://127.0.0.1:8011
+"$RELEASE_ROOT/scripts/compare_gestalt_data_coverage.sh" \
+  http://127.0.0.1:8011 \
+  http://127.0.0.1:8010
 printf 'Deployed NBA GESTALT dev release %s from %s\n' "$RELEASE_ID" "$DEV_REF"

@@ -207,7 +207,14 @@ def test_current_win_projection_fixes_actual_wins_and_scores_remaining_schedule(
     by_team = {row["team"]: row for row in payload["teams"]}
     assert payload["state_kind"] == "in_season_updated"
     assert payload["serving_bundle_sha256"] == "b" * 64
-    assert [game["game_id"] for game in payload["scheduled_games"]] == ["0022600002"]
+    assert [game["game_id"] for game in payload["scheduled_games"]] == [
+        "0022600001",
+        "0022600002",
+    ]
+    assert [game["game_id"] for game in payload["remaining_scheduled_games"]] == [
+        "0022600002"
+    ]
+    assert len(payload["scheduled_games"]) == payload["scheduled_game_count"]
     assert by_team["AAA"]["actual_wins"] == 1
     assert by_team["AAA"]["completed_games"] == 1
     assert by_team["AAA"]["projected_wins"] > by_team["AAA"]["remaining_scheduled_wins"]

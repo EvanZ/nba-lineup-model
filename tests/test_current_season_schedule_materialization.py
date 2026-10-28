@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from nba_lineup_model.modeling.current_season_schedule_materialization import (
     _reforecast_pregame_from_current_state,
+    _validate_forecast_schedule_contract,
     materialize_current_season_schedule,
 )
 from nba_lineup_model.web_api.win_projections import read_schedule_performance
@@ -216,7 +218,17 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
                 "win_probability_scale": 0.1,
                 "home_court": 2.0,
                 "back_to_back": -1.0,
-                "scheduled_games": [],
+                "scheduled_game_count": 1,
+                "scheduled_games": [
+                    {
+                        "game_id": game_id,
+                        "game_date": "2026-10-20",
+                        "away_team": "BOS",
+                        "home_team": "DET",
+                        "home_back_to_back": 0,
+                        "away_back_to_back": 0,
+                    }
+                ],
             },
         },
     )
@@ -251,6 +263,16 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
     assert performance["model_track"] == "updated_ratings_updated_minutes"
     assert season["games"] == 1
     assert season["probability"]["gestalt"]["brier"] == (0.57 - 1.0) ** 2
+
+
+def test_rejects_truncated_public_schedule_before_promotion() -> None:
+    with pytest.raises(ValueError, match="calendar is incomplete"):
+        _validate_forecast_schedule_contract(
+            {
+                "scheduled_game_count": 2,
+                "scheduled_games": [{"game_id": "0022600002"}],
+            }
+        )
 
 
 def test_reforecasts_boundary_game_with_current_minutes_and_frozen_injuries() -> None:

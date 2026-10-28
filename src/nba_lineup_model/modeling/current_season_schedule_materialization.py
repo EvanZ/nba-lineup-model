@@ -63,6 +63,7 @@ def materialize_current_season_schedule(
             raise ValueError(
                 "Current forecast cutoff does not match the updater publications"
             )
+        _validate_forecast_schedule_contract(forecast)
     run_id = str(minutes_publication["dagster_run_id"])
     run_root = minutes_root / "runs" / f"through_date={through_date}" / run_id
     game_path = run_root / "four_cell_game_evaluation.csv"
@@ -747,6 +748,31 @@ def _validate_publications(
         raise ValueError("Rating and minutes publication dates do not match")
     if not minutes.get("dagster_run_id"):
         raise ValueError("Minutes publication has no Dagster run ID")
+
+
+def _validate_forecast_schedule_contract(forecast: dict[str, Any]) -> None:
+    """Fail closed before promotion if the public season calendar is truncated."""
+
+    scheduled_game_count = _integer(forecast.get("scheduled_game_count"))
+    scheduled_games = forecast.get("scheduled_games")
+    if scheduled_game_count < 1:
+        raise ValueError("Current forecast has no scheduled_game_count")
+    if not isinstance(scheduled_games, list):
+        raise ValueError("Current forecast has no scheduled_games calendar")
+    if len(scheduled_games) != scheduled_game_count:
+        raise ValueError(
+            "Current forecast calendar is incomplete: "
+            f"expected {scheduled_game_count} games, found {len(scheduled_games)}"
+        )
+    game_ids = [
+        _normalize_game_id(row.get("game_id"))
+        for row in scheduled_games
+        if isinstance(row, dict)
+    ]
+    if len(game_ids) != scheduled_game_count or any(not game_id for game_id in game_ids):
+        raise ValueError("Current forecast calendar contains invalid game rows")
+    if len(set(game_ids)) != scheduled_game_count:
+        raise ValueError("Current forecast calendar contains duplicate game IDs")
 
 
 def _require_columns(

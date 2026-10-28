@@ -409,7 +409,11 @@ def build_current_season_win_projection_payload(
         "scheduled_games_per_team": int(len(all_games) * 2 / len(strength)),
         "remaining_scheduled_game_count": int(len(remaining_games)),
         "teams": teams.to_dict(orient="records"),
-        "scheduled_games": _public_scheduled_games(game_rows),
+        # ``scheduled_games`` is the public season calendar contract.  Schedule
+        # consumers need completed games here as well as future games; the
+        # simulation itself still uses only ``game_rows`` above.
+        "scheduled_games": _public_scheduled_games(all_games),
+        "remaining_scheduled_games": _public_scheduled_games(game_rows),
         "contract": (
             f"Actual wins through {through_date} are fixed. Remaining games use the "
             "latest promoted player ratings and role estimates, plus the frozen "
