@@ -12,7 +12,7 @@ state.
 - static site: `/var/www/nba-gestalt-dev/`
 - API: loopback port `8011`
 - production artifacts/data: linked read-only from `/opt/nba-gestalt/current`
-- production current-season and Schedule state: mounted read-only by systemd
+- production current-season and Schedule state: read-only materialization inputs
 - collectors and Dagster sensors: not installed or enabled for dev
 
 Current-season serving and lineup materialization run on EC2 against the existing
@@ -20,6 +20,14 @@ updater states, CDN lake, and final-game archive. Only their compact derived
 artifacts are written under the dev state root. The 2026-27 Wins overlay also
 syncs the compact schedule catalog from `s3://nba-gestalt-data/lake/catalog/`
 directly to EC2; it never passes through the laptop.
+
+The dev Schedule is a content-addressed release under
+`/var/lib/nba-gestalt-dev/schedule/releases/`. Completed games use the verified
+strict-forward `updated_updated` evaluation (updated ratings and updated
+minutes), while the original published pregame and final audit JSON remains
+under that release's `as-published/` directory. Games beyond the updater cutoff
+retain their original snapshot until a later updater publication covers them.
+The active dev API reads the atomic `schedule/current` symlink.
 
 ## Deploy a review branch
 

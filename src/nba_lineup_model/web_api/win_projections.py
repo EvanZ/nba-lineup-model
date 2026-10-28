@@ -1078,6 +1078,17 @@ def read_schedule_day(
             if isinstance(final_audit, dict):
                 game["final_audit"] = final_audit
     payload["available"] = True
+    manifest_path = Path(state_dir) / "manifest.json"
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text())
+        if isinstance(manifest, dict):
+            payload["forecast_version"] = {
+                "model_track": manifest.get("model_track"),
+                "evaluation_cell": manifest.get("evaluation_cell"),
+                "mode": "strict_forward_replay",
+                "through_date": manifest.get("through_date"),
+                "identity": manifest.get("identity"),
+            }
     return payload
 
 
@@ -1528,11 +1539,25 @@ def read_schedule_performance(
                     **_score_schedule_performance_games(games),
                 }
             )
+    manifest_path = Path(state_dir) / "manifest.json"
+    manifest = (
+        json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
+    )
+    if not isinstance(manifest, dict):
+        manifest = {}
+    model_track = manifest.get("model_track")
     return {
         "season": season,
         "as_of": as_of,
         "updated_at": latest_archive_time,
-        "source": "Immutable pregame snapshots and completed-game archive",
+        "source": (
+            "Strict-forward updated-ratings + updated-minutes replay"
+            if model_track == "updated_ratings_updated_minutes"
+            else "Immutable pregame snapshots and completed-game archive"
+        ),
+        "model_track": model_track,
+        "evaluation_cell": manifest.get("evaluation_cell"),
+        "replay_through_date": manifest.get("through_date"),
         "windows": windows,
     }
 

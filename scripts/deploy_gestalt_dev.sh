@@ -35,6 +35,7 @@ sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/catalog"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/current-season-serving"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/current-season-lineups"
+sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/schedule"
 
 if [[ ! -d "$RELEASE_ROOT" ]]; then
   git -C "$SOURCE_REPO" worktree add --detach "$RELEASE_ROOT" "$DEV_REF"
@@ -61,7 +62,8 @@ mv \
 
 if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
    [[ ! -f "$DEV_STATE_ROOT/current-season-serving/latest.json" ]] || \
-   [[ ! -f "$DEV_STATE_ROOT/current-season-lineups/latest.json" ]]; then
+   [[ ! -f "$DEV_STATE_ROOT/current-season-lineups/latest.json" ]] || \
+   [[ ! -f "$DEV_STATE_ROOT/schedule/current/manifest.json" ]]; then
   if systemctl cat gestalt-web-dev >/dev/null 2>&1; then
     sudo systemctl stop gestalt-web-dev
   fi
@@ -83,6 +85,14 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
     --schedule-state-dir /var/lib/nba-gestalt/schedule \
     --coverage-path /var/lib/nba-gestalt/cdn/coverage.json \
     --output-root "$DEV_STATE_ROOT/current-season-lineups"
+
+  PYTHONPATH="$RELEASE_ROOT/src" \
+    "$PROD_RELEASE/.venv/bin/python" \
+    -m nba_lineup_model.modeling.current_season_schedule_materialization \
+    --source-root /var/lib/nba-gestalt/schedule \
+    --rating-root /var/lib/nba-gestalt/in-season-nail \
+    --minutes-root /var/lib/nba-gestalt/in-season-minutes \
+    --output-root "$DEV_STATE_ROOT/schedule"
 fi
 
 if [[ -n "$FRONTEND_DIST" ]]; then
@@ -132,4 +142,15 @@ for _ in {1..60}; do
   sleep 1
 done
 curl --fail --silent --show-error http://127.0.0.1:8011/api/health >/dev/null
+
+# Refresh only today's forward-looking dev board. Historical completed games
+# remain the strict-forward replay materialized above, and no dev artifact is
+# uploaded to the production S3 archive.
+PYTHONPATH="$RELEASE_ROOT/src" \
+  "$PROD_RELEASE/.venv/bin/nba-refresh-gestalt-schedule" \
+  --date "$(TZ=America/Los_Angeles date +%F)" \
+  --state-dir "$DEV_STATE_ROOT/schedule/current" \
+  --projection-url http://127.0.0.1:8011/api/win-projections \
+  --days-ahead 7 \
+  --no-s3
 printf 'Deployed NBA GESTALT dev release %s from %s\n' "$RELEASE_ID" "$DEV_REF"

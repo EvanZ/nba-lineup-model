@@ -105,7 +105,7 @@ type ArchivedGame = {
   away_score: number | null;
   broadcasts: string[];
   status: { state: string; completed: boolean; description: string; detail: string | null; display_clock?: string | null; period?: number | null };
-  projection: { model: string; home_margin: number; home_win_probability: number };
+  projection: { model: string; state_kind?: string; model_track?: string; home_margin: number; home_win_probability: number };
   market: MarketLine | null;
   prediction_market?: PredictionMarket | null;
   injury_report: {
@@ -135,6 +135,7 @@ type ScheduleDay = {
   collected_at?: string;
   live_score_collected_at?: string;
   source: string;
+  forecast_version?: { model_track?: string; evaluation_cell?: string; mode?: string; through_date?: string; identity?: string };
   games: ArchivedGame[];
 };
 
@@ -205,6 +206,9 @@ type SchedulePerformance = {
   as_of: string | null;
   updated_at: string | null;
   source: string;
+  model_track?: string | null;
+  evaluation_cell?: string | null;
+  replay_through_date?: string | null;
   windows: PerformanceWindow[];
 };
 
@@ -497,7 +501,7 @@ function atsRecord(bucket: AtsEdgeBucket) {
   return `${bucket.wins}-${bucket.losses}${bucket.pushes ? `-${bucket.pushes}` : ""}`;
 }
 
-function PerformanceSummary({ window, asOf }: { window: PerformanceWindow; asOf: string | null }) {
+function PerformanceSummary({ window, asOf, modelTrack }: { window: PerformanceWindow; asOf: string | null; modelTrack?: string | null }) {
   const brierScores = [
     window.probability.gestalt.brier,
     window.probability.market_consensus.brier,
@@ -514,7 +518,7 @@ function PerformanceSummary({ window, asOf }: { window: PerformanceWindow; asOf:
   return <aside className="schedule-performance-card" aria-labelledby="schedule-performance-title">
     <div className="schedule-performance-card-heading">
       <div><span>Model check · {window.label}</span><strong id="schedule-performance-title">How we’re doing</strong></div>
-      {window.games < 30 && <small>Early sample</small>}
+      <small>{modelTrack === "updated_ratings_updated_minutes" ? "Updated model replay" : window.games < 30 ? "Early sample" : "Published model"}</small>
     </div>
     <div className="schedule-performance-section">
       <div className="schedule-performance-label"><span>{window.games} finals{asOf ? ` · through ${shortMonthDay(asOf)}` : ""}</span><small>Available frozen observations</small></div>
@@ -549,7 +553,7 @@ function PerformanceSummary({ window, asOf }: { window: PerformanceWindow; asOf:
         </div>)}
       </div>
     </div>}
-    <p className="schedule-performance-footnote">Probability metrics use every immutable observation available for each source; sample sizes are shown by column. * Market uses DraftKings for earlier games (n={draftKingsGames}) and multi-book consensus once available (n={consensusGames}). † Actual mins is a postgame hindsight diagnostic, not a pregame forecast. Lower Brier and margin MAE are better. ATS units assume −110.</p>
+    <p className="schedule-performance-footnote">{modelTrack === "updated_ratings_updated_minutes" ? "Gestalt uses the strict-forward updated-ratings + updated-minutes replay; every prediction uses only evidence available before that game. Original published forecasts remain archived separately. " : "Probability metrics use every immutable observation available for each source; "}Sample sizes are shown by column. * Market uses DraftKings for earlier games (n={draftKingsGames}) and multi-book consensus once available (n={consensusGames}). † Actual mins is a postgame hindsight diagnostic, not a pregame forecast. Lower Brier and margin MAE are better. ATS units assume −110.</p>
   </aside>;
 }
 
@@ -616,7 +620,7 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
       </div>
 
       <div className="schedule-projection-panel">
-        <p>GESTALT projection</p>
+        <p>GESTALT projection{pregame?.projection.model_track === "updated_ratings_updated_minutes" || pregame?.projection.state_kind === "in_season_updated" ? " · Updated" : ""}</p>
         <div className="schedule-probability-bar" aria-label={`${game.home_team} ${(projection.winProbability * 100).toFixed(0)} percent win probability`}>
           <span style={{ width: `${(1 - projection.winProbability) * 100}%` }} />
           <span style={{ width: `${projection.winProbability * 100}%` }} />
@@ -829,7 +833,7 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
           <h1>The slate.</h1>
           <p>Every game, our pregame projection, and the market on one timeline. Move backward to audit results or forward to scout the week.</p>
         </div>
-        {seasonPerformance ? <PerformanceSummary window={seasonPerformance} asOf={performance?.as_of ?? null} /> : null}
+        {seasonPerformance ? <PerformanceSummary window={seasonPerformance} asOf={performance?.as_of ?? null} modelTrack={performance?.model_track} /> : null}
       </div>
 
       <div className="schedule-toolbar">
