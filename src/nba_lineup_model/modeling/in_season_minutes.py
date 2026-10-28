@@ -158,6 +158,37 @@ def regulation_equivalent_minutes(
     return values * (REGULATION_TEAM_MINUTES / total)
 
 
+def _capped_team_allocation(weights: pd.Series) -> pd.Series:
+    """Normalize role weights to 240 while respecting the 48-minute ceiling."""
+
+    values = pd.to_numeric(weights, errors="raise").astype(float).clip(lower=0.0)
+    positive = values.gt(0.0)
+    # Small synthetic fixtures cannot satisfy the physical constraint. Keep
+    # the historical proportional behavior there; real NBA rotations always
+    # provide at least five positive allocations and are capped below.
+    if int(positive.sum()) < 5:
+        return REGULATION_TEAM_MINUTES * values / float(values.sum())
+
+    allocation = pd.Series(0.0, index=values.index, dtype=float)
+    active = list(values.index[positive])
+    remaining = REGULATION_TEAM_MINUTES
+    while active:
+        active_total = float(values.loc[active].sum())
+        if active_total <= 0.0:
+            raise ValueError("Positive rotation weights are required")
+        proposed = remaining * values.loc[active] / active_total
+        capped = proposed.loc[proposed.gt(48.0 + 1e-12)].index.tolist()
+        if not capped:
+            allocation.loc[active] = proposed
+            break
+        allocation.loc[capped] = 48.0
+        remaining -= 48.0 * len(capped)
+        active = [index for index in active if index not in capped]
+        if remaining < -1e-9:
+            raise ValueError("Capped minute allocation exceeded the team total")
+    return allocation
+
+
 def advance_minutes_state(
     state: pd.DataFrame,
     observations: pd.DataFrame,
@@ -377,11 +408,10 @@ def forecast_team_minutes(
     selected_total = float(players.loc[selected, "pre_normalization_minutes"].sum())
     if selected_total <= 0:
         raise ValueError(f"No positive shadow minutes for {team}/{game_id}")
-    players["final_normalized_minutes"] = 0.0
-    players.loc[selected, "final_normalized_minutes"] = (
-        REGULATION_TEAM_MINUTES
-        * players.loc[selected, "pre_normalization_minutes"]
-        / selected_total
+    players["final_normalized_minutes"] = _capped_team_allocation(
+        players["pre_normalization_minutes"].where(
+            players.index.isin(selected), 0.0
+        )
     )
     players["team_total_minutes"] = float(players["final_normalized_minutes"].sum())
     players["game_id"] = game_id

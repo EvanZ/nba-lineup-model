@@ -15,6 +15,7 @@ from nba_lineup_model.modeling.in_season_minutes import (
     PLAYED,
     UNKNOWN,
     InSeasonMinutesConfig,
+    _capped_team_allocation,
     advance_minutes_state,
     calibrate_conditional_prior_games,
     calibrate_prior_games,
@@ -400,6 +401,16 @@ def test_overtime_minutes_are_regulation_equivalent() -> None:
     )
     assert normalized.sum() == pytest.approx(240.0)
     assert normalized.tolist() == pytest.approx([48.0] * 5)
+
+
+def test_team_allocation_caps_one_player_and_redistributes_overflow() -> None:
+    allocation = _capped_team_allocation(
+        pd.Series([100.0, 20.0, 15.0, 10.0, 8.0, 7.0])
+    )
+
+    assert allocation.sum() == pytest.approx(240.0)
+    assert allocation.max() == pytest.approx(48.0)
+    assert (allocation >= 0.0).all()
 
 
 def test_out_player_gets_zero_and_remaining_minutes_conserve_240() -> None:
