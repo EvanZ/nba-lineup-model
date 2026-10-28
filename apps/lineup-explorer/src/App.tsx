@@ -499,30 +499,30 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
           const ratingDelta = point.rating - previousRating;
           const status = point.played === false ? point.pregame_status ?? "DNP" : null;
           return <tr className={point.played === false ? "current-season-game-log-dnp" : undefined} key={point.game_id}>
-            <td><time dateTime={gameDate}>{formatGameLogDate(gameDate)}</time></td>
-            <td>
+            <td className="current-season-game-log-date" data-label="Date"><time dateTime={gameDate}>{formatGameLogDate(gameDate)}</time></td>
+            <td className="current-season-game-log-matchup" data-label="Opponent / result">
               {point.opponent ? <a className="current-season-game-log-opponent" href={teamSeasonHref(point.opponent, "2026-27")}>
                 <img src={teamLogoUrl(point.opponent)} alt="" aria-hidden="true" loading="lazy" />
                 <span><strong>{point.home_away === "away" ? "@" : "vs."} {point.opponent}</strong>{result && <small className={point.result === "W" ? "win" : "loss"}>{result}</small>}</span>
               </a> : "-"}
             </td>
-            <td className="quantity-cell current-season-game-log-minutes">
+            <td className="quantity-cell current-season-game-log-minutes" data-label="Minutes · proj. → actual">
               <span>{hasMinutes ? <>{projectedMinutes === null || projectedMinutes === undefined ? "-" : projectedMinutes.toFixed(1)} <span aria-hidden="true">→</span> {actualMinutes === null ? "-" : number.format(actualMinutes)}</> : "-"}</span>
               {status && <small><strong>{status}</strong>{point.pregame_reason && <> · {point.pregame_reason}</>}</small>}
             </td>
-            <td className="current-season-game-log-rating"><Rating value={point.rating} /></td>
-            <td className={ratingDelta < 0 ? "negative current-season-game-log-delta" : "positive current-season-game-log-delta"}>{formatPreciseRating(ratingDelta)}</td>
-            <td className="quantity-cell current-season-game-log-stat">{box?.points ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-stat">{box?.rebounds ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-stat">{box?.assists ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-stat">{box?.turnovers ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-stat">{box?.steals ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-stat">{box?.blocks ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-shooting">{box?.two_points_made === null || box?.two_points_made === undefined ? "-" : `${box.two_points_made}-${box.two_points_attempted ?? "-"}`}</td>
-            <td className="quantity-cell current-season-game-log-shooting">{box?.three_points_made === null || box?.three_points_made === undefined ? "-" : `${box.three_points_made}-${box.three_points_attempted ?? "-"}`}</td>
-            <td className="quantity-cell current-season-game-log-shooting">{box?.free_throws_made === null || box?.free_throws_made === undefined ? "-" : `${box.free_throws_made}-${box.free_throws_attempted ?? "-"}`}</td>
-            <td className={box?.plus_minus !== null && box?.plus_minus !== undefined && box.plus_minus < 0 ? "negative quantity-cell" : "quantity-cell"}>{box?.plus_minus === null || box?.plus_minus === undefined ? "-" : `${box.plus_minus > 0 ? "+" : ""}${box.plus_minus}`}</td>
-            <td className="quantity-cell">{point.game_on_court_possessions === undefined ? "-" : wholeNumber.format(point.game_on_court_possessions)}</td>
+            <td className="current-season-game-log-rating" data-label="NAIL after slate"><Rating value={point.rating} /></td>
+            <td className={ratingDelta < 0 ? "negative current-season-game-log-delta" : "positive current-season-game-log-delta"} data-label="Game Δ">{formatPreciseRating(ratingDelta)}</td>
+            <td className="quantity-cell current-season-game-log-stat" data-label="PTS">{box?.points ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-stat" data-label="REB">{box?.rebounds ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-stat" data-label="AST">{box?.assists ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-stat" data-label="TOV">{box?.turnovers ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-stat" data-label="STL">{box?.steals ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-stat" data-label="BLK">{box?.blocks ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-shooting" data-label="2PT">{box?.two_points_made === null || box?.two_points_made === undefined ? "-" : `${box.two_points_made}-${box.two_points_attempted ?? "-"}`}</td>
+            <td className="quantity-cell current-season-game-log-shooting" data-label="3PT">{box?.three_points_made === null || box?.three_points_made === undefined ? "-" : `${box.three_points_made}-${box.three_points_attempted ?? "-"}`}</td>
+            <td className="quantity-cell current-season-game-log-shooting" data-label="FT">{box?.free_throws_made === null || box?.free_throws_made === undefined ? "-" : `${box.free_throws_made}-${box.free_throws_attempted ?? "-"}`}</td>
+            <td className={box?.plus_minus !== null && box?.plus_minus !== undefined && box.plus_minus < 0 ? "negative quantity-cell current-season-game-log-stat" : "quantity-cell current-season-game-log-stat"} data-label="Raw +/-">{box?.plus_minus === null || box?.plus_minus === undefined ? "-" : `${box.plus_minus > 0 ? "+" : ""}${box.plus_minus}`}</td>
+            <td className="quantity-cell current-season-game-log-stat" data-label="Poss.">{point.game_on_court_possessions === undefined ? "-" : wholeNumber.format(point.game_on_court_possessions)}</td>
           </tr>;
         })}</tbody>
       </table>
