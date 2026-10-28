@@ -315,12 +315,35 @@ class AwsCliImmutableObjectStore:
                 "PreconditionFailed" in error_text or "412" in error_text
             )
             if result.returncode != 0 and not already_exists:
-                raise RuntimeError(f"Unable to create immutable S3 object {uri}: {error_text}")
-            remote = subprocess.run(
-                ["aws", "s3", "cp", uri, "-", "--only-show-errors"],
+                raise RuntimeError(
+                    f"Unable to create immutable S3 object {uri} "
+                    f"(exit {result.returncode}): {error_text}"
+                )
+            remote_path = Path(directory) / "remote"
+            verification = subprocess.run(
+                [
+                    "aws",
+                    "s3api",
+                    "get-object",
+                    "--bucket",
+                    bucket,
+                    "--key",
+                    key,
+                    "--checksum-mode",
+                    "ENABLED",
+                    "--output",
+                    "json",
+                    str(remote_path),
+                ],
                 capture_output=True,
-                check=True,
-            ).stdout
+            )
+            if verification.returncode != 0:
+                error_text = verification.stderr.decode(errors="replace").strip()
+                raise RuntimeError(
+                    f"Unable to verify immutable S3 object {uri} "
+                    f"(exit {verification.returncode}): {error_text}"
+                )
+            remote = remote_path.read_bytes()
         if hashlib.sha256(remote).hexdigest() != digest or remote != payload:
             raise RuntimeError(f"Immutable S3 verification failed for {uri}")
         return not already_exists

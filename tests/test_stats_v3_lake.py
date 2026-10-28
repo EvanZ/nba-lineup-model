@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import pytest
 
 from nba_lineup_model.ingest.nba_stats import NbaStatsEndpoint, StatsCachedResponse
 from nba_lineup_model.season.stats_v3_lake import (
+    AwsCliImmutableObjectStore,
     CompletedScheduleGame,
     StatsV3BatchError,
     StatsV3LakeArchive,
@@ -35,6 +37,29 @@ class MemoryObjectStore:
             return False
         self.objects[uri] = payload
         return True
+
+
+def test_aws_store_verifies_with_s3api_file_download(monkeypatch) -> None:
+    payload = b"immutable payload"
+    calls: list[list[str]] = []
+
+    def fake_run(args, *, capture_output, check=False):
+        calls.append(list(args))
+        if args[:3] == ["aws", "s3api", "put-object"]:
+            return subprocess.CompletedProcess(args, 0, stdout=b"{}", stderr=b"")
+        assert args[:3] == ["aws", "s3api", "get-object"]
+        Path(args[-1]).write_bytes(payload)
+        return subprocess.CompletedProcess(args, 0, stdout=b"{}", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    created = AwsCliImmutableObjectStore().put_bytes(
+        "s3://example/lake/object.bin", payload
+    )
+
+    assert created is True
+    assert calls[1][:3] == ["aws", "s3api", "get-object"]
+    assert "--checksum-mode" in calls[1]
 
 
 def _write_final_slate(
