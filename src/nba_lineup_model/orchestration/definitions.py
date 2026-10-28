@@ -1819,7 +1819,9 @@ def materialize_current_season_lineups_op(
     from nba_lineup_model.web_api.inference import LineupEvaluator
 
     path = materialize_current_season_lineups(
-        evaluator=LineupEvaluator.from_latest_artifact(),
+        evaluator=LineupEvaluator.from_latest_artifact(
+            include_current_season_lineups=False
+        ),
         schedule_state_dir=_state_dir(),
         coverage_path=_cdn_coverage_path(),
         cdn_s3_prefix=f"{_cdn_lake_uri()}/raw/cdn/playbyplay",

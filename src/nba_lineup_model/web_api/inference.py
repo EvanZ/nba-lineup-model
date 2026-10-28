@@ -420,8 +420,14 @@ class LineupEvaluator:
         artifacts_dir: Path | str = DEFAULT_ARTIFACTS_DIR,
         season: str = DISPLAY_SEASON,
         panel_path: Path | str = "data/analytical/player_season_panel/player_seasons.parquet",
+        include_current_season_lineups: bool = True,
     ) -> LineupEvaluator:
-        """Load the published completed-fit model state used by the local Lineup Lab."""
+        """Load the published completed-fit model state used by the local Lineup Lab.
+
+        Lineup materialization deliberately disables the existing current-season
+        lineup catalog: that catalog belongs to the previously promoted serving
+        bundle and cannot be loaded while constructing its replacement.
+        """
 
         root = Path(artifacts_dir) / MODEL_ARTIFACT / season
         latest_path = root / "latest.json"
@@ -539,7 +545,7 @@ class LineupEvaluator:
             load_current_season_lineup_catalog(
                 serving_metadata=current_season.metadata,
             )
-            if current_season is not None
+            if current_season is not None and include_current_season_lineups
             else None
         )
         player_rating_histories = _player_rating_histories(

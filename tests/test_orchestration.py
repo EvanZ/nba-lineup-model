@@ -425,6 +425,67 @@ def test_minutes_sensor_rebuilds_when_updater_version_changes(
     assert current.skip_message == "Production minutes already match the ratings publication"
 
 
+def test_lineup_materialization_ignores_previous_lineup_bundle(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from dagster import build_op_context
+
+    from nba_lineup_model.modeling import current_season_lineup_materialization
+    from nba_lineup_model.orchestration import definitions
+    from nba_lineup_model.web_api.inference import LineupEvaluator
+
+    evaluator = object()
+    evaluator_options: dict[str, object] = {}
+
+    def fake_from_latest_artifact(cls, **kwargs):
+        evaluator_options.update(kwargs)
+        return evaluator
+
+    output = tmp_path / "lineups" / "bundle"
+    output.mkdir(parents=True)
+    (output / "manifest.json").write_text(
+        json.dumps(
+            {
+                "bundle_sha256": "a" * 64,
+                "identity": {
+                    "serving_bundle_sha256": "b" * 64,
+                    "source_game_ids": ["0022600001"],
+                    "lineup_count": 2,
+                },
+            }
+        )
+    )
+
+    def fake_materialize_current_season_lineups(**kwargs):
+        assert kwargs["evaluator"] is evaluator
+        return output
+
+    monkeypatch.setattr(
+        LineupEvaluator,
+        "from_latest_artifact",
+        classmethod(fake_from_latest_artifact),
+    )
+    monkeypatch.setattr(
+        current_season_lineup_materialization,
+        "materialize_current_season_lineups",
+        fake_materialize_current_season_lineups,
+    )
+    monkeypatch.setattr(definitions, "_state_dir", lambda: tmp_path / "schedule")
+    monkeypatch.setattr(
+        definitions, "_cdn_coverage_path", lambda: tmp_path / "coverage.json"
+    )
+    monkeypatch.setattr(definitions, "_cdn_lake_uri", lambda: "s3://example/lake")
+    monkeypatch.setattr(
+        definitions, "_current_season_lineups_root", lambda: tmp_path / "lineups"
+    )
+
+    result = definitions.materialize_current_season_lineups_op(build_op_context())
+
+    assert evaluator_options == {"include_current_season_lineups": False}
+    assert result["serving_bundle_sha256"] == "b" * 64
+
+
 def _write_current_season_child_publications(root: Path) -> tuple[str, str, str]:
     rating_uri = "s3://example/player_state-" + "a" * 64 + ".parquet"
     trajectory_uri = "s3://example/player_game_trajectory-" + "c" * 64 + ".parquet"
