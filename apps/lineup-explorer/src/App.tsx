@@ -485,7 +485,7 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
     <div className="current-season-game-log-table-wrap">
       <table className="current-season-game-log-table">
         <thead><tr>
-          <th>Date</th><th>Opponent / result</th><th>Minutes<br /><small>Proj. → actual</small></th><th>Box score<br /><small>PTS / REB / AST / TOV / STL / BLK</small></th><th>2PT<br /><small>M / A</small></th><th>3PT<br /><small>M / A</small></th><th>FT<br /><small>M / A</small></th><th>Raw<br /><small>+/-</small></th><th>Poss.</th><th>NAIL<br /><small>after slate</small></th><th>Δ</th>
+          <th>Date</th><th>Opponent / result</th><th>Minutes<br /><small>Proj. → actual</small></th><th>Box score<br /><small>PTS / REB / AST / TOV / STL / BLK</small></th><th>2PT<br /><small>M-A</small></th><th>3PT<br /><small>M-A</small></th><th>FT<br /><small>M-A</small></th><th>Raw<br /><small>+/-</small></th><th>Poss.</th><th>NAIL<br /><small>after slate</small></th><th>Δ</th>
         </tr></thead>
         <tbody>{visibleGames.map(({ point, previousRating }) => {
           const box = point.box_score;
@@ -513,9 +513,9 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
             <td className="quantity-cell current-season-game-log-box-score">
               {box && box.points !== null && box.points !== undefined ? `${box.points} / ${box.rebounds ?? "-"} / ${box.assists ?? "-"} / ${box.turnovers ?? "-"} / ${box.steals ?? "-"} / ${box.blocks ?? "-"}` : "-"}
             </td>
-            <td className="quantity-cell current-season-game-log-shooting">{box?.two_points_made === null || box?.two_points_made === undefined ? "-" : `${box.two_points_made} / ${box.two_points_attempted ?? "-"}`}</td>
-            <td className="quantity-cell current-season-game-log-shooting">{box?.three_points_made === null || box?.three_points_made === undefined ? "-" : `${box.three_points_made} / ${box.three_points_attempted ?? "-"}`}</td>
-            <td className="quantity-cell current-season-game-log-shooting">{box?.free_throws_made === null || box?.free_throws_made === undefined ? "-" : `${box.free_throws_made} / ${box.free_throws_attempted ?? "-"}`}</td>
+            <td className="quantity-cell current-season-game-log-shooting">{box?.two_points_made === null || box?.two_points_made === undefined ? "-" : `${box.two_points_made}-${box.two_points_attempted ?? "-"}`}</td>
+            <td className="quantity-cell current-season-game-log-shooting">{box?.three_points_made === null || box?.three_points_made === undefined ? "-" : `${box.three_points_made}-${box.three_points_attempted ?? "-"}`}</td>
+            <td className="quantity-cell current-season-game-log-shooting">{box?.free_throws_made === null || box?.free_throws_made === undefined ? "-" : `${box.free_throws_made}-${box.free_throws_attempted ?? "-"}`}</td>
             <td className={box?.plus_minus !== null && box?.plus_minus !== undefined && box.plus_minus < 0 ? "negative quantity-cell" : "quantity-cell"}>{box?.plus_minus === null || box?.plus_minus === undefined ? "-" : `${box.plus_minus > 0 ? "+" : ""}${box.plus_minus}`}</td>
             <td className="quantity-cell">{point.game_on_court_possessions === undefined ? "-" : wholeNumber.format(point.game_on_court_possessions)}</td>
             <td className="current-season-game-log-rating"><Rating value={point.rating} /></td>
