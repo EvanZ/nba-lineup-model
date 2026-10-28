@@ -147,6 +147,10 @@ export type Player = {
     game_date?: string;
     team?: string;
     opponent?: string;
+    home_away?: "home" | "away";
+    result?: "W" | "L" | null;
+    team_score?: number | null;
+    opponent_score?: number | null;
     played?: boolean;
     pregame_status?: string | null;
     pregame_reason?: string | null;
@@ -157,6 +161,14 @@ export type Player = {
     in_season_delta?: number;
     raw_on_court_possessions?: number;
     game_on_court_possessions?: number;
+    projected_minutes?: number | null;
+    actual_minutes?: number | null;
+    box_score?: {
+      points?: number | null;
+      rebounds?: number | null;
+      assists?: number | null;
+      plus_minus?: number | null;
+    };
     evidence_weight?: number;
     posterior_standard_error?: number | null;
     bundle_sha256?: string | null;

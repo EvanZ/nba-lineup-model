@@ -120,6 +120,20 @@ function formatChartRating(value: number) {
   return value.toFixed(1);
 }
 
+function formatPreciseRating(value: number) {
+  const normalized = Math.abs(value) < 0.005 ? 0 : value;
+  return `${normalized >= 0 ? "+" : ""}${normalized.toFixed(2)}`;
+}
+
+function formatGameLogDate(value: string) {
+  const parsed = new Date(`${value}T12:00:00Z`);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(parsed);
+}
+
 function formatWinPct(value: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
@@ -445,6 +459,73 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
   );
 }
 
+function CurrentSeasonGameLog({ player }: { player: Player }) {
+  const points = player.current_season_trajectory ?? [];
+  const [visibleCount, setVisibleCount] = useState(10);
+
+  useEffect(() => setVisibleCount(10), [player.player_id]);
+
+  const games = points.flatMap((point, index) => {
+    if (!point.game_id || !point.game_date) return [];
+    const previousRating = points[index - 1]?.rating ?? point.preseason_rating ?? point.rating;
+    return [{ point, previousRating }];
+  }).reverse();
+  if (games.length === 0) return null;
+
+  const visibleGames = games.slice(0, visibleCount);
+  const remaining = games.length - visibleGames.length;
+  return <div className="current-season-game-log" aria-labelledby="current-season-game-log-title">
+    <div className="current-season-game-log-heading">
+      <div>
+        <p className="section-kicker">Immutable team-game record</p>
+        <h3 id="current-season-game-log-title">2026–27 game log.</h3>
+      </div>
+      <p>Projected minutes are the frozen pregame estimate. NAIL Δ is the change after the complete day&apos;s slate.</p>
+    </div>
+    <div className="current-season-game-log-table-wrap">
+      <table className="current-season-game-log-table">
+        <thead><tr>
+          <th>Date</th><th>Opponent / result</th><th>Status</th><th>Minutes<br /><small>Proj. → actual</small></th><th>Box score<br /><small>PTS / REB / AST</small></th><th>Raw<br /><small>+/-</small></th><th>Poss.</th><th>NAIL<br /><small>after slate</small></th><th>Δ</th>
+        </tr></thead>
+        <tbody>{visibleGames.map(({ point, previousRating }) => {
+          const box = point.box_score;
+          const gameDate = point.game_date ?? "";
+          const result = point.result && point.team_score !== null && point.team_score !== undefined && point.opponent_score !== null && point.opponent_score !== undefined
+            ? `${point.result} ${point.team_score}–${point.opponent_score}`
+            : null;
+          const projectedMinutes = point.projected_minutes;
+          const actualMinutes = point.actual_minutes ?? (point.played === false ? 0 : null);
+          const hasMinutes = projectedMinutes !== null && projectedMinutes !== undefined || actualMinutes !== null;
+          const ratingDelta = point.rating - previousRating;
+          const status = point.played === false ? point.pregame_status ?? "DNP" : "Played";
+          return <tr className={point.played === false ? "current-season-game-log-dnp" : undefined} key={point.game_id}>
+            <td><time dateTime={gameDate}>{formatGameLogDate(gameDate)}</time></td>
+            <td>
+              {point.opponent ? <a className="current-season-game-log-opponent" href={teamSeasonHref(point.opponent, "2026-27")}>
+                <img src={teamLogoUrl(point.opponent)} alt="" aria-hidden="true" loading="lazy" />
+                <span><strong>{point.home_away === "away" ? "@" : "vs."} {point.opponent}</strong>{result && <small className={point.result === "W" ? "win" : "loss"}>{result}</small>}</span>
+              </a> : "-"}
+            </td>
+            <td className="current-season-game-log-status"><strong>{status}</strong>{point.played === false && point.pregame_reason && <small>{point.pregame_reason}</small>}</td>
+            <td className="quantity-cell">{hasMinutes ? <>{projectedMinutes === null || projectedMinutes === undefined ? "-" : projectedMinutes.toFixed(1)} <span aria-hidden="true">→</span> {actualMinutes === null ? "-" : number.format(actualMinutes)}</> : "-"}</td>
+            <td className="quantity-cell">{box && box.points !== null && box.points !== undefined ? `${box.points} / ${box.rebounds ?? "-"} / ${box.assists ?? "-"}` : "-"}</td>
+            <td className={box?.plus_minus !== null && box?.plus_minus !== undefined && box.plus_minus < 0 ? "negative quantity-cell" : "quantity-cell"}>{box?.plus_minus === null || box?.plus_minus === undefined ? "-" : `${box.plus_minus > 0 ? "+" : ""}${box.plus_minus}`}</td>
+            <td className="quantity-cell">{point.game_on_court_possessions === undefined ? "-" : wholeNumber.format(point.game_on_court_possessions)}</td>
+            <td className="current-season-game-log-rating"><Rating value={point.rating} /></td>
+            <td className={ratingDelta < 0 ? "negative current-season-game-log-delta" : "positive current-season-game-log-delta"}>{formatPreciseRating(ratingDelta)}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>
+    {remaining > 0 && <button className="current-season-game-log-more" type="button" onClick={() => setVisibleCount((count) => count + 10)}>
+      Show {Math.min(10, remaining)} more {Math.min(10, remaining) === 1 ? "game" : "games"} <ChevronDown size={14} aria-hidden="true" />
+    </button>}
+    {remaining === 0 && games.length > 10 && <button className="current-season-game-log-more" type="button" onClick={() => setVisibleCount(10)}>
+      Show latest 10 <ChevronUp size={14} aria-hidden="true" />
+    </button>}
+  </div>;
+}
+
 function PlayerProfilePage({ playerId }: { playerId: number }) {
   const isCompact = useMediaQuery("(max-width: 720px)");
   const [player, setPlayer] = useState<Player | null>(null);
@@ -565,6 +646,7 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
           <div><dt>Expected MPG if available</dt><dd>{player.current_expected_minutes_if_available === null || player.current_expected_minutes_if_available === undefined ? "-" : number.format(player.current_expected_minutes_if_available)}</dd></div>
         </dl>
         <CurrentSeasonRatingTrajectory player={player} />
+        <CurrentSeasonGameLog player={player} />
         <p className="player-rating-path-note">Updated NAIL uses 2026-27 possession evidence through {player.rating_evidence_through_date ?? "the latest final game"}. Expected MPG is conditional on the player being available; it is not an injury or game-status prediction. Additive profile inputs remain frozen from the preseason, and no updated offense/defense split is shown.</p>
       </section>}
 

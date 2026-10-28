@@ -1081,6 +1081,280 @@ def read_schedule_day(
     return payload
 
 
+def enrich_player_game_trajectory(
+    trajectory: list[dict[str, object]],
+    *,
+    player_id: int,
+    player_name: str,
+    state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+) -> list[dict[str, object]]:
+    """Attach immutable pregame, result, and box-score facts to trajectory games.
+
+    The updater trajectory is the authoritative chronological rating record.
+    This helper only decorates its team-game rows from the already archived
+    schedule finals, so player pages never depend on a live ESPN request.
+    """
+
+    enriched = [dict(point) for point in trajectory]
+    game_ids = {
+        str(point["game_id"])
+        for point in enriched
+        if point.get("game_id") not in {None, ""}
+    }
+    if not game_ids:
+        return enriched
+
+    final_dir = Path(state_dir) / "final"
+    if not final_dir.is_dir():
+        return enriched
+
+    summaries: dict[str, tuple[dict[str, object], Path]] = {}
+    game_dates = {
+        str(point["game_date"])
+        for point in enriched
+        if point.get("game_id") in game_ids and point.get("game_date")
+    }
+    for game_date in game_dates:
+        latest_path = Path(state_dir) / "latest" / f"{game_date}.json"
+        try:
+            latest = json.loads(latest_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        games = latest.get("games") if isinstance(latest, dict) else None
+        if not isinstance(games, list):
+            continue
+        for game in games:
+            if not isinstance(game, dict):
+                continue
+            game_id = str(game.get("game_id", ""))
+            espn_game_id = str(game.get("espn_game_id", ""))
+            if game_id not in game_ids or not espn_game_id:
+                continue
+            path = final_dir / f"{espn_game_id}.summary.json"
+            try:
+                summary = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(summary, dict):
+                summaries[game_id] = (summary, path)
+
+    # Old archives may predate the daily latest-file contract. Keep a bounded
+    # compatibility fallback only when direct game-date lookup missed a row.
+    missing_game_ids = game_ids - set(summaries)
+    for path in final_dir.glob("*.summary.json") if missing_game_ids else ():
+        try:
+            summary = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(summary, dict):
+            continue
+        game_id = str(summary.get("game_id", ""))
+        if game_id in missing_game_ids:
+            summaries[game_id] = (summary, path)
+            missing_game_ids.remove(game_id)
+        if not missing_game_ids:
+            break
+
+    for point in enriched:
+        game_id = str(point.get("game_id", ""))
+        match = summaries.get(game_id)
+        if match is None:
+            continue
+        summary, summary_path = match
+        _decorate_player_game_point(
+            point,
+            summary=summary,
+            summary_path=summary_path,
+            player_id=player_id,
+            player_name=player_name,
+        )
+    return enriched
+
+
+def _decorate_player_game_point(
+    point: dict[str, object],
+    *,
+    summary: dict[str, object],
+    summary_path: Path,
+    player_id: int,
+    player_name: str,
+) -> None:
+    team = str(point.get("team", ""))
+    home_team = str(summary.get("home_team", ""))
+    away_team = str(summary.get("away_team", ""))
+    if team not in {home_team, away_team}:
+        return
+    is_home = team == home_team
+    opponent = away_team if is_home else home_team
+    final = summary.get("final")
+    if isinstance(final, dict):
+        team_score = _integer_or_none(
+            final.get("home_score" if is_home else "away_score")
+        )
+        opponent_score = _integer_or_none(
+            final.get("away_score" if is_home else "home_score")
+        )
+        point.update(
+            {
+                "home_away": "home" if is_home else "away",
+                "opponent": opponent,
+                "team_score": team_score,
+                "opponent_score": opponent_score,
+                "result": (
+                    "W"
+                    if team_score is not None
+                    and opponent_score is not None
+                    and team_score > opponent_score
+                    else "L"
+                    if team_score is not None
+                    and opponent_score is not None
+                    and team_score < opponent_score
+                    else None
+                ),
+            }
+        )
+
+    pregame = summary.get("pregame")
+    projected_player = _find_archived_player(
+        pregame.get("projected_minutes") if isinstance(pregame, dict) else None,
+        player_id=player_id,
+    )
+    if projected_player is not None:
+        point["projected_minutes"] = _float_or_none(
+            projected_player.get("projected_minutes")
+        )
+        point["pregame_status"] = (
+            str(projected_player["status"])
+            if projected_player.get("status") not in {None, ""}
+            else point.get("pregame_status")
+        )
+        point["pregame_reason"] = (
+            str(projected_player["reason"])
+            if projected_player.get("reason") not in {None, ""}
+            else point.get("pregame_reason")
+        )
+
+    retrospective = summary.get("retrospective")
+    actual_player = _find_archived_player(
+        retrospective.get("actual_minutes")
+        if isinstance(retrospective, dict)
+        else None,
+        player_id=player_id,
+    )
+    if actual_player is not None:
+        point["actual_minutes"] = _float_or_none(actual_player.get("actual_minutes"))
+    elif point.get("played") is False:
+        point["actual_minutes"] = 0.0
+
+    espn_path = summary_path.with_name(
+        f"{summary.get('espn_game_id', summary_path.name.split('.', 1)[0])}.espn.json"
+    )
+    if not espn_path.is_file():
+        return
+    try:
+        espn_summary = json.loads(espn_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(espn_summary, dict):
+        return
+    archived_name = (
+        str(projected_player.get("player_name"))
+        if projected_player is not None and projected_player.get("player_name")
+        else player_name
+    )
+    box_score = _player_box_score(espn_summary, archived_name)
+    if box_score is not None:
+        point["box_score"] = box_score
+
+
+def _find_archived_player(
+    player_groups: object,
+    *,
+    player_id: int,
+) -> dict[str, object] | None:
+    if not isinstance(player_groups, dict):
+        return None
+    for side in ("away", "home"):
+        rows = player_groups.get(side)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                archived_player_id = int(row.get("player_id"))
+            except (TypeError, ValueError):
+                continue
+            if archived_player_id == player_id:
+                return row
+    return None
+
+
+def _player_box_score(
+    espn_summary: dict[str, object],
+    player_name: str,
+) -> dict[str, object] | None:
+    boxscore = espn_summary.get("boxscore")
+    groups = boxscore.get("players") if isinstance(boxscore, dict) else None
+    if not isinstance(groups, list):
+        return None
+    normalized_name = _normalized_player_name(player_name)
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        statistics = group.get("statistics")
+        if not isinstance(statistics, list):
+            continue
+        for statistic in statistics:
+            if not isinstance(statistic, dict):
+                continue
+            labels = statistic.get("labels")
+            athletes = statistic.get("athletes")
+            if not isinstance(labels, list) or not isinstance(athletes, list):
+                continue
+            label_index = {str(label): index for index, label in enumerate(labels)}
+            for athlete_row in athletes:
+                if not isinstance(athlete_row, dict):
+                    continue
+                athlete = athlete_row.get("athlete")
+                athlete_name = (
+                    athlete.get("displayName") if isinstance(athlete, dict) else None
+                )
+                if _normalized_player_name(athlete_name) != normalized_name:
+                    continue
+                if athlete_row.get("didNotPlay") is True:
+                    return None
+                values = athlete_row.get("stats")
+                if not isinstance(values, list):
+                    return None
+
+                def value(label: str) -> object | None:
+                    index = label_index.get(label)
+                    return values[index] if index is not None and index < len(values) else None
+
+                return {
+                    "points": _integer_or_none(value("PTS")),
+                    "rebounds": _integer_or_none(value("REB")),
+                    "assists": _integer_or_none(value("AST")),
+                    "plus_minus": _signed_integer_or_none(value("+/-")),
+                }
+    return None
+
+
+def _float_or_none(value: object) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _signed_integer_or_none(value: object) -> int | None:
+    try:
+        return int(str(value).strip().replace("+", ""))
+    except (TypeError, ValueError):
+        return None
+
+
 def read_current_season_records(
     *,
     state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,

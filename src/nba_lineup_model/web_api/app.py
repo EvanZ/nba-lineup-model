@@ -31,6 +31,7 @@ from nba_lineup_model.web_api.win_projections import (
     build_current_season_minutes_payload,
     build_current_season_win_projection_payload,
     build_win_projection_payload,
+    enrich_player_game_trajectory,
     read_current_season_records,
     read_schedule_day,
     read_schedule_performance,
@@ -299,7 +300,21 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     @app.get("/api/players/{player_id}")
     def player(player_id: int) -> dict[str, object]:
         try:
-            return get_evaluator().player(player_id)
+            profile = get_evaluator().player(player_id)
+            trajectory = profile.get("current_season_trajectory")
+            if isinstance(trajectory, list) and trajectory:
+                state_dir = Path(
+                    os.environ.get(
+                        "GESTALT_SCHEDULE_STATE_DIR", "/var/lib/nba-gestalt/schedule"
+                    )
+                )
+                profile["current_season_trajectory"] = enrich_player_game_trajectory(
+                    trajectory,
+                    player_id=player_id,
+                    player_name=str(profile.get("player_name", "")),
+                    state_dir=state_dir,
+                )
+            return profile
         except LineupEvaluationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 

@@ -22,6 +22,7 @@ from nba_lineup_model.web_api.win_projections import (
     _team_win_totals,
     build_current_season_minutes_payload,
     build_current_season_win_projection_payload,
+    enrich_player_game_trajectory,
     fit_win_probability_scale,
     read_current_season_records,
     read_schedule_day,
@@ -558,6 +559,105 @@ def test_schedule_day_attaches_immutable_final_audit(tmp_path) -> None:
         payload["games"][0]["final_audit"]["grading"]["market"]["model_ats_result"]
         == "win"
     )
+
+
+def test_player_game_trajectory_uses_frozen_minutes_and_archived_box_score(
+    tmp_path,
+) -> None:
+    final = tmp_path / "final"
+    final.mkdir()
+    (final / "401.summary.json").write_text(
+        json.dumps(
+            {
+                "game_id": "0022600001",
+                "espn_game_id": "401",
+                "away_team": "GSW",
+                "home_team": "LAL",
+                "final": {"away_score": 105, "home_score": 127},
+                "pregame": {
+                    "projected_minutes": {
+                        "away": [
+                            {
+                                "player_id": 201939,
+                                "player_name": "Stephen Curry",
+                                "projected_minutes": 31.9,
+                                "status": "Available",
+                                "reason": None,
+                            }
+                        ],
+                        "home": [],
+                    }
+                },
+                "retrospective": {
+                    "actual_minutes": {
+                        "away": [
+                            {
+                                "player_id": 201939,
+                                "player_name": "Stephen Curry",
+                                "actual_minutes": 21.0,
+                            }
+                        ],
+                        "home": [],
+                    }
+                },
+            }
+        )
+    )
+    (final / "401.espn.json").write_text(
+        json.dumps(
+            {
+                "boxscore": {
+                    "players": [
+                        {
+                            "statistics": [
+                                {
+                                    "labels": ["MIN", "PTS", "REB", "AST", "+/-"],
+                                    "athletes": [
+                                        {
+                                            "athlete": {"displayName": "Stephen Curry"},
+                                            "stats": ["21", "23", "2", "1", "-22"],
+                                            "didNotPlay": False,
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    points = enrich_player_game_trajectory(
+        [
+            {"source": "preseason", "rating": 1.45},
+            {
+                "source": "in_season",
+                "game_id": "0022600001",
+                "team": "GSW",
+                "opponent": "LAL",
+                "played": True,
+                "rating": 1.20,
+            },
+        ],
+        player_id=201939,
+        player_name="Stephen Curry",
+        state_dir=tmp_path,
+    )
+
+    game = points[1]
+    assert game["home_away"] == "away"
+    assert game["result"] == "L"
+    assert game["team_score"] == 105
+    assert game["opponent_score"] == 127
+    assert game["projected_minutes"] == pytest.approx(31.9)
+    assert game["actual_minutes"] == pytest.approx(21.0)
+    assert game["box_score"] == {
+        "points": 23,
+        "rebounds": 2,
+        "assists": 1,
+        "plus_minus": -22,
+    }
 
 
 def test_live_score_default_keeps_watching_unfinished_previous_date(tmp_path) -> None:
