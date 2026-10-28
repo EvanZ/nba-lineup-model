@@ -9,6 +9,7 @@ import pandas as pd
 from nba_lineup_model.modeling.current_season_schedule_materialization import (
     materialize_current_season_schedule,
 )
+from nba_lineup_model.web_api.win_projections import read_schedule_performance
 
 
 def _sha256(path: Path) -> str:
@@ -233,3 +234,8 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
         "replayed_games": 1,
         "skipped_games": 0,
     }
+    performance = read_schedule_performance(state_dir=output / "current")
+    season = next(row for row in performance["windows"] if row["key"] == "season")
+    assert performance["model_track"] == "updated_ratings_updated_minutes"
+    assert season["games"] == 1
+    assert season["probability"]["gestalt"]["brier"] == (0.57 - 1.0) ** 2

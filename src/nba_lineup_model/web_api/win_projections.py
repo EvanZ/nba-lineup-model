@@ -1488,6 +1488,14 @@ def read_schedule_performance(
 ) -> dict[str, object]:
     """Score frozen pregame forecasts against final regular-season results."""
 
+    manifest_path = Path(state_dir) / "manifest.json"
+    manifest = (
+        json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
+    )
+    if not isinstance(manifest, dict):
+        manifest = {}
+    model_track = manifest.get("model_track")
+    replay_only = model_track == "updated_ratings_updated_minutes"
     completed: list[tuple[str, dict[str, object]]] = []
     latest_archive_time: str | None = None
     final_dir = Path(state_dir) / "final"
@@ -1495,6 +1503,10 @@ def read_schedule_performance(
         for path in sorted(final_dir.glob("*.summary.json")):
             payload = json.loads(path.read_text())
             if not isinstance(payload, dict) or payload.get("season") != season:
+                continue
+            if replay_only and payload.get("record_type") != (
+                "strict_forward_replay_final_game_audit"
+            ):
                 continue
             if not str(payload.get("game_id", "")).startswith("002"):
                 continue
@@ -1539,13 +1551,6 @@ def read_schedule_performance(
                     **_score_schedule_performance_games(games),
                 }
             )
-    manifest_path = Path(state_dir) / "manifest.json"
-    manifest = (
-        json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
-    )
-    if not isinstance(manifest, dict):
-        manifest = {}
-    model_track = manifest.get("model_track")
     return {
         "season": season,
         "as_of": as_of,
