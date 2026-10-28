@@ -76,9 +76,12 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
     --release-root "$PROD_RELEASE" \
     --output-root "$DEV_STATE_ROOT/current-season-serving"
 
+  # Do not let evaluator construction load the previously promoted lineup
+  # bundle: it is intentionally incompatible with the serving bundle that was
+  # just rebuilt. The command publishes its replacement to --output-root.
   PYTHONPATH="$RELEASE_ROOT/src" \
   GESTALT_CURRENT_SEASON_SERVING_ROOT="$DEV_STATE_ROOT/current-season-serving" \
-  GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$DEV_STATE_ROOT/current-season-lineups" \
+  GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$DEV_STATE_ROOT/lineup-materialization-input" \
   GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule \
     "$PROD_RELEASE/.venv/bin/python" \
     -m nba_lineup_model.modeling.current_season_lineup_materialization \
