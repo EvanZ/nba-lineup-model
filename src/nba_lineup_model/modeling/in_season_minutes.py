@@ -2,9 +2,9 @@
 
 The promoted preseason availability and conditional-minutes forecasts are the
 complete prior. Completed games contribute compact player observations. Injury
-and inactive-list absences are excluded from the available-player role update,
-healthy coach DNPs contribute zero minutes, and unknown DNP rows update neither
-state.
+and unavailable inactive-list absences are excluded from the available-player
+role update; healthy coach DNPs and G League assignments contribute zero
+minutes, and unknown DNP rows update neither state.
 """
 
 from __future__ import annotations
@@ -21,20 +21,25 @@ import pandas as pd
 REGULATION_TEAM_MINUTES = 240.0
 STATE_SCHEMA_VERSION = 2
 CONTRIBUTION_SCHEMA_VERSION = 2
+UPDATER_VERSION = "early_game_role_v2"
 
 PLAYED = "played"
 MEDICAL_ABSENCE = "medical_absence"
 COACH_DNP = "coach_dnp"
+G_LEAGUE_ASSIGNMENT = "g_league_assignment"
 INACTIVE = "inactive_or_assignment"
 UNKNOWN = "unknown"
 
-PARTICIPATION_OUTCOMES = frozenset({PLAYED, MEDICAL_ABSENCE, COACH_DNP, INACTIVE})
-CONDITIONAL_OUTCOMES = frozenset({PLAYED, COACH_DNP})
+PARTICIPATION_OUTCOMES = frozenset(
+    {PLAYED, MEDICAL_ABSENCE, COACH_DNP, G_LEAGUE_ASSIGNMENT, INACTIVE}
+)
+CONDITIONAL_OUTCOMES = frozenset({PLAYED, COACH_DNP, G_LEAGUE_ASSIGNMENT})
+ZERO_MINUTE_CONDITIONAL_OUTCOMES = frozenset({COACH_DNP, G_LEAGUE_ASSIGNMENT})
 HISTORICAL_AVAILABILITY_MAP = {
     "played": PLAYED,
     "available_dnp_coach": COACH_DNP,
     "available_dnp_active": COACH_DNP,
-    "available_g_league_assignment": INACTIVE,
+    "available_g_league_assignment": G_LEAGUE_ASSIGNMENT,
     "unavailable_injury_or_illness": MEDICAL_ABSENCE,
     "unavailable_rest": MEDICAL_ABSENCE,
     "unavailable_personal_or_not_with_team": MEDICAL_ABSENCE,
@@ -209,7 +214,7 @@ def advance_minutes_state(
             prior = float(output.at[player_id, "preseason_conditional_minutes_prior"])
             clipped = (
                 0.0
-                if classification == COACH_DNP
+                if classification in ZERO_MINUTE_CONDITIONAL_OUTCOMES
                 else float(
                     np.clip(
                         observed,
@@ -444,9 +449,10 @@ def calibrate_conditional_prior_games(
 ) -> dict[str, object]:
     """Calibrate role shrinkage against an exact preseason-prior analogue.
 
-    The target includes appearances and healthy coach/active DNPs. Medical,
-    inactive-list, assignment, and unknown outcomes are excluded from the role
-    loss and update.
+    The target includes appearances, healthy coach/active DNPs, and G League
+    assignments. The latter two are zero-minute available opportunities.
+    Medical, unavailable inactive-list, and unknown outcomes are excluded from
+    the role loss and update.
     """
 
     required_target = {
@@ -636,7 +642,7 @@ def _sequential_conditional_mae(
             prior = float(row.preseason_conditional_minutes_prior)
             observed = (
                 0.0
-                if str(row.availability_state) == COACH_DNP
+                if str(row.availability_state) in ZERO_MINUTE_CONDITIONAL_OUTCOMES
                 else float(
                     np.clip(
                         getattr(row, target_column),

@@ -9,10 +9,11 @@ The exact promoted 2026-27 preseason conditional-minutes and normalized-minute
 fields are the complete prior. The official injury report, not a learned
 in-season probability, determines game-specific eligibility and status.
 
-Appearances and healthy coach/active DNPs update conditional role. A healthy
-DNP is a zero-minute observation because the player was available but omitted
-from the rotation. Medical absences, known inactive/assignment outcomes, and
-unknown DNPs do not enter that role. The frozen official pregame injury status
+Appearances, healthy coach/active DNPs, and G League/two-way assignments update
+conditional role. A healthy DNP or G League assignment is a zero-minute
+observation because the player was medically available but omitted from the NBA
+rotation. Medical absences, unavailable inactive outcomes, and unknown DNPs do
+not enter that role. The frozen official pregame injury status
 is authoritative when it conflicts with ESPN's box-score reason. Participation
 state remains a research diagnostic; it is not used to allocate game-day
 minutes or as a promotion metric. A pending report stays pending rather than

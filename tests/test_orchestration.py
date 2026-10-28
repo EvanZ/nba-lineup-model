@@ -17,6 +17,7 @@ from dagster import (
 from nba_lineup_model.orchestration.definitions import (
     DEFAULT_ODDS_API_BOOKMAKERS,
     EASTERN,
+    IN_SEASON_MINUTES_UPDATER_VERSION,
     PACIFIC,
     _release_root,
     active_live_game_date,
@@ -354,6 +355,74 @@ def test_production_rating_sensor_launches_once_for_complete_slate(
 
     assert "already queued or running" in duplicate.skip_message
     assert queued.run_id in duplicate.skip_message
+
+
+def test_minutes_sensor_rebuilds_when_updater_version_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    through_date = "2026-10-26"
+    game_id = "0022600999"
+    espn_game_id = "401810999"
+    rating_state_uri = "s3://example/player_state-" + "a" * 64 + ".parquet"
+    rating_trajectory_uri = (
+        "s3://example/player_game_trajectory-" + "b" * 64 + ".parquet"
+    )
+    rating_inputs = {
+        "player_state": rating_state_uri,
+        "player_game_trajectory": rating_trajectory_uri,
+    }
+    rating_root = tmp_path / "rating"
+    minutes_root = tmp_path / "minutes"
+    final_root = tmp_path / "schedule" / "final"
+    for path in (rating_root, minutes_root, final_root):
+        path.mkdir(parents=True)
+    (rating_root / "latest.json").write_text(
+        json.dumps(
+            {
+                "through_date": through_date,
+                "coverage": {"excluded": 0},
+                "artifacts": rating_inputs,
+            }
+        )
+    )
+    minutes_publication = {
+        "through_date": through_date,
+        "updater_version": "early_game_role_v1",
+        "input_rating_artifacts": rating_inputs,
+    }
+    (minutes_root / "latest.json").write_text(json.dumps(minutes_publication))
+    (final_root / f"{espn_game_id}.summary.json").write_text(
+        json.dumps(
+            {
+                "game_id": game_id,
+                "espn_game_id": espn_game_id,
+                "pregame": {"start_time": "2026-10-26T19:00:00-07:00"},
+                "final": {"status": {"completed": True}},
+            }
+        )
+    )
+    (final_root / f"{espn_game_id}.espn.json").write_text("{}")
+    monkeypatch.setenv("GESTALT_SCHEDULE_STATE_DIR", str(tmp_path / "schedule"))
+    monkeypatch.setenv("GESTALT_IN_SEASON_NAIL_ROOT", str(rating_root))
+    monkeypatch.setenv("GESTALT_IN_SEASON_MINUTES_ROOT", str(minutes_root))
+    monkeypatch.setenv(
+        "GESTALT_CURRENT_SEASON_SERVING_ROOT", str(tmp_path / "serving")
+    )
+
+    rebuild = in_season_minutes_production_sensor(
+        build_sensor_context(instance=DagsterInstance.ephemeral())
+    )
+
+    assert rebuild.run_key.startswith(f"production-minutes:{through_date}:")
+    minutes_publication["updater_version"] = IN_SEASON_MINUTES_UPDATER_VERSION
+    (minutes_root / "latest.json").write_text(json.dumps(minutes_publication))
+
+    current = in_season_minutes_production_sensor(
+        build_sensor_context(instance=DagsterInstance.ephemeral())
+    )
+
+    assert current.skip_message == "Production minutes already match the ratings publication"
 
 
 def _write_current_season_child_publications(root: Path) -> tuple[str, str, str]:

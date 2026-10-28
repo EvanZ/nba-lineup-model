@@ -57,10 +57,12 @@ forecast_i,t =
 - `K`: 1, 2, 3, 5, 10, or all eligible games.
 - `w`: 0.1, 0.2, 0.5, 1, 2, 4, or 8 preseason-equivalent games.
 - Cutoff `C`: 36, 40, 44, or 48 minutes.
-- Medical absence, inactive/assignment, and unknown rows do not update the
+- Medical absence, unavailable inactive, and unknown rows do not update the
   role history or consume a lookback slot.
 - A player officially available but receiving a coach DNP contributes a
   zero-minute role observation.
+- A G League/two-way assignment also contributes a healthy zero-minute role
+  observation.
 - Games on the same date are scored before any observation from that date is
   applied, preventing same-day leakage.
 

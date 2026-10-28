@@ -9,6 +9,7 @@ import pytest
 
 from nba_lineup_model.modeling.in_season_minutes import (
     COACH_DNP,
+    G_LEAGUE_ASSIGNMENT,
     INACTIVE,
     MEDICAL_ABSENCE,
     PLAYED,
@@ -24,6 +25,7 @@ from nba_lineup_model.modeling.in_season_minutes import (
     regulation_equivalent_minutes,
 )
 from nba_lineup_model.modeling.in_season_minutes_monitor import (
+    _classification,
     _load_cdn_play_by_play,
     _projection_margin,
     apply_early_game_role_observations,
@@ -127,6 +129,47 @@ def test_injury_absence_does_not_erase_conditional_role() -> None:
     assert updated.loc[2, "current_conditional_minutes_estimate"] == pytest.approx(20.0)
     assert updated.loc[2, "conditional_observations"] == 0
     assert updated.loc[3, "current_participation_estimate"] == pytest.approx(0.5)
+
+
+def test_g_league_assignment_is_zero_minute_available_opportunity() -> None:
+    state = initialize_minutes_state(_priors(), season="2026-27", config=_config())
+    observation = _observations().iloc[[0]].copy()
+    observation["outcome_classification"] = G_LEAGUE_ASSIGNMENT
+    observation["played"] = False
+    observation["regulation_equivalent_minutes"] = 0.0
+    updated = advance_minutes_state(
+        state,
+        observation,
+        config=_config(),
+        contribution_sha256="g" * 64,
+    ).set_index("player_id")
+
+    assert updated.loc[1, "participation_observations"] == 1
+    assert updated.loc[1, "conditional_observations"] == 1
+    assert updated.loc[1, "current_conditional_minutes_estimate"] == pytest.approx(24.0)
+
+
+def test_out_g_league_reason_overrides_generic_out_status() -> None:
+    assert (
+        _classification(
+            minutes=0.0,
+            did_not_play=True,
+            espn_reason=None,
+            injury_status="Out",
+            injury_reason="G League - Two-Way",
+        )
+        == G_LEAGUE_ASSIGNMENT
+    )
+    assert (
+        _classification(
+            minutes=0.0,
+            did_not_play=True,
+            espn_reason=None,
+            injury_status="Out",
+            injury_reason="Injury/Illness - Right ankle sprain",
+        )
+        == MEDICAL_ABSENCE
+    )
 
 
 def test_state_prefers_early_game_role_target_over_realized_minutes() -> None:
@@ -539,8 +582,8 @@ def test_final_boxscore_uses_frozen_injury_status_for_available_player_role() ->
                     },
                     {
                         "player_id": 3,
-                        "status": "Available",
-                        "reason": None,
+                        "status": "Out",
+                        "reason": "G League - Two-Way",
                     },
                 ],
                 "away": [],
@@ -588,7 +631,7 @@ def test_final_boxscore_uses_frozen_injury_status_for_available_player_role() ->
     )
     assert observations.loc[1, "outcome_classification"] == PLAYED
     assert observations.loc[2, "outcome_classification"] == MEDICAL_ABSENCE
-    assert observations.loc[3, "outcome_classification"] == COACH_DNP
+    assert observations.loc[3, "outcome_classification"] == G_LEAGUE_ASSIGNMENT
     assert observations.loc[2, "conditional_observation_weight"] == 0.0
     assert observations.loc[3, "conditional_observation_weight"] == 1.0
     assert observations.loc[1, "regulation_equivalent_minutes"] == pytest.approx(240.0)

@@ -29,10 +29,12 @@ from nba_lineup_model.modeling.game_script_minutes import (
 from nba_lineup_model.modeling.in_season_minutes import (
     COACH_DNP,
     CONDITIONAL_OUTCOMES,
+    G_LEAGUE_ASSIGNMENT,
     INACTIVE,
     MEDICAL_ABSENCE,
     PLAYED,
     UNKNOWN,
+    UPDATER_VERSION,
     InSeasonMinutesConfig,
     advance_minutes_state,
     forecast_team_minutes,
@@ -47,7 +49,6 @@ from nba_lineup_model.modeling.in_season_nail import read_game_contribution
 from nba_lineup_model.season.slate_time import summary_slate_date
 
 SEASON = "2026-27"
-UPDATER_VERSION = "early_game_role_v1"
 DEFAULT_ROLE_CUTOFF_MINUTES = 44
 DEFAULT_ROLE_LOOKBACK_GAMES = 3
 DEFAULT_ROLE_PRIOR_GAMES = 0.2
@@ -60,7 +61,8 @@ ESPN_TEAM_ALIASES = {
     "UTAH": "UTA",
     "WSH": "WAS",
 }
-INACTIVE_TOKENS = ("G LEAGUE", "ASSIGNMENT", "TWO-WAY", "SUSPENSION", "PERSONAL")
+G_LEAGUE_TOKENS = ("G LEAGUE", "G-LEAGUE", "GLEAGUE", "ASSIGNMENT", "TWO-WAY")
+INACTIVE_TOKENS = ("SUSPENSION", "PERSONAL")
 INJURY_REPORT_STATUSES = frozenset({"OUT", "DOUBTFUL", "QUESTIONABLE", "PROBABLE"})
 
 
@@ -105,13 +107,21 @@ def _classification(
     did_not_play: bool,
     espn_reason: object,
     injury_status: object,
+    injury_reason: object = None,
 ) -> str:
     if minutes > 0.0:
         return PLAYED
     status = str(injury_status or "").strip().upper()
+    text = " ".join(
+        str(value).upper() for value in (espn_reason, injury_reason) if value
+    )
+    # The official report uses status=Out for G League/two-way assignments,
+    # but this is a healthy team-deployment decision and therefore a
+    # zero-minute available opportunity, not a medical absence.
+    if any(token in text for token in G_LEAGUE_TOKENS):
+        return G_LEAGUE_ASSIGNMENT
     if status in INJURY_REPORT_STATUSES:
         return MEDICAL_ABSENCE
-    text = str(espn_reason or "").upper()
     if any(token in text for token in INACTIVE_TOKENS):
         return INACTIVE
     if status == "AVAILABLE":
@@ -187,6 +197,7 @@ def build_game_observations(
                     did_not_play=bool(athlete_row.get("didNotPlay")),
                     espn_reason=athlete_row.get("reason"),
                     injury_status=injury_row.get("status"),
+                    injury_reason=injury_row.get("reason"),
                 )
                 weight = 0.5 if bool(athlete_row.get("ejected")) or 0.0 < minutes < 4.0 else 1.0
                 team_rows.append(

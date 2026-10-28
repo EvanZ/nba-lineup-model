@@ -44,12 +44,13 @@ For this slice, career available games for player `i` before game `t` is the
 cumulative count of earlier NBA team-games classified as either:
 
 - `played`; or
-- `coach_dnp` / known healthy active DNP.
+- `coach_dnp` / known healthy active DNP; or
+- `g_league_assignment` / known healthy G League or two-way assignment.
 
 The count excludes:
 
 - injury, illness, rest, personal, or other medical absence;
-- inactive-list, assignment, suspension, or ineligible absence; and
+- unavailable inactive-list, suspension, or ineligible absence; and
 - unknown availability states.
 
 The feature is computed strictly before the target game. All games on the same
@@ -119,8 +120,9 @@ directly aligned with repeated opportunities to occupy an NBA rotation role.
   available games.
 - Confirm that a synthetic medically lost rookie season adds zero career
   available games.
-- Confirm that a healthy coach DNP adds one career available game but a medical
-  absence, inactive/assignment row, and unknown row add zero.
+- Confirm that a healthy coach DNP or G League/two-way assignment adds one
+  career available game but a medical absence, unavailable inactive row, and
+  unknown row add zero.
 - Confirm strict pregame and same-date leakage protection.
 - Preserve the row-level evaluation parquet in every shadow run so cohort
   diagnostics can be regenerated for the complete sample.

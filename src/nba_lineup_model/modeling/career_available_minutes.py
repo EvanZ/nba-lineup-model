@@ -95,7 +95,8 @@ def build_career_available_feature(availability: pd.DataFrame) -> pd.DataFrame:
     """Build strict pre-day cumulative available games for every player-game.
 
     Every game on the same date receives the count entering that date. A played
-    game or known healthy coach DNP increments the count only for later dates.
+    game, known healthy coach DNP, or G League/two-way assignment increments
+    the count only for later dates.
     """
 
     required = {"player_id", "game_id", "game_date", "availability_state"}
@@ -868,19 +869,19 @@ main{{max-width:1420px;margin:auto;padding:32px}}h1,h2{{font-family:Inter,system
 </style></head><body><main><div class="eyebrow">NBA GESTALT · Locked holdout study</div>
 <h1>Does experience-aware shrinkage improve minutes?</h1>
 <p>Selected on {", ".join(summary["development_seasons"])}; evaluated once on {summary["holdout_season"]}. Generated {html.escape(generated)}.</p>
-<div class="note"><strong>Finding:</strong> The career-weighted candidate {winner} played-plus-coach-DNP MAE by <strong>{float(all_available["candidate_mae_advantage"]):+.3f} minutes</strong> ({float(all_available["candidate_mae_advantage_pct"]):+.2f}%). The paired game bootstrap 95% interval is [{float(bootstrap["ci95_lower"]):+.3f}, {float(bootstrap["ci95_upper"]):+.3f}]. Played-only MAE changed by {float(played["candidate_mae_advantage"]):+.3f} minutes. The candidate's first-year gain comes from healthy coach DNP rows, not improved forecasts conditional on actually playing. This is a shadow result; public projections are unchanged.</div>
+<div class="note"><strong>Finding:</strong> The career-weighted candidate {winner} available-opportunity MAE by <strong>{float(all_available["candidate_mae_advantage"]):+.3f} minutes</strong> ({float(all_available["candidate_mae_advantage_pct"]):+.2f}%). The paired game bootstrap 95% interval is [{float(bootstrap["ci95_lower"]):+.3f}, {float(bootstrap["ci95_upper"]):+.3f}]. Played-only MAE changed by {float(played["candidate_mae_advantage"]):+.3f} minutes. Zero-minute healthy opportunities include coach DNP and G League/two-way assignment rows. This is a shadow result; public projections are unchanged.</div>
 <section class="cards"><div class="card"><div class="label">Selected curve</div><div class="value">{summary["selected_config"]["w_min"]:g} + {summary["selected_config"]["beta"]:g} log</div><div class="sub">cap {summary["selected_config"]["w_max"]:g} equivalent games</div></div>
 <div class="card"><div class="label">All available rows</div><div class="value">{_fmt(all_available["candidate_mae"])}</div><div class="sub">control {_fmt(all_available["control_mae"])} · {int(all_available["rows"]):,} rows</div></div>
 <div class="card"><div class="label">Played-only rows</div><div class="value">{_fmt(played["candidate_mae"])}</div><div class="sub">control {_fmt(played["control_mae"])} · {int(played["rows"]):,} rows</div></div>
 <div class="card"><div class="label">Probability candidate wins</div><div class="value">{100 * float(bootstrap["probability_candidate_better"]):.1f}%</div><div class="sub">paired game bootstrap · 2,000 draws</div></div></section>
 <div class="grid"><section><h2>Selected prior-weight curve</h2><p>Equivalent preseason games by career available games entering the date.</p><div class="table-wrap"><table><thead><tr><th>Career available games</th><th>Prior weight</th></tr></thead><tbody>{weight_rows}</tbody></table></div></section>
-<section><h2>Availability-state decomposition</h2><p>This reveals whether a gain comes from played games or healthy coach DNPs.</p><div class="table-wrap"><table><thead><tr><th>State</th><th>Rows</th><th>Control MAE</th><th>Candidate MAE</th><th>Advantage</th></tr></thead><tbody>{state_rows}</tbody></table></div></section></div>
-<div class="grid"><section><h2>Career cohorts · played + coach DNP</h2><p>Positive advantage means the candidate is more accurate.</p><div class="table-wrap"><table><thead><tr><th>Band</th><th>Rows</th><th>Control MAE</th><th>Candidate MAE</th><th>Advantage</th><th>Control RMSE</th><th>Candidate RMSE</th></tr></thead><tbody>{cohort_rows("played_plus_coach_dnp")}</tbody></table></div></section>
+<section><h2>Availability-state decomposition</h2><p>This reveals whether a gain comes from played games or healthy zero-minute opportunities.</p><div class="table-wrap"><table><thead><tr><th>State</th><th>Rows</th><th>Control MAE</th><th>Candidate MAE</th><th>Advantage</th></tr></thead><tbody>{state_rows}</tbody></table></div></section></div>
+<div class="grid"><section><h2>Career cohorts · available opportunities</h2><p>Includes played games, coach DNPs, and G League/two-way assignments. Positive advantage means the candidate is more accurate.</p><div class="table-wrap"><table><thead><tr><th>Band</th><th>Rows</th><th>Control MAE</th><th>Candidate MAE</th><th>Advantage</th><th>Control RMSE</th><th>Candidate RMSE</th></tr></thead><tbody>{cohort_rows("played_plus_coach_dnp")}</tbody></table></div></section>
 <section><h2>Career cohorts · played only</h2><p>This conditions on the player actually entering the game.</p><div class="table-wrap"><table><thead><tr><th>Band</th><th>Rows</th><th>Control MAE</th><th>Candidate MAE</th><th>Advantage</th><th>Control RMSE</th><th>Candidate RMSE</th></tr></thead><tbody>{cohort_rows("played_only")}</tbody></table></div></section></div>
 <div class="grid"><section><h2>Most improved players</h2><div class="table-wrap"><table><thead><tr><th>Player</th><th>Team</th><th>Rows</th><th>Career available</th><th>Control MAE</th><th>Candidate MAE</th><th>Advantage</th></tr></thead><tbody>{player_rows(top)}</tbody></table></div></section>
 <section><h2>Largest regressions</h2><div class="table-wrap"><table><thead><tr><th>Player</th><th>Team</th><th>Rows</th><th>Career available</th><th>Control MAE</th><th>Candidate MAE</th><th>Advantage</th></tr></thead><tbody>{player_rows(bottom)}</tbody></table></div></section></div>
 {downstream_section}
-<h2>Design and guardrails</h2><p>The control is the current constant 0.2-game preseason weight. Both arms use the same first-44-minute normalized roles and three eligible-game lookback. Played and known healthy coach DNP games increase career exposure; medical, inactive/assignment, suspension/ineligible, and unknown rows do not. All games on a date are scored before that date updates history or exposure. Before classified availability coverage, only positive-minute box-score appearances count. The locked holdout was not used for parameter selection.</p>
+<h2>Design and guardrails</h2><p>The control is the current constant 0.2-game preseason weight. Both arms use the same first-44-minute normalized roles and three eligible-game lookback. Played games, known healthy coach DNPs, and G League/two-way assignments increase career exposure; medical, unavailable inactive, suspension/ineligible, and unknown rows do not. All games on a date are scored before that date updates history or exposure. Before classified availability coverage, only positive-minute box-score appearances count. The locked holdout was not used for parameter selection.</p>
 </main></body></html>"""
     output.write_text(document)
 
@@ -938,7 +939,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "development_seasons": list(development_seasons),
         "holdout_season": holdout_season,
         "selection_rule": (
-            "lowest pooled development played-plus-coach-DNP MAE, then RMSE, "
+            "lowest pooled development available-opportunity MAE, then RMSE, "
             "then played-only MAE; holdout loaded after selection"
         ),
         "control_prior_weight": CONTROL_PRIOR_WEIGHT,

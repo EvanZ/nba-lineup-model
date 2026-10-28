@@ -30,6 +30,9 @@ from dagster import (
     sensor,
 )
 
+from nba_lineup_model.modeling.in_season_minutes import (
+    UPDATER_VERSION as IN_SEASON_MINUTES_UPDATER_VERSION,
+)
 from nba_lineup_model.season.slate_time import PACIFIC, summary_slate_date
 
 EASTERN = ZoneInfo("America/New_York")
@@ -858,6 +861,7 @@ def update_in_season_nail_production_op(
         "through_date": through_date,
         "dagster_run_id": context.run_id,
         "generated_at": result["generated_at"],
+        "updater_version": result["updater_version"],
         "artifacts": published,
         "metrics": result["metrics"],
         "comparison": result["comparison"],
@@ -1318,18 +1322,24 @@ def in_season_minutes_production_sensor(
     if minutes_path.is_file():
         try:
             minutes_publication = json.loads(minutes_path.read_text())
-            if str(
-                minutes_publication.get("through_date")
-            ) == through_date and minutes_publication.get("input_rating_artifacts") == {
-                "player_state": rating_state_uri,
-                "player_game_trajectory": rating_trajectory_uri,
-            }:
+            if (
+                str(minutes_publication.get("through_date")) == through_date
+                and str(minutes_publication.get("updater_version"))
+                == IN_SEASON_MINUTES_UPDATER_VERSION
+                and minutes_publication.get("input_rating_artifacts")
+                == {
+                    "player_state": rating_state_uri,
+                    "player_game_trajectory": rating_trajectory_uri,
+                }
+            ):
                 return SkipReason(
                     "Production minutes already match the ratings publication"
                 )
             serving_path = _current_season_serving_root() / "latest.json"
             if (
                 str(minutes_publication.get("through_date")) == through_date
+                and str(minutes_publication.get("updater_version"))
+                == IN_SEASON_MINUTES_UPDATER_VERSION
                 and serving_path.is_file()
             ):
                 serving_pointer = json.loads(serving_path.read_text())
@@ -1352,7 +1362,11 @@ def in_season_minutes_production_sensor(
             pass
 
     final_root = _state_dir() / "final"
-    source_parts: list[str] = [rating_state_uri, rating_trajectory_uri]
+    source_parts: list[str] = [
+        IN_SEASON_MINUTES_UPDATER_VERSION,
+        rating_state_uri,
+        rating_trajectory_uri,
+    ]
     final_game_count = 0
     for summary_path in sorted(final_root.glob("*.summary.json")):
         try:

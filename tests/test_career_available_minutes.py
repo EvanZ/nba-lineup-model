@@ -15,6 +15,7 @@ from nba_lineup_model.modeling.career_available_minutes import (
 )
 from nba_lineup_model.modeling.in_season_minutes import (
     COACH_DNP,
+    G_LEAGUE_ASSIGNMENT,
     INACTIVE,
     MEDICAL_ABSENCE,
     PLAYED,
@@ -22,11 +23,19 @@ from nba_lineup_model.modeling.in_season_minutes import (
 )
 
 
-def test_career_available_feature_counts_only_played_and_healthy_coach_dnp() -> None:
+def test_career_available_feature_counts_all_healthy_opportunities() -> None:
     history = pd.DataFrame(
         {
-            "player_id": [1] * 6,
-            "game_id": ["played", "coach", "medical", "inactive", "unknown", "next"],
+            "player_id": [1] * 7,
+            "game_id": [
+                "played",
+                "coach",
+                "g-league",
+                "medical",
+                "inactive",
+                "unknown",
+                "next",
+            ],
             "game_date": [
                 "2025-10-20",
                 "2025-10-21",
@@ -34,10 +43,12 @@ def test_career_available_feature_counts_only_played_and_healthy_coach_dnp() -> 
                 "2025-10-23",
                 "2025-10-24",
                 "2025-10-25",
+                "2025-10-26",
             ],
             "availability_state": [
                 PLAYED,
                 COACH_DNP,
+                G_LEAGUE_ASSIGNMENT,
                 MEDICAL_ABSENCE,
                 INACTIVE,
                 UNKNOWN,
@@ -51,10 +62,11 @@ def test_career_available_feature_counts_only_played_and_healthy_coach_dnp() -> 
     assert result["career_available_games"].to_dict() == {
         "played": 0,
         "coach": 1,
-        "medical": 2,
-        "inactive": 2,
-        "unknown": 2,
-        "next": 2,
+        "g-league": 2,
+        "medical": 3,
+        "inactive": 3,
+        "unknown": 3,
+        "next": 3,
     }
 
 
@@ -93,11 +105,12 @@ def test_same_date_games_share_pregame_exposure() -> None:
 def test_career_available_totals_share_the_same_classification_contract() -> None:
     history = pd.DataFrame(
         {
-            "player_id": [1] * 5,
-            "game_id": ["played", "coach", "medical", "inactive", "unknown"],
+            "player_id": [1] * 6,
+            "game_id": ["played", "coach", "g-league", "medical", "inactive", "unknown"],
             "availability_state": [
                 PLAYED,
                 COACH_DNP,
+                "available_g_league_assignment",
                 MEDICAL_ABSENCE,
                 INACTIVE,
                 UNKNOWN,
@@ -105,7 +118,7 @@ def test_career_available_totals_share_the_same_classification_contract() -> Non
         }
     )
 
-    assert career_available_totals(history).to_dict() == {1: 2}
+    assert career_available_totals(history).to_dict() == {1: 3}
 
 
 def test_weight_curve_is_log_monotonic_and_clipped() -> None:
