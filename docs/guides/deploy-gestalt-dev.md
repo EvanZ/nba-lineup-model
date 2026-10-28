@@ -32,6 +32,11 @@ git fetch origin
 GESTALT_DEV_REF=origin/<branch> ./scripts/deploy_gestalt_dev.sh
 ```
 
+Code-only deployments preserve the currently promoted dev analytical bundles.
+Set `GESTALT_DEV_REMATERIALIZE_CURRENT_STATE=1` only when the dev rating and
+lineup state intentionally need to be rebuilt. The script also discovers an
+existing NVM-managed Node runtime, so it does not require a system-wide npm.
+
 The first deployment emits a generated HTTP Basic Auth username and password.
 Store them in the password manager; later deployments retain the same file.
 
