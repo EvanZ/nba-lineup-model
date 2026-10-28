@@ -29,6 +29,7 @@ from nba_lineup_model.modeling.in_season_minutes_monitor import (
     _classification,
     _load_cdn_play_by_play,
     _projection_margin,
+    _validate_non_replayed_source,
     apply_early_game_role_observations,
     build_game_observations,
 )
@@ -442,46 +443,86 @@ def test_report_pending_is_preserved_without_available_claim() -> None:
     )
     assert set(forecast["injury_status"]) == {"Report pending"}
     assert forecast["game_participation_probability"].isna().all()
+    assert forecast.set_index("player_id").loc[
+        1, "allocation_participation_probability"
+    ] == pytest.approx(0.8)
     assert forecast.set_index("player_id").loc[1, "final_normalized_minutes"] == pytest.approx(
-        144.0
+        240.0 * 24.0 / 42.0
     )
 
 
-def test_archived_projected_minutes_cannot_feed_back_into_role_update() -> None:
+def test_updated_allocation_uses_posterior_role_not_archived_minutes() -> None:
     state = initialize_minutes_state(_priors(), season="2026-27", config=_config())
+    state.loc[state["player_id"].eq(1), "current_conditional_minutes_estimate"] = 36.0
+    state.loc[state["player_id"].eq(2), "current_conditional_minutes_estimate"] = 16.0
     first = forecast_team_minutes(
         state,
         team="AAA",
         game_id="001",
         forecast_cutoff="2026-10-20T00:00:00Z",
         injury_rows=[
-            {"player_id": 1, "status": "Unlisted", "projected_minutes": 230.0},
-            {"player_id": 2, "status": "Unlisted", "projected_minutes": 9.0},
-            {"player_id": 3, "status": "Unlisted", "projected_minutes": 1.0},
-        ],
-        report_status="submitted",
-        config=_config(),
-    ).set_index("player_id")
-    second = forecast_team_minutes(
-        state,
-        team="AAA",
-        game_id="001",
-        forecast_cutoff="2026-10-20T00:00:00Z",
-        injury_rows=[
-            {"player_id": 1, "status": "Unlisted", "projected_minutes": 1.0},
-            {"player_id": 2, "status": "Unlisted", "projected_minutes": 9.0},
-            {"player_id": 3, "status": "Unlisted", "projected_minutes": 230.0},
+            {
+                "player_id": 1,
+                "status": "Unlisted",
+                "conditional_minutes": 30.0,
+                "projected_minutes": 1.0,
+            },
+            {
+                "player_id": 2,
+                "status": "Unlisted",
+                "conditional_minutes": 20.0,
+                "projected_minutes": 239.0,
+            },
+            {
+                "player_id": 3,
+                "status": "Unlisted",
+                "conditional_minutes": 10.0,
+                "projected_minutes": 0.0,
+            },
         ],
         report_status="submitted",
         config=_config(),
     ).set_index("player_id")
 
-    assert first["final_normalized_minutes"].to_dict() == pytest.approx(
-        second["final_normalized_minutes"].to_dict()
-    )
-    assert first.loc[1, "final_normalized_minutes"] == pytest.approx(144.0)
-    assert first.loc[2, "final_normalized_minutes"] == pytest.approx(96.0)
+    expected_one = 240.0 * 36.0 / (36.0 + 16.0)
+    assert first.loc[1, "final_normalized_minutes"] == pytest.approx(expected_one)
+    assert first.loc[2, "final_normalized_minutes"] == pytest.approx(240.0 - expected_one)
     assert first.loc[3, "final_normalized_minutes"] == pytest.approx(0.0)
+
+    conflicting_archived_rows = [
+        {
+            "player_id": int(player_id),
+            "status": "Unlisted",
+            "conditional_minutes": 48.0 - float(player_id),
+            "projected_minutes": 240.0 if player_id == 3 else 0.0,
+        }
+        for player_id, row in first.iterrows()
+    ]
+    second = forecast_team_minutes(
+        state,
+        team="AAA",
+        game_id="001",
+        forecast_cutoff="2026-10-20T00:00:00Z",
+        injury_rows=conflicting_archived_rows,
+        report_status="submitted",
+        config=_config(),
+    ).set_index("player_id")
+    assert second["final_normalized_minutes"].to_dict() == pytest.approx(
+        first["final_normalized_minutes"].to_dict()
+    )
+
+
+def test_replayed_schedule_summary_is_rejected_as_updater_input() -> None:
+    summary = {
+        "game_id": "0022600001",
+        "record_type": "strict_forward_replay_final_game_audit",
+        "pregame": {
+            "projection": {"state_kind": "in_season_strict_forward_replay"}
+        },
+    }
+
+    with pytest.raises(ValueError, match="derived Schedule replay"):
+        _validate_non_replayed_source(summary)
 
 
 def test_incremental_and_full_replay_match_and_duplicate_is_rejected() -> None:

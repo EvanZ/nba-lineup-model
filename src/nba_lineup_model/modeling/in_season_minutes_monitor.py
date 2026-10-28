@@ -145,6 +145,25 @@ def _report_status(summary: dict[str, Any], team: str) -> str:
     return "submitted"
 
 
+def _validate_non_replayed_source(summary: dict[str, Any]) -> None:
+    """Reject a derived Schedule replay as an updater input boundary."""
+
+    pregame = summary.get("pregame")
+    pregame = pregame if isinstance(pregame, dict) else {}
+    projection = pregame.get("projection")
+    projection = projection if isinstance(projection, dict) else {}
+    forecast_version = pregame.get("forecast_version")
+    forecast_version = forecast_version if isinstance(forecast_version, dict) else {}
+    if (
+        str(summary.get("record_type")) == "strict_forward_replay_final_game_audit"
+        or str(projection.get("state_kind")) == "in_season_strict_forward_replay"
+        or str(forecast_version.get("mode")) == "strict_forward_replay"
+    ):
+        raise ValueError(
+            f"Updater input {summary.get('game_id')} is a derived Schedule replay"
+        )
+
+
 def build_game_observations(
     summary: dict[str, Any],
     espn: dict[str, Any],
@@ -605,6 +624,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         and str(row.get("game_id", "")).startswith("002")
         and summary_slate_date(row) <= date.fromisoformat(args.through_date)
     ]
+    for summary in summaries:
+        _validate_non_replayed_source(summary)
     summaries.sort(
         key=lambda row: (
             summary_slate_date(row),

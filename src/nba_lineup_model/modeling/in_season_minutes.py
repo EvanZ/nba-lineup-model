@@ -21,7 +21,7 @@ import pandas as pd
 REGULATION_TEAM_MINUTES = 240.0
 STATE_SCHEMA_VERSION = 2
 CONTRIBUTION_SCHEMA_VERSION = 2
-UPDATER_VERSION = "early_game_role_v2"
+UPDATER_VERSION = "early_game_role_v3_direct_posterior"
 
 PLAYED = "played"
 MEDICAL_ABSENCE = "medical_absence"
@@ -313,12 +313,11 @@ def forecast_team_minutes(
         for row in (injury_rows or [])
         if row.get("player_id") is not None
     }
-    prior_p = players["preseason_participation_prior"].clip(lower=1e-6)
     current_conditional = players["current_conditional_minutes_estimate"].clip(
         lower=0.0, upper=48.0
     )
-    prior_conditional = players["preseason_conditional_minutes_prior"].clip(lower=1e-6)
     forecast_probability: list[float] = []
+    allocation_probability: list[float] = []
     explicit_status: list[bool] = []
     statuses: list[str] = []
     reasons: list[object] = []
@@ -344,6 +343,11 @@ def forecast_team_minutes(
             reason = None
             is_explicit = False
         forecast_probability.append(probability)
+        allocation_probability.append(
+            float(row.current_participation_estimate)
+            if not np.isfinite(probability)
+            else probability
+        )
         explicit_status.append(is_explicit)
         statuses.append(status)
         reasons.append(reason)
@@ -351,52 +355,14 @@ def forecast_team_minutes(
     players["has_explicit_injury_status"] = explicit_status
     players["injury_status"] = statuses
     players["injury_reason"] = reasons
-    # The normalized preseason allocation is the immutable role baseline.
-    # Never use a previously materialized game's projected_minutes here: the
-    # strict-forward Schedule view is rebuilt repeatedly, and feeding its
-    # output back into this ratio compounds role changes on every run.  The
-    # archived rows remain authoritative only for game-specific injury status.
-    players["game_baseline_minutes"] = players["preseason_normalized_minutes"]
-    players["pre_normalization_minutes"] = players["game_baseline_minutes"] * (
-        current_conditional / prior_conditional
-    )
-    status_multiplier = pd.Series(1.0, index=players.index, dtype=float)
-    status_multiplier.loc[players["has_explicit_injury_status"]] = (
-        players.loc[
-            players["has_explicit_injury_status"], "game_participation_probability"
-        ]
-        / prior_p.loc[players["has_explicit_injury_status"]]
-    )
-    players["pre_normalization_minutes"] *= status_multiplier
-    # A player with a preseason zero can enter only after actual participation
-    # evidence. This preserves exact zero-evidence identity while supporting
-    # late signings and rotation changes.
-    team_scale_rows = players.loc[
-        players["game_baseline_minutes"].gt(0.0)
-        & players["preseason_participation_prior"].gt(0.0)
-        & players["preseason_conditional_minutes_prior"].gt(0.0)
-    ]
-    if team_scale_rows.empty:
-        team_scale = 1.0
-    else:
-        team_scale = float(
-            np.median(
-                team_scale_rows["game_baseline_minutes"]
-                / (
-                    team_scale_rows["preseason_participation_prior"]
-                    * team_scale_rows["preseason_conditional_minutes_prior"]
-                )
-            )
-        )
-    cold_entry = (
-        players["game_baseline_minutes"].le(0.0)
-        & players["participation_played"].gt(0.0)
-        & players["game_participation_probability"].fillna(0.0).gt(0.0)
-    )
-    players.loc[cold_entry, "pre_normalization_minutes"] = (
-        team_scale
-        * players.loc[cold_entry, "game_participation_probability"]
-        * players.loc[cold_entry, "current_conditional_minutes_estimate"]
+    players["allocation_participation_probability"] = allocation_probability
+    # The posterior conditional role already contains the preseason prior.
+    # Forecast it directly, applying only the current game's availability
+    # evidence. Frozen pregame minutes are a control arm, never an input to
+    # the updated allocation.
+    players["game_baseline_minutes"] = current_conditional
+    players["pre_normalization_minutes"] = (
+        current_conditional * players["allocation_participation_probability"]
     )
     players["selected_rotation"] = False
     selected = players.sort_values(
