@@ -20,6 +20,7 @@ PROD_APP_ROOT="${GESTALT_PROD_APP_ROOT:-/opt/nba-gestalt}"
 DEV_APP_ROOT="${GESTALT_DEV_APP_ROOT:-/opt/nba-gestalt-dev}"
 DEV_STATE_ROOT="${GESTALT_DEV_STATE_ROOT:-/var/lib/nba-gestalt-dev}"
 DEV_WEB_ROOT="${GESTALT_DEV_WEB_ROOT:-/var/www/nba-gestalt-dev}"
+PROD_SCHEDULE_ROOT="${GESTALT_PROD_SCHEDULE_ROOT:-/var/lib/nba-gestalt/schedule-serving/current}"
 FRONTEND_DIST="${GESTALT_DEV_FRONTEND_DIST:-}"
 RELEASE_ID="${GESTALT_DEV_RELEASE_ID:-$(git -C "$SOURCE_REPO" rev-parse --short=12 "$DEV_REF")}"
 RELEASE_ROOT="$DEV_APP_ROOT/releases/$RELEASE_ID"
@@ -29,6 +30,9 @@ test -d "$SOURCE_REPO/.git"
 test -x "$PROD_RELEASE/.venv/bin/python"
 test -d "$PROD_RELEASE/artifacts"
 test -d "$PROD_RELEASE/data"
+if [[ ! -d "$PROD_SCHEDULE_ROOT/final" ]]; then
+  PROD_SCHEDULE_ROOT=/var/lib/nba-gestalt/schedule
+fi
 
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_APP_ROOT/releases"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT"
@@ -82,10 +86,10 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
   PYTHONPATH="$RELEASE_ROOT/src" \
   GESTALT_CURRENT_SEASON_SERVING_ROOT="$DEV_STATE_ROOT/current-season-serving" \
   GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$DEV_STATE_ROOT/lineup-materialization-input" \
-  GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule \
+  GESTALT_SCHEDULE_STATE_DIR="$PROD_SCHEDULE_ROOT" \
     "$PROD_RELEASE/.venv/bin/python" \
     -m nba_lineup_model.modeling.current_season_lineup_materialization \
-    --schedule-state-dir /var/lib/nba-gestalt/schedule \
+    --schedule-state-dir "$PROD_SCHEDULE_ROOT" \
     --coverage-path /var/lib/nba-gestalt/cdn/coverage.json \
     --output-root "$DEV_STATE_ROOT/current-season-lineups"
 
@@ -94,7 +98,7 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
   GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$DEV_STATE_ROOT/lineup-materialization-input" \
     "$PROD_RELEASE/.venv/bin/python" \
     -m nba_lineup_model.modeling.current_season_schedule_materialization \
-    --source-root /var/lib/nba-gestalt/schedule \
+    --source-root "$PROD_SCHEDULE_ROOT" \
     --rating-root /var/lib/nba-gestalt/in-season-nail \
     --minutes-root /var/lib/nba-gestalt/in-season-minutes \
     --output-root "$DEV_STATE_ROOT/schedule" \

@@ -79,6 +79,7 @@ def materialize_current_season_schedule(
         "evaluation_cell": EVALUATION_CELL,
         "season": minutes_publication["season"],
         "through_date": through_date,
+        "source_schedule_sha256": _schedule_source_sha256(source_root),
         "ratings_manifest_sha256": _sha256(rating_publication_path),
         "minutes_manifest_sha256": _sha256(minutes_publication_path),
         "game_evaluation_sha256": _sha256(game_path),
@@ -861,6 +862,30 @@ def _sha256(path: Path) -> str:
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _schedule_source_sha256(root: Path) -> str:
+    """Fingerprint every schedule input copied into a materialized release."""
+
+    digest = hashlib.sha256()
+    file_count = 0
+    for directory, pattern in (
+        ("latest", "*.json"),
+        ("frozen", "*.json"),
+        ("final", "*.json"),
+        ("odds-api", "*.json"),
+    ):
+        for path in sorted((root / directory).glob(pattern)):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root).as_posix().encode()
+            digest.update(len(relative).to_bytes(8, "big"))
+            digest.update(relative)
+            digest.update(bytes.fromhex(_sha256(path)))
+            file_count += 1
+    if file_count == 0:
+        raise ValueError(f"Schedule source contains no materializable files: {root}")
     return digest.hexdigest()
 
 

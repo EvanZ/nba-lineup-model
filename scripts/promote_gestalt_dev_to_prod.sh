@@ -23,6 +23,7 @@ STATE_ROOT="${GESTALT_STATE_ROOT:-/var/lib/nba-gestalt}"
 WEB_RELEASE_ROOT="${GESTALT_WEB_RELEASE_ROOT:-/var/www/nba-gestalt-releases}"
 PROD_RELEASE="$APP_ROOT/current"
 DEV_RELEASE="${GESTALT_DEV_RELEASE:-/opt/nba-gestalt-dev/current}"
+SOURCE_SCHEDULE_ROOT="${GESTALT_SOURCE_SCHEDULE_ROOT:-$STATE_ROOT/schedule-serving/current}"
 RELEASE_ID="${GESTALT_PROD_RELEASE_ID:-$(git -C "$SOURCE_REPO" rev-parse --short=12 "$PROD_REF")}"
 RELEASE_ROOT="$CODE_ROOT/releases/$RELEASE_ID"
 FRONTEND_DIST="${GESTALT_PROD_FRONTEND_DIST:-}"
@@ -32,6 +33,9 @@ test -x "$PROD_RELEASE/.venv/bin/python"
 test -d "$PROD_RELEASE/artifacts"
 test -d "$PROD_RELEASE/data"
 test -d "$DEV_RELEASE"
+if [[ ! -d "$SOURCE_SCHEDULE_ROOT/final" ]]; then
+  SOURCE_SCHEDULE_ROOT="$STATE_ROOT/schedule"
+fi
 
 prod_commit="$(git -C "$SOURCE_REPO" rev-parse "$PROD_REF^{commit}")"
 dev_commit="$(git -C "$DEV_RELEASE" rev-parse HEAD)"
@@ -79,10 +83,10 @@ PYTHONPATH="$RELEASE_ROOT/src" \
 PYTHONPATH="$RELEASE_ROOT/src" \
 GESTALT_CURRENT_SEASON_SERVING_ROOT="$STATE_ROOT/current-season-serving" \
 GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$STATE_ROOT/lineup-materialization-input" \
-GESTALT_SCHEDULE_STATE_DIR="$STATE_ROOT/schedule" \
+GESTALT_SCHEDULE_STATE_DIR="$SOURCE_SCHEDULE_ROOT" \
   "$PROD_RELEASE/.venv/bin/python" \
   -m nba_lineup_model.modeling.current_season_lineup_materialization \
-  --schedule-state-dir "$STATE_ROOT/schedule" \
+  --schedule-state-dir "$SOURCE_SCHEDULE_ROOT" \
   --coverage-path "$STATE_ROOT/cdn/coverage.json" \
   --output-root "$STATE_ROOT/current-season-lineups"
 
@@ -91,7 +95,7 @@ GESTALT_CURRENT_SEASON_SERVING_ROOT="$STATE_ROOT/current-season-serving" \
 GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$STATE_ROOT/lineup-materialization-input" \
   "$PROD_RELEASE/.venv/bin/python" \
   -m nba_lineup_model.modeling.current_season_schedule_materialization \
-  --source-root "$STATE_ROOT/schedule" \
+  --source-root "$SOURCE_SCHEDULE_ROOT" \
   --rating-root "$STATE_ROOT/in-season-nail" \
   --minutes-root "$STATE_ROOT/in-season-minutes" \
   --output-root "$STATE_ROOT/schedule-serving" \

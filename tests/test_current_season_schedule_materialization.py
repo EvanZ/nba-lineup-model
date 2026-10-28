@@ -9,6 +9,7 @@ import pytest
 
 from nba_lineup_model.modeling.current_season_schedule_materialization import (
     _reforecast_pregame_from_current_state,
+    _schedule_source_sha256,
     _validate_forecast_schedule_contract,
     materialize_current_season_schedule,
 )
@@ -273,6 +274,16 @@ def test_rejects_truncated_public_schedule_before_promotion() -> None:
                 "scheduled_games": [{"game_id": "0022600002"}],
             }
         )
+
+
+def test_schedule_source_identity_changes_when_a_final_is_added(tmp_path: Path) -> None:
+    source = tmp_path / "schedule"
+    _write_json(source / "final" / "one.summary.json", {"game_id": "1"})
+    before = _schedule_source_sha256(source)
+
+    _write_json(source / "final" / "two.summary.json", {"game_id": "2"})
+
+    assert _schedule_source_sha256(source) != before
 
 
 def test_reforecasts_boundary_game_with_current_minutes_and_frozen_injuries() -> None:
