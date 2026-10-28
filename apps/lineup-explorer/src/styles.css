@@ -444,8 +444,11 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .current-rating-point { fill: #fffefa; stroke: #245a47; stroke-width: 2.2; }
 .current-rating-point.skipped { fill: #f6f3ec; stroke: #8a918b; stroke-dasharray: 2 2; }
 .current-rating-point.latest { fill: #e8502f; stroke: #fffefa; stroke-width: 2; }
+.current-rating-logo-halo { fill: #fffefa; stroke: #245a47; stroke-width: 1.5; }
+.current-rating-logo-halo.skipped { fill: #f6f3ec; stroke: #8a918b; stroke-dasharray: 2 2; }
+.current-rating-logo-halo.latest { stroke: #e8502f; stroke-width: 2.5; }
 .current-rating-opponent-logo { opacity: 0.96; }
-.current-rating-opponent-logo.skipped { opacity: 0.4; }
+.current-rating-opponent-logo.skipped { filter: grayscale(0.35); opacity: 0.4; }
 .current-rating-axis-label, .current-rating-date, .current-rating-value { fill: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
 .current-rating-value { fill: #17201c; }
 .current-rating-current-label { fill: #e8502f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; font-weight: 800; text-transform: uppercase; }

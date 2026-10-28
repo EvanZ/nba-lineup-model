@@ -375,11 +375,11 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
   const points = player.current_season_trajectory ?? [];
   if (points.length < 2) return null;
   const width = Math.max(1100, points.length * 42);
-  const height = 252;
+  const height = 238;
   const left = 58;
   const right = 24;
   const top = 28;
-  const bottom = 72;
+  const bottom = 48;
   const values = points.map((point) => point.rating);
   const minimum = Math.floor((Math.min(...values) - 0.35) * 2) / 2;
   const maximum = Math.ceil((Math.max(...values) + 0.35) * 2) / 2;
@@ -423,18 +423,24 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
             point.point_kind === "skipped_game" ? "skipped" : "",
             point.is_current ? "latest" : "",
           ].filter(Boolean).join(" ");
+          const logoHaloClassName = [
+            "current-rating-logo-halo",
+            point.point_kind === "skipped_game" ? "skipped" : "",
+            point.is_current ? "latest" : "",
+          ].filter(Boolean).join(" ");
           return <g key={`${point.point_kind ?? point.source}-${point.game_id ?? point.evidence_through_date ?? index}`}>
-            <circle className={pointClassName} cx={x(index)} cy={y(point.rating)} r={point.is_current ? 5 : point.point_kind === "skipped_game" ? 3.5 : 4}>
-              <title>{detail}</title>
-            </circle>
-            {showValue && <text className="current-rating-value" x={x(index)} y={Math.max(15, y(point.rating) - 11)} textAnchor="middle">{formatRating(point.rating)}</text>}
-            {point.is_current && <text className="current-rating-current-label" x={x(index)} y={height - 50} textAnchor="middle">Current</text>}
-            {point.opponent && <image className={`current-rating-opponent-logo${point.point_kind === "skipped_game" ? " skipped" : ""}`} href={teamLogoUrl(point.opponent)} x={x(index) - 10} y={height - 41} width="20" height="20" preserveAspectRatio="xMidYMid meet" />}
+            <title>{detail}</title>
+            {point.opponent ? <>
+              <circle className={logoHaloClassName} cx={x(index)} cy={y(point.rating)} r={point.is_current ? 14 : 12} />
+              <image className={`current-rating-opponent-logo${point.point_kind === "skipped_game" ? " skipped" : ""}`} href={teamLogoUrl(point.opponent)} x={x(index) - 10} y={y(point.rating) - 10} width="20" height="20" preserveAspectRatio="xMidYMid meet" />
+            </> : <circle className={pointClassName} cx={x(index)} cy={y(point.rating)} r={point.is_current ? 5 : 4} />}
+            {showValue && <text className="current-rating-value" x={x(index)} y={Math.max(15, y(point.rating) - 17)} textAnchor="middle">{formatRating(point.rating)}</text>}
+            {point.is_current && <text className="current-rating-current-label" x={x(index)} y={Math.min(height - 24, y(point.rating) + 25)} textAnchor="middle">Current</text>}
             <text className="current-rating-date" x={x(index)} y={height - 8} textAnchor="middle">{label}</text>
           </g>;
         })}
       </svg>
-      <figcaption>{appearanceCount} {appearanceCount === 1 ? "appearance" : "appearances"}{skippedCount > 0 ? ` · ${skippedCount} missed ${skippedCount === 1 ? "game" : "games"}` : ""}. Each dated logo marks the opponent and the slate-batched updater state after that team game; faded logos and hollow points are games not played. The dashed line is the frozen preseason baseline.</figcaption>
+      <figcaption>{appearanceCount} {appearanceCount === 1 ? "appearance" : "appearances"}{skippedCount > 0 ? ` · ${skippedCount} missed ${skippedCount === 1 ? "game" : "games"}` : ""}. Each opponent logo is the data point for that team game; faded logos and dashed halos are games not played. The dashed horizontal line is the frozen preseason baseline.</figcaption>
     </figure>
   );
 }
