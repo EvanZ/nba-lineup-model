@@ -82,8 +82,8 @@ else
   printf 'npm is unavailable; set GESTALT_DEV_FRONTEND_DIST to a prebuilt dist directory\n' >&2
   exit 1
 fi
-sudo install -d "$DEV_WEB_ROOT"
-sudo rsync -a --delete "$FRONTEND_DIST/" "$DEV_WEB_ROOT/"
+sudo install -d -m 0755 "$DEV_WEB_ROOT"
+sudo rsync -a --delete --chmod=D755,F644 "$FRONTEND_DIST/" "$DEV_WEB_ROOT/"
 
 sudo ln -sfn "$RELEASE_ROOT" "$DEV_APP_ROOT/current"
 sudo install -m 0644 \
