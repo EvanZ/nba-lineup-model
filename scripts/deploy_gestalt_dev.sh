@@ -21,6 +21,8 @@ DEV_APP_ROOT="${GESTALT_DEV_APP_ROOT:-/opt/nba-gestalt-dev}"
 DEV_STATE_ROOT="${GESTALT_DEV_STATE_ROOT:-/var/lib/nba-gestalt-dev}"
 DEV_WEB_ROOT="${GESTALT_DEV_WEB_ROOT:-/var/www/nba-gestalt-dev}"
 PROD_SCHEDULE_ROOT="${GESTALT_PROD_SCHEDULE_ROOT:-/var/lib/nba-gestalt/schedule}"
+DEV_RATING_ROOT="${GESTALT_DEV_RATING_ROOT:-/var/lib/nba-gestalt/in-season-nail}"
+DEV_MINUTES_ROOT="${GESTALT_DEV_MINUTES_ROOT:-/var/lib/nba-gestalt/in-season-minutes}"
 FRONTEND_DIST="${GESTALT_DEV_FRONTEND_DIST:-}"
 RELEASE_ID="${GESTALT_DEV_RELEASE_ID:-$(git -C "$SOURCE_REPO" rev-parse --short=12 "$DEV_REF")}"
 RELEASE_ROOT="$DEV_APP_ROOT/releases/$RELEASE_ID"
@@ -75,8 +77,8 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
   PYTHONPATH="$RELEASE_ROOT/src" \
     "$PROD_RELEASE/.venv/bin/python" \
     -m nba_lineup_model.modeling.current_season_serving_materialization \
-    --rating-root /var/lib/nba-gestalt/in-season-nail \
-    --minutes-root /var/lib/nba-gestalt/in-season-minutes \
+    --rating-root "$DEV_RATING_ROOT" \
+    --minutes-root "$DEV_MINUTES_ROOT" \
     --release-root "$PROD_RELEASE" \
     --output-root "$DEV_STATE_ROOT/current-season-serving"
 
@@ -99,8 +101,8 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
     "$PROD_RELEASE/.venv/bin/python" \
     -m nba_lineup_model.modeling.current_season_schedule_materialization \
     --source-root "$PROD_SCHEDULE_ROOT" \
-    --rating-root /var/lib/nba-gestalt/in-season-nail \
-    --minutes-root /var/lib/nba-gestalt/in-season-minutes \
+    --rating-root "$DEV_RATING_ROOT" \
+    --minutes-root "$DEV_MINUTES_ROOT" \
     --output-root "$DEV_STATE_ROOT/schedule" \
     --catalog-path "$DEV_STATE_ROOT/catalog/games.parquet" \
     --include-current-forecast
