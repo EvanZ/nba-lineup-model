@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from nba_lineup_model.modeling.current_season_schedule_materialization import (
+    _reforecast_pregame_from_current_state,
     materialize_current_season_schedule,
 )
 from nba_lineup_model.web_api.win_projections import read_schedule_performance
@@ -229,13 +230,89 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
     assert original["pregame"]["projection"]["home_margin"] == -4.5
     assert source_summary.read_bytes() == original_source_bytes
     manifest = json.loads((release / "manifest.json").read_text())
-    assert manifest["coverage"] == {
-        "evaluation_games": 1,
-        "replayed_games": 1,
-        "skipped_games": 0,
-    }
+    assert manifest["coverage"]["evaluation_games"] == 1
+    assert manifest["coverage"]["replayed_games"] == 1
+    assert manifest["coverage"]["cutoff_state_reforecast_games"] == 0
+    assert manifest["coverage"]["replayed_final_games"] == 1
+    assert manifest["coverage"]["skipped_games"] == 0
     performance = read_schedule_performance(state_dir=output / "current")
     season = next(row for row in performance["windows"] if row["key"] == "season")
     assert performance["model_track"] == "updated_ratings_updated_minutes"
     assert season["games"] == 1
     assert season["probability"]["gestalt"]["brier"] == (0.57 - 1.0) ** 2
+
+
+def test_reforecasts_boundary_game_with_current_minutes_and_frozen_injuries() -> None:
+    source = {
+        "game_id": "0022600053",
+        "espn_game_id": "401999053",
+        "game_date": "2026-10-27",
+        "away_team": "BOS",
+        "home_team": "DET",
+        "projection": {"home_margin": -2.0, "home_win_probability": 0.45},
+        "injury_report": {
+            "team_reports": {
+                "BOS": {"status": "submitted"},
+                "DET": {"status": "submitted"},
+            },
+            "assumptions": [
+                {
+                    "player_id": 2,
+                    "player_name": "Home Player",
+                    "team": "DET",
+                    "status": "Out",
+                    "reason": "Ankle",
+                    "play_probability": 0.0,
+                }
+            ],
+        },
+        "projected_minutes": {"away": [], "home": []},
+    }
+    players = [
+        {
+            "player_id": 1,
+            "player_name": "Away Player",
+            "team": "BOS",
+            "conditional_minutes_per_game": 40.0,
+            "projected_nail": 1.0,
+        },
+        {
+            "player_id": 2,
+            "player_name": "Home Player",
+            "team": "DET",
+            "conditional_minutes_per_game": 40.0,
+            "projected_nail": 3.0,
+        },
+        {
+            "player_id": 3,
+            "player_name": "Home Reserve",
+            "team": "DET",
+            "conditional_minutes_per_game": 20.0,
+            "projected_nail": 0.0,
+        },
+    ]
+    replay = _reforecast_pregame_from_current_state(
+        source,
+        forecast={"model": "updated", "serving_bundle_sha256": "abc"},
+        minute_players=players,
+        scheduled={
+            "game_date": "2026-10-27",
+            "away_team": "BOS",
+            "home_team": "DET",
+            "home_back_to_back": 0,
+            "away_back_to_back": 0,
+        },
+        rotation_size=15,
+        beta=0.1,
+        home_court=2.0,
+        back_to_back=-1.0,
+        through_date="2026-10-26",
+    )
+
+    assert replay["projection"]["model_track"] == "updated_ratings_updated_minutes"
+    assert replay["forecast_version"]["mode"] == "cutoff_state_reforecast"
+    assert replay["projected_minutes"]["away"][0]["projected_minutes"] == 240.0
+    assert replay["projected_minutes"]["home"][0]["player_id"] == 3
+    assert replay["projected_minutes"]["home"][0]["projected_minutes"] == 240.0
+    assert replay["injury_report"]["assumptions"][0]["status"] == "Out"
+    assert replay["injury_report"]["assumptions"][0]["projected_minutes"] == 0.0

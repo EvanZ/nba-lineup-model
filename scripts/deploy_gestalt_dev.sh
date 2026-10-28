@@ -90,12 +90,16 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
     --output-root "$DEV_STATE_ROOT/current-season-lineups"
 
   PYTHONPATH="$RELEASE_ROOT/src" \
+  GESTALT_CURRENT_SEASON_SERVING_ROOT="$DEV_STATE_ROOT/current-season-serving" \
+  GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$DEV_STATE_ROOT/lineup-materialization-input" \
     "$PROD_RELEASE/.venv/bin/python" \
     -m nba_lineup_model.modeling.current_season_schedule_materialization \
     --source-root /var/lib/nba-gestalt/schedule \
     --rating-root /var/lib/nba-gestalt/in-season-nail \
     --minutes-root /var/lib/nba-gestalt/in-season-minutes \
-    --output-root "$DEV_STATE_ROOT/schedule"
+    --output-root "$DEV_STATE_ROOT/schedule" \
+    --catalog-path "$DEV_STATE_ROOT/catalog/games.parquet" \
+    --include-current-forecast
 fi
 
 if [[ -n "$FRONTEND_DIST" ]]; then
