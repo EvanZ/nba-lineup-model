@@ -167,6 +167,9 @@ export type Player = {
       points?: number | null;
       rebounds?: number | null;
       assists?: number | null;
+      turnovers?: number | null;
+      steals?: number | null;
+      blocks?: number | null;
       plus_minus?: number | null;
     };
     evidence_weight?: number;

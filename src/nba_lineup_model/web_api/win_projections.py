@@ -1332,10 +1332,20 @@ def _player_box_score(
                     index = label_index.get(label)
                     return values[index] if index is not None and index < len(values) else None
 
+                def first_value(*labels: str) -> object | None:
+                    for label in labels:
+                        candidate = value(label)
+                        if candidate is not None:
+                            return candidate
+                    return None
+
                 return {
                     "points": _integer_or_none(value("PTS")),
                     "rebounds": _integer_or_none(value("REB")),
                     "assists": _integer_or_none(value("AST")),
+                    "turnovers": _integer_or_none(first_value("TO", "TOV")),
+                    "steals": _integer_or_none(value("STL")),
+                    "blocks": _integer_or_none(value("BLK")),
                     "plus_minus": _signed_integer_or_none(value("+/-")),
                 }
     return None
