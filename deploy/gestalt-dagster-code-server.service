@@ -10,9 +10,13 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/nba-gestalt/current
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/nba-gestalt-code/current/src
 Environment=DAGSTER_HOME=/var/lib/nba-gestalt/dagster
 Environment=AWS_REGION=us-west-1
 Environment=GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1
+Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt/current-season-serving
+Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt/current-season-lineups
+Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
 EnvironmentFile=-/etc/nba-gestalt/dagster.env
 ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster api grpc --host 127.0.0.1 --port 4000 --module-name nba_lineup_model.orchestration.definitions --working-directory /opt/nba-gestalt/current --use-python-environment-entry-point --log-level warning
 Restart=on-failure

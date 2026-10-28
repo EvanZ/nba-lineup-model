@@ -52,8 +52,12 @@ def materialize_current_season_serving(
     if season != str(minutes_publication.get("season", "")):
         raise ValueError("Rating and minutes publication seasons do not match")
     rating_uri = _artifact_uri(rating_publication, "player_state")
+    rating_trajectory_uri = _artifact_uri(
+        rating_publication, "player_game_trajectory"
+    )
     minutes_uri = _artifact_uri(minutes_publication, "player_state")
     rating_digest = _artifact_digest(rating_uri)
+    rating_trajectory_digest = _artifact_digest(rating_trajectory_uri)
     minutes_digest = _artifact_digest(minutes_uri)
     rating_matches = sorted(
         rating_root.glob(
@@ -67,6 +71,22 @@ def materialize_current_season_serving(
         )
     if _file_sha256(rating_matches[0]) != rating_digest:
         raise ValueError("Local rating state does not match its published checksum")
+    rating_run_id = str(rating_publication.get("dagster_run_id", ""))
+    rating_trajectory_path = (
+        rating_root
+        / "runs"
+        / f"through_date={through_date}"
+        / rating_run_id
+        / "player_game_trajectory.parquet"
+    )
+    if not rating_run_id or not rating_trajectory_path.is_file():
+        raise FileNotFoundError(
+            f"Local player-game trajectory is missing: {rating_trajectory_path}"
+        )
+    if _file_sha256(rating_trajectory_path) != rating_trajectory_digest:
+        raise ValueError(
+            "Local player-game trajectory does not match its published checksum"
+        )
     minutes_run_id = str(minutes_publication.get("dagster_run_id", ""))
     minutes_path = (
         minutes_root
@@ -98,6 +118,8 @@ def materialize_current_season_serving(
         config=ServingPromotionConfig(preseason_run_id=run_id),
         rating_source_uri=rating_uri,
         minutes_source_uri=minutes_uri,
+        rating_trajectory_path=rating_trajectory_path,
+        rating_trajectory_source_uri=rating_trajectory_uri,
     )
     promote_serving_bundle(bundle.path, root=output_root)
     return bundle.path

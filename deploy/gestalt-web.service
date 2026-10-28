@@ -8,6 +8,10 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/nba-gestalt/current
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/nba-gestalt-code/current/src
+Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt/current-season-serving
+Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt/current-season-lineups
+Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
 ExecStart=/opt/nba-gestalt/current/.venv/bin/uvicorn nba_lineup_model.web_api.app:app --host 127.0.0.1 --port 8010 --workers 1
 Restart=on-failure
 RestartSec=5
