@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from nba_lineup_model.web_api.win_projections import (
@@ -169,6 +170,7 @@ def _build_release(
     )
     games["game_id"] = games["game_id"].map(_normalize_game_id)
     players["game_id"] = players["game_id"].map(_normalize_game_id)
+    _validate_player_evaluation(players)
     player_groups = {
         game_id: frame.copy()
         for game_id, frame in players.groupby("game_id", sort=False)
@@ -625,6 +627,23 @@ def _updated_minutes_groups(
         "away": _updated_team_minutes(original.get("away"), players, away_team),
         "home": _updated_team_minutes(original.get("home"), players, home_team),
     }
+
+
+def _validate_player_evaluation(players: pd.DataFrame) -> None:
+    """Reject updater artifacts that contain impossible individual minutes."""
+
+    minutes = pd.to_numeric(players["updated_projected_minutes"], errors="raise")
+    invalid = ~np.isfinite(minutes) | minutes.lt(-1e-9) | minutes.gt(48.0 + 1e-6)
+    if not invalid.any():
+        return
+    rows = players.loc[
+        invalid,
+        ["game_id", "team", "player_id", "player_name", "updated_projected_minutes"],
+    ].head(10)
+    raise ValueError(
+        "Player evaluation contains physically impossible projected minutes: "
+        + rows.to_dict(orient="records").__repr__()
+    )
 
 
 def _updated_team_minutes(

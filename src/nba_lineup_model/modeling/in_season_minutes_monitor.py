@@ -33,6 +33,7 @@ from nba_lineup_model.modeling.in_season_minutes import (
     INACTIVE,
     MEDICAL_ABSENCE,
     PLAYED,
+    REGULATION_TEAM_MINUTES,
     UNKNOWN,
     UPDATER_VERSION,
     InSeasonMinutesConfig,
@@ -466,6 +467,27 @@ def _allocation_map(frame: pd.DataFrame) -> dict[int, float]:
     )
 
 
+def _validate_forecast_distribution(
+    frame: pd.DataFrame, *, team: str, game_id: str
+) -> None:
+    """Fail closed on physically impossible pregame minute allocations."""
+
+    minutes = pd.to_numeric(frame["final_normalized_minutes"], errors="raise")
+    if not np.isfinite(minutes).all() or minutes.lt(-1e-9).any():
+        raise ValueError(f"Non-finite or negative shadow minutes for {team}/{game_id}")
+    total = float(minutes.sum())
+    if not np.isclose(total, REGULATION_TEAM_MINUTES, atol=1e-6):
+        raise ValueError(
+            f"Shadow minutes do not conserve 240 for {team}/{game_id}: {total}"
+        )
+    maximum = float(minutes.max())
+    if maximum > 48.0 + 1e-6:
+        player = frame.loc[minutes.idxmax(), "player_name"]
+        raise ValueError(
+            f"Impossible shadow minutes for {player} ({team}/{game_id}): {maximum}"
+        )
+
+
 def _frozen_map(summary: dict[str, Any], team: str) -> dict[int, float]:
     return {
         int(row["player_id"]): float(row["projected_minutes"])
@@ -654,6 +676,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         injury_rows=_pregame_rows(summary, team),
                         report_status=_report_status(summary, team),
                         config=config,
+                    )
+                    _validate_forecast_distribution(
+                        forecasts[team], team=team, game_id=game_id
                     )
                 espn_path = Path(args.state_dir) / "final" / f"{summary['espn_game_id']}.espn.json"
                 espn = _load_json(espn_path)

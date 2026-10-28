@@ -282,12 +282,6 @@ def forecast_team_minutes(
         for row in (injury_rows or [])
         if row.get("player_id") is not None
     }
-    game_baseline_by_id = {
-        int(row["player_id"]): float(row["projected_minutes"])
-        for row in (injury_rows or [])
-        if row.get("player_id") is not None and row.get("projected_minutes") is not None
-    }
-    has_game_baseline = bool(game_baseline_by_id)
     prior_p = players["preseason_participation_prior"].clip(lower=1e-6)
     current_conditional = players["current_conditional_minutes_estimate"].clip(
         lower=0.0, upper=48.0
@@ -326,23 +320,23 @@ def forecast_team_minutes(
     players["has_explicit_injury_status"] = explicit_status
     players["injury_status"] = statuses
     players["injury_reason"] = reasons
-    players["game_baseline_minutes"] = (
-        players["player_id"].map(game_baseline_by_id).fillna(0.0)
-        if has_game_baseline
-        else players["preseason_normalized_minutes"]
-    )
+    # The normalized preseason allocation is the immutable role baseline.
+    # Never use a previously materialized game's projected_minutes here: the
+    # strict-forward Schedule view is rebuilt repeatedly, and feeding its
+    # output back into this ratio compounds role changes on every run.  The
+    # archived rows remain authoritative only for game-specific injury status.
+    players["game_baseline_minutes"] = players["preseason_normalized_minutes"]
     players["pre_normalization_minutes"] = players["game_baseline_minutes"] * (
         current_conditional / prior_conditional
     )
-    if not has_game_baseline:
-        status_multiplier = pd.Series(1.0, index=players.index, dtype=float)
-        status_multiplier.loc[players["has_explicit_injury_status"]] = (
-            players.loc[
-                players["has_explicit_injury_status"], "game_participation_probability"
-            ]
-            / prior_p.loc[players["has_explicit_injury_status"]]
-        )
-        players["pre_normalization_minutes"] *= status_multiplier
+    status_multiplier = pd.Series(1.0, index=players.index, dtype=float)
+    status_multiplier.loc[players["has_explicit_injury_status"]] = (
+        players.loc[
+            players["has_explicit_injury_status"], "game_participation_probability"
+        ]
+        / prior_p.loc[players["has_explicit_injury_status"]]
+    )
+    players["pre_normalization_minutes"] *= status_multiplier
     # A player with a preseason zero can enter only after actual participation
     # evidence. This preserves exact zero-evidence identity while supporting
     # late signings and rotation changes.

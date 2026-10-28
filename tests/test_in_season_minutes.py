@@ -436,6 +436,43 @@ def test_report_pending_is_preserved_without_available_claim() -> None:
     )
 
 
+def test_archived_projected_minutes_cannot_feed_back_into_role_update() -> None:
+    state = initialize_minutes_state(_priors(), season="2026-27", config=_config())
+    first = forecast_team_minutes(
+        state,
+        team="AAA",
+        game_id="001",
+        forecast_cutoff="2026-10-20T00:00:00Z",
+        injury_rows=[
+            {"player_id": 1, "status": "Unlisted", "projected_minutes": 230.0},
+            {"player_id": 2, "status": "Unlisted", "projected_minutes": 9.0},
+            {"player_id": 3, "status": "Unlisted", "projected_minutes": 1.0},
+        ],
+        report_status="submitted",
+        config=_config(),
+    ).set_index("player_id")
+    second = forecast_team_minutes(
+        state,
+        team="AAA",
+        game_id="001",
+        forecast_cutoff="2026-10-20T00:00:00Z",
+        injury_rows=[
+            {"player_id": 1, "status": "Unlisted", "projected_minutes": 1.0},
+            {"player_id": 2, "status": "Unlisted", "projected_minutes": 9.0},
+            {"player_id": 3, "status": "Unlisted", "projected_minutes": 230.0},
+        ],
+        report_status="submitted",
+        config=_config(),
+    ).set_index("player_id")
+
+    assert first["final_normalized_minutes"].to_dict() == pytest.approx(
+        second["final_normalized_minutes"].to_dict()
+    )
+    assert first.loc[1, "final_normalized_minutes"] == pytest.approx(144.0)
+    assert first.loc[2, "final_normalized_minutes"] == pytest.approx(96.0)
+    assert first.loc[3, "final_normalized_minutes"] == pytest.approx(0.0)
+
+
 def test_incremental_and_full_replay_match_and_duplicate_is_rejected() -> None:
     initial = initialize_minutes_state(_priors(), season="2026-27", config=_config())
     first = _observations("001")

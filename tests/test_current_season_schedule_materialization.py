@@ -11,6 +11,7 @@ from nba_lineup_model.modeling.current_season_schedule_materialization import (
     _reforecast_pregame_from_current_state,
     _schedule_source_sha256,
     _validate_forecast_schedule_contract,
+    _validate_player_evaluation,
     materialize_current_season_schedule,
 )
 from nba_lineup_model.web_api.win_projections import read_schedule_performance
@@ -274,6 +275,23 @@ def test_rejects_truncated_public_schedule_before_promotion() -> None:
                 "scheduled_games": [{"game_id": "0022600002"}],
             }
         )
+
+
+def test_rejects_impossible_player_minutes_before_materialization() -> None:
+    players = pd.DataFrame(
+        [
+            {
+                "game_id": "0022600001",
+                "team": "PHX",
+                "player_id": 1642863,
+                "player_name": "Khaman Maluach",
+                "updated_projected_minutes": 122.9,
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="physically impossible"):
+        _validate_player_evaluation(players)
 
 
 def test_schedule_source_identity_changes_when_a_final_is_added(tmp_path: Path) -> None:

@@ -17,6 +17,7 @@ Environment=GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1
 Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt/current-season-serving
 Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt/current-season-lineups
 Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
+Environment=GESTALT_MODEL_INPUT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule
 Environment=GESTALT_SCHEDULE_S3_URI=s3://nba-gestalt-data/nba-gestalt/schedule/model_track=updated_ratings_updated_minutes
 Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt/catalog/games.parquet
 EnvironmentFile=-/etc/nba-gestalt/dagster.env

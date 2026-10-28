@@ -116,6 +116,17 @@ def _state_dir() -> Path:
     )
 
 
+def _model_input_state_dir() -> Path:
+    """Return the non-replayed Schedule archive used by model updaters.
+
+    Web serving may point at a materialized strict-forward replay.  Model jobs
+    must never consume that derived view as their next input or updates become
+    recursive.  The fallback preserves the single-directory local/test setup.
+    """
+
+    return Path(os.environ.get("GESTALT_MODEL_INPUT_SCHEDULE_STATE_DIR", _state_dir()))
+
+
 def _release_root() -> Path:
     """Return the artifact-bearing release root independently of process CWD."""
 
@@ -238,6 +249,17 @@ def refresh_schedule_op(context: OpExecutionContext) -> dict[str, object]:
         ),
         s3_uri=_schedule_s3_uri(),
     )
+    model_input_dir = _model_input_state_dir()
+    if model_input_dir.resolve() != _state_dir().resolve():
+        refresh_schedule_window(
+            start_date=str(context.op_config["start_date"]),
+            days_ahead=int(context.op_config["days_ahead"]),
+            state_dir=model_input_dir,
+            projection_url=os.environ.get(
+                "GESTALT_SCHEDULE_API_URL", DEFAULT_SCHEDULE_API_URL
+            ),
+            s3_uri=None,
+        )
     context.add_output_metadata(
         {
             "archived_days": int(payload["archived_day_count"]),
@@ -410,6 +432,13 @@ def update_live_scores_op(context: OpExecutionContext) -> dict[str, object]:
         state_dir=_state_dir(),
         s3_uri=_schedule_s3_uri(),
     )
+    model_input_dir = _model_input_state_dir()
+    if model_input_dir.resolve() != _state_dir().resolve():
+        refresh_live_score_state(
+            game_date=game_date,
+            state_dir=model_input_dir,
+            s3_uri=None,
+        )
     context.add_output_metadata(
         {
             "game_date": game_date,
@@ -784,7 +813,7 @@ def update_in_season_nail_production_op(
     output_dir = root / "runs" / f"through_date={through_date}" / context.run_id
     result = run(
         argparse.Namespace(
-            state_dir=_state_dir(),
+            state_dir=_model_input_state_dir(),
             coverage_path=_cdn_coverage_path(),
             release_root=_release_root(),
             cdn_s3_prefix=(f"{_cdn_lake_uri()}/raw/cdn/playbyplay"),
@@ -1109,7 +1138,7 @@ def update_in_season_minutes_production_op(
     output_dir = root / "runs" / f"through_date={through_date}" / context.run_id
     result = run(
         argparse.Namespace(
-            state_dir=_state_dir(),
+            state_dir=_model_input_state_dir(),
             release_root=_release_root(),
             through_date=through_date,
             participation_prior_games=float(
