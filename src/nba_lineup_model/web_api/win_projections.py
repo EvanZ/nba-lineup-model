@@ -1504,10 +1504,25 @@ def read_schedule_performance(
             payload = json.loads(path.read_text())
             if not isinstance(payload, dict) or payload.get("season") != season:
                 continue
-            if replay_only and payload.get("record_type") != (
-                "strict_forward_replay_final_game_audit"
-            ):
-                continue
+            if replay_only:
+                pregame = payload.get("pregame")
+                pregame = pregame if isinstance(pregame, dict) else {}
+                forecast_version = pregame.get("forecast_version")
+                forecast_version = (
+                    forecast_version if isinstance(forecast_version, dict) else {}
+                )
+                projection = pregame.get("projection")
+                projection = projection if isinstance(projection, dict) else {}
+                belongs_to_updated_track = (
+                    payload.get("record_type")
+                    == "strict_forward_replay_final_game_audit"
+                    or forecast_version.get("model_track")
+                    == "updated_ratings_updated_minutes"
+                    or projection.get("model_track")
+                    == "updated_ratings_updated_minutes"
+                )
+                if not belongs_to_updated_track:
+                    continue
             if not str(payload.get("game_id", "")).startswith("002"):
                 continue
             final = payload.get("final")
@@ -3110,7 +3125,22 @@ def refresh_live_score_state(
         }
         if game["status"]["completed"] and not was_completed:
             game.setdefault("final_observed_at", observed_at)
-        if game["status"]["completed"] and "retrospective" not in game:
+        espn_game_id = str(game.get("espn_game_id", "")).strip()
+        frozen_path = state_root / "frozen" / f"{espn_game_id}.json"
+        final_summary_path = state_root / "final" / f"{espn_game_id}.summary.json"
+        final_espn_path = state_root / "final" / f"{espn_game_id}.espn.json"
+        needs_initial_finalization = (
+            game["status"]["completed"]
+            and not was_completed
+            and "retrospective" not in game
+        )
+        needs_final_audit_recovery = (
+            game["status"]["completed"]
+            and was_completed
+            and frozen_path.is_file()
+            and (not final_summary_path.is_file() or not final_espn_path.is_file())
+        )
+        if needs_initial_finalization or needs_final_audit_recovery:
             newly_completed.append(game)
     if newly_completed:
         projection_payload = _fetch_json(DEFAULT_SCHEDULE_API_URL)
@@ -3119,11 +3149,13 @@ def refresh_live_score_state(
                 "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary"
                 f"?event={game['espn_game_id']}"
             )
-            retrospective = _build_actual_minutes_retrospective(
-                game,
-                summary=summary,
-                projection_payload=projection_payload,
-            )
+            retrospective = game.get("retrospective")
+            if not isinstance(retrospective, dict) or not retrospective:
+                retrospective = _build_actual_minutes_retrospective(
+                    game,
+                    summary=summary,
+                    projection_payload=projection_payload,
+                )
             game["retrospective"] = retrospective
             frozen_path = state_root / "frozen" / f"{game['espn_game_id']}.json"
             if not frozen_path.is_file():

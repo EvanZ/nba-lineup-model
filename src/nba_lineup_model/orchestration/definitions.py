@@ -494,15 +494,16 @@ def active_live_game_date(
     state_dir: Path | str,
     now: datetime | None = None,
 ) -> str | None:
-    """Return the active slate only inside its bounded T-30 through T+6h window."""
+    """Return a live slate or a recently completed slate missing its final audit."""
 
     current = (now or datetime.now(UTC)).astimezone(UTC)
     eastern_date = current.astimezone(EASTERN).date()
+    state_root = Path(state_dir)
     for game_date in (
         (eastern_date - timedelta(days=1)).isoformat(),
         eastern_date.isoformat(),
     ):
-        path = Path(state_dir) / "latest" / f"{game_date}.json"
+        path = state_root / "latest" / f"{game_date}.json"
         if not path.is_file():
             continue
         payload = json.loads(path.read_text())
@@ -514,7 +515,26 @@ def active_live_game_date(
             for game in games
             if game.get("start_time")
         ]
-        if not states or not starts or all(state == "post" for state in states):
+        if not states or not starts:
+            continue
+        missing_final_audit = any(
+            isinstance(game.get("status"), dict)
+            and bool(game["status"].get("completed"))
+            and bool(str(game.get("espn_game_id", "")).strip())
+            and (state_root / "frozen" / f"{game['espn_game_id']}.json").is_file()
+            and (
+                not (
+                    state_root / "final" / f"{game['espn_game_id']}.summary.json"
+                ).is_file()
+                or not (
+                    state_root / "final" / f"{game['espn_game_id']}.espn.json"
+                ).is_file()
+            )
+            for game in games
+        )
+        if missing_final_audit and current <= max(starts) + timedelta(hours=12):
+            return game_date
+        if all(state == "post" for state in states):
             continue
         if (
             min(starts) - timedelta(minutes=30)
@@ -530,13 +550,16 @@ def active_live_game_date(
     job=update_live_scores_job,
     minimum_interval_seconds=75,
     default_status=SENSOR_DEFAULT_STATUS,
-    description="Emit short score-update runs only while an unfinished slate is active.",
+    description=(
+        "Emit short score-update runs while a slate is active or a recently completed "
+        "game is still missing its immutable final audit."
+    ),
 )
 def live_score_sensor(context: SensorEvaluationContext) -> RunRequest | SkipReason:
     now = datetime.now(UTC)
     game_date = active_live_game_date(state_dir=_state_dir(), now=now)
     if game_date is None:
-        return SkipReason("No unfinished slate is inside its live-game window")
+        return SkipReason("No live or unfinalized slate is inside its recovery window")
     inflight = context.instance.get_runs(
         filters=RunsFilter(
             job_name="update_live_scores",

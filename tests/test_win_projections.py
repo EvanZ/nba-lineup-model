@@ -389,6 +389,69 @@ def test_schedule_performance_scores_rolling_market_consensus(tmp_path) -> None:
     ]
 
 
+def test_updated_track_performance_includes_new_live_final_audits(tmp_path) -> None:
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"model_track": "updated_ratings_updated_minutes"})
+    )
+    final_dir = tmp_path / "final"
+    final_dir.mkdir()
+    common = {
+        "season": "2026-27",
+        "archived_at": "2026-10-28T06:30:00Z",
+        "start_time": "2026-10-28T03:00:00Z",
+        "final": {
+            "actual_home_margin": -7.0,
+            "status": {"completed": True},
+        },
+        "grading": {
+            "projected_home_margin": 5.8,
+            "projected_home_win_probability": 0.65,
+            "market": {
+                "market_implied_home_margin": 1.5,
+                "model_ats_result": "loss",
+                "model_edge_points": 4.3,
+            },
+        },
+    }
+    (final_dir / "current.summary.json").write_text(
+        json.dumps(
+            {
+                **common,
+                "record_type": "immutable_final_game_audit",
+                "game_id": "0022600131",
+                "pregame": {
+                    "forecast_version": {
+                        "model_track": "updated_ratings_updated_minutes"
+                    },
+                    "market": {
+                        "provider": "Market consensus",
+                        "provider_key": "market_consensus",
+                        "home_win_probability": 0.54,
+                    },
+                },
+            }
+        )
+    )
+    (final_dir / "old-track.summary.json").write_text(
+        json.dumps(
+            {
+                **common,
+                "record_type": "immutable_final_game_audit",
+                "game_id": "0022600132",
+                "pregame": {"market": {"provider": "Draft Kings"}},
+            }
+        )
+    )
+
+    payload = read_schedule_performance(state_dir=tmp_path)
+    season = payload["windows"][-1]
+
+    assert season["games"] == 1
+    assert season["probability"]["gestalt"]["n"] == 1
+    assert season["ats"]["n"] == 1
+    assert season["ats"]["losses"] == 1
+
+
 def test_schedule_performance_includes_legacy_draftkings_games_as_market_benchmark(
     tmp_path,
 ) -> None:
@@ -872,6 +935,39 @@ def test_live_finalizer_immediately_publishes_immutable_artifacts(
             "final/401909860.espn.json",
         ),
     ]
+    assert (tmp_path / "final" / "401909860.summary.json").is_file()
+    assert (tmp_path / "final" / "401909860.espn.json").is_file()
+
+
+def test_live_finalizer_recovers_audit_after_board_already_marked_final(
+    monkeypatch, tmp_path
+) -> None:
+    _write_unfinalized_live_game(tmp_path)
+    latest = tmp_path / "latest" / "2026-10-24.json"
+    payload = json.loads(latest.read_text())
+    payload["games"][0]["status"] = {"state": "post", "completed": True}
+    latest.write_text(json.dumps(payload))
+    monkeypatch.setattr(
+        win_projections,
+        "_fetch_json",
+        lambda url: (
+            _final_scoreboard_payload()
+            if "scoreboard" in url
+            else ({"boxscore": {}} if "summary" in url else {})
+        ),
+    )
+    monkeypatch.setattr(
+        win_projections,
+        "_build_actual_minutes_retrospective",
+        lambda *_args, **_kwargs: {"home_win_probability": 0.61},
+    )
+
+    result = refresh_live_score_state(
+        game_date="2026-10-24",
+        state_dir=tmp_path,
+    )
+
+    assert result["newly_finalized_game_count"] == 1
     assert (tmp_path / "final" / "401909860.summary.json").is_file()
     assert (tmp_path / "final" / "401909860.espn.json").is_file()
 

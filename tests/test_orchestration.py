@@ -86,6 +86,38 @@ def test_live_window_only_returns_unfinished_active_slate(tmp_path: Path) -> Non
     assert active_live_game_date(state_dir=tmp_path, now=now) is None
 
 
+def test_live_window_recovers_completed_game_missing_final_audit(tmp_path: Path) -> None:
+    now = datetime(2026, 10, 24, 23, 0, tzinfo=UTC)
+    game_date = "2026-10-24"
+    latest = tmp_path / "latest" / f"{game_date}.json"
+    latest.parent.mkdir()
+    latest.write_text(
+        json.dumps(
+            {
+                "games": [
+                    {
+                        "espn_game_id": "401909860",
+                        "start_time": "2026-10-24T22:30:00Z",
+                        "status": {"state": "post", "completed": True},
+                    }
+                ]
+            }
+        )
+    )
+    frozen = tmp_path / "frozen" / "401909860.json"
+    frozen.parent.mkdir()
+    frozen.write_text("{}")
+
+    assert active_live_game_date(state_dir=tmp_path, now=now) == game_date
+
+    final = tmp_path / "final"
+    final.mkdir()
+    (final / "401909860.summary.json").write_text("{}")
+    (final / "401909860.espn.json").write_text("{}")
+
+    assert active_live_game_date(state_dir=tmp_path, now=now) is None
+
+
 def test_release_root_does_not_depend_on_process_working_directory(
     tmp_path: Path,
     monkeypatch,
