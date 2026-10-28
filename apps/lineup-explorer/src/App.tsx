@@ -485,7 +485,7 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
     <div className="current-season-game-log-table-wrap">
       <table className="current-season-game-log-table">
         <thead><tr>
-          <th>Date</th><th>Opponent / result</th><th>Minutes<br /><small>Proj. → actual</small></th><th>Box score<br /><small>PTS / REB / AST / TOV / STL / BLK</small></th><th>2PT<br /><small>M-A</small></th><th>3PT<br /><small>M-A</small></th><th>FT<br /><small>M-A</small></th><th>Raw<br /><small>+/-</small></th><th>Poss.</th><th>NAIL<br /><small>after slate</small></th><th>Δ</th>
+          <th>Date</th><th>Opponent / result</th><th>Minutes<br /><small>Proj. → actual</small></th><th>PTS</th><th>REB</th><th>AST</th><th>TOV</th><th>STL</th><th>BLK</th><th>2PT<br /><small>M-A</small></th><th>3PT<br /><small>M-A</small></th><th>FT<br /><small>M-A</small></th><th>Raw<br /><small>+/-</small></th><th>Poss.</th><th>NAIL<br /><small>after slate</small></th><th>Δ</th>
         </tr></thead>
         <tbody>{visibleGames.map(({ point, previousRating }) => {
           const box = point.box_score;
@@ -510,9 +510,12 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
               <span>{hasMinutes ? <>{projectedMinutes === null || projectedMinutes === undefined ? "-" : projectedMinutes.toFixed(1)} <span aria-hidden="true">→</span> {actualMinutes === null ? "-" : number.format(actualMinutes)}</> : "-"}</span>
               {status && <small><strong>{status}</strong>{point.pregame_reason && <> · {point.pregame_reason}</>}</small>}
             </td>
-            <td className="quantity-cell current-season-game-log-box-score">
-              {box && box.points !== null && box.points !== undefined ? `${box.points} / ${box.rebounds ?? "-"} / ${box.assists ?? "-"} / ${box.turnovers ?? "-"} / ${box.steals ?? "-"} / ${box.blocks ?? "-"}` : "-"}
-            </td>
+            <td className="quantity-cell current-season-game-log-stat">{box?.points ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-stat">{box?.rebounds ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-stat">{box?.assists ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-stat">{box?.turnovers ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-stat">{box?.steals ?? "-"}</td>
+            <td className="quantity-cell current-season-game-log-stat">{box?.blocks ?? "-"}</td>
             <td className="quantity-cell current-season-game-log-shooting">{box?.two_points_made === null || box?.two_points_made === undefined ? "-" : `${box.two_points_made}-${box.two_points_attempted ?? "-"}`}</td>
             <td className="quantity-cell current-season-game-log-shooting">{box?.three_points_made === null || box?.three_points_made === undefined ? "-" : `${box.three_points_made}-${box.three_points_attempted ?? "-"}`}</td>
             <td className="quantity-cell current-season-game-log-shooting">{box?.free_throws_made === null || box?.free_throws_made === undefined ? "-" : `${box.free_throws_made}-${box.free_throws_attempted ?? "-"}`}</td>
