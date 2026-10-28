@@ -107,8 +107,10 @@ def publish_current_season_lineup_bundle(
     if source_game_ids != sorted(source_game_checksums):
         raise ValueError("Lineup source-game checksums do not cover the exact stint games")
     root_path = Path(root).resolve()
-    root_path.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(mkdtemp(prefix=".lineups-", dir=root_path.parent))
+    root_path.mkdir(parents=True, exist_ok=True)
+    # Stage inside the dedicated state root.  Service users own that directory,
+    # but correctly do not own its broad /var/lib parent in production.
+    staging = Path(mkdtemp(prefix=".lineups-", dir=root_path))
     try:
         staging.mkdir(parents=True, exist_ok=True)
         lineups.to_parquet(staging / LINEUPS_FILENAME, index=False)
