@@ -797,6 +797,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "season": SEASON,
         "through_date": max(grouped).isoformat() if grouped else None,
         "generated_at": generated_at.isoformat().replace("+00:00", "Z"),
+        "updater_version": UPDATER_VERSION,
         "method": {
             "prior_equivalent_possessions": args.prior_possessions,
             "date_batched": True,
