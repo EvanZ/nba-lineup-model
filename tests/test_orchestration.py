@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from dagster import (
@@ -17,6 +17,7 @@ from dagster import (
 from nba_lineup_model.orchestration.definitions import (
     DEFAULT_ODDS_API_BOOKMAKERS,
     EASTERN,
+    PACIFIC,
     _release_root,
     active_live_game_date,
     cdn_morning_reconciliation_schedule,
@@ -26,7 +27,8 @@ from nba_lineup_model.orchestration.definitions import (
     current_season_serving_sensor,
     defs,
     final_game_archive_morning_reconciliation_schedule,
-    in_season_nail_shadow_schedule,
+    in_season_minutes_production_sensor,
+    in_season_nail_production_sensor,
     ingest_completed_cdn_play_by_play_job,
     live_score_sensor,
     materialize_current_season_lineups_job,
@@ -34,6 +36,7 @@ from nba_lineup_model.orchestration.definitions import (
     promote_current_season_serving_job,
     schedule_refresh_schedule,
     stats_v3_morning_reconciliation_schedule,
+    update_in_season_nail_production_job,
     update_live_scores_job,
     yesterday_finalization_schedule,
 )
@@ -197,6 +200,130 @@ def test_cdn_sensor_uses_stable_retryable_pending_set_key(
     assert retry.run_key == f"cdn-pbp:{digest}:attempt-1"
 
 
+def _write_production_rating_inputs(
+    root: Path,
+    *,
+    slate_final: bool,
+    pbp_covered: bool,
+) -> tuple[str, str]:
+    through = datetime.now(UTC).astimezone(PACIFIC).date()
+    previous = through - timedelta(days=1)
+    through_date = through.isoformat()
+    game_id = "0022600999"
+    espn_game_id = "401810999"
+
+    latest_root = root / "schedule" / "latest"
+    final_root = root / "schedule" / "final"
+    rating_root = root / "rating"
+    cdn_root = root / "cdn"
+    for path in (latest_root, final_root, rating_root, cdn_root):
+        path.mkdir(parents=True)
+    (rating_root / "latest.json").write_text(
+        json.dumps({"through_date": previous.isoformat()})
+    )
+    (latest_root / f"{through_date}.json").write_text(
+        json.dumps(
+            {
+                "games": [
+                    {
+                        "game_id": game_id,
+                        "status": {"completed": slate_final},
+                    }
+                ]
+            }
+        )
+    )
+    (final_root / f"{game_id}.summary.json").write_text(
+        json.dumps(
+            {
+                "game_id": game_id,
+                "espn_game_id": espn_game_id,
+                "pregame": {"start_time": f"{through_date}T19:00:00-07:00"},
+                "final": {"status": {"completed": slate_final}},
+            }
+        )
+    )
+    (final_root / f"{espn_game_id}.espn.json").write_text("{}")
+    coverage_games = {game_id: ["s3://example/pbp.parquet"]} if pbp_covered else {}
+    (cdn_root / "coverage.json").write_text(json.dumps({"games": coverage_games}))
+    return through_date, game_id
+
+
+def _configure_production_rating_inputs(root: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GESTALT_SCHEDULE_STATE_DIR", str(root / "schedule"))
+    monkeypatch.setenv("GESTALT_IN_SEASON_NAIL_ROOT", str(root / "rating"))
+    monkeypatch.setenv("GESTALT_CDN_COVERAGE_PATH", str(root / "cdn/coverage.json"))
+
+
+def test_production_rating_sensor_waits_for_full_final_slate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    through_date, _ = _write_production_rating_inputs(
+        tmp_path, slate_final=False, pbp_covered=False
+    )
+    _configure_production_rating_inputs(tmp_path, monkeypatch)
+
+    result = in_season_nail_production_sensor(
+        build_sensor_context(instance=DagsterInstance.ephemeral())
+    )
+
+    assert result.skip_message == f"The {through_date} slate is not final"
+
+
+def test_production_rating_sensor_waits_for_complete_pbp_coverage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    through_date, game_id = _write_production_rating_inputs(
+        tmp_path, slate_final=True, pbp_covered=False
+    )
+    _configure_production_rating_inputs(tmp_path, monkeypatch)
+
+    result = in_season_nail_production_sensor(
+        build_sensor_context(instance=DagsterInstance.ephemeral())
+    )
+
+    assert result.skip_message == (
+        f"The {through_date} slate is waiting for CDN play-by-play: {game_id}"
+    )
+
+
+def test_production_rating_sensor_launches_once_for_complete_slate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    through_date, _ = _write_production_rating_inputs(
+        tmp_path, slate_final=True, pbp_covered=True
+    )
+    _configure_production_rating_inputs(tmp_path, monkeypatch)
+    instance = DagsterInstance.ephemeral()
+
+    first = in_season_nail_production_sensor(build_sensor_context(instance=instance))
+
+    assert first.run_key.startswith(f"production-ratings:{through_date}:")
+    assert (
+        first.run_config["ops"]["run_in_season_nail_production"]["config"][
+            "through_date"
+        ]
+        == through_date
+    )
+    snapshot = first.tags["gestalt/ratings_snapshot"]
+    queued = instance.create_run_for_job(
+        update_in_season_nail_production_job,
+        run_config=first.run_config,
+        status=DagsterRunStatus.STARTED,
+        tags={"gestalt/ratings_snapshot": snapshot},
+    )
+
+    duplicate = in_season_nail_production_sensor(
+        build_sensor_context(instance=instance)
+    )
+
+    assert "already queued or running" in duplicate.skip_message
+    assert queued.run_id in duplicate.skip_message
+
+
 def _write_current_season_child_publications(root: Path) -> tuple[str, str, str]:
     rating_uri = "s3://example/player_state-" + "a" * 64 + ".parquet"
     trajectory_uri = "s3://example/player_game_trajectory-" + "c" * 64 + ".parquet"
@@ -235,9 +362,7 @@ def test_current_season_serving_sensor_uses_child_state_identity(
     )
     monkeypatch.setenv("GESTALT_IN_SEASON_NAIL_ROOT", str(tmp_path / "rating"))
     monkeypatch.setenv("GESTALT_IN_SEASON_MINUTES_ROOT", str(tmp_path / "minutes"))
-    monkeypatch.setenv(
-        "GESTALT_CURRENT_SEASON_SERVING_ROOT", str(tmp_path / "serving")
-    )
+    monkeypatch.setenv("GESTALT_CURRENT_SEASON_SERVING_ROOT", str(tmp_path / "serving"))
 
     result = current_season_serving_sensor(
         build_sensor_context(instance=DagsterInstance.ephemeral())
@@ -259,9 +384,7 @@ def test_current_season_serving_sensor_suppresses_equivalent_inflight_run(
     )
     monkeypatch.setenv("GESTALT_IN_SEASON_NAIL_ROOT", str(tmp_path / "rating"))
     monkeypatch.setenv("GESTALT_IN_SEASON_MINUTES_ROOT", str(tmp_path / "minutes"))
-    monkeypatch.setenv(
-        "GESTALT_CURRENT_SEASON_SERVING_ROOT", str(tmp_path / "serving")
-    )
+    monkeypatch.setenv("GESTALT_CURRENT_SEASON_SERVING_ROOT", str(tmp_path / "serving"))
     snapshot = hashlib.sha256(
         f"{rating_uri}:{trajectory_uri}:{minutes_uri}".encode()
     ).hexdigest()[:16]
@@ -345,7 +468,9 @@ def test_definitions_are_loadable_and_automations_default_stopped() -> None:
     Definitions.validate_loadable(defs)
     assert DEFAULT_ODDS_API_BOOKMAKERS == DEFAULT_BOOKMAKERS
     assert schedule_refresh_schedule.default_status is DefaultScheduleStatus.STOPPED
-    assert yesterday_finalization_schedule.default_status is DefaultScheduleStatus.STOPPED
+    assert (
+        yesterday_finalization_schedule.default_status is DefaultScheduleStatus.STOPPED
+    )
     assert nba_market_odds_schedule.default_status is DefaultScheduleStatus.STOPPED
     assert nba_market_odds_schedule.cron_schedule == "20 8,12,15-19 * * *"
     assert nba_market_odds_schedule.execution_timezone == "America/Los_Angeles"
@@ -357,9 +482,6 @@ def test_definitions_are_loadable_and_automations_default_stopped() -> None:
         cdn_morning_reconciliation_schedule.default_status
         is DefaultScheduleStatus.STOPPED
     )
-    assert in_season_nail_shadow_schedule.default_status is DefaultScheduleStatus.STOPPED
-    assert in_season_nail_shadow_schedule.cron_schedule == "45 5 * * *"
-    assert in_season_nail_shadow_schedule.execution_timezone == "America/Los_Angeles"
     assert (
         stats_v3_morning_reconciliation_schedule.default_status
         is DefaultScheduleStatus.STOPPED
@@ -370,4 +492,11 @@ def test_definitions_are_loadable_and_automations_default_stopped() -> None:
         is DefaultSensorStatus.STOPPED
     )
     assert completed_game_stats_v3_sensor.default_status is DefaultSensorStatus.STOPPED
+    assert (
+        in_season_nail_production_sensor.default_status is DefaultSensorStatus.STOPPED
+    )
+    assert (
+        in_season_minutes_production_sensor.default_status
+        is DefaultSensorStatus.STOPPED
+    )
     assert current_season_serving_sensor.default_status is DefaultSensorStatus.STOPPED

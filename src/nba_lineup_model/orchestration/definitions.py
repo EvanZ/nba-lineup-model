@@ -76,13 +76,10 @@ DEFAULT_CURRENT_SEASON_LINEUPS_ROOT = Path(
     "/var/lib/nba-gestalt/current-season-lineups"
 )
 DEFAULT_RELEASE_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_HEALTHCHECK_PARQUET = (
-    "s3://nba-gestalt-data/lake/analytical/box_score_prior_panel/"
-    "season_cohort_summary.parquet"
+DEFAULT_HEALTHCHECK_PARQUET = "s3://nba-gestalt-data/lake/analytical/box_score_prior_panel/season_cohort_summary.parquet"
+AUTOMATIONS_DEFAULT_RUNNING = (
+    os.environ.get("GESTALT_AUTOMATIONS_DEFAULT_RUNNING", "0") == "1"
 )
-AUTOMATIONS_DEFAULT_RUNNING = os.environ.get(
-    "GESTALT_AUTOMATIONS_DEFAULT_RUNNING", "0"
-) == "1"
 SCHEDULE_DEFAULT_STATUS = (
     DefaultScheduleStatus.RUNNING
     if AUTOMATIONS_DEFAULT_RUNNING
@@ -111,7 +108,9 @@ ODDS_API_SCHEDULE_DEFAULT_STATUS = (
 
 
 def _state_dir() -> Path:
-    return Path(os.environ.get("GESTALT_SCHEDULE_STATE_DIR", DEFAULT_SCHEDULE_STATE_DIR))
+    return Path(
+        os.environ.get("GESTALT_SCHEDULE_STATE_DIR", DEFAULT_SCHEDULE_STATE_DIR)
+    )
 
 
 def _release_root() -> Path:
@@ -126,9 +125,9 @@ def _schedule_s3_uri() -> str | None:
 
 
 def _stats_v3_lake_uri() -> str:
-    return os.environ.get("GESTALT_STATS_V3_LAKE_URI", DEFAULT_STATS_V3_LAKE_URI).rstrip(
-        "/"
-    )
+    return os.environ.get(
+        "GESTALT_STATS_V3_LAKE_URI", DEFAULT_STATS_V3_LAKE_URI
+    ).rstrip("/")
 
 
 def _stats_v3_season() -> str:
@@ -150,13 +149,13 @@ def _cdn_season() -> str:
 
 
 def _cdn_coverage_path() -> Path:
-    return Path(
-        os.environ.get("GESTALT_CDN_COVERAGE_PATH", DEFAULT_CDN_COVERAGE_PATH)
-    )
+    return Path(os.environ.get("GESTALT_CDN_COVERAGE_PATH", DEFAULT_CDN_COVERAGE_PATH))
 
 
 def _in_season_nail_root() -> Path:
-    return Path(os.environ.get("GESTALT_IN_SEASON_NAIL_ROOT", DEFAULT_IN_SEASON_NAIL_ROOT))
+    return Path(
+        os.environ.get("GESTALT_IN_SEASON_NAIL_ROOT", DEFAULT_IN_SEASON_NAIL_ROOT)
+    )
 
 
 def _in_season_nail_lake_uri() -> str:
@@ -231,7 +230,9 @@ def refresh_schedule_op(context: OpExecutionContext) -> dict[str, object]:
         start_date=str(context.op_config["start_date"]),
         days_ahead=int(context.op_config["days_ahead"]),
         state_dir=_state_dir(),
-        projection_url=os.environ.get("GESTALT_SCHEDULE_API_URL", DEFAULT_SCHEDULE_API_URL),
+        projection_url=os.environ.get(
+            "GESTALT_SCHEDULE_API_URL", DEFAULT_SCHEDULE_API_URL
+        ),
         s3_uri=_schedule_s3_uri(),
     )
     context.add_output_metadata(
@@ -255,7 +256,9 @@ def refresh_schedule_job() -> None:
 
 def _regular_refresh_config(context: object) -> dict[str, object]:
     game_date = _scheduled_time(context).astimezone(EASTERN).date().isoformat()
-    return _schedule_run_config(start_date=game_date, days_ahead=DEFAULT_SCHEDULE_DAYS_AHEAD)
+    return _schedule_run_config(
+        start_date=game_date, days_ahead=DEFAULT_SCHEDULE_DAYS_AHEAD
+    )
 
 
 def _yesterday_refresh_config(context: object) -> dict[str, object]:
@@ -309,7 +312,9 @@ def archive_nba_market_odds_op(context: OpExecutionContext) -> dict[str, object]
     now = datetime.now(UTC)
     upcoming_games = 0
     for offset in range(DEFAULT_SCHEDULE_DAYS_AHEAD + 1):
-        game_date = (now.astimezone(PACIFIC).date() + timedelta(days=offset)).isoformat()
+        game_date = (
+            now.astimezone(PACIFIC).date() + timedelta(days=offset)
+        ).isoformat()
         path = _state_dir() / "latest" / f"{game_date}.json"
         if not path.is_file():
             continue
@@ -469,11 +474,7 @@ def _final_archive_reconciliation_config(context: object) -> dict[str, object]:
         _scheduled_time(context).astimezone(EASTERN).date() - timedelta(days=1)
     ).isoformat()
     return {
-        "ops": {
-            "verify_final_game_archives_s3": {
-                "config": {"game_date": game_date}
-            }
-        }
+        "ops": {"verify_final_game_archives_s3": {"config": {"game_date": game_date}}}
     }
 
 
@@ -515,7 +516,11 @@ def active_live_game_date(
         ]
         if not states or not starts or all(state == "post" for state in states):
             continue
-        if min(starts) - timedelta(minutes=30) <= current <= max(starts) + timedelta(hours=6):
+        if (
+            min(starts) - timedelta(minutes=30)
+            <= current
+            <= max(starts) + timedelta(hours=6)
+        ):
             return game_date
     return None
 
@@ -547,8 +552,7 @@ def live_score_sensor(context: SensorEvaluationContext) -> RunRequest | SkipReas
     )
     if inflight:
         return SkipReason(
-            f"Live-score update already queued or running for {game_date}: "
-            f"{inflight[0].run_id}"
+            f"Live-score update already queued or running for {game_date}: {inflight[0].run_id}"
         )
     interval_bucket = int(now.timestamp() // 75)
     return RunRequest(
@@ -583,7 +587,9 @@ def archive_completed_cdn_play_by_play_op(
     from nba_lineup_model.season.cdn_lake import ingest_completed_cdn
 
     config = context.op_config
-    start_date = date.fromisoformat(config["start_date"]) if config["start_date"] else None
+    start_date = (
+        date.fromisoformat(config["start_date"]) if config["start_date"] else None
+    )
     end_date = date.fromisoformat(config["end_date"]) if config["end_date"] else None
     result = ingest_completed_cdn(
         state_dir=_state_dir(),
@@ -662,8 +668,7 @@ def completed_game_cdn_play_by_play_sensor(
     ]
     if inflight:
         return SkipReason(
-            "Equivalent CDN play-by-play ingestion already queued or running: "
-            f"{inflight[0].run_id}"
+            f"Equivalent CDN play-by-play ingestion already queued or running: {inflight[0].run_id}"
         )
     # The pending-set digest stays stable while an attempt is queued or running.
     # A terminal attempt increments the suffix so failed/canceled runs remain
@@ -725,7 +730,7 @@ cdn_morning_reconciliation_schedule = ScheduleDefinition(
 
 
 @op(
-    name="run_in_season_nail_shadow",
+    name="run_in_season_nail_production",
     config_schema={
         "through_date": str,
         "prior_possessions": Field(
@@ -735,8 +740,10 @@ cdn_morning_reconciliation_schedule = ScheduleDefinition(
     },
     retry_policy=RetryPolicy(max_retries=1, delay=300),
 )
-def update_in_season_nail_shadow_op(context: OpExecutionContext) -> dict[str, object]:
-    """Advance the shadow updater and compare it with frozen production forecasts."""
+def update_in_season_nail_production_op(
+    context: OpExecutionContext,
+) -> dict[str, object]:
+    """Advance the production ratings state and retain the frozen-model audit."""
 
     import argparse
 
@@ -817,7 +824,9 @@ def update_in_season_nail_shadow_op(context: OpExecutionContext) -> dict[str, ob
         }
         marker_path.parent.mkdir(parents=True, exist_ok=True)
         marker_tmp = marker_path.with_suffix(".json.tmp")
-        marker_tmp.write_text(json.dumps(marker_payload, indent=2, sort_keys=True) + "\n")
+        marker_tmp.write_text(
+            json.dumps(marker_payload, indent=2, sort_keys=True) + "\n"
+        )
         marker_tmp.replace(marker_path)
 
     publication = {
@@ -835,7 +844,9 @@ def update_in_season_nail_shadow_op(context: OpExecutionContext) -> dict[str, ob
             "excluded": len(result["excluded_contributions"]),
         },
     }
-    publication_bytes = (json.dumps(publication, indent=2, sort_keys=True) + "\n").encode()
+    publication_bytes = (
+        json.dumps(publication, indent=2, sort_keys=True) + "\n"
+    ).encode()
     publication_sha = hashlib.sha256(publication_bytes).hexdigest()
     publication_uri = _join_s3_uri(
         lake_uri,
@@ -874,21 +885,18 @@ def update_in_season_nail_shadow_op(context: OpExecutionContext) -> dict[str, ob
 
 
 @job(
-    name="update_in_season_nail_shadow",
+    name="update_in_season_nail_production",
     executor_def=in_process_executor,
-    tags={WORKLOAD_TAG: "in_season_nail_shadow"},
+    tags={WORKLOAD_TAG: "in_season_nail_production"},
 )
-def update_in_season_nail_shadow_job() -> None:
-    update_in_season_nail_shadow_op()
+def update_in_season_nail_production_job() -> None:
+    update_in_season_nail_production_op()
 
 
-def _in_season_nail_shadow_config(context: object) -> dict[str, object]:
-    through_date = (
-        _scheduled_time(context).astimezone(PACIFIC).date() - timedelta(days=1)
-    ).isoformat()
+def _in_season_nail_production_config(through_date: str) -> dict[str, object]:
     return {
         "ops": {
-            "run_in_season_nail_shadow": {
+            "run_in_season_nail_production": {
                 "config": {
                     "through_date": through_date,
                     "prior_possessions": DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS,
@@ -898,22 +906,147 @@ def _in_season_nail_shadow_config(context: object) -> dict[str, object]:
     }
 
 
-in_season_nail_shadow_schedule = ScheduleDefinition(
-    name="in_season_nail_shadow_daily",
-    job=update_in_season_nail_shadow_job,
-    cron_schedule="45 5 * * *",
-    execution_timezone="America/Los_Angeles",
-    run_config_fn=_in_season_nail_shadow_config,
-    default_status=SCHEDULE_DEFAULT_STATUS,
+def _next_production_rating_slate() -> tuple[str, str] | SkipReason:
+    """Return the next complete slate once every game has immutable PBP coverage."""
+
+    rating_latest = _in_season_nail_root() / "latest.json"
+    latest_rating_date = ""
+    if rating_latest.is_file():
+        try:
+            latest_rating_date = str(
+                json.loads(rating_latest.read_text()).get("through_date", "")
+            )
+        except (OSError, json.JSONDecodeError, TypeError):
+            return SkipReason("The production ratings pointer is invalid")
+
+    coverage_path = _cdn_coverage_path()
+    if not coverage_path.is_file():
+        return SkipReason("CDN play-by-play coverage is unavailable")
+    try:
+        coverage = json.loads(coverage_path.read_text())
+    except (OSError, json.JSONDecodeError, TypeError):
+        return SkipReason("CDN play-by-play coverage is invalid")
+    covered_games = coverage.get("games", {}) if isinstance(coverage, dict) else {}
+    if not isinstance(covered_games, dict):
+        return SkipReason("CDN play-by-play game coverage is invalid")
+
+    final_root = _state_dir() / "final"
+    summaries: dict[str, tuple[Path, dict[str, object]]] = {}
+    for path in sorted(final_root.glob("*.summary.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, TypeError):
+            continue
+        game_id = str(payload.get("game_id", "")) if isinstance(payload, dict) else ""
+        if game_id.startswith("002"):
+            summaries[game_id] = (path, payload)
+
+    today = datetime.now(UTC).astimezone(PACIFIC).date().isoformat()
+    for slate_path in sorted((_state_dir() / "latest").glob("*.json")):
+        through_date = slate_path.stem
+        if through_date <= latest_rating_date or through_date > today:
+            continue
+        try:
+            slate = json.loads(slate_path.read_text())
+        except (OSError, json.JSONDecodeError, TypeError):
+            return SkipReason(f"Schedule slate is invalid: {through_date}")
+        games = [
+            game
+            for game in slate.get("games", [])
+            if isinstance(game, dict) and str(game.get("game_id", "")).startswith("002")
+        ]
+        if not games:
+            continue
+        if not all(
+            isinstance(game.get("status"), dict)
+            and bool(game["status"].get("completed"))
+            for game in games
+        ):
+            return SkipReason(f"The {through_date} slate is not final")
+        game_ids = [str(game["game_id"]) for game in games]
+        missing_pbp = [
+            game_id for game_id in game_ids if not covered_games.get(game_id)
+        ]
+        if missing_pbp:
+            return SkipReason(
+                f"The {through_date} slate is waiting for CDN play-by-play: "
+                + ", ".join(missing_pbp)
+            )
+        missing_finals = [game_id for game_id in game_ids if game_id not in summaries]
+        if missing_finals:
+            return SkipReason(
+                f"The {through_date} slate is waiting for final archives: "
+                + ", ".join(missing_finals)
+            )
+
+        source_parts = [hashlib.sha256(slate_path.read_bytes()).hexdigest()]
+        for game_id in sorted(game_ids):
+            summary_path, summary = summaries[game_id]
+            espn_path = final_root / f"{summary.get('espn_game_id')}.espn.json"
+            if not espn_path.is_file():
+                return SkipReason(
+                    f"The {through_date} slate is waiting for ESPN box score: {game_id}"
+                )
+            source_parts.extend(
+                [
+                    game_id,
+                    str(covered_games[game_id][-1]),
+                    hashlib.sha256(summary_path.read_bytes()).hexdigest(),
+                    hashlib.sha256(espn_path.read_bytes()).hexdigest(),
+                ]
+            )
+        snapshot = hashlib.sha256(":".join(source_parts).encode()).hexdigest()[:16]
+        return through_date, snapshot
+    return SkipReason("No newer complete production slate is ready")
+
+
+@sensor(
+    name="in_season_nail_production_ready",
+    job=update_in_season_nail_production_job,
+    minimum_interval_seconds=900,
+    default_status=SENSOR_DEFAULT_STATUS,
     description=(
-        "Advance the possession-based NAIL shadow state after morning CDN reconciliation "
-        "and compare it with immutable production forecasts."
+        "Advance production ratings as soon as the full slate is final and every game "
+        "has immutable CDN play-by-play coverage."
     ),
 )
+def in_season_nail_production_sensor(
+    context: SensorEvaluationContext,
+) -> RunRequest | SkipReason:
+    readiness = _next_production_rating_slate()
+    if isinstance(readiness, SkipReason):
+        return readiness
+    through_date, snapshot = readiness
+    inflight = context.instance.get_runs(
+        filters=RunsFilter(
+            job_name="update_in_season_nail_production",
+            statuses=(
+                DagsterRunStatus.QUEUED,
+                DagsterRunStatus.STARTING,
+                DagsterRunStatus.STARTED,
+                DagsterRunStatus.CANCELING,
+            ),
+            tags={"gestalt/ratings_snapshot": snapshot},
+        ),
+        limit=1,
+    )
+    if inflight:
+        return SkipReason(
+            f"Equivalent production ratings update already queued or running: {inflight[0].run_id}"
+        )
+    return RunRequest(
+        run_key=f"production-ratings:{through_date}:{snapshot}",
+        run_config=_in_season_nail_production_config(through_date),
+        tags={
+            WORKLOAD_TAG: "in_season_nail_production",
+            "gestalt/through_date": through_date,
+            "gestalt/ratings_snapshot": snapshot,
+        },
+    )
 
 
 @op(
-    name="run_in_season_minutes_shadow",
+    name="run_in_season_minutes_production",
     config_schema={
         "through_date": str,
         "participation_prior_games": Field(
@@ -931,10 +1064,10 @@ in_season_nail_shadow_schedule = ScheduleDefinition(
     },
     retry_policy=RetryPolicy(max_retries=1, delay=300),
 )
-def update_in_season_minutes_shadow_op(
+def update_in_season_minutes_production_op(
     context: OpExecutionContext,
 ) -> dict[str, object]:
-    """Advance the shadow participation/minutes state and publish its audit."""
+    """Advance the production participation/minutes state and publish its audit."""
 
     import argparse
 
@@ -969,6 +1102,15 @@ def update_in_season_minutes_shadow_op(
             output_dir=output_dir,
         )
     )
+    rating_publication = json.loads(
+        (_in_season_nail_root() / "latest.json").read_text()
+    )
+    input_rating_artifacts = {
+        "player_state": _published_artifact_uri(rating_publication, "player_state"),
+        "player_game_trajectory": _published_artifact_uri(
+            rating_publication, "player_game_trajectory"
+        ),
+    }
     local_artifacts = result.pop("local_artifacts")
     store = AwsCliImmutableObjectStore()
     lake_uri = _in_season_minutes_lake_uri()
@@ -1021,7 +1163,9 @@ def update_in_season_minutes_shadow_op(
             json.dumps(
                 {
                     "schema_version": 1,
-                    "published_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    "published_at": datetime.now(UTC)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
                     "objects": objects,
                 },
                 indent=2,
@@ -1047,8 +1191,11 @@ def update_in_season_minutes_shadow_op(
         "four_cell_game_metrics": result["four_cell_game_metrics"],
         "minutes_ab_game_metrics": result["minutes_ab_game_metrics"],
         "early_role_coverage": result["early_role_coverage"],
+        "input_rating_artifacts": input_rating_artifacts,
     }
-    publication_bytes = (json.dumps(publication, indent=2, sort_keys=True) + "\n").encode()
+    publication_bytes = (
+        json.dumps(publication, indent=2, sort_keys=True) + "\n"
+    ).encode()
     publication_sha = hashlib.sha256(publication_bytes).hexdigest()
     publication_uri = _join_s3_uri(
         lake_uri,
@@ -1081,21 +1228,18 @@ def update_in_season_minutes_shadow_op(
 
 
 @job(
-    name="update_in_season_minutes_shadow",
+    name="update_in_season_minutes_production",
     executor_def=in_process_executor,
-    tags={WORKLOAD_TAG: "in_season_minutes_shadow"},
+    tags={WORKLOAD_TAG: "in_season_minutes_production"},
 )
-def update_in_season_minutes_shadow_job() -> None:
-    update_in_season_minutes_shadow_op()
+def update_in_season_minutes_production_job() -> None:
+    update_in_season_minutes_production_op()
 
 
-def _in_season_minutes_shadow_config(context: object) -> dict[str, object]:
-    through_date = (
-        _scheduled_time(context).astimezone(PACIFIC).date() - timedelta(days=1)
-    ).isoformat()
+def _in_season_minutes_production_config(through_date: str) -> dict[str, object]:
     return {
         "ops": {
-            "run_in_season_minutes_shadow": {
+            "run_in_season_minutes_production": {
                 "config": {
                     "through_date": through_date,
                     "participation_prior_games": (
@@ -1116,40 +1260,77 @@ def _in_season_minutes_shadow_config(context: object) -> dict[str, object]:
     }
 
 
-in_season_minutes_shadow_schedule = ScheduleDefinition(
-    name="in_season_minutes_shadow_daily",
-    job=update_in_season_minutes_shadow_job,
-    cron_schedule="5 6 * * *",
-    execution_timezone="America/Los_Angeles",
-    run_config_fn=_in_season_minutes_shadow_config,
-    default_status=SCHEDULE_DEFAULT_STATUS,
-    description=(
-        "Advance the calibrated participation/minutes shadow after final archive and "
-        "NAIL reconciliation; public projections remain unchanged."
-    ),
-)
-
-
 @sensor(
-    name="in_season_minutes_shadow_ready",
-    job=update_in_season_minutes_shadow_job,
-    minimum_interval_seconds=1800,
+    name="in_season_minutes_production_ready",
+    job=update_in_season_minutes_production_job,
+    minimum_interval_seconds=900,
     default_status=SENSOR_DEFAULT_STATUS,
     description=(
-        "Launch one minutes-shadow replay after the morning reconciliation; a content "
-        "revision receives a new run key and equivalent queued/active work is suppressed."
+        "Advance production minutes immediately after a new exclusion-free ratings "
+        "publication; equivalent queued or active work is suppressed."
     ),
 )
-def in_season_minutes_shadow_sensor(
+def in_season_minutes_production_sensor(
     context: SensorEvaluationContext,
 ) -> RunRequest | SkipReason:
-    now = datetime.now(UTC)
-    pacific = now.astimezone(PACIFIC)
-    if (pacific.hour, pacific.minute) < (6, 5):
-        return SkipReason("Minutes shadow waits until 6:05 AM Pacific")
-    through_date = (pacific.date() - timedelta(days=1)).isoformat()
+    rating_path = _in_season_nail_root() / "latest.json"
+    if not rating_path.is_file():
+        return SkipReason("Production minutes are waiting for a ratings publication")
+    try:
+        rating_publication = json.loads(rating_path.read_text())
+        through_date = str(rating_publication["through_date"])
+        rating_coverage = rating_publication["coverage"]
+        rating_state_uri = _published_artifact_uri(rating_publication, "player_state")
+        rating_trajectory_uri = _published_artifact_uri(
+            rating_publication, "player_game_trajectory"
+        )
+    except (KeyError, OSError, ValueError, json.JSONDecodeError, TypeError) as error:
+        return SkipReason(f"Production ratings publication is invalid: {error}")
+    if not isinstance(rating_coverage, dict) or int(
+        rating_coverage.get("excluded", -1)
+    ):
+        return SkipReason("Production ratings publication has exclusions")
+
+    minutes_path = _in_season_minutes_root() / "latest.json"
+    if minutes_path.is_file():
+        try:
+            minutes_publication = json.loads(minutes_path.read_text())
+            if str(
+                minutes_publication.get("through_date")
+            ) == through_date and minutes_publication.get("input_rating_artifacts") == {
+                "player_state": rating_state_uri,
+                "player_game_trajectory": rating_trajectory_uri,
+            }:
+                return SkipReason(
+                    "Production minutes already match the ratings publication"
+                )
+            serving_path = _current_season_serving_root() / "latest.json"
+            if (
+                str(minutes_publication.get("through_date")) == through_date
+                and serving_path.is_file()
+            ):
+                serving_pointer = json.loads(serving_path.read_text())
+                manifest_path = (
+                    _current_season_serving_root()
+                    / str(serving_pointer["bundle_path"])
+                    / "manifest.json"
+                )
+                sources = json.loads(manifest_path.read_text())["identity"]["sources"]
+                if (
+                    sources["rating_state"]["uri"] == rating_state_uri
+                    and sources["rating_trajectory"]["uri"] == rating_trajectory_uri
+                    and sources["minutes_state"]["uri"]
+                    == _published_artifact_uri(minutes_publication, "player_state")
+                ):
+                    return SkipReason(
+                        "Production minutes and serving state already match ratings"
+                    )
+        except (KeyError, OSError, ValueError, json.JSONDecodeError, TypeError):
+            pass
+
     final_root = _state_dir() / "final"
-    source_parts: list[str] = []
+    source_parts: list[str] = [rating_state_uri, rating_trajectory_uri]
+    final_game_count = 0
     for summary_path in sorted(final_root.glob("*.summary.json")):
         try:
             summary = json.loads(summary_path.read_text())
@@ -1171,7 +1352,8 @@ def in_season_minutes_shadow_sensor(
                 hashlib.sha256(espn_path.read_bytes()).hexdigest(),
             ]
         )
-    if not source_parts:
+        final_game_count += 1
+    if not final_game_count:
         return SkipReason(f"No completed games are available through {through_date}")
     coverage_path = _cdn_coverage_path()
     if coverage_path.is_file():
@@ -1179,7 +1361,7 @@ def in_season_minutes_shadow_sensor(
     snapshot = hashlib.sha256(":".join(source_parts).encode()).hexdigest()[:16]
     inflight = context.instance.get_runs(
         filters=RunsFilter(
-            job_name="update_in_season_minutes_shadow",
+            job_name="update_in_season_minutes_production",
             statuses=(
                 DagsterRunStatus.QUEUED,
                 DagsterRunStatus.STARTING,
@@ -1192,14 +1374,13 @@ def in_season_minutes_shadow_sensor(
     )
     if inflight:
         return SkipReason(
-            "Equivalent minutes-shadow replay already queued or running: "
-            f"{inflight[0].run_id}"
+            f"Equivalent production minutes update already queued or running: {inflight[0].run_id}"
         )
     return RunRequest(
-        run_key=f"minutes-shadow:{through_date}:{snapshot}",
-        run_config=_in_season_minutes_shadow_config(context),
+        run_key=f"production-minutes:{through_date}:{snapshot}",
+        run_config=_in_season_minutes_production_config(through_date),
         tags={
-            WORKLOAD_TAG: "in_season_minutes_shadow",
+            WORKLOAD_TAG: "in_season_minutes_production",
             "gestalt/through_date": through_date,
             "gestalt/minutes_snapshot": snapshot,
         },
@@ -1240,7 +1421,9 @@ def _published_file_digest(uri: str, *, label: str, suffix: str) -> str:
     if not filename.startswith(prefix) or not filename.endswith(suffix):
         raise ValueError(f"Published artifact name is invalid: {uri}")
     digest = filename[len(prefix) : -len(suffix)]
-    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
         raise ValueError(f"Published artifact checksum is invalid: {uri}")
     return digest
 
@@ -1305,7 +1488,9 @@ def _current_season_child_state_paths(
     if not trajectory_path.is_file():
         raise ValueError(f"Local player-game trajectory is missing: {trajectory_path}")
     if hashlib.sha256(trajectory_path.read_bytes()).hexdigest() != trajectory_digest:
-        raise ValueError("Local player-game trajectory does not match its published checksum")
+        raise ValueError(
+            "Local player-game trajectory does not match its published checksum"
+        )
     return (
         rating_matches[0],
         minutes_path,
@@ -1369,7 +1554,9 @@ def promote_current_season_serving_op(
     ):
         coverage = publication.get("coverage")
         if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) != 0:
-            raise ValueError(f"{label.title()} publication has exclusions or invalid coverage")
+            raise ValueError(
+                f"{label.title()} publication has exclusions or invalid coverage"
+            )
     (
         rating_path,
         minutes_path,
@@ -1377,16 +1564,14 @@ def promote_current_season_serving_op(
         rating_uri,
         minutes_uri,
         rating_trajectory_uri,
-    ) = (
-        _current_season_child_state_paths(
-            through_date,
-            rating_publication,
-            minutes_publication,
-        )
+    ) = _current_season_child_state_paths(
+        through_date,
+        rating_publication,
+        minutes_publication,
     )
-    next_midnight_pacific = datetime.fromisoformat(
-        f"{through_date}T00:00:00"
-    ).replace(tzinfo=PACIFIC) + timedelta(days=1)
+    next_midnight_pacific = datetime.fromisoformat(f"{through_date}T00:00:00").replace(
+        tzinfo=PACIFIC
+    ) + timedelta(days=1)
     config = ServingPromotionConfig(
         preseason_run_id=_preseason_release_run_id(),
         rating_prior_possessions=float(DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS),
@@ -1440,7 +1625,9 @@ def promote_current_season_serving_op(
         "dagster_run_id": context.run_id,
         "artifacts": published,
     }
-    pointer_bytes = (json.dumps(pointer_payload, indent=2, sort_keys=True) + "\n").encode()
+    pointer_bytes = (
+        json.dumps(pointer_payload, indent=2, sort_keys=True) + "\n"
+    ).encode()
     pointer_uri = _join_s3_uri(
         _current_season_serving_lake_uri(),
         "serving",
@@ -1497,11 +1684,11 @@ def _current_season_serving_config(through_date: str) -> dict[str, object]:
 @sensor(
     name="current_season_serving_ready",
     job=promote_current_season_serving_job,
-    minimum_interval_seconds=1800,
+    minimum_interval_seconds=900,
     default_status=SENSOR_DEFAULT_STATUS,
     description=(
         "Promote one current-season serving bundle after matching, exclusion-free "
-        "ratings and minutes shadow publications are complete."
+        "production ratings and minutes publications are complete."
     ),
 )
 def current_season_serving_sensor(
@@ -1515,8 +1702,7 @@ def current_season_serving_sensor(
     minutes_date = str(minutes_publication.get("through_date", ""))
     if not rating_date or rating_date != minutes_date:
         return SkipReason(
-            f"Current-season child dates do not match: {rating_date or '-'} / "
-            f"{minutes_date or '-'}"
+            f"Current-season child dates do not match: {rating_date or '-'} / {minutes_date or '-'}"
         )
     for label, publication in (
         ("ratings", rating_publication),
@@ -1626,7 +1812,7 @@ def materialize_current_season_lineups_job() -> None:
 @sensor(
     name="promoted_current_season_lineups_ready",
     job=materialize_current_season_lineups_job,
-    minimum_interval_seconds=1800,
+    minimum_interval_seconds=900,
     default_status=SENSOR_DEFAULT_STATUS,
     description=(
         "Materialize observed lineups after a new synchronized current-season "
@@ -1649,7 +1835,9 @@ def current_season_lineups_sensor(
         try:
             lineup = json.loads(lineup_path.read_text())
             if str(lineup.get("serving_bundle_sha256")) == serving_sha:
-                return SkipReason("Current-season lineups already match the serving state")
+                return SkipReason(
+                    "Current-season lineups already match the serving state"
+                )
         except (OSError, json.JSONDecodeError, TypeError):
             pass
     inflight = context.instance.get_runs(
@@ -1700,7 +1888,9 @@ def archive_completed_stats_v3_op(context: OpExecutionContext) -> dict[str, obje
     from nba_lineup_model.season.stats_v3_lake import ingest_completed_stats_v3
 
     config = context.op_config
-    start_date = date.fromisoformat(config["start_date"]) if config["start_date"] else None
+    start_date = (
+        date.fromisoformat(config["start_date"]) if config["start_date"] else None
+    )
     end_date = date.fromisoformat(config["end_date"]) if config["end_date"] else None
     result = ingest_completed_stats_v3(
         state_dir=_state_dir(),
@@ -1828,9 +2018,7 @@ def s3_lake_query_health(context: AssetExecutionContext) -> int:
 
     uri = os.environ.get("GESTALT_LAKE_HEALTHCHECK_URI", DEFAULT_HEALTHCHECK_PARQUET)
     count = s3_parquet_row_count(uri)
-    context.add_output_metadata(
-        {"rows": count, "s3_uri": MetadataValue.url(uri)}
-    )
+    context.add_output_metadata({"rows": count, "s3_uri": MetadataValue.url(uri)})
     return count
 
 
@@ -1859,8 +2047,8 @@ defs = Definitions(
         update_live_scores_job,
         reconcile_final_game_archives_job,
         ingest_completed_cdn_play_by_play_job,
-        update_in_season_nail_shadow_job,
-        update_in_season_minutes_shadow_job,
+        update_in_season_nail_production_job,
+        update_in_season_minutes_production_job,
         promote_current_season_serving_job,
         materialize_current_season_lineups_job,
         ingest_completed_stats_v3_job,
@@ -1872,14 +2060,14 @@ defs = Definitions(
         yesterday_finalization_schedule,
         final_game_archive_morning_reconciliation_schedule,
         cdn_morning_reconciliation_schedule,
-        in_season_nail_shadow_schedule,
         stats_v3_morning_reconciliation_schedule,
         daily_lake_health_schedule,
     ],
     sensors=[
         live_score_sensor,
         completed_game_cdn_play_by_play_sensor,
-        in_season_minutes_shadow_sensor,
+        in_season_nail_production_sensor,
+        in_season_minutes_production_sensor,
         current_season_serving_sensor,
         current_season_lineups_sensor,
         completed_game_stats_v3_sensor,
