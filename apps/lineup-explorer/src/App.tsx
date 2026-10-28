@@ -485,7 +485,7 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
     <div className="current-season-game-log-table-wrap">
       <table className="current-season-game-log-table">
         <thead><tr>
-          <th>Date</th><th>Opponent / result</th><th>Status</th><th>Minutes<br /><small>Proj. → actual</small></th><th>Box score<br /><small>PTS / REB / AST</small></th><th>Raw<br /><small>+/-</small></th><th>Poss.</th><th>NAIL<br /><small>after slate</small></th><th>Δ</th>
+          <th>Date</th><th>Opponent / result</th><th>Minutes<br /><small>Proj. → actual</small></th><th>Box score<br /><small>PTS / REB / AST</small></th><th>Raw<br /><small>+/-</small></th><th>Poss.</th><th>NAIL<br /><small>after slate</small></th><th>Δ</th>
         </tr></thead>
         <tbody>{visibleGames.map(({ point, previousRating }) => {
           const box = point.box_score;
@@ -497,7 +497,7 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
           const actualMinutes = point.actual_minutes ?? (point.played === false ? 0 : null);
           const hasMinutes = projectedMinutes !== null && projectedMinutes !== undefined || actualMinutes !== null;
           const ratingDelta = point.rating - previousRating;
-          const status = point.played === false ? point.pregame_status ?? "DNP" : "Played";
+          const status = point.played === false ? point.pregame_status ?? "DNP" : null;
           return <tr className={point.played === false ? "current-season-game-log-dnp" : undefined} key={point.game_id}>
             <td><time dateTime={gameDate}>{formatGameLogDate(gameDate)}</time></td>
             <td>
@@ -506,8 +506,10 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
                 <span><strong>{point.home_away === "away" ? "@" : "vs."} {point.opponent}</strong>{result && <small className={point.result === "W" ? "win" : "loss"}>{result}</small>}</span>
               </a> : "-"}
             </td>
-            <td className="current-season-game-log-status"><strong>{status}</strong>{point.played === false && point.pregame_reason && <small>{point.pregame_reason}</small>}</td>
-            <td className="quantity-cell">{hasMinutes ? <>{projectedMinutes === null || projectedMinutes === undefined ? "-" : projectedMinutes.toFixed(1)} <span aria-hidden="true">→</span> {actualMinutes === null ? "-" : number.format(actualMinutes)}</> : "-"}</td>
+            <td className="quantity-cell current-season-game-log-minutes">
+              <span>{hasMinutes ? <>{projectedMinutes === null || projectedMinutes === undefined ? "-" : projectedMinutes.toFixed(1)} <span aria-hidden="true">→</span> {actualMinutes === null ? "-" : number.format(actualMinutes)}</> : "-"}</span>
+              {status && <small><strong>{status}</strong>{point.pregame_reason && <> · {point.pregame_reason}</>}</small>}
+            </td>
             <td className="quantity-cell">{box && box.points !== null && box.points !== undefined ? `${box.points} / ${box.rebounds ?? "-"} / ${box.assists ?? "-"}` : "-"}</td>
             <td className={box?.plus_minus !== null && box?.plus_minus !== undefined && box.plus_minus < 0 ? "negative quantity-cell" : "quantity-cell"}>{box?.plus_minus === null || box?.plus_minus === undefined ? "-" : `${box.plus_minus > 0 ? "+" : ""}${box.plus_minus}`}</td>
             <td className="quantity-cell">{point.game_on_court_possessions === undefined ? "-" : wholeNumber.format(point.game_on_court_possessions)}</td>
