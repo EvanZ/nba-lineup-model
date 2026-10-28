@@ -859,6 +859,7 @@ def update_in_season_nail_production_op(
         "schema_version": 1,
         "season": _cdn_season(),
         "through_date": through_date,
+        "updater_version": str(result["updater_version"]),
         "dagster_run_id": context.run_id,
         "generated_at": result["generated_at"],
         "updater_version": result["updater_version"],
