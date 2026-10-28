@@ -480,12 +480,12 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
         <p className="section-kicker">Immutable team-game record</p>
         <h3 id="current-season-game-log-title">2026–27 game log.</h3>
       </div>
-      <p>Projected minutes are the frozen pregame estimate. NAIL Δ is the change after the complete day&apos;s slate.</p>
+      <p>Projected minutes are the frozen pregame estimate. Game Δ is the incremental NAIL change after the complete day&apos;s slate.</p>
     </div>
     <div className="current-season-game-log-table-wrap">
       <table className="current-season-game-log-table">
         <thead><tr>
-          <th>Date</th><th>Opponent / result</th><th>Minutes<br /><small>Proj. → actual</small></th><th>PTS</th><th>REB</th><th>AST</th><th>TOV</th><th>STL</th><th>BLK</th><th>2PT<br /><small>M-A</small></th><th>3PT<br /><small>M-A</small></th><th>FT<br /><small>M-A</small></th><th>Raw<br /><small>+/-</small></th><th>Poss.</th><th>NAIL<br /><small>after slate</small></th><th>Δ</th>
+          <th>Date</th><th>Opponent / result</th><th>Minutes<br /><small>Proj. → actual</small></th><th>NAIL<br /><small>after slate</small></th><th>Δ<br /><small>game update</small></th><th>PTS</th><th>REB</th><th>AST</th><th>TOV</th><th>STL</th><th>BLK</th><th>2PT<br /><small>M-A</small></th><th>3PT<br /><small>M-A</small></th><th>FT<br /><small>M-A</small></th><th>Raw<br /><small>+/-</small></th><th>Poss.</th>
         </tr></thead>
         <tbody>{visibleGames.map(({ point, previousRating }) => {
           const box = point.box_score;
@@ -510,6 +510,8 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
               <span>{hasMinutes ? <>{projectedMinutes === null || projectedMinutes === undefined ? "-" : projectedMinutes.toFixed(1)} <span aria-hidden="true">→</span> {actualMinutes === null ? "-" : number.format(actualMinutes)}</> : "-"}</span>
               {status && <small><strong>{status}</strong>{point.pregame_reason && <> · {point.pregame_reason}</>}</small>}
             </td>
+            <td className="current-season-game-log-rating"><Rating value={point.rating} /></td>
+            <td className={ratingDelta < 0 ? "negative current-season-game-log-delta" : "positive current-season-game-log-delta"}>{formatPreciseRating(ratingDelta)}</td>
             <td className="quantity-cell current-season-game-log-stat">{box?.points ?? "-"}</td>
             <td className="quantity-cell current-season-game-log-stat">{box?.rebounds ?? "-"}</td>
             <td className="quantity-cell current-season-game-log-stat">{box?.assists ?? "-"}</td>
@@ -521,8 +523,6 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
             <td className="quantity-cell current-season-game-log-shooting">{box?.free_throws_made === null || box?.free_throws_made === undefined ? "-" : `${box.free_throws_made}-${box.free_throws_attempted ?? "-"}`}</td>
             <td className={box?.plus_minus !== null && box?.plus_minus !== undefined && box.plus_minus < 0 ? "negative quantity-cell" : "quantity-cell"}>{box?.plus_minus === null || box?.plus_minus === undefined ? "-" : `${box.plus_minus > 0 ? "+" : ""}${box.plus_minus}`}</td>
             <td className="quantity-cell">{point.game_on_court_possessions === undefined ? "-" : wholeNumber.format(point.game_on_court_possessions)}</td>
-            <td className="current-season-game-log-rating"><Rating value={point.rating} /></td>
-            <td className={ratingDelta < 0 ? "negative current-season-game-log-delta" : "positive current-season-game-log-delta"}>{formatPreciseRating(ratingDelta)}</td>
           </tr>;
         })}</tbody>
       </table>
