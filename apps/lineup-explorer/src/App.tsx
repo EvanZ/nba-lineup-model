@@ -372,7 +372,7 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
                 <img src={playerHeadshotUrl(player.player_id)} alt="" />
                 <span>
                   <strong>{player.player_name}</strong>
-                  <small>{player.latest_team} · latest {player.latest_season} · {player.history_seasons} seasons</small>
+                  <small>{player.latest_team} · latest {player.latest_season} · {player.history_seasons > 0 ? `${player.history_seasons} historical ${player.history_seasons === 1 ? "season" : "seasons"}` : "cold-start player"}</small>
                 </span>
                 <ArrowUpRight size={16} aria-hidden="true" />
               </a>

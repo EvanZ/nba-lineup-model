@@ -1294,6 +1294,17 @@ def test_preseason_rankings_include_returners_and_cold_starts(tmp_path) -> None:
     team_search = client.get("/api/search", params={"q": "TST"})
     assert team_search.status_code == 200
     assert team_search.json()["teams"][0]["latest_season"] == "2026-27"
+    rookie_search = client.get("/api/search", params={"q": "Draft Rookie"})
+    assert rookie_search.status_code == 200
+    assert rookie_search.json()["players"] == [
+        {
+            "player_id": 99,
+            "player_name": "Draft Rookie",
+            "latest_season": "2026-27",
+            "latest_team": "RKS",
+            "history_seasons": 0,
+        }
+    ]
     preseason_team_page = client.get("/api/teams/TST", params={"season": "2026-27"})
     assert preseason_team_page.status_code == 200
     assert preseason_team_page.json()["rating_state"]["kind"] == "preseason_preview"

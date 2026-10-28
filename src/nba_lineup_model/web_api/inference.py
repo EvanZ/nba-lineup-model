@@ -833,6 +833,72 @@ class LineupEvaluator:
             for row in matches.itertuples(index=False)
         ]
 
+    def search_global_players(
+        self, query: str, *, limit: int = 12
+    ) -> list[dict[str, Any]]:
+        """Search active forecasts and the completed-fit player archive.
+
+        Unlike comparison search, global navigation must include cold-start
+        players whose current-season forecast exists before they have any
+        completed-season rating history.
+        """
+
+        normalized = _normalize_search_text(query)
+        if not normalized:
+            return []
+        required = {"player_id", "player_name", "season", "team"}
+        catalogs: list[pd.DataFrame] = []
+        active = self._active_current_season_rankings()
+        if not active.empty:
+            missing = required - set(active.columns)
+            if missing:
+                raise LineupEvaluationError(
+                    "Active player search catalog is missing required columns: "
+                    + ", ".join(sorted(missing))
+                )
+            catalogs.append(active.loc[:, sorted(required)].copy())
+        historical = self.historical_rankings
+        if historical.empty:
+            historical = self.players.assign(season=self.season)
+        missing = required - set(historical.columns)
+        if missing:
+            raise LineupEvaluationError(
+                "Historical player search catalog is missing required columns: "
+                + ", ".join(sorted(missing))
+            )
+        catalogs.append(historical.loc[:, sorted(required)].copy())
+
+        histories = self.player_rating_histories or {
+            int(row.player_id): list(row.rating_history)
+            for row in self.players.itertuples(index=False)
+            if isinstance(getattr(row, "rating_history", None), list)
+        }
+        candidates = pd.concat(catalogs, ignore_index=True)
+        candidates = candidates.loc[candidates["player_name"].notna()].copy()
+        candidates["player_name"] = candidates["player_name"].astype(str)
+        candidates["player_id"] = candidates["player_id"].astype(int)
+        candidates = candidates.sort_values(
+            ["player_id", "season"], ascending=[True, False], kind="stable"
+        ).drop_duplicates("player_id", keep="first")
+        names = candidates["player_name"].map(_normalize_search_text)
+        matches = candidates.loc[names.str.contains(normalized, regex=False)].copy()
+        matches["history_seasons"] = matches["player_id"].map(
+            lambda player_id: len(histories.get(int(player_id), []))
+        )
+        matches = matches.sort_values(
+            ["player_name", "player_id"], kind="stable"
+        ).head(max(1, min(limit, 25)))
+        return [
+            {
+                "player_id": int(row.player_id),
+                "player_name": str(row.player_name),
+                "latest_season": str(row.season),
+                "latest_team": str(row.team),
+                "history_seasons": int(row.history_seasons),
+            }
+            for row in matches.itertuples(index=False)
+        ]
+
     def search_teams(self, query: str, *, limit: int = 12) -> list[dict[str, Any]]:
         """Return historical franchise identities matching a city, nickname, or tricode."""
 

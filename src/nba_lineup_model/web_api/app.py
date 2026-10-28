@@ -228,7 +228,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         try:
             state = get_evaluator()
             return {
-                "players": state.search_comparison_players(q, limit=limit),
+                "players": state.search_global_players(q, limit=limit),
                 "teams": state.search_teams(q, limit=limit),
             }
         except LineupEvaluationError as error:
