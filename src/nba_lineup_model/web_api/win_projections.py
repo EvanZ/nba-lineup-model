@@ -2102,6 +2102,49 @@ def refresh_schedule_window(
     }
 
 
+def mirror_missing_frozen_pregame_snapshots(
+    *,
+    game_date: str,
+    source_state_dir: Path | str,
+    target_state_dir: Path | str,
+) -> list[str]:
+    """Mirror valid immutable pregames into a second schedule-state tree."""
+
+    source_root = Path(source_state_dir)
+    target_root = Path(target_state_dir)
+    latest_path = source_root / "latest" / f"{game_date}.json"
+    if not latest_path.is_file():
+        return []
+    latest = json.loads(latest_path.read_text())
+    games = latest.get("games", []) if isinstance(latest, dict) else []
+    mirrored: list[str] = []
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        espn_game_id = str(game.get("espn_game_id", "")).strip()
+        if not espn_game_id:
+            continue
+        source_path = source_root / "frozen" / f"{espn_game_id}.json"
+        target_path = target_root / "frozen" / f"{espn_game_id}.json"
+        if target_path.is_file() or not source_path.is_file():
+            continue
+        frozen = json.loads(source_path.read_text())
+        if not isinstance(frozen, dict):
+            raise ValueError(f"Invalid frozen pregame record: {source_path}")
+        if str(frozen.get("espn_game_id", "")) != espn_game_id:
+            raise ValueError(f"Frozen pregame game ID mismatch: {source_path}")
+        status = frozen.get("status")
+        state = status.get("state") if isinstance(status, dict) else None
+        if state != "pre" or bool(frozen.get("late_freeze")):
+            raise ValueError(
+                f"Refusing to mirror a non-pregame frozen record: {source_path}"
+            )
+        _write_json_exclusive(target_path, frozen)
+        if target_path.is_file():
+            mirrored.append(espn_game_id)
+    return mirrored
+
+
 def _fetch_latest_official_injury_report(
     *, report_date: str, now: datetime
 ) -> tuple[dict[str, object], bytes]:
@@ -3637,6 +3680,11 @@ def refresh_schedule_main() -> int:
     parser.add_argument("--s3-uri", default=DEFAULT_SCHEDULE_S3_URI)
     parser.add_argument("--no-s3", action="store_true")
     parser.add_argument(
+        "--mirror-frozen-to",
+        type=Path,
+        help="Mirror immutable pregames into another schedule-state tree",
+    )
+    parser.add_argument(
         "--days-ahead",
         type=int,
         default=DEFAULT_SCHEDULE_DAYS_AHEAD,
@@ -3652,10 +3700,21 @@ def refresh_schedule_main() -> int:
         projection_url=args.projection_url,
         s3_uri=None if args.no_s3 else args.s3_uri,
     )
+    mirrored = 0
+    if args.mirror_frozen_to is not None:
+        first_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+        for offset in range(args.days_ahead + 1):
+            mirrored += len(
+                mirror_missing_frozen_pregame_snapshots(
+                    game_date=(first_date + timedelta(days=offset)).isoformat(),
+                    source_state_dir=args.state_dir,
+                    target_state_dir=args.mirror_frozen_to,
+                )
+            )
     print(
         f"Archived {payload['game_count']} games across "
         f"{payload['archived_day_count']} available dates from {args.date}; "
-        f"newly frozen: {payload['newly_frozen_game_count']}"
+        f"newly frozen: {payload['newly_frozen_game_count']}; mirrored: {mirrored}"
     )
     return 0
 

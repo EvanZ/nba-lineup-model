@@ -238,7 +238,10 @@ def _schedule_run_config(*, start_date: str, days_ahead: int) -> dict[str, objec
 def refresh_schedule_op(context: OpExecutionContext) -> dict[str, object]:
     """Refresh ESPN, lines, injury reports, projections, and immutable snapshots."""
 
-    from nba_lineup_model.web_api.win_projections import refresh_schedule_window
+    from nba_lineup_model.web_api.win_projections import (
+        mirror_missing_frozen_pregame_snapshots,
+        refresh_schedule_window,
+    )
 
     payload = refresh_schedule_window(
         start_date=str(context.op_config["start_date"]),
@@ -250,7 +253,19 @@ def refresh_schedule_op(context: OpExecutionContext) -> dict[str, object]:
         s3_uri=_schedule_s3_uri(),
     )
     model_input_dir = _model_input_state_dir()
+    mirrored_frozen_games = 0
     if model_input_dir.resolve() != _state_dir().resolve():
+        first_date = datetime.fromisoformat(
+            str(context.op_config["start_date"])
+        ).date()
+        for offset in range(int(context.op_config["days_ahead"]) + 1):
+            mirrored_frozen_games += len(
+                mirror_missing_frozen_pregame_snapshots(
+                    game_date=(first_date + timedelta(days=offset)).isoformat(),
+                    source_state_dir=_state_dir(),
+                    target_state_dir=model_input_dir,
+                )
+            )
         refresh_schedule_window(
             start_date=str(context.op_config["start_date"]),
             days_ahead=int(context.op_config["days_ahead"]),
@@ -265,6 +280,7 @@ def refresh_schedule_op(context: OpExecutionContext) -> dict[str, object]:
             "archived_days": int(payload["archived_day_count"]),
             "games": int(payload["game_count"]),
             "newly_frozen_games": int(payload["newly_frozen_game_count"]),
+            "mirrored_frozen_games": mirrored_frozen_games,
         }
     )
     return payload
@@ -424,7 +440,10 @@ nba_market_odds_schedule = ScheduleDefinition(
 def update_live_scores_op(context: OpExecutionContext) -> dict[str, object]:
     """Perform one short score/clock update; the sensor controls when it runs."""
 
-    from nba_lineup_model.web_api.win_projections import refresh_live_score_state
+    from nba_lineup_model.web_api.win_projections import (
+        mirror_missing_frozen_pregame_snapshots,
+        refresh_live_score_state,
+    )
 
     game_date = str(context.op_config["game_date"])
     result = refresh_live_score_state(
@@ -433,7 +452,15 @@ def update_live_scores_op(context: OpExecutionContext) -> dict[str, object]:
         s3_uri=_schedule_s3_uri(),
     )
     model_input_dir = _model_input_state_dir()
+    mirrored_frozen_games = 0
     if model_input_dir.resolve() != _state_dir().resolve():
+        mirrored_frozen_games = len(
+            mirror_missing_frozen_pregame_snapshots(
+                game_date=game_date,
+                source_state_dir=_state_dir(),
+                target_state_dir=model_input_dir,
+            )
+        )
         refresh_live_score_state(
             game_date=game_date,
             state_dir=model_input_dir,
@@ -447,6 +474,7 @@ def update_live_scores_op(context: OpExecutionContext) -> dict[str, object]:
             "all_final": bool(result["all_final"]),
             "newly_finalized_games": int(result["newly_finalized_game_count"]),
             "uploaded_final_artifacts": int(result["uploaded_final_artifact_count"]),
+            "mirrored_frozen_games": mirrored_frozen_games,
         }
     )
     return result

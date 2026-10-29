@@ -24,6 +24,7 @@ from nba_lineup_model.web_api.win_projections import (
     build_current_season_win_projection_payload,
     enrich_player_game_trajectory,
     fit_win_probability_scale,
+    mirror_missing_frozen_pregame_snapshots,
     read_current_season_records,
     read_schedule_day,
     read_schedule_performance,
@@ -1713,6 +1714,52 @@ def test_injury_pdf_is_uploaded_once_by_checksum(tmp_path, monkeypatch) -> None:
     assert uploads == [(injury_pdf, first["s3_uri"])]
     assert not (tmp_path / "pending" / "injury-reports" / f"{digest}.pdf").exists()
     assert (tmp_path / "artifacts" / "injury-reports" / f"{digest}.json").is_file()
+
+
+def test_mirror_missing_frozen_pregame_snapshots_is_validated_and_idempotent(
+    tmp_path,
+) -> None:
+    source = tmp_path / "serving"
+    target = tmp_path / "model-input"
+    (source / "latest").mkdir(parents=True)
+    (source / "frozen").mkdir()
+    (source / "latest" / "2026-10-28.json").write_text(
+        json.dumps({"games": [{"espn_game_id": "401909888"}]})
+    )
+    frozen = {
+        "game_id": "0022600139",
+        "espn_game_id": "401909888",
+        "status": {"state": "pre", "completed": False},
+        "late_freeze": False,
+        "projection": {
+            "state_kind": "in_season_updated",
+            "serving_bundle_sha256": "b" * 64,
+        },
+    }
+    (source / "frozen" / "401909888.json").write_text(json.dumps(frozen))
+
+    assert mirror_missing_frozen_pregame_snapshots(
+        game_date="2026-10-28",
+        source_state_dir=source,
+        target_state_dir=target,
+    ) == ["401909888"]
+    assert json.loads((target / "frozen" / "401909888.json").read_text()) == frozen
+    assert mirror_missing_frozen_pregame_snapshots(
+        game_date="2026-10-28",
+        source_state_dir=source,
+        target_state_dir=target,
+    ) == []
+
+    (target / "frozen" / "401909888.json").unlink()
+    frozen["status"] = {"state": "post", "completed": True}
+    frozen["late_freeze"] = True
+    (source / "frozen" / "401909888.json").write_text(json.dumps(frozen))
+    with pytest.raises(ValueError, match="non-pregame"):
+        mirror_missing_frozen_pregame_snapshots(
+            game_date="2026-10-28",
+            source_state_dir=source,
+            target_state_dir=target,
+        )
 
 
 def test_s3_schedule_snapshot_does_not_retain_local_archive(tmp_path, monkeypatch) -> None:

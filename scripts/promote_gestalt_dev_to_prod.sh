@@ -161,6 +161,7 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   "$PROD_RELEASE/.venv/bin/nba-refresh-gestalt-schedule" \
   --date "$(TZ=America/Los_Angeles date +%F)" \
   --state-dir "$STATE_ROOT/schedule-serving/current" \
+  --mirror-frozen-to "$SOURCE_SCHEDULE_ROOT" \
   --projection-url http://127.0.0.1:8010/api/win-projections \
   --days-ahead 7 \
   --no-s3
@@ -174,6 +175,14 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   --state-dir "$SOURCE_SCHEDULE_ROOT" \
   --projection-url http://127.0.0.1:8010/api/win-projections \
   --days-ahead 7 \
+  --no-s3
+
+# If a deploy supplied a missing pregame freeze for a game that is already
+# final, complete the corresponding immutable model-input audit immediately.
+PYTHONPATH="$RELEASE_ROOT/src" \
+  "$PROD_RELEASE/.venv/bin/nba-watch-gestalt-live-scores" \
+  --date "$(TZ=America/Los_Angeles date +%F)" \
+  --state-dir "$SOURCE_SCHEDULE_ROOT" \
   --no-s3
 
 
