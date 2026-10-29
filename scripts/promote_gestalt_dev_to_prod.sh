@@ -24,11 +24,18 @@ WEB_RELEASE_ROOT="${GESTALT_WEB_RELEASE_ROOT:-/var/www/nba-gestalt-releases}"
 PROD_RELEASE="$APP_ROOT/current"
 DEV_RELEASE="${GESTALT_DEV_RELEASE:-/opt/nba-gestalt-dev/current}"
 SOURCE_SCHEDULE_ROOT="${GESTALT_SOURCE_SCHEDULE_ROOT:-$STATE_ROOT/schedule}"
+
+test -d "$SOURCE_REPO/.git"
+if [[ "$PROD_REF" == origin/* ]]; then
+  prod_branch="${PROD_REF#origin/}"
+  git -C "$SOURCE_REPO" fetch --no-tags origin \
+    "refs/heads/$prod_branch:refs/remotes/origin/$prod_branch"
+fi
+
 RELEASE_ID="${GESTALT_PROD_RELEASE_ID:-$(git -C "$SOURCE_REPO" rev-parse --short=12 "$PROD_REF")}"
 RELEASE_ROOT="$CODE_ROOT/releases/$RELEASE_ID"
 FRONTEND_DIST="${GESTALT_PROD_FRONTEND_DIST:-}"
 
-test -d "$SOURCE_REPO/.git"
 test -x "$PROD_RELEASE/.venv/bin/python"
 test -d "$PROD_RELEASE/artifacts"
 test -d "$PROD_RELEASE/data"

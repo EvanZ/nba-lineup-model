@@ -24,11 +24,18 @@ PROD_SCHEDULE_ROOT="${GESTALT_PROD_SCHEDULE_ROOT:-/var/lib/nba-gestalt/schedule}
 DEV_RATING_ROOT="${GESTALT_DEV_RATING_ROOT:-/var/lib/nba-gestalt/in-season-nail}"
 DEV_MINUTES_ROOT="${GESTALT_DEV_MINUTES_ROOT:-/var/lib/nba-gestalt/in-season-minutes}"
 FRONTEND_DIST="${GESTALT_DEV_FRONTEND_DIST:-}"
+
+test -d "$SOURCE_REPO/.git"
+if [[ "$DEV_REF" == origin/* ]]; then
+  dev_branch="${DEV_REF#origin/}"
+  git -C "$SOURCE_REPO" fetch --no-tags origin \
+    "refs/heads/$dev_branch:refs/remotes/origin/$dev_branch"
+fi
+
 RELEASE_ID="${GESTALT_DEV_RELEASE_ID:-$(git -C "$SOURCE_REPO" rev-parse --short=12 "$DEV_REF")}"
 RELEASE_ROOT="$DEV_APP_ROOT/releases/$RELEASE_ID"
 PROD_RELEASE="$PROD_APP_ROOT/current"
 
-test -d "$SOURCE_REPO/.git"
 test -x "$PROD_RELEASE/.venv/bin/python"
 test -d "$PROD_RELEASE/artifacts"
 test -d "$PROD_RELEASE/data"
