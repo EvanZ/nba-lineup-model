@@ -46,9 +46,14 @@ if [[ "$dev_commit" != "$prod_commit" ]]; then
 fi
 "$DEV_RELEASE/scripts/validate_gestalt_serving_contract.sh" \
   http://127.0.0.1:8011
+coverage_mode=()
+if [[ "${GESTALT_ALLOW_DEV_FINAL_SUPERSET:-0}" == "1" ]]; then
+  coverage_mode+=(--allow-left-final-superset)
+fi
 "$DEV_RELEASE/scripts/compare_gestalt_data_coverage.sh" \
   http://127.0.0.1:8011 \
-  http://127.0.0.1:8010
+  http://127.0.0.1:8010 \
+  "${coverage_mode[@]}"
 
 sudo install -d -o "$USER" -g "$(id -gn)" "$CODE_ROOT/releases"
 sudo install -d -o "$USER" -g "$(id -gn)" "$STATE_ROOT/catalog"
@@ -66,6 +71,23 @@ ln -sfn \
   "$RELEASE_ROOT/apps/lineup-explorer/node_modules"
 
 cd "$PROD_RELEASE"
+
+# Repair any deployment-time pregames and completed audits in the isolated
+# model-input archive before building the production strict-forward view.
+PYTHONPATH="$RELEASE_ROOT/src" \
+  "$PROD_RELEASE/.venv/bin/nba-refresh-gestalt-schedule" \
+  --date "$(TZ=America/Los_Angeles date +%F)" \
+  --state-dir "$STATE_ROOT/schedule-serving/current" \
+  --mirror-frozen-to "$SOURCE_SCHEDULE_ROOT" \
+  --projection-url http://127.0.0.1:8010/api/win-projections \
+  --days-ahead 0 \
+  --no-s3
+PYTHONPATH="$RELEASE_ROOT/src" \
+  "$PROD_RELEASE/.venv/bin/nba-watch-gestalt-live-scores" \
+  --date "$(TZ=America/Los_Angeles date +%F)" \
+  --state-dir "$SOURCE_SCHEDULE_ROOT" \
+  --no-s3
+
 aws s3 cp \
   s3://nba-gestalt-data/lake/catalog/games.parquet \
   "$STATE_ROOT/catalog/games.parquet.next" \

@@ -3,6 +3,7 @@ set -euo pipefail
 
 LEFT_API="${1:?First API root is required}"
 RIGHT_API="${2:?Second API root is required}"
+MODE="${3:-}"
 WORK_ROOT="$(mktemp -d)"
 trap 'rm -rf "$WORK_ROOT"' EXIT
 
@@ -38,11 +39,30 @@ snapshot() {
 snapshot "$LEFT_API" "$WORK_ROOT/left.json"
 snapshot "$RIGHT_API" "$WORK_ROOT/right.json"
 
-if ! cmp --silent "$WORK_ROOT/left.json" "$WORK_ROOT/right.json"; then
+if [[ "$MODE" == "--allow-left-final-superset" ]]; then
+  jq 'del(.performance_as_of, .audited_final_games)' \
+    "$WORK_ROOT/left.json" >"$WORK_ROOT/left-core.json"
+  jq 'del(.performance_as_of, .audited_final_games)' \
+    "$WORK_ROOT/right.json" >"$WORK_ROOT/right-core.json"
+  if ! cmp --silent "$WORK_ROOT/left-core.json" "$WORK_ROOT/right-core.json"; then
+    printf 'Dev/production core data coverage mismatch:\n' >&2
+    diff -u "$WORK_ROOT/right.json" "$WORK_ROOT/left.json" >&2 || true
+    exit 1
+  fi
+  left_finals="$(jq -r '.audited_final_games' "$WORK_ROOT/left.json")"
+  right_finals="$(jq -r '.audited_final_games' "$WORK_ROOT/right.json")"
+  left_date="$(jq -r '.performance_as_of' "$WORK_ROOT/left.json")"
+  right_date="$(jq -r '.performance_as_of' "$WORK_ROOT/right.json")"
+  if (( left_finals < right_finals )) || [[ "$left_date" < "$right_date" ]]; then
+    printf 'Dev final-audit coverage is behind production:\n' >&2
+    diff -u "$WORK_ROOT/right.json" "$WORK_ROOT/left.json" >&2 || true
+    exit 1
+  fi
+elif ! cmp --silent "$WORK_ROOT/left.json" "$WORK_ROOT/right.json"; then
   printf 'Dev/production data coverage mismatch:\n' >&2
   diff -u "$WORK_ROOT/right.json" "$WORK_ROOT/left.json" >&2 || true
   exit 1
 fi
 
-printf 'Validated identical dev/production dates and game coverage: '
+printf 'Validated dev/production dates and game coverage: '
 jq -r '"evidence through \(.evidence_through_date), \(.evidence_game_count) modeled games, \(.audited_final_games) final audits, \(.catalog_game_count) catalog games"' "$WORK_ROOT/left.json"
