@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ChevronUp,
   CircleAlert,
+  ClipboardCheck,
   Dices,
   Download,
   GitBranch,
@@ -1706,6 +1707,16 @@ function App() {
               <Search size={16} aria-hidden="true" />
               <span>Search</span>
             </button>
+            <a
+              className="header-link"
+              href="/api/reports/current-season"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open the daily data quality report"
+            >
+              <ClipboardCheck size={15} aria-hidden="true" />
+              <span>Data quality</span>
+            </a>
             <a
               className="header-link"
               href="https://github.com/EvanZ/nba-lineup-model"
