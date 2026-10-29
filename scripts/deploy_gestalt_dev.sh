@@ -169,7 +169,12 @@ PYTHONPATH="$RELEASE_ROOT/src" \
 
 "$RELEASE_ROOT/scripts/validate_gestalt_serving_contract.sh" \
   http://127.0.0.1:8011
+coverage_args=()
+if [[ "${GESTALT_ALLOW_DEV_FINAL_SUPERSET:-0}" == "1" ]]; then
+  coverage_args+=(--allow-left-final-superset)
+fi
 "$RELEASE_ROOT/scripts/compare_gestalt_data_coverage.sh" \
   http://127.0.0.1:8011 \
-  http://127.0.0.1:8010
+  http://127.0.0.1:8010 \
+  "${coverage_args[@]}"
 printf 'Deployed NBA GESTALT dev release %s from %s\n' "$RELEASE_ID" "$DEV_REF"
