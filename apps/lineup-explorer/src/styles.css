@@ -1095,6 +1095,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 }
 
 @media (max-width: 720px) {
+  .player-history-column-order-reset { display: none; }
   .rankings-table-toolbar { align-items: stretch; flex-direction: column; }
   .rankings-table-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rankings-player-picker, .mobile-sort-controls { grid-column: 1 / -1; width: 100%; }

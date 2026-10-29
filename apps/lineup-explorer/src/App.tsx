@@ -711,10 +711,52 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
   </div>;
 }
 
+type PlayerHistoryColumn =
+  | "season" | "team" | "age" | "games" | "games_started" | "possessions"
+  | "rating" | "offense" | "defense" | "rank" | "prior" | "season_update"
+  | "additive_profile" | "lineup_edge";
+
+type PlayerHistoryColumnDefinition = {
+  key: PlayerHistoryColumn;
+  label: string;
+  className?: string;
+};
+
+const PLAYER_HISTORY_FIXED_COLUMNS: readonly PlayerHistoryColumn[] = ["season", "team"];
+const PLAYER_HISTORY_MOVABLE_COLUMNS: readonly PlayerHistoryColumn[] = [
+  "age", "games", "games_started", "possessions", "rating", "offense", "defense",
+  "rank", "prior", "season_update", "additive_profile", "lineup_edge",
+];
+const PLAYER_HISTORY_COLUMNS: readonly PlayerHistoryColumnDefinition[] = [
+  { key: "season", label: "Season" },
+  { key: "team", label: "Team split" },
+  { key: "age", label: "Age" },
+  { key: "games", label: "GP" },
+  { key: "games_started", label: "GS" },
+  { key: "possessions", label: "Possessions" },
+  { key: "rating", label: MODEL_LABEL, className: "nail-history-column" },
+  { key: "offense", label: "Offense" },
+  { key: "defense", label: "Defense" },
+  { key: "rank", label: "NAIL rank" },
+  { key: "prior", label: "Prior" },
+  { key: "season_update", label: "Season update" },
+  { key: "additive_profile", label: "Additive profile" },
+  { key: "lineup_edge", label: "Non-Additive Lineup Edge" },
+];
+
 function PlayerProfilePage({ playerId }: { playerId: number }) {
   const isCompact = useMediaQuery("(max-width: 720px)");
   const [player, setPlayer] = useState<Player | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [draggedHistoryColumn, setDraggedHistoryColumn] = useState<PlayerHistoryColumn | null>(null);
+  const [dropHistoryColumn, setDropHistoryColumn] = useState<PlayerHistoryColumn | null>(null);
+  const {
+    order: movableHistoryColumnOrder,
+    moveColumn: moveHistoryColumn,
+    moveColumnBy: moveHistoryColumnBy,
+    resetColumnOrder: resetHistoryColumnOrder,
+    isDefault: isDefaultHistoryColumnOrder,
+  } = usePersistedColumnOrder("gestalt.player-history.column-order.v1", PLAYER_HISTORY_MOVABLE_COLUMNS);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -746,6 +788,10 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
   ];
   const hasAdditiveProfileInputs = additiveProfileInputs.every((value) => value !== null);
   const historyRows = completePlayerHistory(player);
+  const playerHistoryColumnByKey = new Map(PLAYER_HISTORY_COLUMNS.map((column) => [column.key, column]));
+  const displayedPlayerHistoryColumns = [...PLAYER_HISTORY_FIXED_COLUMNS, ...movableHistoryColumnOrder]
+    .map((key) => playerHistoryColumnByKey.get(key))
+    .filter((column): column is PlayerHistoryColumnDefinition => column !== undefined);
   const isCurrentSeasonUpdate = player.rating_state === "in_season_updated";
   const isPreseasonPreview = player.rating_season === "2026-27" && !isCurrentSeasonUpdate;
   const preseasonRotationForecast = player.rotation_history?.find((point) => point.is_preseason_forecast);
@@ -940,34 +986,102 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
         </section>
       ) : <section className="player-profile-section" aria-labelledby="rating-history-title">
         <div className="player-profile-heading">
-          <p className="section-kicker">Completed fits</p>
-          <h2 id="rating-history-title">{MODEL_LABEL} history.</h2>
+          <div>
+            <p className="section-kicker">Completed fits</p>
+            <h2 id="rating-history-title">{MODEL_LABEL} history.</h2>
+          </div>
+          <button className="column-order-reset player-history-column-order-reset" type="button" onClick={resetHistoryColumnOrder} disabled={isDefaultHistoryColumnOrder}>
+            <RotateCcw size={13} aria-hidden="true" /> Reset columns
+          </button>
         </div>
         <PlayerAgingChart player={player} />
         <p className="player-rating-path-note">Offense and defense are a constrained descriptive allocation: they sum exactly to {MODEL_LABEL} but do not replace the scalar prediction rating. Non-Additive Lineup Edge is the possession-weighted residual non-additive edge of a player’s regular-season units, not individual causal credit.</p>
         {isCompact ? <PlayerRatingHistoryCards rows={historyRows} /> : <div className="player-history-table-wrap">
           <table className="player-history-table">
-            <thead><tr><th>Season</th><th>Team split</th><th>Age</th><th>GP</th><th>GS</th><th>Possessions</th><th className="nail-history-column">{MODEL_LABEL}</th><th>Offense</th><th>Defense</th><th>NAIL rank</th><th>Prior</th><th>Season update</th><th>Additive profile</th><th>Non-Additive Lineup Edge</th></tr></thead>
-            <tbody>{[...historyRows].reverse().map((row) => row.kind === "dnp" ? (
-              <tr className="player-history-dnp" key={row.season}>
-                <td>{row.season}</td><td><span className="dnp-label">DNP</span></td><td>{row.age === null ? "-" : number.format(row.age)}</td>
-                <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
-              </tr>
-            ) : (
-              <tr key={row.point.season}>
-                <td>{row.point.season}</td><td><TeamSplits point={row.point} /></td><td>{row.point.age === null ? "-" : number.format(row.point.age)}</td>
-                <td className="quantity-cell">{wholeNumber.format(row.point.games)}</td><td className="quantity-cell">{wholeNumber.format(row.point.games_started)}</td>
-                <td className="quantity-cell">{wholeNumber.format(row.point.possessions)}</td>
-                <td className="nail-history-cell"><Rating value={row.point.rating} /></td>
-                <td>{row.point.offense_rating === null || row.point.offense_rating === undefined ? "-" : <Rating value={row.point.offense_rating} />}</td>
-                <td>{row.point.defense_rating === null || row.point.defense_rating === undefined ? "-" : <Rating value={row.point.defense_rating} />}</td>
-                <td className="nail-rank-cell">#{wholeNumber.format(row.point.nail_rank)}</td>
-                <td>{row.point.prior_rating === null ? "-" : <Rating value={row.point.prior_rating} />}</td>
-                <td>{row.point.season_update === null ? "-" : <Rating value={row.point.season_update} />}</td>
-                <td>{row.point.additive_profile_adjustment === null ? "-" : <Rating value={row.point.additive_profile_adjustment} />}</td>
-                <td>{row.point.observed_context_exposure === null ? "-" : <Rating value={row.point.observed_context_exposure} />}</td>
-              </tr>
-            ))}</tbody>
+            <thead><tr>{displayedPlayerHistoryColumns.map((column) => {
+              const movable = !PLAYER_HISTORY_FIXED_COLUMNS.includes(column.key);
+              return <th
+                className={`${column.className ?? ""}${column.className ? " " : ""}${movable ? "movable-column" : "fixed-column"}${dropHistoryColumn === column.key ? " column-drop-target" : ""}`}
+                scope="col"
+                key={column.key}
+                onDragEnter={() => movable && setDropHistoryColumn(column.key)}
+                onDragOver={(event) => {
+                  if (!movable || !draggedHistoryColumn) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (movable && draggedHistoryColumn) moveHistoryColumn(draggedHistoryColumn, column.key);
+                  setDraggedHistoryColumn(null);
+                  setDropHistoryColumn(null);
+                }}
+              >
+                <span className="movable-column-heading">
+                  <span>{column.label}</span>
+                  {movable && <button
+                    className="column-drag-handle"
+                    type="button"
+                    draggable
+                    aria-label={`Move ${column.label} column. Use left and right arrow keys to reposition.`}
+                    title={`Drag ${column.label} column to reorder`}
+                    onDragStart={(event) => {
+                      setDraggedHistoryColumn(column.key);
+                      setDropHistoryColumn(column.key);
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", column.key);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedHistoryColumn(null);
+                      setDropHistoryColumn(null);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                      event.preventDefault();
+                      moveHistoryColumnBy(column.key, event.key === "ArrowLeft" ? -1 : 1);
+                    }}
+                  ><GripVertical size={13} aria-hidden="true" /></button>}
+                </span>
+              </th>;
+            })}</tr></thead>
+            <tbody>{[...historyRows].reverse().map((row) => {
+              if (row.kind === "dnp") {
+                const cells: Record<PlayerHistoryColumn, () => ReactNode> = {
+                  season: () => <td key="season">{row.season}</td>,
+                  team: () => <td key="team"><span className="dnp-label">DNP</span></td>,
+                  age: () => <td key="age">{row.age === null ? "-" : number.format(row.age)}</td>,
+                  games: () => <td key="games">-</td>,
+                  games_started: () => <td key="games_started">-</td>,
+                  possessions: () => <td key="possessions">-</td>,
+                  rating: () => <td key="rating">-</td>,
+                  offense: () => <td key="offense">-</td>,
+                  defense: () => <td key="defense">-</td>,
+                  rank: () => <td key="rank">-</td>,
+                  prior: () => <td key="prior">-</td>,
+                  season_update: () => <td key="season_update">-</td>,
+                  additive_profile: () => <td key="additive_profile">-</td>,
+                  lineup_edge: () => <td key="lineup_edge">-</td>,
+                };
+                return <tr className="player-history-dnp" key={row.season}>{displayedPlayerHistoryColumns.map((column) => cells[column.key]())}</tr>;
+              }
+              const cells: Record<PlayerHistoryColumn, () => ReactNode> = {
+                season: () => <td key="season">{row.point.season}</td>,
+                team: () => <td key="team"><TeamSplits point={row.point} /></td>,
+                age: () => <td key="age">{row.point.age === null ? "-" : number.format(row.point.age)}</td>,
+                games: () => <td key="games" className="quantity-cell">{wholeNumber.format(row.point.games)}</td>,
+                games_started: () => <td key="games_started" className="quantity-cell">{wholeNumber.format(row.point.games_started)}</td>,
+                possessions: () => <td key="possessions" className="quantity-cell">{wholeNumber.format(row.point.possessions)}</td>,
+                rating: () => <td key="rating" className="nail-history-cell"><Rating value={row.point.rating} /></td>,
+                offense: () => <td key="offense">{row.point.offense_rating === null || row.point.offense_rating === undefined ? "-" : <Rating value={row.point.offense_rating} />}</td>,
+                defense: () => <td key="defense">{row.point.defense_rating === null || row.point.defense_rating === undefined ? "-" : <Rating value={row.point.defense_rating} />}</td>,
+                rank: () => <td key="rank" className="nail-rank-cell">#{wholeNumber.format(row.point.nail_rank)}</td>,
+                prior: () => <td key="prior">{row.point.prior_rating === null ? "-" : <Rating value={row.point.prior_rating} />}</td>,
+                season_update: () => <td key="season_update">{row.point.season_update === null ? "-" : <Rating value={row.point.season_update} />}</td>,
+                additive_profile: () => <td key="additive_profile">{row.point.additive_profile_adjustment === null ? "-" : <Rating value={row.point.additive_profile_adjustment} />}</td>,
+                lineup_edge: () => <td key="lineup_edge">{row.point.observed_context_exposure === null ? "-" : <Rating value={row.point.observed_context_exposure} />}</td>,
+              };
+              return <tr key={row.point.season}>{displayedPlayerHistoryColumns.map((column) => cells[column.key]())}</tr>;
+            })}</tbody>
           </table>
         </div>}
       </section>}
@@ -3811,6 +3925,11 @@ type LineupRankingColumn =
   | "gestalt_score"
   | "actual_net_rating";
 
+const LINEUP_MOVABLE_COLUMNS: readonly LineupRankingColumn[] = [
+  "gestalt_score", "offensive_edge", "defensive_edge", "player_edge", "context_edge",
+  "actual_net_rating", "possessions", "games",
+];
+
 function LineupRankingsPage({
   onLoadInLab,
 }: {
@@ -3828,6 +3947,15 @@ function LineupRankingsPage({
   const [sortDirection, setSortDirection] = useState<"ascending" | "descending">("descending");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [draggedColumn, setDraggedColumn] = useState<LineupRankingColumn | null>(null);
+  const [dropColumn, setDropColumn] = useState<LineupRankingColumn | null>(null);
+  const {
+    order: movableColumnOrder,
+    moveColumn,
+    moveColumnBy,
+    resetColumnOrder,
+    isDefault: isDefaultColumnOrder,
+  } = usePersistedColumnOrder("gestalt.lineups.column-order.v1", LINEUP_MOVABLE_COLUMNS);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -3913,6 +4041,10 @@ function LineupRankingsPage({
     { key: "possessions", label: "Poss", tooltip: "Regular-season possessions played by this exact five-man unit." , numeric: true },
     { key: "games", label: "Games", tooltip: "Regular-season games in which this exact five-man unit appeared.", numeric: true },
   ];
+  const columnByKey = new Map(columns.map((column) => [column.key, column]));
+  const displayedMetricColumns = movableColumnOrder
+    .map((key) => columnByKey.get(key))
+    .filter((column): column is (typeof columns)[number] => column !== undefined);
 
   return (
     <article className="rankings-page lineup-rankings-page" aria-labelledby="lineups-title">
@@ -3989,6 +4121,14 @@ function LineupRankingsPage({
                 {sortDirection === "ascending" ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
             </div>
+            <button
+              className="column-order-reset rankings-column-order-reset"
+              type="button"
+              onClick={resetColumnOrder}
+              disabled={isDefaultColumnOrder}
+            >
+              <RotateCcw size={13} aria-hidden="true" /> Reset columns
+            </button>
           </div>
         </div>
         {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
@@ -4013,17 +4153,59 @@ function LineupRankingsPage({
                     </span>
                   </span>
                 </th>
-                {columns.slice(2).map((column) => <th className={[
-                  column.numeric ? "numeric" : "",
-                  column.key === "gestalt_score" ? "edge-column" : "",
-                ].filter(Boolean).join(" ")} scope="col" key={column.key}>
-                  <button type="button" onClick={() => changeSort(column.key)}>
-                    {column.label}
-                    <span className="column-info" role="img" aria-label={column.tooltip} data-tooltip={column.tooltip}>
-                      <Info size={12} aria-hidden="true" />
-                    </span>
-                    {sortColumn === column.key && (sortDirection === "ascending" ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
-                  </button>
+                {displayedMetricColumns.map((column) => <th
+                  className={[
+                    column.numeric ? "numeric" : "",
+                    column.key === "gestalt_score" ? "edge-column" : "",
+                    "movable-column",
+                    dropColumn === column.key ? "column-drop-target" : "",
+                  ].filter(Boolean).join(" ")}
+                  scope="col"
+                  key={column.key}
+                  onDragEnter={() => setDropColumn(column.key)}
+                  onDragOver={(event) => {
+                    if (!draggedColumn) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (draggedColumn) moveColumn(draggedColumn, column.key);
+                    setDraggedColumn(null);
+                    setDropColumn(null);
+                  }}
+                >
+                  <span className="movable-column-heading">
+                    <button className="column-sort-button" type="button" onClick={() => changeSort(column.key)}>
+                      {column.label}
+                      <span className="column-info" role="img" aria-label={column.tooltip} data-tooltip={column.tooltip}>
+                        <Info size={12} aria-hidden="true" />
+                      </span>
+                      {sortColumn === column.key && (sortDirection === "ascending" ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                    </button>
+                    <button
+                      className="column-drag-handle"
+                      type="button"
+                      draggable
+                      aria-label={`Move ${column.label} column. Use left and right arrow keys to reposition.`}
+                      title={`Drag ${column.label} column to reorder`}
+                      onDragStart={(event) => {
+                        setDraggedColumn(column.key);
+                        setDropColumn(column.key);
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", column.key);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedColumn(null);
+                        setDropColumn(null);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                        event.preventDefault();
+                        moveColumnBy(column.key, event.key === "ArrowLeft" ? -1 : 1);
+                      }}
+                    ><GripVertical size={13} aria-hidden="true" /></button>
+                  </span>
                 </th>)}
               </tr>
             </thead>
@@ -4060,16 +4242,28 @@ function LineupRankingsPage({
                     </button>
                   </span>
                 </th>
-                <td className={lineup.gestalt_score < 0 ? "negative numeric rating-cell edge-rating" : "positive numeric rating-cell edge-rating"}>{formatRating(lineup.gestalt_score)}</td>
-                {selectedSeason !== "2026-27" && <>
-                  <td className={optionalRatingClass(lineup.offensive_edge)}>{formatOptionalRating(lineup.offensive_edge)}</td>
-                  <td className={optionalRatingClass(lineup.defensive_edge)}>{formatOptionalRating(lineup.defensive_edge)}</td>
-                </>}
-                <td className={lineup.player_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.player_edge)}</td>
-                <td className={lineup.context_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.context_edge)}</td>
-                <td className={lineup.actual_net_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.actual_net_rating)}</td>
-                <td className="numeric quantity-cell">{wholeNumber.format(lineup.possessions)}</td>
-                <td className="numeric quantity-cell">{lineup.games}</td>
+                {displayedMetricColumns.map((column) => {
+                  switch (column.key) {
+                    case "gestalt_score":
+                      return <td key={column.key} className={lineup.gestalt_score < 0 ? "negative numeric rating-cell edge-rating" : "positive numeric rating-cell edge-rating"}>{formatRating(lineup.gestalt_score)}</td>;
+                    case "offensive_edge":
+                      return <td key={column.key} className={optionalRatingClass(lineup.offensive_edge)}>{formatOptionalRating(lineup.offensive_edge)}</td>;
+                    case "defensive_edge":
+                      return <td key={column.key} className={optionalRatingClass(lineup.defensive_edge)}>{formatOptionalRating(lineup.defensive_edge)}</td>;
+                    case "player_edge":
+                      return <td key={column.key} className={lineup.player_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.player_edge)}</td>;
+                    case "context_edge":
+                      return <td key={column.key} className={lineup.context_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.context_edge)}</td>;
+                    case "actual_net_rating":
+                      return <td key={column.key} className={lineup.actual_net_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.actual_net_rating)}</td>;
+                    case "possessions":
+                      return <td key={column.key} className="numeric quantity-cell">{wholeNumber.format(lineup.possessions)}</td>;
+                    case "games":
+                      return <td key={column.key} className="numeric quantity-cell">{lineup.games}</td>;
+                    default:
+                      return null;
+                  }
+                })}
               </tr>)}
             </tbody>
           </table>
