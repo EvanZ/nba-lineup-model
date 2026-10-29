@@ -187,6 +187,7 @@ def reconstruct_lineups(
 
             before = state
             duplicate_team_ids = _idempotent_substitution_team_ids(before, batch)
+            reconciliation_issue: LineupIssue | None = None
             try:
                 after = _apply_substitution_batch(
                     before,
@@ -194,27 +195,39 @@ def reconstruct_lineups(
                     substitution_batch_id,
                 )
             except LineupReconstructionError as error:
-                if period_active or not _is_full_clock_period_boundary(batch):
+                reconciliation = _reconcile_repeated_outgoing_substitution(
+                    before,
+                    batch,
+                    earlier_events=ordered_events[:index],
+                    later_events=ordered_events[batch_end:],
+                    batch_id=substitution_batch_id,
+                )
+                if reconciliation is not None:
+                    after, reconciliation_issue = reconciliation
+                elif period_active or not _is_full_clock_period_boundary(batch):
                     raise LineupReconstructionError(
                         f"{error} at period {batch[0].period}, clock {batch[0].clock}"
                     ) from error
-                after = _reconcile_period_start_lineup(
-                    before,
-                    batch,
-                    ordered_events[batch_end:],
-                    substitution_batch_id,
-                )
-                issues.append(
-                    LineupIssue(
-                        code="period_start_lineup_reconciled",
-                        severity="warning",
-                        detail=(
-                            "An impossible full-clock substitution batch was "
-                            "reconciled from declared entrants and early period actors."
-                        ),
-                        event_id=batch[0].event_id,
+                else:
+                    after = _reconcile_period_start_lineup(
+                        before,
+                        batch,
+                        ordered_events[batch_end:],
+                        substitution_batch_id,
                     )
-                )
+                    issues.append(
+                        LineupIssue(
+                            code="period_start_lineup_reconciled",
+                            severity="warning",
+                            detail=(
+                                "An impossible full-clock substitution batch was "
+                                "reconciled from declared entrants and early period actors."
+                            ),
+                            event_id=batch[0].event_id,
+                        )
+                    )
+            if reconciliation_issue is not None:
+                issues.append(reconciliation_issue)
             if duplicate_team_ids:
                 issues.append(
                     LineupIssue(
@@ -504,6 +517,181 @@ def _idempotent_substitution_team_ids(
         and team_changes["out"].isdisjoint(lineups[team_id])
         and team_changes["in"] <= lineups[team_id]
     }
+
+
+def _reconcile_repeated_outgoing_substitution(
+    state: LineupState,
+    batch: Sequence[Event],
+    *,
+    earlier_events: Sequence[Event],
+    later_events: Sequence[Event],
+    batch_id: int,
+) -> tuple[LineupState, LineupIssue] | None:
+    """Repair one narrowly corroborated repeated-outgoing feed error.
+
+    Some feeds repeat the player who left in the prior one-for-one substitution
+    instead of naming that player's replacement as the next outgoing player.
+    We only reconcile that typo when later substitution chronology independently
+    confirms that both the repeated player and the replacement were off court.
+    """
+
+    lineups = {
+        state.home_team_id: set(state.home_player_ids),
+        state.away_team_id: set(state.away_player_ids),
+    }
+    changes = _substitution_changes(batch)
+    invalid_team_ids = []
+    for team_id, team_changes in changes.items():
+        lineup = lineups.get(team_id)
+        if lineup is None:
+            return None
+        cancelled = team_changes["out"] & team_changes["in"]
+        outgoing = team_changes["out"] - cancelled
+        incoming = team_changes["in"] - cancelled
+        if outgoing - lineup or incoming & lineup:
+            invalid_team_ids.append(team_id)
+    if len(invalid_team_ids) != 1:
+        return None
+
+    team_id = invalid_team_ids[0]
+    lineup = lineups[team_id]
+    team_changes = changes[team_id]
+    cancelled = team_changes["out"] & team_changes["in"]
+    outgoing = team_changes["out"] - cancelled
+    incoming = team_changes["in"] - cancelled
+    missing = outgoing - lineup
+    if len(outgoing) != 1 or len(incoming) != 1 or len(missing) != 1:
+        return None
+    repeated_player_id = next(iter(missing))
+    incoming_player_id = next(iter(incoming))
+    if incoming_player_id in lineup:
+        return None
+
+    replacement_player_id = _previous_direct_replacement(
+        earlier_events,
+        team_id=team_id,
+        outgoing_player_id=repeated_player_id,
+    )
+    if replacement_player_id is None or replacement_player_id not in lineup:
+        return None
+
+    repeated_next = _next_player_substitution(
+        later_events,
+        team_id=team_id,
+        player_id=repeated_player_id,
+    )
+    replacement_next = _next_player_substitution(
+        later_events,
+        team_id=team_id,
+        player_id=replacement_player_id,
+    )
+    if (
+        repeated_next is None
+        or repeated_next.event_subtype != "in"
+        or replacement_next is None
+        or replacement_next.event_subtype != "in"
+        or repeated_next.source_order_number >= replacement_next.source_order_number
+    ):
+        return None
+
+    repaired_batch = [
+        event.model_copy(update={"player_id": replacement_player_id})
+        if event.team_id == team_id
+        and event.player_id == repeated_player_id
+        and event.event_subtype == "out"
+        else event
+        for event in batch
+    ]
+    try:
+        after = _apply_substitution_batch(state, repaired_batch, batch_id)
+    except LineupReconstructionError:
+        return None
+
+    return after, LineupIssue(
+        code="repeated_outgoing_substitution_reconciled",
+        severity="warning",
+        detail=(
+            f"Feed repeated outgoing player {repeated_player_id}; reconciled team "
+            f"{team_id} as {replacement_player_id} out for {incoming_player_id} in. "
+            "The prior one-for-one replacement and both players' next substitution "
+            "events uniquely corroborate the correction."
+        ),
+        event_id=batch[0].event_id,
+        player_id=repeated_player_id,
+    )
+
+
+def _substitution_changes(
+    events: Sequence[Event],
+) -> dict[int, dict[str, set[int]]]:
+    changes: dict[int, dict[str, set[int]]] = {}
+    for event in events:
+        if (
+            event.event_type != "substitution"
+            or event.team_id is None
+            or event.player_id is None
+            or event.event_subtype not in {"in", "out"}
+        ):
+            continue
+        changes.setdefault(event.team_id, {"in": set(), "out": set()})[
+            event.event_subtype
+        ].add(event.player_id)
+    return changes
+
+
+def _previous_direct_replacement(
+    events: Sequence[Event],
+    *,
+    team_id: int,
+    outgoing_player_id: int,
+) -> int | None:
+    prior = next(
+        (
+            event
+            for event in reversed(events)
+            if event.event_type == "substitution"
+            and event.team_id == team_id
+            and event.player_id == outgoing_player_id
+        ),
+        None,
+    )
+    if prior is None or prior.event_subtype != "out":
+        return None
+    prior_batch = [
+        event
+        for event in events
+        if event.event_type == "substitution"
+        and event.team_id == team_id
+        and event.period == prior.period
+        and event.elapsed_game_seconds == prior.elapsed_game_seconds
+    ]
+    changes = _substitution_changes(prior_batch).get(team_id)
+    if changes is None:
+        return None
+    cancelled = changes["out"] & changes["in"]
+    outgoing = changes["out"] - cancelled
+    incoming = changes["in"] - cancelled
+    if outgoing != {outgoing_player_id} or len(incoming) != 1:
+        return None
+    return next(iter(incoming))
+
+
+def _next_player_substitution(
+    events: Sequence[Event],
+    *,
+    team_id: int,
+    player_id: int,
+) -> Event | None:
+    return next(
+        (
+            event
+            for event in events
+            if event.event_type == "substitution"
+            and event.team_id == team_id
+            and event.player_id == player_id
+        ),
+        None,
+    )
 
 
 def _is_full_clock_period_boundary(batch: Sequence[Event]) -> bool:

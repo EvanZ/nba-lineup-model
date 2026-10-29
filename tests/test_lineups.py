@@ -66,6 +66,123 @@ def test_reconstruction_rejects_subbing_out_player_not_on_court():
     assert "period 1, clock 10:00.00" in str(raised.value)
 
 
+def _repeated_outgoing_payload() -> dict:
+    payload = deepcopy(load_fixture("playbyplay_lineup_scenario.json"))
+    payload["game"]["actions"].extend(
+        [
+            {
+                "actionNumber": 14,
+                "orderNumber": 71000,
+                "period": 1,
+                "periodType": "REGULAR",
+                "clock": "PT09M00.00S",
+                "actionType": "substitution",
+                "subType": "out",
+                "teamId": 100,
+                "teamTricode": "HOM",
+                "personId": 105,
+                "possession": 100,
+                "scoreHome": "2",
+                "scoreAway": "0",
+                "description": "SUB out: H5 (repeated feed error)",
+            },
+            {
+                "actionNumber": 15,
+                "orderNumber": 72000,
+                "period": 1,
+                "periodType": "REGULAR",
+                "clock": "PT09M00.00S",
+                "actionType": "substitution",
+                "subType": "in",
+                "teamId": 100,
+                "teamTricode": "HOM",
+                "personId": 107,
+                "possession": 100,
+                "scoreHome": "2",
+                "scoreAway": "0",
+                "description": "SUB in: H7",
+            },
+            {
+                "actionNumber": 16,
+                "orderNumber": 73000,
+                "period": 1,
+                "periodType": "REGULAR",
+                "clock": "PT08M00.00S",
+                "actionType": "substitution",
+                "subType": "out",
+                "teamId": 100,
+                "teamTricode": "HOM",
+                "personId": 101,
+                "possession": 100,
+                "scoreHome": "2",
+                "scoreAway": "0",
+                "description": "SUB out: H1",
+            },
+            {
+                "actionNumber": 17,
+                "orderNumber": 74000,
+                "period": 1,
+                "periodType": "REGULAR",
+                "clock": "PT08M00.00S",
+                "actionType": "substitution",
+                "subType": "in",
+                "teamId": 100,
+                "teamTricode": "HOM",
+                "personId": 105,
+                "possession": 100,
+                "scoreHome": "2",
+                "scoreAway": "0",
+                "description": "SUB in: H5",
+            },
+        ]
+    )
+    for action in payload["game"]["actions"]:
+        if action["orderNumber"] == 90000:
+            action["personId"] = 102
+            action["description"] = "SUB out: H2"
+        elif action["orderNumber"] == 100000:
+            action["personId"] = 106
+            action["description"] = "SUB in: H6"
+    return payload
+
+
+def test_reconciles_repeated_outgoing_when_substitution_history_is_corroborated():
+    result = reconstruct_lineups(
+        canonical_events(_repeated_outgoing_payload()),
+        load_fixture("boxscore_lineup_scenario.json"),
+        validate_boxscore_minutes=False,
+    )
+
+    assignment = next(
+        row for row in result.event_lineups if row.source_order_number == 72000
+    )
+    assert assignment.lineup_before.home_player_ids == (101, 102, 103, 104, 106)
+    assert assignment.lineup_after.home_player_ids == (101, 102, 103, 104, 107)
+    issue = next(
+        row
+        for row in result.issues
+        if row.code == "repeated_outgoing_substitution_reconciled"
+    )
+    assert "105" in issue.detail
+    assert "106 out for 107 in" in issue.detail
+
+
+def test_does_not_guess_repeated_outgoing_without_future_corroboration():
+    payload = _repeated_outgoing_payload()
+    payload["game"]["actions"] = [
+        action
+        for action in payload["game"]["actions"]
+        if action["orderNumber"] not in {90000, 100000}
+    ]
+
+    with pytest.raises(LineupReconstructionError, match="not on court"):
+        reconstruct_lineups(
+            canonical_events(payload),
+            load_fixture("boxscore_lineup_scenario.json"),
+            validate_boxscore_minutes=False,
+        )
+
+
 def test_atomic_batch_cancels_player_subbed_in_and_back_out():
     payload = deepcopy(load_fixture("playbyplay_lineup_scenario.json"))
     actions = payload["game"]["actions"]
