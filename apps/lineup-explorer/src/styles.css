@@ -614,7 +614,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .rankings-table thead button { display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; font-size: inherit; font-weight: 800; text-transform: inherit; }
 .rankings-table thead button:hover { color: #245a47; }
 .movable-column-heading { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
-.column-drag-handle { display: inline-grid !important; width: 18px !important; height: 22px; flex: 0 0 18px; place-items: center; border-radius: 2px !important; color: #9a9f9a !important; cursor: grab; touch-action: none; }
+.column-drag-handle { display: inline-grid !important; width: 18px !important; height: 22px; flex: 0 0 18px; place-items: center; margin: 0; padding: 0 !important; border: 0 !important; border-radius: 2px !important; background: transparent !important; color: #9a9f9a !important; font: inherit; line-height: 1; cursor: grab; appearance: none; touch-action: none; }
 .column-drag-handle:hover, .column-drag-handle:focus-visible { background: #dce8db !important; color: #245a47 !important; outline: none; }
 .column-drag-handle:active { cursor: grabbing; }
 .column-drop-target { background: #edf2e9; box-shadow: inset 3px 0 0 #e8502f; }
