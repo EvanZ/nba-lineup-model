@@ -23,6 +23,7 @@ from nba_lineup_model.web_api.win_projections import (
     _team_win_totals,
     build_current_season_minutes_payload,
     build_current_season_win_projection_payload,
+    enrich_current_rotation_history,
     enrich_player_game_trajectory,
     fit_win_probability_scale,
     mirror_missing_frozen_pregame_snapshots,
@@ -763,6 +764,60 @@ def test_player_game_trajectory_uses_frozen_minutes_and_archived_box_score(
         "free_throws_attempted": 1,
         "plus_minus": -22,
     }
+
+
+def test_current_rotation_history_keeps_preseason_reference_and_updates_live_row() -> None:
+    profile: dict[str, object] = {
+        "rating_state": "in_season_updated",
+        "rating_season": "2026-27",
+        "rating_evidence_through_date": "2026-10-28",
+        "current_participation_estimate": 0.8,
+        "participation_observations": 4,
+        "minutes_role_observations": 3,
+        "current_expected_minutes_if_available": 31.5,
+        "rotation_history": [
+            {
+                "season": "2025-26",
+                "predicted_available_share": 0.75,
+                "predicted_minutes_per_available_game": 29.0,
+                "is_preseason_forecast": False,
+            },
+            {
+                "season": "2026-27",
+                "predicted_available_share": 0.9,
+                "predicted_minutes_per_available_game": 33.0,
+                "projected_total_minutes": 2200.0,
+                "actual_available_games": None,
+                "actual_minutes_per_available_game": None,
+                "actual_total_minutes": None,
+                "is_preseason_forecast": True,
+            },
+        ],
+    }
+    trajectory = [
+        {"source": "preseason"},
+        {"game_id": "1", "actual_minutes": 34.0},
+        {"game_id": "2", "actual_minutes": 0.0},
+        {"game_id": "3", "actual_minutes": 29.0},
+        {"game_id": "4", "actual_minutes": 0.0},
+    ]
+
+    history = enrich_current_rotation_history(profile, trajectory)
+
+    assert history[0] == profile["rotation_history"][0]
+    current = history[1]
+    assert current["preseason_predicted_available_share"] == pytest.approx(0.9)
+    assert current["preseason_predicted_minutes_per_available_game"] == pytest.approx(33.0)
+    assert current["predicted_available_share"] == pytest.approx(0.8)
+    assert current["predicted_minutes_per_available_game"] == pytest.approx(31.5)
+    assert current["actual_available_games"] == 3
+    assert current["known_roster_games"] == 4
+    assert current["actual_minutes_per_available_game"] == pytest.approx(21.0)
+    assert current["actual_total_minutes"] == pytest.approx(63.0)
+    assert current["is_preseason_forecast"] is False
+    assert current["is_current_season_update"] is True
+    assert current["evidence_through_date"] == "2026-10-28"
+    assert profile["rotation_history"][1]["predicted_minutes_per_available_game"] == 33.0
 
 
 def test_live_score_default_keeps_watching_unfinished_previous_date(tmp_path) -> None:

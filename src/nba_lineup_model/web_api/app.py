@@ -35,6 +35,7 @@ from nba_lineup_model.web_api.win_projections import (
     build_current_season_minutes_payload,
     build_current_season_win_projection_payload,
     build_win_projection_payload,
+    enrich_current_rotation_history,
     enrich_player_game_trajectory,
     read_current_season_records,
     read_schedule_day,
@@ -335,6 +336,10 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                     player_id=player_id,
                     player_name=str(profile.get("player_name", "")),
                     state_dir=state_dir,
+                )
+                profile["rotation_history"] = enrich_current_rotation_history(
+                    profile,
+                    profile["current_season_trajectory"],
                 )
             return profile
         except LineupEvaluationError as error:

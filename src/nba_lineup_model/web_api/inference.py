@@ -1150,6 +1150,8 @@ class LineupEvaluator:
                     "preseason_expected_minutes_if_available",
                     "minutes_role_observations",
                     "minutes_effective_observation_weight",
+                    "current_participation_estimate",
+                    "participation_observations",
                     "rating_evidence_through_date",
                     "rating_as_of_cutoff_time",
                     "rating_bundle_sha256",

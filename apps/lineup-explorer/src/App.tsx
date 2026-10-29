@@ -1095,11 +1095,11 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
         </div>
         <PlayerRotationHistoryChart player={player} />
         <p className="player-rating-path-note">
-          Solid marks are observed regular-season outcomes. Dashed traces are forecasts made before each season: available games are modeled separately from minutes per available game.
+          Solid marks are observed regular-season outcomes. Historical dashed traces are preseason forecasts; the 2026–27 endpoint updates nightly from the promoted minutes state while retaining its preseason baseline for comparison.
         </p>
         {isCompact ? <PlayerRotationHistoryCards rows={player.rotation_history ?? []} /> : <div className="player-history-table-wrap">
           <table className="player-history-table player-rotation-history-table">
-            <thead><tr><th>Season</th><th>Available G</th><th>Availability forecast</th><th>Observed MPG when available</th><th>FCM forecast</th><th>Total minutes</th></tr></thead>
+            <thead><tr><th>Season</th><th>Available G</th><th>Availability estimate</th><th>Observed MPG when available</th><th>Minutes estimate</th><th>Total minutes</th></tr></thead>
             <tbody>{[...(player.rotation_history ?? [])].reverse().map((row) => {
               const availableGames = row.actual_available_games === null
                 ? "-"
@@ -1113,13 +1113,21 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
               const forecastMinutes = row.predicted_minutes_per_available_game === null
                 ? "-"
                 : number.format(row.predicted_minutes_per_available_game);
-              const totalMinutes = row.actual_total_minutes ?? row.projected_total_minutes;
-              return <tr key={row.season} className={row.is_preseason_forecast ? "rotation-history-forecast-row" : undefined}>
-                <td>{row.season}</td>
+              const preseasonAvailabilityForecast = row.preseason_predicted_available_share === null || row.preseason_predicted_available_share === undefined
+                ? null
+                : `${number.format(row.preseason_predicted_available_share * 82)} G`;
+              const preseasonMinutesForecast = row.preseason_predicted_minutes_per_available_game === null || row.preseason_predicted_minutes_per_available_game === undefined
+                ? null
+                : number.format(row.preseason_predicted_minutes_per_available_game);
+              const totalMinutes = row.is_current_season_update
+                ? row.actual_total_minutes
+                : row.actual_total_minutes ?? row.projected_total_minutes;
+              return <tr key={row.season} className={row.is_current_season_update ? "rotation-history-current-row" : row.is_preseason_forecast ? "rotation-history-forecast-row" : undefined}>
+                <td>{row.season}{row.is_current_season_update && <small className="rotation-history-current-label">Current{row.evidence_through_date ? ` through ${row.evidence_through_date}` : ""}</small>}</td>
                 <td className="quantity-cell">{availableGames}</td>
-                <td className="rotation-forecast-cell">{availabilityForecast}</td>
+                <td className="rotation-forecast-cell"><span>{availabilityForecast}</span>{row.is_current_season_update && preseasonAvailabilityForecast && <small>Preseason {preseasonAvailabilityForecast}</small>}</td>
                 <td className="quantity-cell">{observedMinutes}</td>
-                <td className="rotation-forecast-cell">{forecastMinutes}</td>
+                <td className="rotation-forecast-cell"><span>{forecastMinutes}</span>{row.is_current_season_update && preseasonMinutesForecast && <small>Preseason {preseasonMinutesForecast}</small>}</td>
                 <td className="quantity-cell">{totalMinutes === null ? "-" : wholeNumber.format(totalMinutes)}</td>
               </tr>;
             })}</tbody>
@@ -1266,17 +1274,26 @@ function PlayerRotationHistoryCards({ rows }: { rows: RotationHistoryPoint[] }) 
         const forecastMinutes = row.predicted_minutes_per_available_game === null
           ? "-"
           : number.format(row.predicted_minutes_per_available_game);
-        const totalMinutes = row.actual_total_minutes ?? row.projected_total_minutes;
-        return <li className={row.is_preseason_forecast ? "player-history-mobile-card forecast" : "player-history-mobile-card"} key={row.season}>
+        const preseasonAvailabilityForecast = row.preseason_predicted_available_share === null || row.preseason_predicted_available_share === undefined
+          ? null
+          : `${number.format(row.preseason_predicted_available_share * 82)} G`;
+        const preseasonMinutesForecast = row.preseason_predicted_minutes_per_available_game === null || row.preseason_predicted_minutes_per_available_game === undefined
+          ? null
+          : number.format(row.preseason_predicted_minutes_per_available_game);
+        const totalMinutes = row.is_current_season_update
+          ? row.actual_total_minutes
+          : row.actual_total_minutes ?? row.projected_total_minutes;
+        return <li className={row.is_current_season_update ? "player-history-mobile-card current" : row.is_preseason_forecast ? "player-history-mobile-card forecast" : "player-history-mobile-card"} key={row.season}>
           <header className="player-history-mobile-header">
             <strong>{row.season}</strong>
             {row.is_preseason_forecast && <span className="player-history-mobile-forecast-label">Forecast</span>}
+            {row.is_current_season_update && <span className="player-history-mobile-forecast-label current">Current{row.evidence_through_date ? ` · ${row.evidence_through_date}` : ""}</span>}
           </header>
           <dl className="player-history-mobile-metrics">
             <div><dt>Available G</dt><dd>{availableGames}</dd></div>
-            <div className="forecast"><dt>Availability forecast</dt><dd>{availabilityForecast}</dd></div>
+            <div className="forecast"><dt>Availability estimate</dt><dd>{availabilityForecast}{row.is_current_season_update && preseasonAvailabilityForecast && <small>Preseason {preseasonAvailabilityForecast}</small>}</dd></div>
             <div><dt>MPG when available</dt><dd>{observedMinutes}</dd></div>
-            <div className="forecast"><dt>FCM forecast</dt><dd>{forecastMinutes}</dd></div>
+            <div className="forecast"><dt>Minutes estimate</dt><dd>{forecastMinutes}{row.is_current_season_update && preseasonMinutesForecast && <small>Preseason {preseasonMinutesForecast}</small>}</dd></div>
             <div className="player-history-mobile-total-minutes"><dt>Total minutes</dt><dd>{totalMinutes === null ? "-" : wholeNumber.format(totalMinutes)}</dd></div>
           </dl>
         </li>;
@@ -1307,6 +1324,7 @@ function PlayerRotationHistoryChart({ player }: { player: Player }) {
     ...points.flatMap((point) => [
       point.actual_minutes_per_available_game ?? 0,
       point.predicted_minutes_per_available_game ?? 0,
+      point.preseason_predicted_minutes_per_available_game ?? 0,
     ]),
   );
   const minutesCeiling = Math.ceil(maxMinutes / 5) * 5;
@@ -1340,7 +1358,8 @@ function PlayerRotationHistoryChart({ player }: { player: Player }) {
     <figure className="player-rotation-history-chart">
       <div className="rotation-history-legend" aria-label="Rotation history legend">
         <span><i className="rotation-history-swatch observed" />Observed</span>
-        <span><i className="rotation-history-swatch forecast" />Preseason forecast</span>
+        <span><i className="rotation-history-swatch forecast" />Forecast / current estimate</span>
+        <span><i className="rotation-history-swatch preseason-reference" />2026–27 preseason baseline</span>
       </div>
       <svg viewBox={`0 0 ${chartWidth} ${height}`} role="img" aria-label={`${player.player_name} availability and forward conditional minutes history`}>
         <title>{player.player_name} rotation history</title>
@@ -1377,6 +1396,17 @@ function PlayerRotationHistoryChart({ player }: { player: Player }) {
         ))}
         {availabilityForecast && <path className="rotation-history-forecast-line" d={availabilityForecast} />}
         {fcmForecast && <path className="rotation-history-forecast-line" d={fcmForecast} />}
+        {points.map((point, index) => !point.is_current_season_update || point.preseason_predicted_available_share === null || point.preseason_predicted_available_share === undefined ? null : (
+          <circle
+            key={`available-preseason-${point.season}`}
+            className="rotation-history-preseason-reference-point"
+            cx={x(index)}
+            cy={availabilityY(point.preseason_predicted_available_share * 82)}
+            r="4"
+          >
+            <title>{`${point.season} preseason baseline: ${number.format(point.preseason_predicted_available_share * 82)} available games`}</title>
+          </circle>
+        ))}
         {points.map((point, index) => point.predicted_available_share === null ? null : (
           <text
             key={`available-forecast-${point.season}`}
@@ -1406,6 +1436,17 @@ function PlayerRotationHistoryChart({ player }: { player: Player }) {
             </text>
           </g>
         ))}
+        {points.map((point, index) => !point.is_current_season_update || point.preseason_predicted_minutes_per_available_game === null || point.preseason_predicted_minutes_per_available_game === undefined ? null : (
+          <circle
+            key={`minutes-preseason-${point.season}`}
+            className="rotation-history-preseason-reference-point"
+            cx={x(index)}
+            cy={minutesY(point.preseason_predicted_minutes_per_available_game)}
+            r="4"
+          >
+            <title>{`${point.season} preseason baseline: ${number.format(point.preseason_predicted_minutes_per_available_game)} MPG when available`}</title>
+          </circle>
+        ))}
         {points.map((point, index) => point.predicted_minutes_per_available_game === null ? null : (
           <text
             key={`minutes-forecast-${point.season}`}
@@ -1427,7 +1468,7 @@ function PlayerRotationHistoryChart({ player }: { player: Player }) {
           </g>
         ))}
       </svg>
-      <figcaption>Observed availability counts rostered games with a known status. FCM is expected minutes per game conditional on being available.</figcaption>
+      <figcaption>Observed availability counts rostered games with a known status. The current-season availability and minutes estimates update after the nightly promoted slate; the hollow point preserves the frozen preseason baseline.</figcaption>
     </figure>
   );
 }

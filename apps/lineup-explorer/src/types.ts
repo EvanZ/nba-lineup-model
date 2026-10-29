@@ -101,6 +101,11 @@ export type Player = {
     predicted_minutes_per_available_game: number | null;
     projected_total_minutes: number | null;
     is_preseason_forecast: boolean;
+    preseason_predicted_available_share?: number | null;
+    preseason_predicted_minutes_per_available_game?: number | null;
+    preseason_projected_total_minutes?: number | null;
+    is_current_season_update?: boolean;
+    evidence_through_date?: string | null;
   }>;
   four_factor_history?: Array<{
     season: string;

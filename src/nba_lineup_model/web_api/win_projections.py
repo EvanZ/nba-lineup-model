@@ -1187,6 +1187,100 @@ def enrich_player_game_trajectory(
     return enriched
 
 
+def enrich_current_rotation_history(
+    profile: dict[str, object],
+    trajectory: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Overlay the promoted in-season minutes state onto the current history row.
+
+    Completed seasons remain immutable.  The current season keeps its frozen
+    preseason estimates as explicit reference fields while its observed totals
+    and updater estimates advance with the nightly promoted serving bundle.
+    """
+
+    raw_history = profile.get("rotation_history")
+    if not isinstance(raw_history, list):
+        return []
+    history = [dict(row) for row in raw_history if isinstance(row, dict)]
+    if profile.get("rating_state") != "in_season_updated":
+        return history
+
+    season = str(profile.get("rating_season", ""))
+    current = next((row for row in history if str(row.get("season")) == season), None)
+    if current is None:
+        return history
+
+    current.setdefault(
+        "preseason_predicted_available_share",
+        current.get("predicted_available_share"),
+    )
+    current.setdefault(
+        "preseason_predicted_minutes_per_available_game",
+        current.get("predicted_minutes_per_available_game"),
+    )
+    current.setdefault(
+        "preseason_projected_total_minutes",
+        current.get("projected_total_minutes"),
+    )
+
+    known_games = _integer_or_none(profile.get("participation_observations"))
+    available_games = _integer_or_none(profile.get("minutes_role_observations"))
+    current_availability = _float_or_none(profile.get("current_participation_estimate"))
+    current_minutes = _float_or_none(
+        profile.get("current_expected_minutes_if_available")
+    )
+    game_points = [
+        point
+        for point in trajectory
+        if point.get("game_id") not in {None, ""}
+    ]
+    actual_minutes = [_float_or_none(point.get("actual_minutes")) for point in game_points]
+    has_complete_minutes = bool(game_points) and all(
+        value is not None for value in actual_minutes
+    )
+    actual_total = (
+        sum(value for value in actual_minutes if value is not None)
+        if has_complete_minutes
+        else None
+    )
+
+    current.update(
+        {
+            "actual_available_games": available_games,
+            "known_roster_games": known_games,
+            "actual_availability_share": (
+                available_games / known_games
+                if available_games is not None
+                and known_games is not None
+                and known_games > 0
+                else None
+            ),
+            "actual_minutes_per_available_game": (
+                actual_total / available_games
+                if actual_total is not None
+                and available_games is not None
+                and available_games > 0
+                else None
+            ),
+            "actual_total_minutes": actual_total,
+            "predicted_available_share": (
+                current_availability
+                if current_availability is not None
+                else current.get("predicted_available_share")
+            ),
+            "predicted_minutes_per_available_game": (
+                current_minutes
+                if current_minutes is not None
+                else current.get("predicted_minutes_per_available_game")
+            ),
+            "is_preseason_forecast": False,
+            "is_current_season_update": True,
+            "evidence_through_date": profile.get("rating_evidence_through_date"),
+        }
+    )
+    return history
+
+
 def _decorate_player_game_point(
     point: dict[str, object],
     *,
