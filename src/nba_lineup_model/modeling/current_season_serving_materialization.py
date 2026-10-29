@@ -45,8 +45,20 @@ def materialize_current_season_serving(
         ("minutes", minutes_publication),
     ):
         coverage = publication.get("coverage")
-        if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) != 0:
-            raise ValueError(f"{label.title()} publication is not exclusion-free")
+        if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) < 0:
+            raise ValueError(f"{label.title()} publication coverage is invalid")
+    source_exclusions = {
+        "ratings": _publication_exclusions(
+            rating_publication,
+            root=rating_root,
+            summary_key="excluded_contributions",
+        ),
+        "minutes": _publication_exclusions(
+            minutes_publication,
+            root=minutes_root,
+            summary_key="excluded_games",
+        ),
+    }
 
     season = str(rating_publication.get("season", ""))
     if season != str(minutes_publication.get("season", "")):
@@ -120,6 +132,11 @@ def materialize_current_season_serving(
         minutes_source_uri=minutes_uri,
         rating_trajectory_path=rating_trajectory_path,
         rating_trajectory_source_uri=rating_trajectory_uri,
+        source_exclusions=source_exclusions,
+        source_coverage={
+            "ratings": dict(rating_publication["coverage"]),
+            "minutes": dict(minutes_publication["coverage"]),
+        },
     )
     promote_serving_bundle(bundle.path, root=output_root)
     return bundle.path
@@ -130,6 +147,42 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"Expected an object: {path}")
     return payload
+
+
+def _publication_exclusions(
+    publication: dict[str, Any],
+    *,
+    root: Path,
+    summary_key: str,
+) -> list[dict[str, str]]:
+    raw = publication.get("exclusions")
+    if raw is None:
+        through_date = str(publication.get("through_date", ""))
+        run_id = str(publication.get("dagster_run_id", ""))
+        summary_path = root / "runs" / f"through_date={through_date}" / run_id / "summary.json"
+        if through_date and run_id and summary_path.is_file():
+            summary = _load_json(summary_path)
+            raw = summary.get(summary_key, [])
+        else:
+            raw = []
+    if not isinstance(raw, list):
+        raise ValueError("Publication exclusions must be a list")
+    exclusions: list[dict[str, str]] = []
+    for issue in raw:
+        if not isinstance(issue, dict):
+            raise ValueError("Publication exclusion must be an object")
+        game_id = str(issue.get("game_id", "")).strip()
+        reason = str(issue.get("reason", "")).strip()
+        if not game_id or not reason:
+            raise ValueError("Publication exclusions require game_id and reason")
+        exclusions.append({"game_id": game_id, "reason": reason})
+    coverage = publication.get("coverage")
+    expected = int(coverage.get("excluded", -1)) if isinstance(coverage, dict) else -1
+    if expected < 0 or expected != len(exclusions):
+        raise ValueError(
+            "Publication exclusion count does not match its named quarantines"
+        )
+    return sorted(exclusions, key=lambda issue: (issue["game_id"], issue["reason"]))
 
 
 def _artifact_uri(publication: dict[str, Any], key: str) -> str:

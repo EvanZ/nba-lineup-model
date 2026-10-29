@@ -13,9 +13,13 @@ from typing import Annotated, Literal
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
+from nba_lineup_model.season.current_serving import (
+    REPORT_FILENAME,
+    resolve_latest_bundle,
+)
 from nba_lineup_model.web_api.inference import (
     MODEL_ARTIFACT,
     MODEL_DISPLAY_NAME,
@@ -190,6 +194,24 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             "lab_seasons": state.available_lab_seasons(),
             "current_season_state": state.current_season_metadata or None,
         }
+
+    @app.get("/api/reports/current-season")
+    def current_season_report() -> FileResponse:
+        """Serve the latest immutable daily updater audit as a browser report."""
+
+        root = Path(
+            os.environ.get(
+                "GESTALT_CURRENT_SEASON_SERVING_ROOT",
+                "/var/lib/nba-gestalt/current-season-serving",
+            )
+        )
+        try:
+            report_path = resolve_latest_bundle(root) / REPORT_FILENAME
+        except (FileNotFoundError, ValueError) as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if not report_path.is_file():
+            raise HTTPException(status_code=404, detail="Current-season report is missing")
+        return FileResponse(report_path, media_type="text/html")
 
     @app.get("/api/players")
     def search_players(

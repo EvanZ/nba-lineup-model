@@ -109,6 +109,10 @@ def load_current_season_serving_catalog(
         "source_game_ids": [str(game_id) for game_id in coverage["source_game_ids"]],
         "rating_updater_version": str(identity["sources"]["rating_state"]["updater_version"]),
         "minutes_updater_version": str(identity["sources"]["minutes_state"]["updater_version"]),
+        "data_quality": identity.get(
+            "data_quality",
+            {"status": "unknown", "issue_count": None},
+        ),
         "additive_profiles": "frozen_preseason",
         "offense_defense_split": "unavailable",
     }

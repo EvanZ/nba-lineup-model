@@ -96,6 +96,7 @@ def build_serving_state(
     evidence_through_date: date,
     as_of_cutoff_time: datetime,
     config: ServingPromotionConfig,
+    source_exclusions: dict[str, list[dict[str, str]]] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Validate and combine one synchronized rating/minutes state pair."""
 
@@ -128,8 +129,31 @@ def build_serving_state(
     minutes_games = _uniform_json_list(
         minutes_state, "included_game_ids_json", "minutes included games"
     )
-    if rating_games != minutes_games:
-        raise ValueError("Rating and minutes states do not contain the same finalized games")
+    exclusions = _normalize_source_exclusions(source_exclusions)
+    rating_quarantines = {
+        issue["game_id"] for issue in exclusions["ratings"]
+    }
+    minutes_quarantines = {
+        issue["game_id"] for issue in exclusions["minutes"]
+    }
+    missing_from_ratings = sorted(set(minutes_games) - set(rating_games))
+    missing_from_minutes = sorted(set(rating_games) - set(minutes_games))
+    unexplained_rating_gaps = sorted(set(missing_from_ratings) - rating_quarantines)
+    unexplained_minutes_gaps = sorted(set(missing_from_minutes) - minutes_quarantines)
+    if unexplained_rating_gaps or unexplained_minutes_gaps:
+        details: list[str] = []
+        if unexplained_rating_gaps:
+            details.append(
+                "missing from ratings without quarantine: "
+                + ", ".join(unexplained_rating_gaps)
+            )
+        if unexplained_minutes_gaps:
+            details.append(
+                "missing from minutes without quarantine: "
+                + ", ".join(unexplained_minutes_gaps)
+            )
+        raise ValueError("Child states have unexplained game gaps (" + "; ".join(details) + ")")
+    source_game_ids = sorted(set(rating_games) | set(minutes_games))
     rating_lineage = _uniform_json_list(
         rating_state, "contribution_lineage_json", "rating contribution lineage"
     )
@@ -243,7 +267,11 @@ def build_serving_state(
 
     serving = serving.sort_values("player_id", kind="stable").reset_index(drop=True)
     audit = {
-        "source_game_ids": rating_games,
+        "source_game_ids": source_game_ids,
+        "rating_source_game_ids": rating_games,
+        "minutes_source_game_ids": minutes_games,
+        "source_exclusions": exclusions,
+        "quality_issue_count": sum(len(issues) for issues in exclusions.values()),
         "rating_contribution_lineage": rating_lineage,
         "minutes_contribution_lineage": minutes_lineage,
         "rating_player_count": int(len(rating_state)),
@@ -269,6 +297,8 @@ def publish_serving_bundle(
     minutes_source_uri: str,
     rating_trajectory_path: Path | str | None = None,
     rating_trajectory_source_uri: str | None = None,
+    source_exclusions: dict[str, list[dict[str, str]]] | None = None,
+    source_coverage: dict[str, dict[str, int]] | None = None,
     generated_at: datetime | None = None,
 ) -> PublishedServingBundle:
     """Write one immutable serving bundle and return its validated identity."""
@@ -298,7 +328,10 @@ def publish_serving_bundle(
         evidence_through_date=evidence_through_date,
         as_of_cutoff_time=as_of_cutoff_time,
         config=config,
+        source_exclusions=source_exclusions,
     )
+    normalized_coverage = _normalize_source_coverage(source_coverage)
+    audit["source_coverage"] = normalized_coverage
     root_path = Path(root)
     staging = root_path / f".serving-bundle.tmp-{uuid4().hex}"
     staging.mkdir(parents=True)
@@ -356,10 +389,18 @@ def publish_serving_bundle(
             "coverage": {
                 "source_game_ids": audit["source_game_ids"],
                 "game_count": len(audit["source_game_ids"]),
+                "rating_source_game_ids": audit["rating_source_game_ids"],
+                "minutes_source_game_ids": audit["minutes_source_game_ids"],
                 "rating_player_count": audit["rating_player_count"],
                 "serving_player_count": audit["serving_player_count"],
                 "team_count": audit["team_count"],
                 "rating_team_mismatch_count": audit["rating_team_mismatch_count"],
+            },
+            "data_quality": {
+                "status": "warnings" if audit["quality_issue_count"] else "clean",
+                "issue_count": audit["quality_issue_count"],
+                "source_exclusions": audit["source_exclusions"],
+                "source_coverage": normalized_coverage,
             },
             "files": {
                 SERVING_STATE_FILENAME: state_sha,
@@ -668,6 +709,48 @@ def _render_report(
         "</tr>"
         for row in ranked.itertuples(index=False)
     )
+    issues = [
+        {"stage": stage, **issue}
+        for stage, stage_issues in audit["source_exclusions"].items()
+        for issue in stage_issues
+    ]
+    issue_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(str(issue['stage']))}</td>"
+        f"<td><code>{html.escape(str(issue['game_id']))}</code></td>"
+        f"<td>{html.escape(str(issue['reason']))}</td>"
+        "</tr>"
+        for issue in issues
+    )
+    quality = (
+        "<p class=\"warning\"><strong>Warnings present.</strong> "
+        "The games below were quarantined from the failing updater; other valid "
+        "games were published.</p>"
+        if issues
+        else "<p class=\"clean\"><strong>Clean run.</strong> No games were quarantined.</p>"
+    )
+    issues_table = (
+        '<table class="issues"><thead><tr><th>Stage</th><th>Game</th>'
+        f"<th>Error</th></tr></thead><tbody>{issue_rows}</tbody></table>"
+        if issues
+        else ""
+    )
+    coverage_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(stage)}</td>"
+        f"<td>{int(coverage.get('games', 0))}</td>"
+        f"<td>{int(coverage.get('contributions', coverage.get('player_game_rows', 0)))}</td>"
+        f"<td>{int(coverage.get('excluded', 0))}</td>"
+        "</tr>"
+        for stage, coverage in audit["source_coverage"].items()
+    )
+    coverage_table = (
+        "<table><thead><tr><th>Stage</th><th>Games</th>"
+        "<th>Contributions / player rows</th><th>Quarantined</th></tr></thead>"
+        f"<tbody>{coverage_rows}</tbody></table>"
+        if coverage_rows
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -684,6 +767,9 @@ table {{ width: 100%; border-collapse: collapse; background: #fff; margin-top: 2
 th, td {{ padding: 9px; border-bottom: 1px solid #ddd; text-align: right; }}
 th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) {{ text-align: left; }}
 code {{ font-size: 13px; }}
+.warning {{ border-left: 4px solid #b56b16; background: #fff2d7; padding: 12px 16px; }}
+.clean {{ border-left: 4px solid #287255; background: #e9f5ee; padding: 12px 16px; }}
+.issues th:nth-child(3), .issues td:nth-child(3) {{ text-align: left; white-space: normal; }}
 </style>
 </head>
 <body><main>
@@ -697,6 +783,10 @@ decompositions remain frozen.</p>
 <div class="card"><strong>{len(audit['source_game_ids'])}</strong>final games</div>
 <div class="card"><strong>{audit['rating_team_mismatch_count']}</strong>team audit differences</div>
 </div>
+<h2>Daily pipeline quality</h2>
+{quality}
+{coverage_table}
+{issues_table}
 <p><code>Preseason run: {html.escape(config.preseason_run_id)}</code></p>
 <table>
 <thead><tr><th>Player</th><th>Team</th><th>Preseason</th><th>Season delta</th>
@@ -704,6 +794,50 @@ decompositions remain frozen.</p>
 <tbody>{rows}</tbody>
 </table>
 </main></body></html>"""
+
+
+def _normalize_source_exclusions(
+    source_exclusions: dict[str, list[dict[str, str]]] | None,
+) -> dict[str, list[dict[str, str]]]:
+    normalized: dict[str, list[dict[str, str]]] = {"ratings": [], "minutes": []}
+    if source_exclusions is None:
+        return normalized
+    unknown = sorted(set(source_exclusions) - set(normalized))
+    if unknown:
+        raise ValueError("Unknown source-exclusion stages: " + ", ".join(unknown))
+    for stage in normalized:
+        issues = source_exclusions.get(stage, [])
+        if not isinstance(issues, list):
+            raise ValueError(f"{stage.title()} exclusions must be a list")
+        for issue in issues:
+            if not isinstance(issue, dict):
+                raise ValueError(f"{stage.title()} exclusion must be an object")
+            game_id = str(issue.get("game_id", "")).strip()
+            reason = str(issue.get("reason", "")).strip()
+            if not game_id or not reason:
+                raise ValueError(
+                    f"{stage.title()} exclusions require game_id and reason"
+                )
+            normalized[stage].append({"game_id": game_id, "reason": reason})
+        normalized[stage].sort(key=lambda issue: (issue["game_id"], issue["reason"]))
+    return normalized
+
+
+def _normalize_source_coverage(
+    source_coverage: dict[str, dict[str, int]] | None,
+) -> dict[str, dict[str, int]]:
+    if source_coverage is None:
+        return {}
+    normalized: dict[str, dict[str, int]] = {}
+    for stage, coverage in sorted(source_coverage.items()):
+        if stage not in {"ratings", "minutes"} or not isinstance(coverage, dict):
+            raise ValueError("Source coverage must contain ratings/minutes objects")
+        normalized[stage] = {}
+        for key, value in sorted(coverage.items()):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"Invalid {stage} coverage value: {key}")
+            normalized[stage][str(key)] = value
+    return normalized
 
 
 def _uniform_json_list(frame: pd.DataFrame, column: str, label: str) -> list[str]:

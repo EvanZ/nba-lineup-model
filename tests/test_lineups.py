@@ -60,8 +60,10 @@ def test_reconstruction_rejects_subbing_out_player_not_on_court():
     boxscore = load_fixture("boxscore_lineup_scenario.json")
     events[2] = events[2].model_copy(update={"player_id": 999})
 
-    with pytest.raises(LineupReconstructionError, match="not on court"):
+    with pytest.raises(LineupReconstructionError, match="not on court") as raised:
         reconstruct_lineups(events, boxscore)
+
+    assert "period 1, clock 10:00.00" in str(raised.value)
 
 
 def test_atomic_batch_cancels_player_subbed_in_and_back_out():

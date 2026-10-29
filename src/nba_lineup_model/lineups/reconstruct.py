@@ -193,9 +193,11 @@ def reconstruct_lineups(
                     batch,
                     substitution_batch_id,
                 )
-            except LineupReconstructionError:
+            except LineupReconstructionError as error:
                 if period_active or not _is_full_clock_period_boundary(batch):
-                    raise
+                    raise LineupReconstructionError(
+                        f"{error} at period {batch[0].period}, clock {batch[0].clock}"
+                    ) from error
                 after = _reconcile_period_start_lineup(
                     before,
                     batch,

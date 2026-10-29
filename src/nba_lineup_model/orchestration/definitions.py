@@ -927,6 +927,7 @@ def update_in_season_nail_production_op(
             "contributions": result["contribution_count"],
             "excluded": len(result["excluded_contributions"]),
         },
+        "exclusions": result["excluded_contributions"],
     }
     publication_bytes = (
         json.dumps(publication, indent=2, sort_keys=True) + "\n"
@@ -1162,6 +1163,14 @@ def update_in_season_minutes_production_op(
     )
 
     through_date = str(context.op_config["through_date"])
+    rating_publication = json.loads(
+        (_in_season_nail_root() / "latest.json").read_text()
+    )
+    rating_exclusions = _publication_exclusions(
+        rating_publication,
+        root=_in_season_nail_root(),
+        summary_key="excluded_contributions",
+    )
     root = _in_season_minutes_root()
     output_dir = root / "runs" / f"through_date={through_date}" / context.run_id
     result = run(
@@ -1184,10 +1193,8 @@ def update_in_season_minutes_production_op(
             cdn_lake_uri=_cdn_lake_uri(),
             cache_dir=root,
             output_dir=output_dir,
+            upstream_rating_exclusions=rating_exclusions,
         )
-    )
-    rating_publication = json.loads(
-        (_in_season_nail_root() / "latest.json").read_text()
     )
     input_rating_artifacts = {
         "player_state": _published_artifact_uri(rating_publication, "player_state"),
@@ -1272,6 +1279,8 @@ def update_in_season_minutes_production_op(
             "player_game_rows": result["player_game_rows"],
             "excluded": len(result["excluded_games"]),
         },
+        "exclusions": result["excluded_games"],
+        "upstream_exclusions": result["upstream_exclusions"],
         "player_metrics": result["player_metrics"],
         "four_cell_game_metrics": result["four_cell_game_metrics"],
         "minutes_ab_game_metrics": result["minutes_ab_game_metrics"],
@@ -1351,8 +1360,8 @@ def _in_season_minutes_production_config(through_date: str) -> dict[str, object]
     minimum_interval_seconds=900,
     default_status=SENSOR_DEFAULT_STATUS,
     description=(
-        "Advance production minutes immediately after a new exclusion-free ratings "
-        "publication; equivalent queued or active work is suppressed."
+        "Advance production minutes after a new ratings publication, carrying any "
+        "quarantined-game warnings forward; equivalent work is suppressed."
     ),
 )
 def in_season_minutes_production_sensor(
@@ -1373,8 +1382,16 @@ def in_season_minutes_production_sensor(
         return SkipReason(f"Production ratings publication is invalid: {error}")
     if not isinstance(rating_coverage, dict) or int(
         rating_coverage.get("excluded", -1)
-    ):
-        return SkipReason("Production ratings publication has exclusions")
+    ) < 0:
+        return SkipReason("Production ratings publication coverage is invalid")
+    try:
+        _publication_exclusions(
+            rating_publication,
+            root=_in_season_nail_root(),
+            summary_key="excluded_contributions",
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        return SkipReason(f"Production ratings quarantine inventory is invalid: {error}")
 
     minutes_path = _in_season_minutes_root() / "latest.json"
     if minutes_path.is_file():
@@ -1508,6 +1525,46 @@ def _published_artifact_uri(publication: dict[str, object], label: str) -> str:
     if not isinstance(uri, str) or not uri.startswith("s3://"):
         raise ValueError(f"Child publication artifact is invalid: {label}")
     return uri
+
+
+def _publication_exclusions(
+    publication: dict[str, object],
+    *,
+    root: Path,
+    summary_key: str,
+) -> list[dict[str, str]]:
+    """Load named quarantines, including publications created before they were embedded."""
+
+    raw = publication.get("exclusions")
+    if raw is None:
+        through_date = str(publication.get("through_date", ""))
+        run_id = str(publication.get("dagster_run_id", ""))
+        summary_path = (
+            root / "runs" / f"through_date={through_date}" / run_id / "summary.json"
+        )
+        if through_date and run_id and summary_path.is_file():
+            summary = json.loads(summary_path.read_text())
+            raw = summary.get(summary_key, []) if isinstance(summary, dict) else []
+        else:
+            raw = []
+    if not isinstance(raw, list):
+        raise ValueError("Publication exclusions must be a list")
+    exclusions: list[dict[str, str]] = []
+    for issue in raw:
+        if not isinstance(issue, dict):
+            raise ValueError("Publication exclusion must be an object")
+        game_id = str(issue.get("game_id", "")).strip()
+        reason = str(issue.get("reason", "")).strip()
+        if not game_id or not reason:
+            raise ValueError("Publication exclusions require game_id and reason")
+        exclusions.append({"game_id": game_id, "reason": reason})
+    coverage = publication.get("coverage")
+    expected = int(coverage.get("excluded", -1)) if isinstance(coverage, dict) else -1
+    if expected < 0 or expected != len(exclusions):
+        raise ValueError(
+            "Publication exclusion count does not match its named quarantines"
+        )
+    return sorted(exclusions, key=lambda issue: (issue["game_id"], issue["reason"]))
 
 
 def _published_file_digest(uri: str, *, label: str, suffix: str) -> str:
@@ -1648,10 +1705,20 @@ def promote_current_season_serving_op(
         ("minutes", minutes_publication),
     ):
         coverage = publication.get("coverage")
-        if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) != 0:
-            raise ValueError(
-                f"{label.title()} publication has exclusions or invalid coverage"
-            )
+        if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) < 0:
+            raise ValueError(f"{label.title()} publication coverage is invalid")
+    source_exclusions = {
+        "ratings": _publication_exclusions(
+            rating_publication,
+            root=_in_season_nail_root(),
+            summary_key="excluded_contributions",
+        ),
+        "minutes": _publication_exclusions(
+            minutes_publication,
+            root=_in_season_minutes_root(),
+            summary_key="excluded_games",
+        ),
+    }
     (
         rating_path,
         minutes_path,
@@ -1694,6 +1761,11 @@ def promote_current_season_serving_op(
         minutes_source_uri=minutes_uri,
         rating_trajectory_path=rating_trajectory_path,
         rating_trajectory_source_uri=rating_trajectory_uri,
+        source_exclusions=source_exclusions,
+        source_coverage={
+            "ratings": dict(rating_publication["coverage"]),
+            "minutes": dict(minutes_publication["coverage"]),
+        },
     )
     store = AwsCliImmutableObjectStore()
     base_uri = _join_s3_uri(
@@ -1739,6 +1811,9 @@ def promote_current_season_serving_op(
             "players": int(coverage["serving_player_count"]),
             "teams": int(coverage["team_count"]),
             "games": int(coverage["game_count"]),
+            "quality_issues": int(
+                bundle.manifest["identity"]["data_quality"]["issue_count"]
+            ),
             "created": bundle.created,
             "promoted": promoted,
             "manifest": MetadataValue.url(published[MANIFEST_FILENAME]),
@@ -1782,8 +1857,8 @@ def _current_season_serving_config(through_date: str) -> dict[str, object]:
     minimum_interval_seconds=900,
     default_status=SENSOR_DEFAULT_STATUS,
     description=(
-        "Promote one current-season serving bundle after matching, exclusion-free "
-        "production ratings and minutes publications are complete."
+        "Promote one current-season serving bundle after matching production ratings "
+        "and minutes publications are complete, retaining named quarantines."
     ),
 )
 def current_season_serving_sensor(
@@ -1804,8 +1879,22 @@ def current_season_serving_sensor(
         ("minutes", minutes_publication),
     ):
         coverage = publication.get("coverage")
-        if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) != 0:
-            return SkipReason(f"{label.title()} publication is not exclusion-free")
+        if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) < 0:
+            return SkipReason(f"{label.title()} publication coverage is invalid")
+        try:
+            _publication_exclusions(
+                publication,
+                root=(
+                    _in_season_nail_root()
+                    if label == "ratings"
+                    else _in_season_minutes_root()
+                ),
+                summary_key=(
+                    "excluded_contributions" if label == "ratings" else "excluded_games"
+                ),
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            return SkipReason(f"{label.title()} quarantine inventory is invalid: {error}")
     try:
         rating_uri = _published_artifact_uri(rating_publication, "player_state")
         trajectory_uri = _published_artifact_uri(

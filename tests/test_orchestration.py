@@ -381,7 +381,13 @@ def test_minutes_sensor_rebuilds_when_updater_version_changes(
         json.dumps(
             {
                 "through_date": through_date,
-                "coverage": {"excluded": 0},
+                "coverage": {"excluded": 1},
+                "exclusions": [
+                    {
+                        "game_id": "0022600998",
+                        "reason": "invalid substitution sequence",
+                    }
+                ],
                 "artifacts": rating_inputs,
             }
         )
@@ -535,6 +541,29 @@ def test_current_season_serving_sensor_uses_child_state_identity(
     ).hexdigest()[:16]
     assert result.run_key == f"current-season-serving:2026-10-26:{snapshot}"
     assert result.tags["gestalt/serving_snapshot"] == snapshot
+
+
+def test_current_season_serving_sensor_accepts_named_quarantine(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_current_season_child_publications(tmp_path)
+    rating_path = tmp_path / "rating" / "latest.json"
+    rating = json.loads(rating_path.read_text())
+    rating["coverage"]["excluded"] = 1
+    rating["exclusions"] = [
+        {"game_id": "0022600003", "reason": "invalid substitution sequence"}
+    ]
+    rating_path.write_text(json.dumps(rating))
+    monkeypatch.setenv("GESTALT_IN_SEASON_NAIL_ROOT", str(tmp_path / "rating"))
+    monkeypatch.setenv("GESTALT_IN_SEASON_MINUTES_ROOT", str(tmp_path / "minutes"))
+    monkeypatch.setenv("GESTALT_CURRENT_SEASON_SERVING_ROOT", str(tmp_path / "serving"))
+
+    result = current_season_serving_sensor(
+        build_sensor_context(instance=DagsterInstance.ephemeral())
+    )
+
+    assert result.run_key.startswith("current-season-serving:2026-10-26:")
 
 
 def test_current_season_serving_sensor_suppresses_equivalent_inflight_run(

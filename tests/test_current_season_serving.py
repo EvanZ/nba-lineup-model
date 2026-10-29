@@ -128,11 +128,11 @@ def test_build_serving_state_preserves_zero_evidence_priors() -> None:
     assert audit["team_count"] == 2
 
 
-def test_build_serving_state_rejects_desynchronized_games() -> None:
+def test_build_serving_state_rejects_unexplained_desynchronized_games() -> None:
     minutes = _minutes_state()
     minutes["included_game_ids_json"] = json.dumps(["0022600001"])
 
-    with pytest.raises(ValueError, match="same finalized games"):
+    with pytest.raises(ValueError, match="unexplained game gaps"):
         build_serving_state(
             _rating_state(),
             minutes,
@@ -141,6 +141,70 @@ def test_build_serving_state_rejects_desynchronized_games() -> None:
             as_of_cutoff_time=CUTOFF,
             config=CONFIG,
         )
+
+
+def test_build_serving_state_allows_named_game_quarantine() -> None:
+    minutes = _minutes_state()
+    minutes["included_game_ids_json"] = json.dumps(["0022600001"])
+
+    _, audit = build_serving_state(
+        _rating_state(),
+        minutes,
+        season=SEASON,
+        evidence_through_date=date(2026, 10, 26),
+        as_of_cutoff_time=CUTOFF,
+        config=CONFIG,
+        source_exclusions={
+            "ratings": [],
+            "minutes": [
+                {
+                    "game_id": "0022600002",
+                    "reason": "invalid substitution sequence",
+                }
+            ],
+        },
+    )
+
+    assert audit["source_game_ids"] == ["0022600001", "0022600002"]
+    assert audit["quality_issue_count"] == 1
+
+
+def test_daily_report_surfaces_quarantined_game(tmp_path: Path) -> None:
+    rating, minutes = _write_sources(tmp_path)
+    frame = pd.read_parquet(minutes)
+    frame["included_game_ids_json"] = json.dumps(["0022600001"])
+    frame.to_parquet(minutes, index=False)
+
+    bundle = publish_serving_bundle(
+        rating,
+        minutes,
+        root=tmp_path / "serving",
+        season=SEASON,
+        evidence_through_date=date(2026, 10, 26),
+        as_of_cutoff_time=CUTOFF,
+        config=CONFIG,
+        rating_source_uri="rating",
+        minutes_source_uri="minutes",
+        source_exclusions={
+            "ratings": [],
+            "minutes": [
+                {
+                    "game_id": "0022600002",
+                    "reason": "invalid substitution sequence",
+                }
+            ],
+        },
+        source_coverage={
+            "ratings": {"games": 2, "excluded": 0},
+            "minutes": {"games": 2, "excluded": 1},
+        },
+    )
+
+    report = (bundle.path / REPORT_FILENAME).read_text()
+    assert "Daily pipeline quality" in report
+    assert "0022600002" in report
+    assert "invalid substitution sequence" in report
+    assert bundle.manifest["identity"]["data_quality"]["status"] == "warnings"
 
 
 def test_publish_serving_bundle_is_content_addressed_and_idempotent(
