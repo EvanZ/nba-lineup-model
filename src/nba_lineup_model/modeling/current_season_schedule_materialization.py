@@ -58,7 +58,7 @@ def materialize_current_season_schedule(
     minutes_publication_path = minutes_root / "latest.json"
     rating_publication = _load_object(rating_publication_path)
     minutes_publication = _load_object(minutes_publication_path)
-    _validate_publications(
+    quarantines = _validate_publications(
         rating_publication,
         minutes_publication,
         rating_root=rating_root,
@@ -93,6 +93,7 @@ def materialize_current_season_schedule(
         "minutes_manifest_sha256": _sha256(minutes_publication_path),
         "game_evaluation_sha256": _sha256(game_path),
         "player_evaluation_sha256": _sha256(player_path),
+        "quarantined_games": quarantines,
         "current_serving_bundle_sha256": (
             _forecast_bundle_sha256(current_forecast_response)
             if current_forecast_response is not None
@@ -119,6 +120,7 @@ def materialize_current_season_schedule(
                 minutes_publication_path=minutes_publication_path,
                 identity=identity,
                 identity_payload=identity_payload,
+                quarantines=quarantines,
                 current_forecast_response=current_forecast_response,
             )
             staging.replace(release_path)
@@ -142,6 +144,7 @@ def _build_release(
     minutes_publication_path: Path,
     identity: str,
     identity_payload: dict[str, Any],
+    quarantines: dict[str, list[dict[str, str]]],
     current_forecast_response: dict[str, Any] | None,
 ) -> None:
     staging.mkdir(parents=True)
@@ -292,6 +295,7 @@ def _build_release(
             forecast_response=current_forecast_response,
             through_date=str(minutes_publication["through_date"]),
             identity=identity,
+            quarantines=quarantines,
         )
 
     manifest = {
@@ -304,7 +308,14 @@ def _build_release(
         "coverage": {
             "evaluation_games": int(len(games)),
             "replayed_games": len(replayed),
-            "cutoff_state_reforecast_games": len(boundary_reforecasts),
+            "cutoff_state_reforecast_games": sum(
+                row.get("replay_method") != "quarantined_original"
+                for row in boundary_reforecasts
+            ),
+            "quarantined_fallback_games": sum(
+                row.get("replay_method") == "quarantined_original"
+                for row in boundary_reforecasts
+            ),
             "replayed_final_games": len(replayed)
             + sum(bool(row["completed"]) for row in boundary_reforecasts),
             "skipped_games": len(skipped),
@@ -313,8 +324,8 @@ def _build_release(
         "cutoff_state_reforecasts": boundary_reforecasts,
         "skipped": skipped,
         "fallback_policy": (
-            "Games not covered by the strict-forward evaluation retain their original "
-            "published Schedule snapshot."
+            "Only games named in the updater quarantine inventory may retain their "
+            "original published Schedule snapshot at or before the cutoff."
         ),
     }
     _write_json(staging / "manifest.json", manifest)
@@ -328,6 +339,7 @@ def _reforecast_uncovered_frozen_games(
     forecast_response: dict[str, Any],
     through_date: str,
     identity: str,
+    quarantines: dict[str, list[dict[str, str]]],
 ) -> list[dict[str, Any]]:
     forecast = forecast_response.get("win_projection")
     if not isinstance(forecast, dict):
@@ -363,6 +375,39 @@ def _reforecast_uncovered_frozen_games(
 
             game_date = pacific_date(start_time).isoformat()
         if game_date <= through_date:
+            if game_id in quarantines:
+                espn_game_id = str(source_pregame["espn_game_id"])
+                _write_json(
+                    staging / "as-published" / "frozen" / f"{espn_game_id}.json",
+                    source_pregame,
+                )
+                source_summary_path = (
+                    source_root / "final" / f"{espn_game_id}.summary.json"
+                )
+                completed = source_summary_path.is_file()
+                if completed:
+                    _write_json(
+                        staging / "as-published" / "final" / source_summary_path.name,
+                        _load_object(source_summary_path),
+                    )
+                output.append(
+                    {
+                        "game_id": game_id,
+                        "espn_game_id": espn_game_id,
+                        "game_date": game_date,
+                        "away_team": str(source_pregame["away_team"]),
+                        "home_team": str(source_pregame["home_team"]),
+                        "completed": completed,
+                        "evidence_through_date": through_date,
+                        "replay_method": "quarantined_original",
+                        "quarantine_issues": quarantines[game_id],
+                        "original_pregame_sha256": _object_sha256(source_pregame),
+                        "replay_pregame_sha256": _sha256(
+                            staging / "frozen" / f"{espn_game_id}.json"
+                        ),
+                    }
+                )
+                continue
             raise ValueError(
                 f"Frozen game {game_id} is at or before the updater cutoff but was not evaluated"
             )
@@ -769,7 +814,8 @@ def _validate_publications(
     *,
     rating_root: Path,
     minutes_root: Path,
-) -> None:
+) -> dict[str, list[dict[str, str]]]:
+    quarantines: dict[str, list[dict[str, str]]] = {}
     for label, publication, root, summary_key in (
         ("rating", ratings, rating_root, "excluded_contributions"),
         ("minutes", minutes, minutes_root, "excluded_games"),
@@ -777,17 +823,21 @@ def _validate_publications(
         coverage = publication.get("coverage")
         if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) < 0:
             raise ValueError(f"{label.title()} publication coverage is invalid")
-        _publication_exclusions(
+        for issue in _publication_exclusions(
             publication,
             root=root,
             summary_key=summary_key,
-        )
+        ):
+            quarantines.setdefault(issue["game_id"], []).append(
+                {"stage": label, "reason": issue["reason"]}
+            )
     if ratings.get("season") != minutes.get("season"):
         raise ValueError("Rating and minutes publication seasons do not match")
     if ratings.get("through_date") != minutes.get("through_date"):
         raise ValueError("Rating and minutes publication dates do not match")
     if not minutes.get("dagster_run_id"):
         raise ValueError("Minutes publication has no Dagster run ID")
+    return quarantines
 
 
 def _validate_forecast_schedule_contract(forecast: dict[str, Any]) -> None:

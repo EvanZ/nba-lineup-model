@@ -9,6 +9,7 @@ import pytest
 
 from nba_lineup_model.modeling.current_season_schedule_materialization import (
     _reforecast_pregame_from_current_state,
+    _reforecast_uncovered_frozen_games,
     _schedule_source_sha256,
     _validate_forecast_schedule_contract,
     _validate_player_evaluation,
@@ -24,6 +25,52 @@ def _sha256(path: Path) -> str:
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def test_quarantined_cutoff_game_retains_original_snapshot(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    staging = tmp_path / "staging"
+    pregame = {
+        "game_id": "0022600142",
+        "espn_game_id": "401909891",
+        "game_date": "2026-10-28",
+        "away_team": "OKC",
+        "home_team": "DAL",
+    }
+    source_path = source / "frozen" / "401909891.json"
+    staging_path = staging / "frozen" / "401909891.json"
+    _write_json(source_path, pregame)
+    _write_json(staging_path, pregame)
+
+    rows = _reforecast_uncovered_frozen_games(
+        staging=staging,
+        source_root=source,
+        replayed_game_ids=set(),
+        forecast_response={
+            "win_projection": {
+                "scheduled_games": [],
+                "win_probability_scale": 0.1,
+                "home_court": 2.0,
+                "back_to_back": -1.0,
+            },
+            "players": [],
+        },
+        through_date="2026-10-28",
+        identity="test-identity",
+        quarantines={
+            "0022600142": [
+                {
+                    "stage": "rating",
+                    "reason": "invalid substitution sequence",
+                }
+            ]
+        },
+    )
+
+    assert rows[0]["replay_method"] == "quarantined_original"
+    assert rows[0]["completed"] is False
+    assert rows[0]["quarantine_issues"][0]["stage"] == "rating"
+    assert (staging / "as-published" / "frozen" / "401909891.json").is_file()
 
 
 def test_materializes_strict_forward_schedule_without_mutating_source(
