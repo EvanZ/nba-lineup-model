@@ -104,10 +104,10 @@ def _repeated_outgoing_payload() -> dict:
             },
             {
                 "actionNumber": 16,
-                "orderNumber": 73000,
+                "orderNumber": 71500,
                 "period": 1,
                 "periodType": "REGULAR",
-                "clock": "PT08M00.00S",
+                "clock": "PT09M00.00S",
                 "actionType": "substitution",
                 "subType": "out",
                 "teamId": 100,
@@ -120,6 +120,38 @@ def _repeated_outgoing_payload() -> dict:
             },
             {
                 "actionNumber": 17,
+                "orderNumber": 72500,
+                "period": 1,
+                "periodType": "REGULAR",
+                "clock": "PT09M00.00S",
+                "actionType": "substitution",
+                "subType": "in",
+                "teamId": 100,
+                "teamTricode": "HOM",
+                "personId": 108,
+                "possession": 100,
+                "scoreHome": "2",
+                "scoreAway": "0",
+                "description": "SUB in: H8",
+            },
+            {
+                "actionNumber": 18,
+                "orderNumber": 73000,
+                "period": 1,
+                "periodType": "REGULAR",
+                "clock": "PT08M00.00S",
+                "actionType": "substitution",
+                "subType": "out",
+                "teamId": 100,
+                "teamTricode": "HOM",
+                "personId": 102,
+                "possession": 100,
+                "scoreHome": "2",
+                "scoreAway": "0",
+                "description": "SUB out: H2",
+            },
+            {
+                "actionNumber": 19,
                 "orderNumber": 74000,
                 "period": 1,
                 "periodType": "REGULAR",
@@ -138,8 +170,8 @@ def _repeated_outgoing_payload() -> dict:
     )
     for action in payload["game"]["actions"]:
         if action["orderNumber"] == 90000:
-            action["personId"] = 102
-            action["description"] = "SUB out: H2"
+            action["personId"] = 103
+            action["description"] = "SUB out: H3"
         elif action["orderNumber"] == 100000:
             action["personId"] = 106
             action["description"] = "SUB in: H6"
@@ -157,14 +189,15 @@ def test_reconciles_repeated_outgoing_when_substitution_history_is_corroborated(
         row for row in result.event_lineups if row.source_order_number == 72000
     )
     assert assignment.lineup_before.home_player_ids == (101, 102, 103, 104, 106)
-    assert assignment.lineup_after.home_player_ids == (101, 102, 103, 104, 107)
+    assert assignment.lineup_after.home_player_ids == (102, 103, 104, 107, 108)
     issue = next(
         row
         for row in result.issues
         if row.code == "repeated_outgoing_substitution_reconciled"
     )
     assert "105" in issue.detail
-    assert "106 out for 107 in" in issue.detail
+    assert "entry with 106" in issue.detail
+    assert "[107, 108]" in issue.detail
 
 
 def test_does_not_guess_repeated_outgoing_without_future_corroboration():

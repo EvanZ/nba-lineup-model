@@ -560,19 +560,25 @@ def _reconcile_repeated_outgoing_substitution(
     outgoing = team_changes["out"] - cancelled
     incoming = team_changes["in"] - cancelled
     missing = outgoing - lineup
-    if len(outgoing) != 1 or len(incoming) != 1 or len(missing) != 1:
+    if (
+        len(missing) != 1
+        or not outgoing
+        or len(outgoing) != len(incoming)
+        or incoming & lineup
+    ):
         return None
     repeated_player_id = next(iter(missing))
-    incoming_player_id = next(iter(incoming))
-    if incoming_player_id in lineup:
-        return None
 
     replacement_player_id = _previous_direct_replacement(
         earlier_events,
         team_id=team_id,
         outgoing_player_id=repeated_player_id,
     )
-    if replacement_player_id is None or replacement_player_id not in lineup:
+    if (
+        replacement_player_id is None
+        or replacement_player_id not in lineup
+        or replacement_player_id in outgoing
+    ):
         return None
 
     repeated_next = _next_player_substitution(
@@ -612,7 +618,8 @@ def _reconcile_repeated_outgoing_substitution(
         severity="warning",
         detail=(
             f"Feed repeated outgoing player {repeated_player_id}; reconciled team "
-            f"{team_id} as {replacement_player_id} out for {incoming_player_id} in. "
+            f"{team_id} by replacing that outgoing entry with "
+            f"{replacement_player_id}; incoming players were {sorted(incoming)}. "
             "The prior one-for-one replacement and both players' next substitution "
             "events uniquely corroborate the correction."
         ),
