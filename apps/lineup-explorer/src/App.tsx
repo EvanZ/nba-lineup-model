@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { BlockMath } from "react-katex";
 import { trackPageView } from "./analytics";
 import { RosterMovesPage } from "./RosterMovesPage";
@@ -19,8 +20,10 @@ import {
   Dices,
   Download,
   GitBranch,
+  GripVertical,
   Info,
   LoaderCircle,
+  RotateCcw,
   Search,
   Sparkles,
   Trash2,
@@ -99,6 +102,76 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
 
 const number = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
 const wholeNumber = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+function normalizeColumnOrder<Key extends string>(
+  storedOrder: unknown,
+  defaultOrder: readonly Key[],
+) {
+  if (!Array.isArray(storedOrder)) return [...defaultOrder];
+  const allowed = new Set<string>(defaultOrder);
+  const normalized = storedOrder.filter(
+    (key, index): key is Key => typeof key === "string"
+      && allowed.has(key)
+      && storedOrder.indexOf(key) === index,
+  );
+  return [...normalized, ...defaultOrder.filter((key) => !normalized.includes(key))];
+}
+
+function usePersistedColumnOrder<Key extends string>(
+  storageKey: string,
+  defaultOrder: readonly Key[],
+) {
+  const [order, setOrder] = useState<Key[]>(() => {
+    if (typeof window === "undefined") return [...defaultOrder];
+    try {
+      const stored = window.localStorage.getItem(storageKey);
+      return normalizeColumnOrder(stored ? JSON.parse(stored) : null, defaultOrder);
+    } catch {
+      return [...defaultOrder];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(order));
+    } catch {
+      // A private browsing policy can disable local storage; column movement still works.
+    }
+  }, [order, storageKey]);
+
+  function moveColumn(source: Key, target: Key) {
+    if (source === target) return;
+    setOrder((current) => {
+      const withoutSource = current.filter((key) => key !== source);
+      const targetIndex = withoutSource.indexOf(target);
+      if (targetIndex < 0) return current;
+      withoutSource.splice(targetIndex, 0, source);
+      return withoutSource;
+    });
+  }
+
+  function moveColumnBy(source: Key, offset: -1 | 1) {
+    setOrder((current) => {
+      const sourceIndex = current.indexOf(source);
+      const targetIndex = sourceIndex + offset;
+      if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= current.length) return current;
+      const next = [...current];
+      [next[sourceIndex], next[targetIndex]] = [next[targetIndex], next[sourceIndex]];
+      return next;
+    });
+  }
+
+  const isDefault = order.length === defaultOrder.length
+    && order.every((key, index) => key === defaultOrder[index]);
+
+  return {
+    order,
+    moveColumn,
+    moveColumnBy,
+    resetColumnOrder: () => setOrder([...defaultOrder]),
+    isDefault,
+  };
+}
 
 function formatRating(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
@@ -460,9 +533,54 @@ function CurrentSeasonRatingTrajectory({ player }: { player: Player }) {
   );
 }
 
+type GameLogColumn =
+  | "date" | "matchup" | "minutes" | "rating" | "rating_delta"
+  | "points" | "rebounds" | "assists" | "turnovers" | "steals" | "blocks"
+  | "two_points" | "three_points" | "free_throws" | "plus_minus" | "possessions";
+
+type GameLogColumnDefinition = {
+  key: GameLogColumn;
+  label: ReactNode;
+  accessibleLabel: string;
+};
+
+const GAME_LOG_FIXED_COLUMNS: readonly GameLogColumn[] = ["date", "matchup"];
+const GAME_LOG_MOVABLE_COLUMNS: readonly GameLogColumn[] = [
+  "minutes", "rating", "rating_delta", "points", "rebounds", "assists", "turnovers",
+  "steals", "blocks", "two_points", "three_points", "free_throws", "plus_minus", "possessions",
+];
+const GAME_LOG_COLUMNS: readonly GameLogColumnDefinition[] = [
+  { key: "date", label: "Date", accessibleLabel: "Date" },
+  { key: "matchup", label: "Opponent / result", accessibleLabel: "Opponent and result" },
+  { key: "minutes", label: <>Minutes<br /><small>Proj. → actual</small></>, accessibleLabel: "Minutes" },
+  { key: "rating", label: <>NAIL<br /><small>after slate</small></>, accessibleLabel: "NAIL after slate" },
+  { key: "rating_delta", label: <>Δ<br /><small>game update</small></>, accessibleLabel: "Game update" },
+  { key: "points", label: "PTS", accessibleLabel: "Points" },
+  { key: "rebounds", label: "REB", accessibleLabel: "Rebounds" },
+  { key: "assists", label: "AST", accessibleLabel: "Assists" },
+  { key: "turnovers", label: "TOV", accessibleLabel: "Turnovers" },
+  { key: "steals", label: "STL", accessibleLabel: "Steals" },
+  { key: "blocks", label: "BLK", accessibleLabel: "Blocks" },
+  { key: "two_points", label: <>2PT<br /><small>M-A</small></>, accessibleLabel: "Two-point shooting" },
+  { key: "three_points", label: <>3PT<br /><small>M-A</small></>, accessibleLabel: "Three-point shooting" },
+  { key: "free_throws", label: <>FT<br /><small>M-A</small></>, accessibleLabel: "Free-throw shooting" },
+  { key: "plus_minus", label: <>Raw<br /><small>+/-</small></>, accessibleLabel: "Raw plus-minus" },
+  { key: "possessions", label: "Poss.", accessibleLabel: "Possessions" },
+];
+
 function CurrentSeasonGameLog({ player }: { player: Player }) {
+  const isCompact = useMediaQuery("(max-width: 780px)");
   const points = player.current_season_trajectory ?? [];
   const [visibleCount, setVisibleCount] = useState(10);
+  const [draggedColumn, setDraggedColumn] = useState<GameLogColumn | null>(null);
+  const [dropColumn, setDropColumn] = useState<GameLogColumn | null>(null);
+  const {
+    order: movableColumnOrder,
+    moveColumn,
+    moveColumnBy,
+    resetColumnOrder,
+    isDefault: isDefaultColumnOrder,
+  } = usePersistedColumnOrder("gestalt.player-game-log.column-order.v1", GAME_LOG_MOVABLE_COLUMNS);
 
   useEffect(() => setVisibleCount(10), [player.player_id]);
 
@@ -475,19 +593,72 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
 
   const visibleGames = games.slice(0, visibleCount);
   const remaining = games.length - visibleGames.length;
+  const columnByKey = new Map(GAME_LOG_COLUMNS.map((column) => [column.key, column]));
+  const desktopColumnOrder = [...GAME_LOG_FIXED_COLUMNS, ...movableColumnOrder];
+  const displayedColumns = (isCompact ? GAME_LOG_COLUMNS.map((column) => column.key) : desktopColumnOrder)
+    .map((key) => columnByKey.get(key))
+    .filter((column): column is GameLogColumnDefinition => column !== undefined);
   return <div className="current-season-game-log" aria-labelledby="current-season-game-log-title">
     <div className="current-season-game-log-heading">
       <div>
         <p className="section-kicker">Immutable team-game record</p>
         <h3 id="current-season-game-log-title">2026–27 game log.</h3>
       </div>
-      <p>Projected minutes are the frozen pregame estimate. Game Δ is the incremental NAIL change after the complete day&apos;s slate.</p>
+      <div className="current-season-game-log-heading-actions">
+        <p>Projected minutes are the frozen pregame estimate. Game Δ is the incremental NAIL change after the complete day&apos;s slate.</p>
+        <button className="column-order-reset" type="button" onClick={resetColumnOrder} disabled={isDefaultColumnOrder}>
+          <RotateCcw size={13} aria-hidden="true" /> Reset columns
+        </button>
+      </div>
     </div>
     <div className="current-season-game-log-table-wrap">
       <table className="current-season-game-log-table">
-        <thead><tr>
-          <th>Date</th><th>Opponent / result</th><th>Minutes<br /><small>Proj. → actual</small></th><th>NAIL<br /><small>after slate</small></th><th>Δ<br /><small>game update</small></th><th>PTS</th><th>REB</th><th>AST</th><th>TOV</th><th>STL</th><th>BLK</th><th>2PT<br /><small>M-A</small></th><th>3PT<br /><small>M-A</small></th><th>FT<br /><small>M-A</small></th><th>Raw<br /><small>+/-</small></th><th>Poss.</th>
-        </tr></thead>
+        <thead><tr>{displayedColumns.map((column) => {
+          const movable = !GAME_LOG_FIXED_COLUMNS.includes(column.key);
+          return <th
+            className={`${movable ? "movable-column" : "fixed-column"}${dropColumn === column.key ? " column-drop-target" : ""}`}
+            scope="col"
+            key={column.key}
+            onDragEnter={() => movable && setDropColumn(column.key)}
+            onDragOver={(event) => {
+              if (!movable || !draggedColumn) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              if (movable && draggedColumn) moveColumn(draggedColumn, column.key);
+              setDraggedColumn(null);
+              setDropColumn(null);
+            }}
+          >
+            <span className="movable-column-heading">
+              <span>{column.label}</span>
+              {movable && <button
+                className="column-drag-handle"
+                type="button"
+                draggable
+                aria-label={`Move ${column.accessibleLabel} column. Use left and right arrow keys to reposition.`}
+                title={`Drag ${column.accessibleLabel} column to reorder`}
+                onDragStart={(event) => {
+                  setDraggedColumn(column.key);
+                  setDropColumn(column.key);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", column.key);
+                }}
+                onDragEnd={() => {
+                  setDraggedColumn(null);
+                  setDropColumn(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                  event.preventDefault();
+                  moveColumnBy(column.key, event.key === "ArrowLeft" ? -1 : 1);
+                }}
+              ><GripVertical size={13} aria-hidden="true" /></button>}
+            </span>
+          </th>;
+        })}</tr></thead>
         <tbody>{visibleGames.map(({ point, previousRating }) => {
           const box = point.box_score;
           const gameDate = point.game_date ?? "";
@@ -499,31 +670,34 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
           const hasMinutes = projectedMinutes !== null && projectedMinutes !== undefined || actualMinutes !== null;
           const ratingDelta = point.rating - previousRating;
           const status = point.played === false ? point.pregame_status ?? "DNP" : null;
-          return <tr className={point.played === false ? "current-season-game-log-dnp" : undefined} key={point.game_id}>
-            <td className="current-season-game-log-date" data-label="Date"><time dateTime={gameDate}>{formatGameLogDate(gameDate)}</time></td>
-            <td className="current-season-game-log-matchup" data-label="Opponent / result">
+          const cells: Record<GameLogColumn, () => ReactNode> = {
+            date: () => <td key="date" className="current-season-game-log-date" data-label="Date"><time dateTime={gameDate}>{formatGameLogDate(gameDate)}</time></td>,
+            matchup: () => <td key="matchup" className="current-season-game-log-matchup" data-label="Opponent / result">
               {point.opponent ? <a className="current-season-game-log-opponent" href={teamSeasonHref(point.opponent, "2026-27")}>
                 <img src={teamLogoUrl(point.opponent)} alt="" aria-hidden="true" loading="lazy" />
                 <span><strong>{point.home_away === "away" ? "@" : "vs."} {point.opponent}</strong>{result && <small className={point.result === "W" ? "win" : "loss"}>{result}</small>}</span>
               </a> : "-"}
-            </td>
-            <td className="quantity-cell current-season-game-log-minutes" data-label="Minutes · proj. → actual">
+            </td>,
+            minutes: () => <td key="minutes" className="quantity-cell current-season-game-log-minutes" data-label="Minutes · proj. → actual">
               <span>{hasMinutes ? <>{projectedMinutes === null || projectedMinutes === undefined ? "-" : projectedMinutes.toFixed(1)} <span aria-hidden="true">→</span> {actualMinutes === null ? "-" : number.format(actualMinutes)}</> : "-"}</span>
               {status && <small><strong>{status}</strong>{point.pregame_reason && <> · {point.pregame_reason}</>}</small>}
-            </td>
-            <td className="current-season-game-log-rating" data-label="NAIL after slate"><Rating value={point.rating} /></td>
-            <td className={ratingDelta < 0 ? "negative current-season-game-log-delta" : "positive current-season-game-log-delta"} data-label="Game Δ">{formatPreciseRating(ratingDelta)}</td>
-            <td className="quantity-cell current-season-game-log-stat" data-label="PTS">{box?.points ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-stat" data-label="REB">{box?.rebounds ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-stat" data-label="AST">{box?.assists ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-stat" data-label="TOV">{box?.turnovers ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-stat" data-label="STL">{box?.steals ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-stat" data-label="BLK">{box?.blocks ?? "-"}</td>
-            <td className="quantity-cell current-season-game-log-shooting" data-label="2PT">{box?.two_points_made === null || box?.two_points_made === undefined ? "-" : `${box.two_points_made}-${box.two_points_attempted ?? "-"}`}</td>
-            <td className="quantity-cell current-season-game-log-shooting" data-label="3PT">{box?.three_points_made === null || box?.three_points_made === undefined ? "-" : `${box.three_points_made}-${box.three_points_attempted ?? "-"}`}</td>
-            <td className="quantity-cell current-season-game-log-shooting" data-label="FT">{box?.free_throws_made === null || box?.free_throws_made === undefined ? "-" : `${box.free_throws_made}-${box.free_throws_attempted ?? "-"}`}</td>
-            <td className={box?.plus_minus !== null && box?.plus_minus !== undefined && box.plus_minus < 0 ? "negative quantity-cell current-season-game-log-stat" : "quantity-cell current-season-game-log-stat"} data-label="Raw +/-">{box?.plus_minus === null || box?.plus_minus === undefined ? "-" : `${box.plus_minus > 0 ? "+" : ""}${box.plus_minus}`}</td>
-            <td className="quantity-cell current-season-game-log-stat" data-label="Poss.">{point.game_on_court_possessions === undefined ? "-" : wholeNumber.format(point.game_on_court_possessions)}</td>
+            </td>,
+            rating: () => <td key="rating" className="current-season-game-log-rating" data-label="NAIL after slate"><Rating value={point.rating} /></td>,
+            rating_delta: () => <td key="rating_delta" className={ratingDelta < 0 ? "negative current-season-game-log-delta" : "positive current-season-game-log-delta"} data-label="Game Δ">{formatPreciseRating(ratingDelta)}</td>,
+            points: () => <td key="points" className="quantity-cell current-season-game-log-stat" data-label="PTS">{box?.points ?? "-"}</td>,
+            rebounds: () => <td key="rebounds" className="quantity-cell current-season-game-log-stat" data-label="REB">{box?.rebounds ?? "-"}</td>,
+            assists: () => <td key="assists" className="quantity-cell current-season-game-log-stat" data-label="AST">{box?.assists ?? "-"}</td>,
+            turnovers: () => <td key="turnovers" className="quantity-cell current-season-game-log-stat" data-label="TOV">{box?.turnovers ?? "-"}</td>,
+            steals: () => <td key="steals" className="quantity-cell current-season-game-log-stat" data-label="STL">{box?.steals ?? "-"}</td>,
+            blocks: () => <td key="blocks" className="quantity-cell current-season-game-log-stat" data-label="BLK">{box?.blocks ?? "-"}</td>,
+            two_points: () => <td key="two_points" className="quantity-cell current-season-game-log-shooting" data-label="2PT">{box?.two_points_made === null || box?.two_points_made === undefined ? "-" : `${box.two_points_made}-${box.two_points_attempted ?? "-"}`}</td>,
+            three_points: () => <td key="three_points" className="quantity-cell current-season-game-log-shooting" data-label="3PT">{box?.three_points_made === null || box?.three_points_made === undefined ? "-" : `${box.three_points_made}-${box.three_points_attempted ?? "-"}`}</td>,
+            free_throws: () => <td key="free_throws" className="quantity-cell current-season-game-log-shooting" data-label="FT">{box?.free_throws_made === null || box?.free_throws_made === undefined ? "-" : `${box.free_throws_made}-${box.free_throws_attempted ?? "-"}`}</td>,
+            plus_minus: () => <td key="plus_minus" className={box?.plus_minus !== null && box?.plus_minus !== undefined && box.plus_minus < 0 ? "negative quantity-cell current-season-game-log-stat" : "quantity-cell current-season-game-log-stat"} data-label="Raw +/-">{box?.plus_minus === null || box?.plus_minus === undefined ? "-" : `${box.plus_minus > 0 ? "+" : ""}${box.plus_minus}`}</td>,
+            possessions: () => <td key="possessions" className="quantity-cell current-season-game-log-stat" data-label="Poss.">{point.game_on_court_possessions === undefined ? "-" : wholeNumber.format(point.game_on_court_possessions)}</td>,
+          };
+          return <tr className={point.played === false ? "current-season-game-log-dnp" : undefined} key={point.game_id}>
+            {displayedColumns.map((column) => cells[column.key]())}
           </tr>;
         })}</tbody>
       </table>
@@ -2261,6 +2435,37 @@ function AboutPage() {
 
 type RankingColumn = "player_name" | "team" | "position" | "draft_number" | "rapm" | "offense_rating" | "defense_rating" | "ffapr" | "ffapr_offense" | "ffapr_defense" | "prior_rating" | "season_update" | "additive_profile_adjustment" | "observed_context_exposure" | "possessions" | "games" | "preseason_nail" | "in_season_delta" | "current_expected_minutes_if_available";
 
+type RankingColumnDefinition = {
+  key: RankingColumn;
+  label: string;
+  numeric?: boolean;
+};
+
+const RANKING_FIXED_COLUMNS: readonly RankingColumn[] = ["player_name", "team"];
+const RANKING_MOVABLE_COLUMNS: readonly RankingColumn[] = [
+  "position", "draft_number", "rapm", "offense_rating", "defense_rating", "ffapr",
+  "ffapr_offense", "ffapr_defense", "prior_rating", "season_update",
+  "additive_profile_adjustment", "observed_context_exposure", "possessions", "games",
+];
+const RANKING_COLUMNS: readonly RankingColumnDefinition[] = [
+  { key: "player_name", label: "Player" },
+  { key: "team", label: "Team" },
+  { key: "position", label: "Pos" },
+  { key: "draft_number", label: "Pick", numeric: true },
+  { key: "rapm", label: MODEL_LABEL, numeric: true },
+  { key: "offense_rating", label: "Offense", numeric: true },
+  { key: "defense_rating", label: "Defense", numeric: true },
+  { key: "ffapr", label: "FFAPR", numeric: true },
+  { key: "ffapr_offense", label: "FF Off", numeric: true },
+  { key: "ffapr_defense", label: "FF Def", numeric: true },
+  { key: "prior_rating", label: "Prior", numeric: true },
+  { key: "season_update", label: "Season change", numeric: true },
+  { key: "additive_profile_adjustment", label: "Additive profile", numeric: true },
+  { key: "observed_context_exposure", label: "Non-Additive Lineup Edge", numeric: true },
+  { key: "possessions", label: "Possessions", numeric: true },
+  { key: "games", label: "Games", numeric: true },
+];
+
 type RankingStateMetadata = {
   kind: "completed_fit" | "preseason_preview" | "in_season_updated";
   season: string;
@@ -2285,6 +2490,15 @@ function RankingsPage() {
   const [sortDirection, setSortDirection] = useState<"ascending" | "descending">("descending");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [draggedColumn, setDraggedColumn] = useState<RankingColumn | null>(null);
+  const [dropColumn, setDropColumn] = useState<RankingColumn | null>(null);
+  const {
+    order: movableColumnOrder,
+    moveColumn,
+    moveColumnBy,
+    resetColumnOrder,
+    isDefault: isDefaultColumnOrder,
+  } = usePersistedColumnOrder("gestalt.rankings.column-order.v1", RANKING_MOVABLE_COLUMNS);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2438,24 +2652,52 @@ function RankingsPage() {
     setSortDirection(column === "player_name" || column === "team" || column === "position" ? "ascending" : "descending");
   }
 
-  const columns: Array<{ key: RankingColumn; label: string; numeric?: boolean }> = [
-    { key: "player_name", label: "Player" },
-    { key: "team", label: "Team" },
-    { key: "position", label: "Pos" },
-    { key: "draft_number", label: "Pick", numeric: true },
-    { key: "rapm", label: MODEL_LABEL, numeric: true },
-    { key: "offense_rating", label: "Offense", numeric: true },
-    { key: "defense_rating", label: "Defense", numeric: true },
-    { key: "ffapr", label: "FFAPR", numeric: true },
-    { key: "ffapr_offense", label: "FF Off", numeric: true },
-    { key: "ffapr_defense", label: "FF Def", numeric: true },
-    { key: "prior_rating", label: "Prior", numeric: true },
-    { key: "season_update", label: "Season change", numeric: true },
-    { key: "additive_profile_adjustment", label: "Additive profile", numeric: true },
-    { key: "observed_context_exposure", label: "Non-Additive Lineup Edge", numeric: true },
-    { key: "possessions", label: "Possessions", numeric: true },
-    { key: "games", label: "Games", numeric: true },
-  ];
+  const columnByKey = new Map(RANKING_COLUMNS.map((column) => [column.key, column]));
+  const columns = [...RANKING_FIXED_COLUMNS, ...movableColumnOrder]
+    .map((key) => columnByKey.get(key))
+    .filter((column): column is RankingColumnDefinition => column !== undefined);
+
+  function renderRankingCell(player: RankedPlayer, column: RankingColumnDefinition) {
+    switch (column.key) {
+      case "player_name":
+        return <th key={column.key} scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>;
+      case "team":
+        return <td key={column.key}><a className="lineup-team-mark" href={teamSeasonHref(player.team, selectedSeason)} aria-label={`View ${player.team} in ${selectedSeason}`} title={`View ${player.team} team page`}>
+          <img src={teamLogoUrl(player.team)} alt="" aria-hidden="true" loading="lazy" />
+          <small>{player.team}</small>
+        </a></td>;
+      case "position":
+        return <td key={column.key}>{player.position}</td>;
+      case "draft_number":
+        return <td key={column.key} className="numeric quantity-cell">{formatDraftPick(player)}</td>;
+      case "rapm":
+        return <td key={column.key} className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>;
+      case "offense_rating":
+        return <td key={column.key} className={optionalRatingClass(player.offense_rating)}>{formatOptionalRating(player.offense_rating)}</td>;
+      case "defense_rating":
+        return <td key={column.key} className={optionalRatingClass(player.defense_rating)}>{formatOptionalRating(player.defense_rating)}</td>;
+      case "ffapr":
+        return <td key={column.key} className={optionalRatingClass(player.ffapr)}>{formatOptionalRating(player.ffapr)}</td>;
+      case "ffapr_offense":
+        return <td key={column.key} className={optionalRatingClass(player.ffapr_offense)}>{formatOptionalRating(player.ffapr_offense)}</td>;
+      case "ffapr_defense":
+        return <td key={column.key} className={optionalRatingClass(player.ffapr_defense)}>{formatOptionalRating(player.ffapr_defense)}</td>;
+      case "prior_rating":
+        return <td key={column.key} className={optionalRatingClass(player.prior_rating)}>{formatOptionalRating(player.prior_rating)}</td>;
+      case "season_update":
+        return <td key={column.key} className={optionalRatingClass(player.season_update)}>{formatOptionalRating(player.season_update)}</td>;
+      case "additive_profile_adjustment":
+        return <td key={column.key} className={optionalRatingClass(player.additive_profile_adjustment)}>{formatOptionalRating(player.additive_profile_adjustment)}</td>;
+      case "observed_context_exposure":
+        return <td key={column.key} className={optionalRatingClass(player.observed_context_exposure)}>{formatOptionalRating(player.observed_context_exposure)}</td>;
+      case "possessions":
+        return <td key={column.key} className="numeric quantity-cell">{wholeNumber.format(player.possessions)}</td>;
+      case "games":
+        return <td key={column.key} className="numeric quantity-cell">{player.games}</td>;
+      default:
+        return null;
+    }
+  }
 
   return (
     <article className="rankings-page" aria-labelledby="rankings-title">
@@ -2578,7 +2820,7 @@ function RankingsPage() {
                     setSortDirection(column === "player_name" || column === "team" || column === "position" ? "ascending" : "descending");
                   }}
                 >
-                  {columns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
+                  {RANKING_COLUMNS.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
                 </select>
               </label>
               <button
@@ -2590,6 +2832,14 @@ function RankingsPage() {
                 {sortDirection === "ascending" ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
             </div>
+            <button
+              className="column-order-reset rankings-column-order-reset"
+              type="button"
+              onClick={resetColumnOrder}
+              disabled={isDefaultColumnOrder}
+            >
+              <RotateCcw size={13} aria-hidden="true" /> Reset columns
+            </button>
           </div>
         </div>
         {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
@@ -2598,36 +2848,61 @@ function RankingsPage() {
             <thead>
               <tr>
                 <th className="numeric" scope="col">Rank</th>
-                {columns.map((column) => <th className={`${column.numeric ? "numeric " : ""}${column.key === "rapm" ? "nail-rating-column" : ""}`} scope="col" key={column.key}>
-                  <button type="button" onClick={() => changeSort(column.key)}>
-                    {column.label}
-                    {sortColumn === column.key && (sortDirection === "ascending" ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
-                  </button>
-                </th>)}
+                {columns.map((column) => {
+                  const movable = !RANKING_FIXED_COLUMNS.includes(column.key);
+                  return <th
+                    className={`${column.numeric ? "numeric " : ""}${column.key === "rapm" ? "nail-rating-column " : ""}${movable ? "movable-column" : "fixed-column"}${dropColumn === column.key ? " column-drop-target" : ""}`}
+                    scope="col"
+                    key={column.key}
+                    onDragEnter={() => movable && setDropColumn(column.key)}
+                    onDragOver={(event) => {
+                      if (!movable || !draggedColumn) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      if (movable && draggedColumn) moveColumn(draggedColumn, column.key);
+                      setDraggedColumn(null);
+                      setDropColumn(null);
+                    }}
+                  >
+                    <span className="movable-column-heading">
+                      <button className="column-sort-button" type="button" onClick={() => changeSort(column.key)}>
+                        {column.label}
+                        {sortColumn === column.key && (sortDirection === "ascending" ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                      </button>
+                      {movable && <button
+                        className="column-drag-handle"
+                        type="button"
+                        draggable
+                        aria-label={`Move ${column.label} column. Use left and right arrow keys to reposition.`}
+                        title={`Drag ${column.label} column to reorder`}
+                        onDragStart={(event) => {
+                          setDraggedColumn(column.key);
+                          setDropColumn(column.key);
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", column.key);
+                        }}
+                        onDragEnd={() => {
+                          setDraggedColumn(null);
+                          setDropColumn(null);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                          event.preventDefault();
+                          moveColumnBy(column.key, event.key === "ArrowLeft" ? -1 : 1);
+                        }}
+                      ><GripVertical size={13} aria-hidden="true" /></button>}
+                    </span>
+                  </th>;
+                })}
               </tr>
             </thead>
             <tbody>
               {visiblePlayers.map((player) => <tr key={player.player_id}>
                 <td className="rank-number">{rankByPlayerId.get(player.player_id) ?? "-"}</td>
-                <th scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>
-                <td><a className="lineup-team-mark" href={teamSeasonHref(player.team, selectedSeason)} aria-label={`View ${player.team} in ${selectedSeason}`} title={`View ${player.team} team page`}>
-                  <img src={teamLogoUrl(player.team)} alt="" aria-hidden="true" loading="lazy" />
-                  <small>{player.team}</small>
-                </a></td>
-                <td>{player.position}</td>
-                <td className="numeric quantity-cell">{formatDraftPick(player)}</td>
-                <td className={player.rapm < 0 ? "negative numeric rating-cell nail-rating-cell" : "positive numeric rating-cell nail-rating-cell"}>{formatRating(player.rapm)}</td>
-                <td className={optionalRatingClass(player.offense_rating)}>{formatOptionalRating(player.offense_rating)}</td>
-                <td className={optionalRatingClass(player.defense_rating)}>{formatOptionalRating(player.defense_rating)}</td>
-                <td className={optionalRatingClass(player.ffapr)}>{formatOptionalRating(player.ffapr)}</td>
-                <td className={optionalRatingClass(player.ffapr_offense)}>{formatOptionalRating(player.ffapr_offense)}</td>
-                <td className={optionalRatingClass(player.ffapr_defense)}>{formatOptionalRating(player.ffapr_defense)}</td>
-                <td className={optionalRatingClass(player.prior_rating)}>{formatOptionalRating(player.prior_rating)}</td>
-                <td className={optionalRatingClass(player.season_update)}>{formatOptionalRating(player.season_update)}</td>
-                <td className={optionalRatingClass(player.additive_profile_adjustment)}>{formatOptionalRating(player.additive_profile_adjustment)}</td>
-                <td className={optionalRatingClass(player.observed_context_exposure)}>{formatOptionalRating(player.observed_context_exposure)}</td>
-                <td className="numeric quantity-cell">{wholeNumber.format(player.possessions)}</td>
-                <td className="numeric quantity-cell">{player.games}</td>
+                {columns.map((column) => renderRankingCell(player, column))}
               </tr>)}
             </tbody>
           </table>

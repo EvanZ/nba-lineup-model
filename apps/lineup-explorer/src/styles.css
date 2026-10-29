@@ -456,7 +456,8 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .current-season-game-log { margin: 30px 0 20px; }
 .current-season-game-log-heading { display: flex; align-items: end; justify-content: space-between; gap: 28px; margin-bottom: 14px; }
 .current-season-game-log-heading h3 { margin: 4px 0 0; color: #17201c; font-family: Georgia, "Times New Roman", serif; font-size: 25px; font-weight: 400; }
-.current-season-game-log-heading > p { max-width: 470px; margin: 0; color: #68716a; font-size: 12px; line-height: 1.45; text-align: right; }
+.current-season-game-log-heading-actions { display: flex; max-width: 520px; align-items: flex-end; flex-direction: column; gap: 8px; }
+.current-season-game-log-heading-actions > p { margin: 0; color: #68716a; font-size: 12px; line-height: 1.45; text-align: right; }
 .current-season-game-log-table-wrap { overflow-x: auto; border-top: 1px solid #17201c; }
 .current-season-game-log-table { width: 100%; min-width: 1240px; border-collapse: collapse; }
 .current-season-game-log-table th { padding: 10px 12px 9px 0; border-bottom: 1px solid #bfc3bd; color: #68716a; font-size: 9px; font-weight: 800; line-height: 1.25; text-align: left; text-transform: uppercase; vertical-align: bottom; }
@@ -612,6 +613,15 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .rankings-table thead th { position: relative; z-index: 1; padding-top: 13px; padding-bottom: 12px; color: #68716a; font-size: 10px; text-transform: uppercase; }
 .rankings-table thead button { display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; font-size: inherit; font-weight: 800; text-transform: inherit; }
 .rankings-table thead button:hover { color: #245a47; }
+.movable-column-heading { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
+.column-drag-handle { display: inline-grid !important; width: 18px !important; height: 22px; flex: 0 0 18px; place-items: center; border-radius: 2px !important; color: #9a9f9a !important; cursor: grab; touch-action: none; }
+.column-drag-handle:hover, .column-drag-handle:focus-visible { background: #dce8db !important; color: #245a47 !important; outline: none; }
+.column-drag-handle:active { cursor: grabbing; }
+.column-drop-target { background: #edf2e9; box-shadow: inset 3px 0 0 #e8502f; }
+.column-order-reset { display: inline-flex; height: 30px; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid #a6aaa4; border-radius: 3px; background: #fffefa; color: #245a47; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
+.column-order-reset:hover:not(:disabled) { border-color: #245a47; background: #dce8db; }
+.column-order-reset:disabled { opacity: 0.42; cursor: default; }
+.rankings-column-order-reset { height: 38px; }
 .lineup-column-heading { display: inline-flex; align-items: center; gap: 3px; }
 .column-info { position: relative; z-index: 2; display: inline-grid; place-items: center; color: #69716b; cursor: help; }
 .column-info::after { position: absolute; z-index: 8; top: calc(100% + 8px); left: 50%; width: 230px; padding: 8px 9px; border: 1px solid #17201c; border-radius: 3px; background: #fffefa; box-shadow: 3px 3px 0 #17201c; color: #17201c; content: attr(data-tooltip); font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 11px; font-weight: 500; line-height: 1.35; opacity: 0; pointer-events: none; text-align: left; text-transform: none; transform: translate(-50%, -4px); transition: opacity 120ms ease, transform 120ms ease; visibility: hidden; white-space: normal; }
@@ -626,9 +636,10 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-name-link:hover { color: #245a47; text-decoration: underline; text-decoration-color: #e8502f; text-underline-offset: 3px; }
 .rankings-table .player-headshot { width: 27px; height: 27px; flex-basis: 27px; }
 .rankings-table .numeric { text-align: right; }
-.rankings-table thead .numeric button { justify-content: flex-end; width: 100%; }
+.rankings-table thead .numeric .movable-column-heading { width: 100%; justify-content: flex-end; }
+.rankings-table thead .numeric .column-sort-button { justify-content: flex-end; }
 .rank-number, .rating-cell, .rankings-table td.numeric { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
-.rankings-table .nail-rating-column button { color: #17201c; font-size: 11px; font-weight: 900; }
+.rankings-table .nail-rating-column .column-sort-button { color: #17201c; font-size: 11px; font-weight: 900; }
 .rankings-table .nail-rating-cell { font-size: 15px; font-weight: 900; }
 .rankings-table td.quantity-cell { font-weight: 400; }
 .team-page-hero { max-width: 1180px; }
@@ -1015,7 +1026,9 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .player-aging-chart-actions { flex-wrap: wrap; }
   .player-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .current-season-game-log-heading { align-items: start; flex-direction: column; gap: 8px; }
-  .current-season-game-log-heading > p { max-width: none; text-align: left; }
+  .current-season-game-log-heading-actions { max-width: none; align-items: flex-start; }
+  .current-season-game-log-heading-actions > p { text-align: left; }
+  .current-season-game-log-heading-actions .column-order-reset, .rankings-column-order-reset { display: none; }
   .current-season-game-log-table-wrap { overflow: visible; border-top: 0; }
   .current-season-game-log-table { display: block; min-width: 0; }
   .current-season-game-log-table thead { display: none; }
