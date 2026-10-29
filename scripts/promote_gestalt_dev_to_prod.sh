@@ -165,6 +165,17 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   --days-ahead 7 \
   --no-s3
 
+# A deployment-time freeze must be available to both the public serving view
+# and the immutable model-input archive. Live-score finalization writes to both
+# trees and assumes this pregame snapshot already exists in both places.
+PYTHONPATH="$RELEASE_ROOT/src" \
+  "$PROD_RELEASE/.venv/bin/nba-refresh-gestalt-schedule" \
+  --date "$(TZ=America/Los_Angeles date +%F)" \
+  --state-dir "$SOURCE_SCHEDULE_ROOT" \
+  --projection-url http://127.0.0.1:8010/api/win-projections \
+  --days-ahead 7 \
+  --no-s3
+
 
 "$RELEASE_ROOT/scripts/validate_gestalt_serving_contract.sh" \
   http://127.0.0.1:8010

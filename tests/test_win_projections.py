@@ -206,6 +206,7 @@ def test_current_win_projection_fixes_actual_wins_and_scores_remaining_schedule(
 
     by_team = {row["team"]: row for row in payload["teams"]}
     assert payload["state_kind"] == "in_season_updated"
+    assert payload["model_track"] == "updated_ratings_updated_minutes"
     assert payload["serving_bundle_sha256"] == "b" * 64
     assert [game["game_id"] for game in payload["scheduled_games"]] == [
         "0022600001",
@@ -449,14 +450,37 @@ def test_updated_track_performance_includes_new_live_final_audits(tmp_path) -> N
             }
         )
     )
+    (final_dir / "current-state.summary.json").write_text(
+        json.dumps(
+            {
+                **common,
+                "record_type": "immutable_final_game_audit",
+                "game_id": "0022600133",
+                "pregame": {
+                    "projection": {
+                        "state_kind": "in_season_updated",
+                        "serving_bundle_sha256": "b" * 64,
+                    },
+                    "market": {
+                        "provider": "Market consensus",
+                        "provider_key": "market_consensus",
+                        "home_win_probability": 0.54,
+                    },
+                },
+            }
+        )
+    )
 
     payload = read_schedule_performance(state_dir=tmp_path)
     season = payload["windows"][-1]
 
-    assert season["games"] == 1
-    assert season["probability"]["gestalt"]["n"] == 1
-    assert season["ats"]["n"] == 1
-    assert season["ats"]["losses"] == 1
+    assert season["games"] == 2
+    assert season["probability"]["gestalt"]["n"] == 2
+    assert season["probability"]["market_consensus"]["n"] == 2
+    assert season["spread"]["n"] == 2
+    assert season["ats"]["n"] == 2
+    assert season["ats"]["losses"] == 2
+    assert season["ats"]["edge_buckets"][-1]["losses"] == 2
 
 
 def test_schedule_performance_includes_legacy_draftkings_games_as_market_benchmark(

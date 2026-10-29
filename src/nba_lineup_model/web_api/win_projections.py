@@ -401,6 +401,7 @@ def build_current_season_win_projection_payload(
             if key not in {"teams", "scheduled_games", "contract", "model"}
         },
         "model": "Current NAIL + current minutes",
+        "model_track": "updated_ratings_updated_minutes",
         "state_kind": "in_season_updated",
         "as_of": through_date,
         "serving_bundle_sha256": metadata.get("bundle_sha256"),
@@ -1524,6 +1525,10 @@ def read_schedule_performance(
                     == "updated_ratings_updated_minutes"
                     or projection.get("model_track")
                     == "updated_ratings_updated_minutes"
+                    or (
+                        projection.get("state_kind") == "in_season_updated"
+                        and bool(projection.get("serving_bundle_sha256"))
+                    )
                 )
                 if not belongs_to_updated_track:
                     continue
@@ -2629,6 +2634,7 @@ def _normalize_espn_schedule(
                 },
                 "projection": {
                     "model": forecast.get("model"),
+                    "model_track": forecast.get("model_track"),
                     "state_kind": forecast.get("state_kind", "preseason_preview"),
                     "rating_as_of": forecast.get("as_of"),
                     "serving_bundle_sha256": forecast.get("serving_bundle_sha256"),
