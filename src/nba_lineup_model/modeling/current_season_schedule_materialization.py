@@ -24,6 +24,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from nba_lineup_model.modeling.current_season_serving_materialization import (
+    _publication_exclusions,
+)
 from nba_lineup_model.web_api.win_projections import (
     _build_final_game_archive,
     _game_rotation,
@@ -55,7 +58,12 @@ def materialize_current_season_schedule(
     minutes_publication_path = minutes_root / "latest.json"
     rating_publication = _load_object(rating_publication_path)
     minutes_publication = _load_object(minutes_publication_path)
-    _validate_publications(rating_publication, minutes_publication)
+    _validate_publications(
+        rating_publication,
+        minutes_publication,
+        rating_root=rating_root,
+        minutes_root=minutes_root,
+    )
 
     through_date = str(minutes_publication["through_date"])
     if current_forecast_response is not None:
@@ -756,12 +764,24 @@ def _previous_evidence_date(players: pd.DataFrame, game_date: str) -> str | None
 
 
 def _validate_publications(
-    ratings: dict[str, Any], minutes: dict[str, Any]
+    ratings: dict[str, Any],
+    minutes: dict[str, Any],
+    *,
+    rating_root: Path,
+    minutes_root: Path,
 ) -> None:
-    for label, publication in (("rating", ratings), ("minutes", minutes)):
+    for label, publication, root, summary_key in (
+        ("rating", ratings, rating_root, "excluded_contributions"),
+        ("minutes", minutes, minutes_root, "excluded_games"),
+    ):
         coverage = publication.get("coverage")
-        if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) != 0:
-            raise ValueError(f"{label.title()} publication is not exclusion-free")
+        if not isinstance(coverage, dict) or int(coverage.get("excluded", -1)) < 0:
+            raise ValueError(f"{label.title()} publication coverage is invalid")
+        _publication_exclusions(
+            publication,
+            root=root,
+            summary_key=summary_key,
+        )
     if ratings.get("season") != minutes.get("season"):
         raise ValueError("Rating and minutes publication seasons do not match")
     if ratings.get("through_date") != minutes.get("through_date"):
