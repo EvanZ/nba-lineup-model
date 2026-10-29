@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -802,6 +803,56 @@ def test_live_score_default_advances_after_previous_date_is_final(tmp_path) -> N
     )
 
     assert game_date == "2026-10-23"
+
+
+def test_live_score_watcher_once_exits_while_games_are_live(monkeypatch, tmp_path) -> None:
+    state = {
+        "game_count": 3,
+        "any_live": True,
+        "all_final": False,
+        "earliest_start": datetime(2026, 10, 29, 0, 0, tzinfo=UTC),
+        "latest_start": datetime(2026, 10, 29, 3, 0, tzinfo=UTC),
+        "newly_finalized_game_count": 1,
+        "uploaded_final_artifact_count": 0,
+    }
+    calls: list[dict[str, object]] = []
+
+    def fake_refresh_live_score_state(**kwargs):
+        calls.append(kwargs)
+        return state
+
+    monkeypatch.setattr(
+        win_projections,
+        "refresh_live_score_state",
+        fake_refresh_live_score_state,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nba-watch-gestalt-live-scores",
+            "--date",
+            "2026-10-28",
+            "--state-dir",
+            str(tmp_path),
+            "--once",
+            "--no-s3",
+        ],
+    )
+    monkeypatch.setattr(
+        win_projections.time,
+        "sleep",
+        lambda _seconds: pytest.fail("one-pass watcher must not sleep"),
+    )
+
+    assert win_projections.live_score_watcher_main() == 0
+    assert calls == [
+        {
+            "game_date": "2026-10-28",
+            "state_dir": tmp_path,
+            "s3_uri": None,
+        }
+    ]
 
 
 def test_live_score_records_first_final_observation(monkeypatch, tmp_path) -> None:

@@ -3629,6 +3629,14 @@ def live_score_watcher_main() -> int:
         default=Path(os.environ.get("GESTALT_SCHEDULE_STATE_DIR", DEFAULT_SCHEDULE_STATE_DIR)),
     )
     parser.add_argument("--interval-seconds", type=int, default=75)
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help=(
+            "Refresh and finalize every currently eligible game once, then exit "
+            "without waiting for the rest of the slate"
+        ),
+    )
     parser.add_argument("--s3-uri", default=DEFAULT_SCHEDULE_S3_URI)
     parser.add_argument(
         "--no-s3",
@@ -3650,6 +3658,12 @@ def live_score_watcher_main() -> int:
         latest = state["latest_start"]
         if state["all_final"]:
             print(f"All {state['game_count']} games are final for {game_date}")
+            return 0
+        if args.once:
+            print(
+                f"Refreshed {state['game_count']} games for {game_date}; "
+                f"newly finalized: {state['newly_finalized_game_count']}"
+            )
             return 0
         if not isinstance(earliest, datetime) or not isinstance(latest, datetime):
             print(f"No games to watch for {game_date}")

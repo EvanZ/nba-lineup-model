@@ -86,6 +86,7 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   "$PROD_RELEASE/.venv/bin/nba-watch-gestalt-live-scores" \
   --date "$(TZ=America/Los_Angeles date +%F)" \
   --state-dir "$SOURCE_SCHEDULE_ROOT" \
+  --once \
   --no-s3
 
 aws s3 cp \
@@ -205,6 +206,7 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   "$PROD_RELEASE/.venv/bin/nba-watch-gestalt-live-scores" \
   --date "$(TZ=America/Los_Angeles date +%F)" \
   --state-dir "$SOURCE_SCHEDULE_ROOT" \
+  --once \
   --no-s3
 
 
