@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from dagster import (
     DagsterInstance,
     DagsterRunStatus,
@@ -14,6 +15,7 @@ from dagster import (
     build_sensor_context,
 )
 
+import nba_lineup_model.orchestration.definitions as orchestration
 from nba_lineup_model.orchestration.definitions import (
     DEFAULT_ODDS_API_BOOKMAKERS,
     EASTERN,
@@ -541,6 +543,75 @@ def test_current_season_serving_sensor_uses_child_state_identity(
     ).hexdigest()[:16]
     assert result.run_key == f"current-season-serving:2026-10-26:{snapshot}"
     assert result.tags["gestalt/serving_snapshot"] == snapshot
+
+
+def test_current_season_api_reload_verifies_promoted_bundle(
+    monkeypatch,
+) -> None:
+    commands: list[tuple[list[str], bool, int]] = []
+    monkeypatch.setenv(
+        "GESTALT_CURRENT_SEASON_SERVING_RELOAD_COMMAND",
+        "/usr/bin/sudo -n /usr/bin/systemctl restart gestalt-web",
+    )
+    monkeypatch.setenv(
+        "GESTALT_CURRENT_SEASON_SERVING_HEALTH_URL",
+        "http://127.0.0.1:8010/api/health",
+    )
+    monkeypatch.setattr(
+        orchestration.subprocess,
+        "run",
+        lambda command, *, check, timeout: commands.append(
+            (command, check, timeout)
+        ),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "_current_season_live_identity",
+        lambda url: ("2026-10-29", "bundle-29"),
+    )
+
+    result = orchestration._reload_current_season_api(
+        through_date="2026-10-29",
+        bundle_sha256="bundle-29",
+    )
+
+    assert commands == [
+        (
+            [
+                "/usr/bin/sudo",
+                "-n",
+                "/usr/bin/systemctl",
+                "restart",
+                "gestalt-web",
+            ],
+            True,
+            90,
+        )
+    ]
+    assert result["verified"] is True
+    assert result["bundle_sha256"] == "bundle-29"
+
+
+def test_current_season_api_reload_rejects_stale_live_bundle(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "GESTALT_CURRENT_SEASON_SERVING_RELOAD_COMMAND",
+        "/usr/bin/systemctl restart gestalt-web",
+    )
+    monkeypatch.setenv("GESTALT_CURRENT_SEASON_SERVING_VERIFY_TIMEOUT_SECONDS", "0")
+    monkeypatch.setattr(orchestration.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        orchestration,
+        "_current_season_live_identity",
+        lambda url: ("2026-10-28", "bundle-28"),
+    )
+
+    with pytest.raises(RuntimeError, match="did not load the promoted"):
+        orchestration._reload_current_season_api(
+            through_date="2026-10-29",
+            bundle_sha256="bundle-29",
+        )
 
 
 def test_current_season_serving_sensor_accepts_named_quarantine(

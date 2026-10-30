@@ -3,8 +3,13 @@
 import hashlib
 import json
 import os
+import shlex
+import subprocess
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
 from dagster import (
@@ -75,6 +80,8 @@ DEFAULT_CURRENT_SEASON_SERVING_ROOT = Path(
     "/var/lib/nba-gestalt/current-season-serving"
 )
 DEFAULT_CURRENT_SEASON_SERVING_LAKE_URI = "s3://nba-gestalt-data/lake"
+DEFAULT_CURRENT_SEASON_SERVING_HEALTH_URL = "http://127.0.0.1:8010/api/health"
+DEFAULT_CURRENT_SEASON_SERVING_VERIFY_TIMEOUT_SECONDS = 180
 DEFAULT_CURRENT_SEASON_LINEUPS_ROOT = Path(
     "/var/lib/nba-gestalt/current-season-lineups"
 )
@@ -204,6 +211,80 @@ def _current_season_serving_lake_uri() -> str:
         "GESTALT_CURRENT_SEASON_SERVING_LAKE_URI",
         DEFAULT_CURRENT_SEASON_SERVING_LAKE_URI,
     ).rstrip("/")
+
+
+def _current_season_live_identity(url: str) -> tuple[str, str]:
+    """Read the current-season date and bundle identity loaded by the live API."""
+
+    with urlopen(url, timeout=5) as response:  # noqa: S310 - configured local URL
+        payload = json.loads(response.read())
+    state = payload.get("current_season_state") if isinstance(payload, dict) else None
+    if not isinstance(state, dict):
+        raise ValueError("Live API health response has no current-season state")
+    return (
+        str(state.get("evidence_through_date", "")),
+        str(state.get("bundle_sha256", "")),
+    )
+
+
+def _reload_current_season_api(
+    *,
+    through_date: str,
+    bundle_sha256: str,
+) -> dict[str, object]:
+    """Reload production and prove that it serves the promoted immutable bundle."""
+
+    raw_command = os.environ.get(
+        "GESTALT_CURRENT_SEASON_SERVING_RELOAD_COMMAND", ""
+    ).strip()
+    if not raw_command:
+        if AUTOMATIONS_DEFAULT_RUNNING:
+            raise RuntimeError(
+                "Current-season serving reload command is required when automations run"
+            )
+        return {"requested": False, "verified": False}
+
+    command = shlex.split(raw_command)
+    if not command:
+        raise ValueError("Current-season serving reload command is empty")
+    subprocess.run(command, check=True, timeout=90)
+
+    health_url = os.environ.get(
+        "GESTALT_CURRENT_SEASON_SERVING_HEALTH_URL",
+        DEFAULT_CURRENT_SEASON_SERVING_HEALTH_URL,
+    )
+    timeout_seconds = int(
+        os.environ.get(
+            "GESTALT_CURRENT_SEASON_SERVING_VERIFY_TIMEOUT_SECONDS",
+            str(DEFAULT_CURRENT_SEASON_SERVING_VERIFY_TIMEOUT_SECONDS),
+        )
+    )
+    deadline = time.monotonic() + timeout_seconds
+    observed_date = ""
+    observed_sha = ""
+    last_error = ""
+    while True:
+        try:
+            observed_date, observed_sha = _current_season_live_identity(health_url)
+            if observed_date == through_date and observed_sha == bundle_sha256:
+                return {
+                    "requested": True,
+                    "verified": True,
+                    "health_url": health_url,
+                    "evidence_through_date": observed_date,
+                    "bundle_sha256": observed_sha,
+                }
+            last_error = (
+                f"observed date/SHA {observed_date or '-'} / {observed_sha or '-'}"
+            )
+        except (OSError, URLError, ValueError, json.JSONDecodeError) as error:
+            last_error = str(error)
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "Live API did not load the promoted current-season bundle: "
+                f"expected {through_date} / {bundle_sha256}; {last_error}"
+            )
+        time.sleep(1)
 
 
 def _current_season_lineups_root() -> Path:
@@ -1803,6 +1884,10 @@ def promote_current_season_serving_op(
         f"{bundle.manifest['bundle_sha256']}.json",
     )
     store.put_bytes(pointer_uri, pointer_bytes)
+    api_reload = _reload_current_season_api(
+        through_date=through_date,
+        bundle_sha256=str(bundle.manifest["bundle_sha256"]),
+    )
     coverage = bundle.manifest["identity"]["coverage"]
     context.add_output_metadata(
         {
@@ -1816,6 +1901,8 @@ def promote_current_season_serving_op(
             ),
             "created": bundle.created,
             "promoted": promoted,
+            "api_reload_requested": bool(api_reload["requested"]),
+            "api_bundle_verified": bool(api_reload["verified"]),
             "manifest": MetadataValue.url(published[MANIFEST_FILENAME]),
             "report": MetadataValue.url(published[REPORT_FILENAME]),
             "pointer": MetadataValue.url(pointer_uri),
@@ -1827,6 +1914,7 @@ def promote_current_season_serving_op(
         "bundle_sha256": bundle.manifest["bundle_sha256"],
         "created": bundle.created,
         "promoted": promoted,
+        "api_reload": api_reload,
         "published": published,
         "pointer_uri": pointer_uri,
     }

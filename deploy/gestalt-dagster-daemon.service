@@ -15,6 +15,8 @@ Environment=DAGSTER_HOME=/var/lib/nba-gestalt/dagster
 Environment=AWS_REGION=us-west-1
 Environment=GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1
 Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt/current-season-serving
+Environment="GESTALT_CURRENT_SEASON_SERVING_RELOAD_COMMAND=/usr/bin/sudo -n /usr/bin/systemctl restart gestalt-web"
+Environment=GESTALT_CURRENT_SEASON_SERVING_HEALTH_URL=http://127.0.0.1:8010/api/health
 Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt/current-season-lineups
 Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
 Environment=GESTALT_MODEL_INPUT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule
