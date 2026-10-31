@@ -10,6 +10,61 @@ from nba_lineup_model.players.in_season_rosters import (
     normalize_player_name,
     reconcile_current_roster,
 )
+from nba_lineup_model.web_api.preseason_rankings_cache import append_target_bios
+
+
+def test_runtime_target_bios_can_reuse_history_without_packaged_draft_file(
+    tmp_path: Path,
+) -> None:
+    panel = pd.DataFrame(
+        [
+            {
+                "season": "2025-26",
+                "season_start_year": 2025,
+                "player_id": 1631104,
+                "player_name": "Blake Wesley",
+                "age": 22.0,
+                "listed_position": "G",
+                "height_inches": 76.0,
+                "weight_pounds": 190.0,
+                "nba_experience_years": 3,
+                "is_rookie": False,
+                "rapm_seconds": 100.0,
+                "rapm_exposure_eligible": True,
+                "rapm_possessions": 50.0,
+                "draft_year": 2022.0,
+                "draft_round": 1.0,
+                "draft_number": 25.0,
+                "is_undrafted": False,
+            }
+        ]
+    )
+    roster = pd.DataFrame(
+        [
+            {
+                "player_id": 1631104,
+                "player_name": "Blake Wesley",
+                "age": 23.0,
+                "listed_position": "G",
+                "height_inches": 76,
+                "weight_pounds": 190,
+                "experience": "4",
+            }
+        ]
+    )
+
+    output = append_target_bios(
+        panel,
+        roster,
+        target_season="2026-27",
+        draft_history_path=tmp_path / "not-packaged.parquet",
+        allow_missing_draft_history=True,
+    )
+
+    target = output.loc[output["season"].eq("2026-27")].iloc[0]
+    assert int(target["player_id"]) == 1631104
+    assert int(target["draft_year"]) == 2022
+    assert int(target["draft_number"]) == 25
 
 
 def test_reconcile_current_roster_resolves_suffixes_and_historical_players() -> None:

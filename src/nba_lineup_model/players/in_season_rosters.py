@@ -486,6 +486,7 @@ def run(
             profiles_output_path=profiles_path,
             frozen_rankings_path=prior_rankings,
             frozen_profiles_path=prior_profiles,
+            allow_missing_build_inputs=True,
         )
         rankings = pd.read_parquet(rankings_path)
         active_team = dict(

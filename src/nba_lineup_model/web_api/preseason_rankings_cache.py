@@ -52,6 +52,7 @@ def materialize_preseason_rankings(
     profiles_output_path: Path | str | None = None,
     frozen_rankings_path: Path | str | None = None,
     frozen_profiles_path: Path | str | None = None,
+    allow_missing_build_inputs: bool = False,
 ) -> Path:
     """Write a true frozen next-season catalog for the published NAIL run.
 
@@ -116,7 +117,12 @@ def materialize_preseason_rankings(
     )
     panel = pd.read_parquet(panel_path)
     roster = _load_roster(target_season, roster_path=roster_path)
-    target_panel = append_target_bios(panel, roster, target_season=target_season)
+    target_panel = append_target_bios(
+        panel,
+        roster,
+        target_season=target_season,
+        allow_missing_draft_history=allow_missing_build_inputs,
+    )
     roster = roster.merge(
         target_panel.loc[
             target_panel["season"].eq(target_season),
@@ -145,7 +151,18 @@ def materialize_preseason_rankings(
     prior_by_player = dict(
         zip(priors["player_id"].astype(int), priors[PRIOR_MEAN_COLUMN].astype(float), strict=True)
     )
-    draft = _draft_cold_start(target_season)
+    draft_path = forward_draft_cold_start_rankings_path(target_season)
+    draft = (
+        _draft_cold_start(target_season)
+        if draft_path.is_file()
+        else pd.DataFrame(
+            columns=("player_id", "cold_start_rapm_prior", "replacement_rapm")
+        )
+    )
+    if draft.empty and not allow_missing_build_inputs:
+        raise FileNotFoundError(
+            f"Frozen draft cold-start rankings do not exist: {draft_path}"
+        )
     completed_ids = set(
         historical.loc[
             historical["season"].eq(completed_season), "player_id"
@@ -157,7 +174,11 @@ def materialize_preseason_rankings(
         ].astype(int)
     )
     established_returner_ids = completed_ids | gap_returner_ids
-    replacement = float(draft["replacement_rapm"].dropna().iloc[0])
+    replacement = (
+        float(draft["replacement_rapm"].dropna().iloc[0])
+        if not draft.empty
+        else float(pd.DataFrame(replacement_tokens)["replacement_token_rapm"].mean())
+    )
     roster["player_id"] = roster["player_id"].astype(int)
     roster["base_prior"] = roster["player_id"].map(prior_by_player)
     roster.loc[~roster["player_id"].isin(established_returner_ids), "base_prior"] = np.nan
@@ -404,7 +425,12 @@ def _draft_cold_start(target_season: str) -> pd.DataFrame:
 
 
 def append_target_bios(
-    panel: pd.DataFrame, roster: pd.DataFrame, *, target_season: str
+    panel: pd.DataFrame,
+    roster: pd.DataFrame,
+    *,
+    target_season: str,
+    draft_history_path: Path | str | None = None,
+    allow_missing_draft_history: bool = False,
 ) -> pd.DataFrame:
     """Append roster-only target rows; no target box-score or RAPM field is read."""
 
@@ -415,8 +441,27 @@ def append_target_bios(
         .drop_duplicates("player_id", keep="last")
         .set_index("player_id")
     )
-    draft_path = Path("data/curated/draft_history") / target_season / "part-00000.parquet"
-    draft = _normalize_draft_history_ids(pd.read_parquet(draft_path))
+    draft_path = (
+        Path(draft_history_path)
+        if draft_history_path is not None
+        else Path("data/curated/draft_history")
+        / target_season
+        / "part-00000.parquet"
+    )
+    if draft_path.is_file():
+        draft = _normalize_draft_history_ids(pd.read_parquet(draft_path))
+    elif allow_missing_draft_history:
+        draft = pd.DataFrame(
+            columns=(
+                "player_id",
+                "draft_year",
+                "draft_round",
+                "draft_number",
+                "is_undrafted",
+            )
+        )
+    else:
+        raise FileNotFoundError(f"Draft history does not exist: {draft_path}")
     draft = draft.drop_duplicates("player_id", keep="first").set_index("player_id")
     rows: list[dict[str, object]] = []
     for roster_row in roster.itertuples(index=False):
