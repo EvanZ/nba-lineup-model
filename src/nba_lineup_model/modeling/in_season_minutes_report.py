@@ -157,15 +157,24 @@ def render_minutes_shadow_report(
         )
     exclusions = len(summary.get("excluded_games", []))
     quality_issues = [
-        {"stage": "ratings", **issue}
+        {"stage": "ratings", "severity": "error", **issue}
         for issue in summary.get("upstream_exclusions", {}).get("ratings", [])
     ] + [
-        {"stage": "minutes", **issue}
+        {"stage": "minutes", "severity": "error", **issue}
         for issue in summary.get("excluded_games", [])
+    ] + [
+        {
+            "stage": "ratings",
+            "severity": "warning",
+            "game_id": issue.get("game_id", ""),
+            "reason": "; ".join(str(value) for value in issue.get("reasons", [])),
+        }
+        for issue in summary.get("upstream_warnings", {}).get("ratings", [])
     ]
     quality_rows = "".join(
         "<tr>"
         f"<td>{html.escape(str(issue['stage']))}</td>"
+        f"<td>{html.escape(str(issue['severity']))}</td>"
         f"<td>{html.escape(str(issue['game_id']))}</td>"
         f"<td>{html.escape(str(issue['reason']))}</td>"
         "</tr>"
@@ -193,7 +202,7 @@ main{{max-width:1480px;margin:auto;padding:32px}} h1,h2{{font-family:Inter,syste
 .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:22px 0}} .card{{background:#fffdf7;border:1px solid var(--line);padding:16px}} .label{{color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:800}} .value{{font:800 27px/1.2 Inter,system-ui,sans-serif;margin-top:6px}} .sub{{font-size:12px;color:var(--muted);margin-top:4px}}
 .table-wrap{{overflow:auto;border:1px solid var(--line);background:#fffdf7}} table{{border-collapse:collapse;width:100%;font-size:12px}} th{{position:sticky;top:0;background:#ece8dc;text-align:right;text-transform:uppercase;font-size:10px;letter-spacing:.04em}} th:first-child,td:first-child{{text-align:left}} td,th{{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}} tbody tr:hover{{background:#f0f5f1}} .positive{{color:var(--green);font-weight:800}} .negative{{color:var(--red);font-weight:800}}
 .grid{{display:grid;grid-template-columns:1fr 1fr;gap:18px}} .grid>section{{min-width:0}} input{{width:100%;max-width:420px;padding:10px;border:1px solid var(--line);background:#fffdf7;font:inherit;margin:0 0 10px}} footer{{margin:36px 0;color:var(--muted);font-size:11px}} @media(max-width:900px){{.grid{{grid-template-columns:1fr}}main{{padding:18px}}}}
-.quality th:nth-child(3),.quality td:nth-child(3){{text-align:left;white-space:normal;min-width:420px}}
+.quality th:nth-child(4),.quality td:nth-child(4){{text-align:left;white-space:normal;min-width:420px}}
 </style></head><body><main>
 <div class="eyebrow">NBA GESTALT · Shadow evaluation</div>
 <h1>Early-game minutes updater</h1>
@@ -207,7 +216,7 @@ main{{max-width:1480px;margin:auto;padding:32px}} h1,h2{{font-family:Inter,syste
   <div class="card"><div class="label">{cutoff_minutes}-minute role coverage</div><div class="value">{reconstructed}/{int(summary['games'])}</div><div class="sub">{fallback} realized-minute fallbacks</div></div>
 </section>
 <h2>Daily pipeline quality</h2>
-{f'''<div class="note"><strong>{len(quality_issues)} quarantined game error(s).</strong> Valid games continued through the pipeline; these errors still require correction.</div><div class="table-wrap"><table class="quality"><thead><tr><th>Stage</th><th>Game</th><th>Error</th></tr></thead><tbody>{quality_rows}</tbody></table></div>''' if quality_issues else '<div class="note"><strong>Clean run.</strong> No games were quarantined by ratings or minutes.</div>'}
+{f'''<div class="note"><strong>{len(quality_issues)} pipeline warning/error item(s).</strong> Valid games continued through the pipeline; warnings show explicit fallbacks while errors show quarantined games.</div><div class="table-wrap"><table class="quality"><thead><tr><th>Stage</th><th>Severity</th><th>Game</th><th>Detail</th></tr></thead><tbody>{quality_rows}</tbody></table></div>''' if quality_issues else '<div class="note"><strong>Clean run.</strong> No games were quarantined and no fallbacks were required.</div>'}
 <h2>Updated-ratings minutes A/B</h2><p>Both rows use the same possession-updated NAIL ratings. Only the minutes allocation changes. Lower is better for MAE, RMSE, Brier, and log loss.</p>
 <div class="table-wrap"><table><thead><tr><th>Model inputs</th><th>Games</th><th>Margin MAE</th><th>RMSE</th><th>Brier</th><th>Log loss</th><th>Winner</th><th>ATS</th></tr></thead><tbody>{''.join(four_cell_rows)}</tbody></table></div>
 <div class="grid">

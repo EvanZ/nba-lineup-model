@@ -1067,6 +1067,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "upstream_exclusions": {
             "ratings": list(getattr(args, "upstream_rating_exclusions", [])),
         },
+        "upstream_warnings": {
+            "ratings": list(getattr(args, "upstream_rating_warnings", [])),
+        },
         "player_metrics": player_metrics,
         "four_cell_game_metrics": four_cell,
         "minutes_ab_game_metrics": minutes_ab,

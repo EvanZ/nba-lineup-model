@@ -1124,6 +1124,7 @@ def update_in_season_nail_production_op(
             "excluded": len(result["excluded_contributions"]),
         },
         "exclusions": result["excluded_contributions"],
+        "warnings": result.get("context_fallbacks", []),
     }
     publication_bytes = (
         json.dumps(publication, indent=2, sort_keys=True) + "\n"
@@ -1153,6 +1154,7 @@ def update_in_season_nail_production_op(
             "games": int(result["game_count"]),
             "contributions": int(result["contribution_count"]),
             "excluded_contributions": len(result["excluded_contributions"]),
+            "context_fallbacks": len(result.get("context_fallbacks", [])),
             "current_brier": float(current["brier_score"]),
             "updater_brier": float(updater["brier_score"]),
             "current_margin_mae": float(current["margin_mae"]),
@@ -1376,6 +1378,9 @@ def update_in_season_minutes_production_op(
         root=_in_season_nail_root(),
         summary_key="excluded_contributions",
     )
+    rating_warnings = rating_publication.get("warnings", [])
+    if not isinstance(rating_warnings, list):
+        raise ValueError("Production ratings warning inventory is invalid")
     root = _in_season_minutes_root()
     output_dir = root / "runs" / f"through_date={through_date}" / context.run_id
     result = run(
@@ -1399,6 +1404,7 @@ def update_in_season_minutes_production_op(
             cache_dir=root,
             output_dir=output_dir,
             upstream_rating_exclusions=rating_exclusions,
+            upstream_rating_warnings=rating_warnings,
             preseason_minutes_path=_in_season_roster_artifact(
                 "preseason_minutes"
             ),
@@ -1489,6 +1495,7 @@ def update_in_season_minutes_production_op(
         },
         "exclusions": result["excluded_games"],
         "upstream_exclusions": result["upstream_exclusions"],
+        "upstream_warnings": result["upstream_warnings"],
         "player_metrics": result["player_metrics"],
         "four_cell_game_metrics": result["four_cell_game_metrics"],
         "minutes_ab_game_metrics": result["minutes_ab_game_metrics"],
