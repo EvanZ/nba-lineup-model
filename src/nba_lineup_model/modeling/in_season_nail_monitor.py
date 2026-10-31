@@ -17,6 +17,7 @@ import math
 import re
 import subprocess
 import unicodedata
+import urllib.error
 import urllib.request
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
@@ -338,33 +339,48 @@ def _context_offsets(
     matchup_url: str,
     home_back_to_back: bool,
     away_back_to_back: bool,
-    cache: dict[tuple[object, ...], float],
-) -> np.ndarray:
+    cache: dict[tuple[object, ...], tuple[float, str | None]],
+) -> tuple[np.ndarray, list[str]]:
     offsets: list[float] = []
+    fallback_reasons: set[str] = set()
     for row in stints.itertuples(index=False):
         home_ids = tuple(int(value) for value in row.home_player_ids)
         away_ids = tuple(int(value) for value in row.away_player_ids)
         key = (home_ids, away_ids, home_back_to_back, away_back_to_back)
         if key not in cache:
-            response = _post_matchup(
-                matchup_url,
-                {
-                    "unit_player_ids": home_ids,
-                    "opponent_player_ids": away_ids,
-                    "unit_season": SEASON,
-                    "opponent_season": SEASON,
-                    "environment": "unit",
-                    "court": "unit_home",
-                    "unit_back_to_back": home_back_to_back,
-                    "opponent_back_to_back": away_back_to_back,
-                    "include_response_curves": False,
-                },
-            )
-            cache[key] = float(response["predicted_net_rating"]) - float(
-                response["additive_margin"]
-            )
-        offsets.append(cache[key])
-    return np.asarray(offsets, dtype=float)
+            try:
+                response = _post_matchup(
+                    matchup_url,
+                    {
+                        "unit_player_ids": home_ids,
+                        "opponent_player_ids": away_ids,
+                        "unit_season": SEASON,
+                        "opponent_season": SEASON,
+                        "environment": "unit",
+                        "court": "unit_home",
+                        "unit_back_to_back": home_back_to_back,
+                        "opponent_back_to_back": away_back_to_back,
+                        "include_response_curves": False,
+                    },
+                )
+                cache[key] = (
+                    float(response["predicted_net_rating"])
+                    - float(response["additive_margin"]),
+                    None,
+                )
+            except urllib.error.HTTPError as error:
+                if error.code != 422:
+                    raise
+                detail = error.read().decode(errors="replace").strip()
+                cache[key] = (
+                    0.0,
+                    f"matchup HTTP 422; neutral context fallback: {detail}",
+                )
+        offset, fallback_reason = cache[key]
+        offsets.append(offset)
+        if fallback_reason is not None:
+            fallback_reasons.add(fallback_reason)
+    return np.asarray(offsets, dtype=float), sorted(fallback_reasons)
 
 
 def _probability_scale(summaries: list[dict[str, Any]]) -> float:
@@ -622,7 +638,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     prior_precision = sparse.eye(len(player_ids), format="csr") * args.prior_possessions
     gram = sparse.csr_matrix((len(player_ids), len(player_ids)), dtype=float)
     score = np.zeros(len(player_ids), dtype=float)
-    context_cache: dict[tuple[object, ...], float] = {}
+    context_cache: dict[tuple[object, ...], tuple[float, str | None]] = {}
+    context_fallbacks: list[dict[str, object]] = []
     contributions_by_date: dict[date, list[Any]] = defaultdict(list)
     rows: list[dict[str, Any]] = []
     exclusions: list[dict[str, str]] = []
@@ -725,13 +742,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 if missing:
                     raise ValueError(f"Players missing from frozen preseason prior: {missing}")
                 home_b2b, away_b2b = b2b[game_id]
-                fixed_context = _context_offsets(
+                fixed_context, fallback_reasons = _context_offsets(
                     stints,
                     matchup_url=args.matchup_url,
                     home_back_to_back=home_b2b,
                     away_back_to_back=away_b2b,
                     cache=context_cache,
                 )
+                if fallback_reasons:
+                    context_fallbacks.append(
+                        {
+                            "game_id": game_id,
+                            "fallback": "neutral_non_additive_context",
+                            "reasons": fallback_reasons,
+                        }
+                    )
                 start_time = _parse_time(summary["pregame"]["start_time"])
                 finalized_at = _parse_time(summary["archived_at"])
                 if finalized_at < start_time:
@@ -745,7 +770,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     source_sha256=source_sha,
                     source_uri=source_uri,
                     core_model_version=CORE_MODEL_VERSION,
-                    context_model_version=CORE_MODEL_VERSION + ":2025-26",
+                    context_model_version=(
+                        CORE_MODEL_VERSION
+                        + ":2025-26"
+                        + (":neutral_422_fallback" if fallback_reasons else "")
+                    ),
                     player_ids=player_ids,
                     preseason_nail=preseason,
                     fixed_context_offset=fixed_context,
@@ -818,6 +847,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "cached_contribution_count": cached_contribution_count,
         "created_contribution_count": len(created_contribution_paths),
         "excluded_contributions": exclusions,
+        "context_fallbacks": context_fallbacks,
         "shadow_player_state": {
             "player_count": len(state),
             "state_sha256": player_state_path.name.removeprefix("state_sha256="),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import urllib.error
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,9 +16,46 @@ from nba_lineup_model.modeling.in_season_nail_monitor import (
     SEASON,
     _b2b_flags,
     _cached_game_contribution,
+    _context_offsets,
     _player_game_context,
     build_player_game_trajectory,
 )
+
+
+def test_context_offsets_neutralize_and_report_unknown_player_422(
+    monkeypatch,
+) -> None:
+    def reject_unknown_player(_url, _request):
+        raise urllib.error.HTTPError(
+            "http://matchup",
+            422,
+            "Unprocessable Entity",
+            {},
+            io.BytesIO(b'{"detail":"Unknown player 1631104"}'),
+        )
+
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_nail_monitor._post_matchup",
+        reject_unknown_player,
+    )
+    stints = pd.DataFrame(
+        {
+            "home_player_ids": [(1, 2, 1631104), (1, 2, 1631104)],
+            "away_player_ids": [(3, 4, 5), (3, 4, 5)],
+        }
+    )
+
+    offsets, reasons = _context_offsets(
+        stints,
+        matchup_url="http://matchup",
+        home_back_to_back=False,
+        away_back_to_back=False,
+        cache={},
+    )
+
+    assert offsets.tolist() == [0.0, 0.0]
+    assert len(reasons) == 1
+    assert "Unknown player 1631104" in reasons[0]
 
 
 def _contribution():
