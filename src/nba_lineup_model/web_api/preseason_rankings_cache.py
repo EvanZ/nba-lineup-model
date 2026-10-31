@@ -467,6 +467,14 @@ def append_target_bios(
     for roster_row in roster.itertuples(index=False):
         player_id = int(roster_row.player_id)
         prior = latest.loc[player_id] if player_id in latest.index else pd.Series(dtype=object)
+        has_history = player_id in latest.index
+        roster_experience = _experience_years(roster_row.experience)
+        prior_experience = (
+            _experience_years(prior.get("nba_experience_years")) + 1
+            if has_history
+            else 0
+        )
+        target_experience = max(roster_experience, prior_experience)
         current_draft = (
             draft.loc[player_id] if player_id in draft.index else pd.Series(dtype=object)
         )
@@ -481,8 +489,8 @@ def append_target_bios(
                 "listed_position": str(roster_row.listed_position),
                 "height_inches": _number_or_nan(roster_row.height_inches),
                 "weight_pounds": _number_or_nan(roster_row.weight_pounds),
-                "nba_experience_years": _experience_years(roster_row.experience),
-                "is_rookie": _experience_years(roster_row.experience) == 0,
+                "nba_experience_years": target_experience,
+                "is_rookie": not has_history and target_experience == 0,
                 "rapm_seconds": 0.0,
                 "rapm_exposure_eligible": False,
                 "rapm_possessions": 0.0,

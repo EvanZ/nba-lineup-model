@@ -48,7 +48,9 @@ def test_runtime_target_bios_can_reuse_history_without_packaged_draft_file(
                 "listed_position": "G",
                 "height_inches": 76,
                 "weight_pounds": 190,
-                "experience": "4",
+                # Runtime roster sources can report zero even for a player who
+                # has a completed prior-season panel row.
+                "experience": "0",
             }
         ]
     )
@@ -65,6 +67,8 @@ def test_runtime_target_bios_can_reuse_history_without_packaged_draft_file(
     assert int(target["player_id"]) == 1631104
     assert int(target["draft_year"]) == 2022
     assert int(target["draft_number"]) == 25
+    assert int(target["nba_experience_years"]) == 4
+    assert not bool(target["is_rookie"])
 
 
 def test_reconcile_current_roster_resolves_suffixes_and_historical_players() -> None:
