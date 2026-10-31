@@ -35,9 +35,6 @@ from nba_lineup_model.players.opening_rosters import (
     _movement_frame,
 )
 from nba_lineup_model.players.rosters import TEAM_ABBREVIATIONS
-from nba_lineup_model.web_api.preseason_minutes import (
-    build_forward_conditional_preseason_minutes_payload,
-)
 from nba_lineup_model.web_api.preseason_rankings_cache import (
     _completed_results,
     _exposure_history,
@@ -630,6 +627,124 @@ def _merge_minutes_catalog(
     return additions
 
 
+def _extend_runtime_minutes_catalog(
+    *,
+    base_cache_path: Path,
+    prior_overlay_path: Path | None,
+    rankings: pd.DataFrame,
+    current_roster: pd.DataFrame,
+    rotation_history_path: Path,
+    output_path: Path,
+) -> list[int]:
+    """Append only missing minute priors from materialized rotation history."""
+
+    source = (
+        prior_overlay_path
+        if prior_overlay_path and prior_overlay_path.is_file()
+        else base_cache_path
+    )
+    payload = json.loads(source.read_text())
+    minutes = payload.get("minutes", payload)
+    if not isinstance(minutes, dict) or not isinstance(minutes.get("players"), list):
+        raise ValueError("Frozen minutes cache has no player catalog")
+    rows = {int(row["player_id"]): dict(row) for row in minutes["players"]}
+    current = current_roster.copy()
+    current["player_id"] = pd.to_numeric(
+        current["player_id"], errors="raise"
+    ).astype(int)
+    current_by_id = current.set_index("player_id")
+    ratings = rankings.copy()
+    ratings["player_id"] = pd.to_numeric(
+        ratings["player_id"], errors="raise"
+    ).astype(int)
+    rating_by_id = ratings.set_index("player_id")
+    additions = sorted(set(current_by_id.index) - set(rows))
+    history = pd.read_parquet(rotation_history_path)
+    history["player_id"] = pd.to_numeric(
+        history["player_id"], errors="raise"
+    ).astype(int)
+    cold_start_rows = [
+        row
+        for row in rows.values()
+        if bool(row.get("uses_draft_cold_start_prior"))
+        or not bool(row.get("has_prior_minutes_state", True))
+    ]
+    cold_start_conditional = float(
+        pd.to_numeric(
+            pd.Series(
+                [row.get("conditional_minutes_per_game") for row in cold_start_rows]
+            ),
+            errors="coerce",
+        ).median()
+    )
+    if not np.isfinite(cold_start_conditional) or cold_start_conditional <= 0:
+        cold_start_conditional = 8.0
+    for player_id in additions:
+        roster = current_by_id.loc[player_id]
+        player_history = history.loc[history["player_id"].eq(player_id)].sort_values(
+            ["season_start_year", "season"], kind="stable"
+        )
+        if player_history.empty:
+            conditional = cold_start_conditional
+            prior_minutes = 0.0
+            has_prior = False
+            rating_source = "in-season replacement cold-start prior"
+        else:
+            latest = player_history.iloc[-1]
+            conditional = float(latest["actual_minutes_per_available_game"])
+            prior_minutes = float(latest["actual_total_minutes"])
+            has_prior = np.isfinite(conditional) and conditional >= 0.0
+            if not has_prior:
+                conditional = cold_start_conditional
+                prior_minutes = 0.0
+            rating_source = "in-season last observed available-game role"
+        rating = rating_by_id.loc[player_id]
+        template = {key: None for key in next(iter(rows.values()))}
+        template.update(
+            {
+                "player_id": player_id,
+                "player_name": str(roster["player_name"]),
+                "position": str(roster["listed_position"]),
+                "age": float(roster["age"]),
+                "team": str(roster["team_abbreviation"]),
+                "prior_season_minutes": prior_minutes,
+                "is_rating_fallback": False,
+                "is_baseline_rotation_candidate": conditional > 0.0,
+                "has_prior_availability_state": has_prior,
+                "has_prior_minutes_state": has_prior,
+                "availability_probability": 1.0,
+                "conditional_minutes_per_game": conditional,
+                "raw_expected_total_minutes": 82.0 * conditional,
+                # Frozen normalized team allocations are not rewritten when a
+                # player signs. The in-season forecaster normalizes the live
+                # conditional-role state to 240 minutes at each game cutoff.
+                "baseline_minute_share": 0.0,
+                "baseline_minutes_per_game": 0.0,
+                "projected_nail": float(rating["rapm"]),
+                "rating_source": rating_source,
+                "model_availability_probability": 1.0,
+                "injury_adjusted": False,
+                "injury_expected_games_missed": 0.0,
+                "uses_draft_cold_start_prior": not has_prior,
+                "uses_incumbent_team_strength": False,
+                "is_incumbent_team_strength_incumbent": False,
+            }
+        )
+        rows[player_id] = template
+    for player_id, roster in current_by_id.iterrows():
+        if int(player_id) not in rows:
+            continue
+        rows[int(player_id)]["team"] = str(roster["team_abbreviation"])
+        rows[int(player_id)]["player_name"] = str(roster["player_name"])
+        rows[int(player_id)]["position"] = str(roster["listed_position"])
+    merged = dict(minutes)
+    merged["players"] = sorted(
+        rows.values(), key=lambda row: (str(row.get("team", "")), int(row["player_id"]))
+    )
+    _atomic_write_bytes(output_path, _canonical_json_bytes({"minutes": merged}))
+    return additions
+
+
 def run(
     *,
     release_root: Path,
@@ -740,11 +855,6 @@ def run(
             profiles_output_path=profiles_path,
         )
         rankings = pd.read_parquet(rankings_path)
-        candidate_minutes = build_forward_conditional_preseason_minutes_payload(
-            preseason_rankings=rankings,
-            roster_path=roster_path,
-            target_season=SEASON,
-        )
     finally:
         os.chdir(old_cwd)
 
@@ -756,11 +866,17 @@ def run(
     prior_minutes_value = previous_artifacts.get("preseason_minutes")
     prior_minutes = Path(str(prior_minutes_value)) if prior_minutes_value else None
     minutes_path = run_root / "preseason_minutes.json"
-    minute_additions = _merge_minutes_catalog(
+    rotation_history_path = _single_match(
+        release_root,
+        "artifacts/web/player_rotation_history/forward_nail_rapm_v1212_residualized_lambda/*.parquet",
+        "player rotation history",
+    )
+    minute_additions = _extend_runtime_minutes_catalog(
         base_cache_path=frozen_minutes_cache,
         prior_overlay_path=prior_minutes,
-        candidate=candidate_minutes,
+        rankings=rankings,
         current_roster=current,
+        rotation_history_path=rotation_history_path,
         output_path=minutes_path,
     )
     frozen_ids = set(pd.read_parquet(frozen_rankings)["player_id"].astype(int))

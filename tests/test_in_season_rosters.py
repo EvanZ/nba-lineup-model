@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from nba_lineup_model.players.in_season_rosters import (
+    _extend_runtime_minutes_catalog,
     _merge_minutes_catalog,
     normalize_player_name,
     reconcile_current_roster,
@@ -242,3 +243,88 @@ def test_minutes_overlay_appends_new_player_without_rewriting_frozen_prior(
     assert rows[1]["conditional_minutes_per_game"] == 30.0
     assert rows[1]["team"] == "LAC"
     assert rows[2]["conditional_minutes_per_game"] == 18.0
+
+
+def test_runtime_minutes_append_uses_last_observed_available_game_role(
+    tmp_path: Path,
+) -> None:
+    frozen_path = tmp_path / "frozen.json"
+    frozen_path.write_text(
+        json.dumps(
+            {
+                "minutes": {
+                    "players": [
+                        {
+                            "player_id": 1,
+                            "player_name": "Incumbent",
+                            "team": "LAC",
+                            "position": "G",
+                            "conditional_minutes_per_game": 30.0,
+                            "has_prior_minutes_state": True,
+                            "uses_draft_cold_start_prior": False,
+                        },
+                        {
+                            "player_id": 3,
+                            "player_name": "Cold Start",
+                            "team": "LAC",
+                            "position": "F",
+                            "conditional_minutes_per_game": 8.0,
+                            "has_prior_minutes_state": False,
+                            "uses_draft_cold_start_prior": True,
+                        },
+                    ]
+                }
+            }
+        )
+    )
+    current = pd.DataFrame(
+        [
+            {
+                "player_id": "1",
+                "player_name": "Incumbent",
+                "team_abbreviation": "LAC",
+                "listed_position": "G",
+                "age": 27,
+            },
+            {
+                "player_id": "2",
+                "player_name": "New Player",
+                "team_abbreviation": "LAC",
+                "listed_position": "G",
+                "age": 23,
+            },
+        ]
+    )
+    rankings = pd.DataFrame([{"player_id": 2, "rapm": -1.25}])
+    rotation_path = tmp_path / "rotation.parquet"
+    pd.DataFrame(
+        [
+            {
+                "season": "2025-26",
+                "season_start_year": 2025,
+                "player_id": 2,
+                "actual_minutes_per_available_game": 12.5,
+                "actual_total_minutes": 250.0,
+            }
+        ]
+    ).to_parquet(rotation_path, index=False)
+    output = tmp_path / "overlay.json"
+
+    additions = _extend_runtime_minutes_catalog(
+        base_cache_path=frozen_path,
+        prior_overlay_path=None,
+        rankings=rankings,
+        current_roster=current,
+        rotation_history_path=rotation_path,
+        output_path=output,
+    )
+
+    rows = {
+        int(row["player_id"]): row
+        for row in json.loads(output.read_text())["minutes"]["players"]
+    }
+    assert additions == [2]
+    assert rows[1]["conditional_minutes_per_game"] == 30.0
+    assert rows[2]["conditional_minutes_per_game"] == 12.5
+    assert rows[2]["baseline_minutes_per_game"] == 0.0
+    assert rows[2]["projected_nail"] == -1.25
