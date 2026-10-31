@@ -76,6 +76,8 @@ DEFAULT_IN_SEASON_MINUTES_PARTICIPATION_PRIOR_GAMES = 4
 DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_PRIOR_GAMES = 0.2
 DEFAULT_IN_SEASON_MINUTES_CONDITIONAL_LOOKBACK_GAMES = 3
 DEFAULT_IN_SEASON_MINUTES_ROLE_CUTOFF_MINUTES = 44
+DEFAULT_IN_SEASON_ROSTER_ROOT = Path("/var/lib/nba-gestalt/in-season-rosters")
+DEFAULT_IN_SEASON_ROSTER_LAKE_URI = "s3://nba-gestalt-data/lake"
 DEFAULT_CURRENT_SEASON_SERVING_ROOT = Path(
     "/var/lib/nba-gestalt/current-season-serving"
 )
@@ -195,6 +197,37 @@ def _in_season_minutes_lake_uri() -> str:
     return os.environ.get(
         "GESTALT_IN_SEASON_MINUTES_LAKE_URI", DEFAULT_IN_SEASON_MINUTES_LAKE_URI
     ).rstrip("/")
+
+
+def _in_season_roster_root() -> Path:
+    return Path(
+        os.environ.get("GESTALT_IN_SEASON_ROSTER_ROOT", DEFAULT_IN_SEASON_ROSTER_ROOT)
+    )
+
+
+def _in_season_roster_lake_uri() -> str:
+    return os.environ.get(
+        "GESTALT_IN_SEASON_ROSTER_LAKE_URI", DEFAULT_IN_SEASON_ROSTER_LAKE_URI
+    ).rstrip("/")
+
+
+def _in_season_roster_artifact(label: str) -> Path | None:
+    latest = _in_season_roster_root() / "latest.json"
+    if not latest.is_file():
+        return None
+    manifest = json.loads(latest.read_text())
+    artifacts = manifest.get("artifacts")
+    checksums = manifest.get("artifact_sha256")
+    if not isinstance(artifacts, dict) or not isinstance(checksums, dict):
+        raise ValueError("In-season roster manifest has no artifact inventory")
+    path = Path(str(artifacts.get(label, "")))
+    expected = str(checksums.get(label, ""))
+    if not path.is_file() or not expected:
+        raise ValueError(f"In-season roster artifact is unavailable: {label}")
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != expected:
+        raise ValueError(f"In-season roster artifact checksum changed: {label}")
+    return path
 
 
 def _current_season_serving_root() -> Path:
@@ -894,9 +927,87 @@ cdn_morning_reconciliation_schedule = ScheduleDefinition(
 
 
 @op(
+    name="reconcile_current_nba_rosters",
+    retry_policy=RetryPolicy(max_retries=1, delay=120),
+)
+def reconcile_in_season_rosters_op(context: OpExecutionContext) -> dict[str, object]:
+    """Poll current rosters and append legitimate in-season player priors."""
+
+    from nba_lineup_model.players.in_season_rosters import run
+    from nba_lineup_model.season.stats_v3_lake import (
+        AwsCliImmutableObjectStore,
+        _join_s3_uri,
+    )
+
+    result = run(release_root=_release_root(), state_root=_in_season_roster_root())
+    published: dict[str, str] = {}
+    if bool(result.get("changed")):
+        store = AwsCliImmutableObjectStore()
+        for label, path_value in dict(result.get("artifacts", {})).items():
+            path = Path(str(path_value))
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            uri = _join_s3_uri(
+                _in_season_roster_lake_uri(),
+                "analytical",
+                "in_season_rosters",
+                f"season={_cdn_season()}",
+                f"source_sha256={result['source_digest']}",
+                f"{label}-{digest}{path.suffix}",
+            )
+            store.put_bytes(uri, path.read_bytes())
+            published[str(label)] = uri
+        manifest_path = Path(str(result["manifest_path"]))
+        manifest_uri = _join_s3_uri(
+            _in_season_roster_lake_uri(),
+            "analytical",
+            "in_season_rosters",
+            "manifests",
+            f"season={_cdn_season()}",
+            f"{result['manifest_sha256']}.json",
+        )
+        store.put_bytes(manifest_uri, manifest_path.read_bytes())
+        published["manifest"] = manifest_uri
+    coverage = dict(result.get("coverage", {}))
+    context.add_output_metadata(
+        {
+            "status": str(result.get("status", "")),
+            "changed": bool(result.get("changed")),
+            "teams": int(coverage.get("teams", 0)),
+            "current_players": int(coverage.get("current_players", 0)),
+            "catalog_additions": int(coverage.get("catalog_additions", 0)),
+            "unresolved_players": int(coverage.get("unresolved_players", 0)),
+        }
+    )
+    return {**result, "published": published}
+
+
+@job(
+    name="reconcile_in_season_rosters",
+    executor_def=in_process_executor,
+    tags={WORKLOAD_TAG: "in_season_rosters"},
+)
+def reconcile_in_season_rosters_job() -> None:
+    reconcile_in_season_rosters_op()
+
+
+in_season_roster_schedule = ScheduleDefinition(
+    name="in_season_rosters_four_times_daily",
+    job=reconcile_in_season_rosters_job,
+    cron_schedule="0 6,9,12,15 * * *",
+    execution_timezone="America/Los_Angeles",
+    default_status=SCHEDULE_DEFAULT_STATUS,
+    description=(
+        "Reconcile NBA transactions and current rosters at 06:00, 09:00, "
+        "12:00, and 15:00 Pacific; unchanged source membership is a no-op."
+    ),
+)
+
+
+@op(
     name="run_in_season_nail_production",
     config_schema={
         "through_date": str,
+        "input_snapshot": Field(str, default_value=""),
         "prior_possessions": Field(
             int,
             default_value=DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS,
@@ -933,6 +1044,9 @@ def update_in_season_nail_production_op(
             through_date=through_date,
             cache_dir=root,
             output_dir=output_dir,
+            preseason_rankings_path=_in_season_roster_artifact(
+                "preseason_rankings"
+            ),
         )
     )
     local_artifacts = result.pop("local_artifacts")
@@ -998,6 +1112,7 @@ def update_in_season_nail_production_op(
         "season": _cdn_season(),
         "through_date": through_date,
         "dagster_run_id": context.run_id,
+        "input_snapshot": str(context.op_config["input_snapshot"]),
         "generated_at": result["generated_at"],
         "updater_version": result["updater_version"],
         "artifacts": published,
@@ -1059,12 +1174,15 @@ def update_in_season_nail_production_job() -> None:
     update_in_season_nail_production_op()
 
 
-def _in_season_nail_production_config(through_date: str) -> dict[str, object]:
+def _in_season_nail_production_config(
+    through_date: str, input_snapshot: str = ""
+) -> dict[str, object]:
     return {
         "ops": {
             "run_in_season_nail_production": {
                 "config": {
                     "through_date": through_date,
+                    "input_snapshot": input_snapshot,
                     "prior_possessions": DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS,
                 }
             }
@@ -1077,11 +1195,12 @@ def _next_production_rating_slate() -> tuple[str, str] | SkipReason:
 
     rating_latest = _in_season_nail_root() / "latest.json"
     latest_rating_date = ""
+    latest_input_snapshot = ""
     if rating_latest.is_file():
         try:
-            latest_rating_date = str(
-                json.loads(rating_latest.read_text()).get("through_date", "")
-            )
+            latest_payload = json.loads(rating_latest.read_text())
+            latest_rating_date = str(latest_payload.get("through_date", ""))
+            latest_input_snapshot = str(latest_payload.get("input_snapshot", ""))
         except (OSError, json.JSONDecodeError, TypeError):
             return SkipReason("The production ratings pointer is invalid")
 
@@ -1110,7 +1229,7 @@ def _next_production_rating_slate() -> tuple[str, str] | SkipReason:
     today = datetime.now(UTC).astimezone(PACIFIC).date().isoformat()
     for slate_path in sorted((_state_dir() / "latest").glob("*.json")):
         through_date = slate_path.stem
-        if through_date <= latest_rating_date or through_date > today:
+        if through_date < latest_rating_date or through_date > today:
             continue
         try:
             slate = json.loads(slate_path.read_text())
@@ -1161,7 +1280,12 @@ def _next_production_rating_slate() -> tuple[str, str] | SkipReason:
                     hashlib.sha256(espn_path.read_bytes()).hexdigest(),
                 ]
             )
+        roster_latest = _in_season_roster_root() / "latest.json"
+        if roster_latest.is_file():
+            source_parts.append(hashlib.sha256(roster_latest.read_bytes()).hexdigest())
         snapshot = hashlib.sha256(":".join(source_parts).encode()).hexdigest()[:16]
+        if through_date == latest_rating_date and snapshot == latest_input_snapshot:
+            continue
         return through_date, snapshot
     return SkipReason("No newer complete production slate is ready")
 
@@ -1202,7 +1326,7 @@ def in_season_nail_production_sensor(
         )
     return RunRequest(
         run_key=f"production-ratings:{through_date}:{snapshot}",
-        run_config=_in_season_nail_production_config(through_date),
+        run_config=_in_season_nail_production_config(through_date, snapshot),
         tags={
             WORKLOAD_TAG: "in_season_nail_production",
             "gestalt/through_date": through_date,
@@ -1275,6 +1399,9 @@ def update_in_season_minutes_production_op(
             cache_dir=root,
             output_dir=output_dir,
             upstream_rating_exclusions=rating_exclusions,
+            preseason_minutes_path=_in_season_roster_artifact(
+                "preseason_minutes"
+            ),
         )
     )
     input_rating_artifacts = {
@@ -2321,6 +2448,7 @@ defs = Definitions(
         update_live_scores_job,
         reconcile_final_game_archives_job,
         ingest_completed_cdn_play_by_play_job,
+        reconcile_in_season_rosters_job,
         update_in_season_nail_production_job,
         update_in_season_minutes_production_job,
         promote_current_season_serving_job,
@@ -2334,6 +2462,7 @@ defs = Definitions(
         yesterday_finalization_schedule,
         final_game_archive_morning_reconciliation_schedule,
         cdn_morning_reconciliation_schedule,
+        in_season_roster_schedule,
         stats_v3_morning_reconciliation_schedule,
         daily_lake_health_schedule,
     ],

@@ -600,7 +600,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             str(row["game_id"]),
         )
     )
-    rankings_path, _metadata_path = _ranking_paths(args.release_root)
+    configured_rankings_path = getattr(args, "preseason_rankings_path", None)
+    if configured_rankings_path is not None:
+        rankings_path = Path(configured_rankings_path)
+        if not rankings_path.is_file():
+            raise ValueError(
+                f"Configured in-season preseason ranking is missing: {rankings_path}"
+            )
+    else:
+        rankings_path, _metadata_path = _ranking_paths(args.release_root)
     rankings = pd.read_parquet(rankings_path).sort_values("player_id", kind="stable")
     player_ids = tuple(rankings["player_id"].astype(int))
     preseason = dict(
@@ -873,6 +881,7 @@ def _parser() -> argparse.ArgumentParser:
         default=Path("/var/lib/nba-gestalt/cdn/coverage.json"),
     )
     parser.add_argument("--release-root", type=Path, default=Path("/opt/nba-gestalt/current"))
+    parser.add_argument("--preseason-rankings-path", type=Path)
     parser.add_argument(
         "--cdn-s3-prefix",
         default="s3://nba-gestalt-data/lake/raw/cdn/playbyplay",

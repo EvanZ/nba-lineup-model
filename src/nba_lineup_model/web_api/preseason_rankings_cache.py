@@ -47,6 +47,11 @@ def materialize_preseason_rankings(
     target_season: str = PRESEASON_PREVIEW_SEASON,
     completed_season: str = DISPLAY_SEASON,
     panel_path: Path | str = DEFAULT_PANEL_PATH,
+    roster_path: Path | str | None = None,
+    output_path: Path | str | None = None,
+    profiles_output_path: Path | str | None = None,
+    frozen_rankings_path: Path | str | None = None,
+    frozen_profiles_path: Path | str | None = None,
 ) -> Path:
     """Write a true frozen next-season catalog for the published NAIL run.
 
@@ -57,13 +62,48 @@ def materialize_preseason_rankings(
     """
 
     run_dir, run_id = _published_run(completed_season)
-    path = preseason_rankings_path(MODEL_ARTIFACT, run_id, target_season)
-    profiles_path = preseason_profiles_path(MODEL_ARTIFACT, run_id, target_season)
-    existing_rankings = pd.read_parquet(path) if path.is_file() else None
-    existing_profiles = pd.read_parquet(profiles_path) if profiles_path.is_file() else None
+    published_path = preseason_rankings_path(MODEL_ARTIFACT, run_id, target_season)
+    published_profiles_path = preseason_profiles_path(
+        MODEL_ARTIFACT, run_id, target_season
+    )
+    path = Path(output_path) if output_path is not None else published_path
+    profiles_path = (
+        Path(profiles_output_path)
+        if profiles_output_path is not None
+        else published_profiles_path
+    )
+    existing_rankings_source = (
+        path
+        if path.is_file()
+        else (
+            Path(frozen_rankings_path)
+            if frozen_rankings_path is not None
+            else published_path
+        )
+    )
+    existing_profiles_source = (
+        profiles_path
+        if profiles_path.is_file()
+        else (
+            Path(frozen_profiles_path)
+            if frozen_profiles_path is not None
+            else published_profiles_path
+        )
+    )
+    existing_rankings = (
+        pd.read_parquet(existing_rankings_source)
+        if existing_rankings_source.is_file()
+        else None
+    )
+    existing_profiles = (
+        pd.read_parquet(existing_profiles_source)
+        if existing_profiles_source.is_file()
+        else None
+    )
+    existing_metadata_path = existing_rankings_source.with_suffix(".json")
     existing_metadata = (
-        json.loads(path.with_suffix(".json").read_text())
-        if path.with_suffix(".json").is_file()
+        json.loads(existing_metadata_path.read_text())
+        if existing_metadata_path.is_file()
         else None
     )
     if (existing_rankings is None) != (existing_profiles is None):
@@ -75,7 +115,7 @@ def materialize_preseason_rankings(
         == "last_observed_padded_profile"
     )
     panel = pd.read_parquet(panel_path)
-    roster = _load_roster(target_season)
+    roster = _load_roster(target_season, roster_path=roster_path)
     target_panel = append_target_bios(panel, roster, target_season=target_season)
     roster = roster.merge(
         target_panel.loc[
@@ -342,8 +382,11 @@ def _exposure_history(
     return histories
 
 
-def _load_roster(target_season: str) -> pd.DataFrame:
-    roster = pd.read_parquet(team_roster_path(target_season)).copy()
+def _load_roster(
+    target_season: str, *, roster_path: Path | str | None = None
+) -> pd.DataFrame:
+    source = Path(roster_path) if roster_path is not None else team_roster_path(target_season)
+    roster = pd.read_parquet(source).copy()
     roster["player_id"] = pd.to_numeric(roster["player_id"], errors="raise").astype(int)
     roster = roster.sort_values(["player_id", "team_abbreviation"], kind="stable").drop_duplicates(
         "player_id", keep="first"

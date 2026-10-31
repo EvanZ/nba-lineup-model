@@ -32,11 +32,13 @@ from nba_lineup_model.orchestration.definitions import (
     final_game_archive_morning_reconciliation_schedule,
     in_season_minutes_production_sensor,
     in_season_nail_production_sensor,
+    in_season_roster_schedule,
     ingest_completed_cdn_play_by_play_job,
     live_score_sensor,
     materialize_current_season_lineups_job,
     nba_market_odds_schedule,
     promote_current_season_serving_job,
+    reconcile_in_season_rosters_job,
     schedule_refresh_schedule,
     stats_v3_morning_reconciliation_schedule,
     update_in_season_nail_production_job,
@@ -736,6 +738,10 @@ def test_definitions_are_loadable_and_automations_default_stopped() -> None:
     assert nba_market_odds_schedule.default_status is DefaultScheduleStatus.STOPPED
     assert nba_market_odds_schedule.cron_schedule == "20 8,12,15-19 * * *"
     assert nba_market_odds_schedule.execution_timezone == "America/Los_Angeles"
+    assert in_season_roster_schedule.cron_schedule == "0 6,9,12,15 * * *"
+    assert in_season_roster_schedule.execution_timezone == "America/Los_Angeles"
+    assert in_season_roster_schedule.default_status is DefaultScheduleStatus.STOPPED
+    assert reconcile_in_season_rosters_job.name == "reconcile_in_season_rosters"
     assert (
         final_game_archive_morning_reconciliation_schedule.default_status
         is DefaultScheduleStatus.STOPPED

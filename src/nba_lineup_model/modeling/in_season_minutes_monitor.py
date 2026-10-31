@@ -684,7 +684,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             row["game_id"],
         )
     )
-    cache = _load_json(_minutes_cache_path(Path(args.release_root)))
+    configured_minutes_path = getattr(args, "preseason_minutes_path", None)
+    minutes_path = (
+        Path(configured_minutes_path)
+        if configured_minutes_path is not None
+        else _minutes_cache_path(Path(args.release_root))
+    )
+    cache = _load_json(minutes_path)
     priors = pd.DataFrame(cache["minutes"]["players"])
     config = InSeasonMinutesConfig(
         updater_version=UPDATER_VERSION,
@@ -1104,6 +1110,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--release-root", type=Path, required=True)
+    parser.add_argument("--preseason-minutes-path", type=Path)
     parser.add_argument("--cache-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--through-date", required=True)

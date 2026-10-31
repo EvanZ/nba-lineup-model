@@ -31,6 +31,12 @@ DuckDB for bounded analytical queries and S3 as durable storage.
   America/New_York and byte-verifies every local final artifact from the prior
   day's completed games against its immutable S3 key. Missing local artifacts
   fail the run instead of being silently skipped.
+- `in_season_rosters_four_times_daily` checks the official NBA transaction
+  ledger and all 30 current ESPN team rosters at 06:00, 09:00, 12:00, and
+  15:00 America/Los_Angeles. Unchanged membership is a no-op. Newly rostered
+  players extend the frozen ratings/minutes vocabulary without rewriting any
+  incumbent preseason prior, and a changed roster digest makes a quarantined
+  same-date ratings/minutes slate eligible for repair.
 - `daily_s3_lake_health` reads a small immutable Parquet object directly from
   S3 using DuckDB's AWS credential chain.
 - `completed_game_stats_v3` evaluates every 15 minutes and launches ingestion
