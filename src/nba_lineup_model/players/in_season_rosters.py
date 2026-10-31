@@ -20,8 +20,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
+from nba_lineup_model.modeling.forward_portable_matchup_contextual_rapm import (
+    _recover_replacement_tokens,
+)
+from nba_lineup_model.modeling.gap_returner_prior import (
+    build_centered_value_conditioned_aging_gap_returner_priors,
+)
+from nba_lineup_model.modeling.prior_rapm import PRIOR_MEAN_COLUMN
 from nba_lineup_model.players.opening_rosters import (
     PLAYER_MOVEMENT_URL,
     _movement_frame,
@@ -31,10 +39,14 @@ from nba_lineup_model.web_api.preseason_minutes import (
     build_forward_conditional_preseason_minutes_payload,
 )
 from nba_lineup_model.web_api.preseason_rankings_cache import (
-    materialize_preseason_rankings,
+    _completed_results,
+    _exposure_history,
+    _published_run,
+    append_target_bios,
 )
 
 SEASON = "2026-27"
+COMPLETED_SEASON = "2025-26"
 ESPN_TEAMS_URL = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams"
 )
@@ -340,6 +352,241 @@ def _single_match(root: Path, pattern: str, label: str) -> Path:
     return paths[0]
 
 
+def _extend_preseason_catalogs(
+    *,
+    base_rankings_path: Path,
+    base_profiles_path: Path,
+    current_roster: pd.DataFrame,
+    panel_path: Path,
+    historical_profiles_path: Path,
+    rankings_output_path: Path,
+    profiles_output_path: Path,
+) -> list[int]:
+    """Append roster additions without rebuilding or rewriting frozen states.
+
+    The deployed release intentionally excludes the raw multi-decade profile
+    inputs used by the offline preseason build.  Runtime reconciliation uses
+    the already-fitted forward prior machinery for historical players and the
+    frozen replacement prior for true cold starts.  A last materialized profile
+    is retained for display/provenance, but it is not rescored into the prior.
+    """
+
+    rankings = pd.read_parquet(base_rankings_path).copy()
+    profiles = pd.read_parquet(base_profiles_path).copy()
+    for label, frame in (("rankings", rankings), ("profiles", profiles)):
+        if frame.empty or frame["player_id"].duplicated().any():
+            raise ValueError(f"Frozen preseason {label} catalog is invalid")
+    current = current_roster.copy()
+    current["player_id"] = pd.to_numeric(
+        current["player_id"], errors="raise"
+    ).astype(int)
+    current_by_id = current.set_index("player_id")
+    additions = sorted(set(current_by_id.index) - set(rankings["player_id"].astype(int)))
+
+    panel = pd.read_parquet(panel_path)
+    latest_panel = (
+        panel.sort_values(["player_id", "season_start_year"], kind="stable")
+        .drop_duplicates("player_id", keep="last")
+        .set_index("player_id")
+    )
+    forward_prior: dict[int, float] = {}
+    prior_alignment = 0.0
+    if additions:
+        target_panel = append_target_bios(
+            panel,
+            current,
+            target_season=SEASON,
+            allow_missing_draft_history=True,
+        )
+        run_dir, run_id = _published_run(COMPLETED_SEASON)
+        historical = pd.read_parquet(run_dir / "historical_player_coefficients.parquet")
+        results = _completed_results(historical)
+        exposure_history = _exposure_history(run_id, historical, panel)
+        prior_metadata = pd.read_parquet(
+            run_dir / "season_player_prior_metadata.parquet"
+        )
+        replacement_tokens = _recover_replacement_tokens(
+            prior_metadata,
+            tuple(result.season for result in results),
+        )
+        priors, _contract = (
+            build_centered_value_conditioned_aging_gap_returner_priors(
+                season=SEASON,
+                panel=target_panel,
+                completed_results=results,
+                exposure_history=exposure_history,
+                replacement_tokens=replacement_tokens,
+            )
+        )
+        forward_prior = dict(
+            zip(
+                priors["player_id"].astype(int),
+                priors[PRIOR_MEAN_COLUMN].astype(float),
+                strict=True,
+            )
+        )
+        aligned = rankings.loc[
+            rankings["forecast_source"].astype(str).str.startswith("forward_")
+            & rankings["player_id"].astype(int).isin(forward_prior),
+            ["player_id", "prior_rating"],
+        ].copy()
+        aligned["candidate"] = aligned["player_id"].astype(int).map(forward_prior)
+        differences = pd.to_numeric(
+            aligned["prior_rating"], errors="coerce"
+        ) - pd.to_numeric(aligned["candidate"], errors="coerce")
+        differences = differences[np.isfinite(differences)]
+        if differences.empty:
+            raise ValueError("Cannot align appended player priors to the frozen catalog")
+        prior_alignment = float(differences.median())
+
+    replacement = rankings.loc[
+        rankings["forecast_source"].eq("replacement_cold_start_prior"), "rapm"
+    ]
+    replacement_rating = float(pd.to_numeric(replacement, errors="coerce").median())
+    if not np.isfinite(replacement_rating):
+        raise ValueError("Frozen replacement cold-start prior is unavailable")
+
+    ranking_rows: list[dict[str, object]] = []
+    for player_id in additions:
+        roster = current_by_id.loc[player_id]
+        historical = (
+            latest_panel.loc[player_id]
+            if player_id in latest_panel.index
+            else pd.Series(dtype=object)
+        )
+        has_forward_prior = player_id in forward_prior
+        prior_rating = (
+            float(forward_prior[player_id]) + prior_alignment
+            if has_forward_prior
+            else replacement_rating
+        )
+        row = {column: pd.NA for column in rankings.columns}
+        row.update(
+            {
+                "season": SEASON,
+                "player_id": player_id,
+                "player_name": str(roster["player_name"]),
+                "team": str(roster["team_abbreviation"]),
+                "position": str(roster["listed_position"]),
+                "draft_year": historical.get("draft_year", pd.NA),
+                "draft_round": historical.get("draft_round", pd.NA),
+                "draft_number": historical.get("draft_number", pd.NA),
+                "is_undrafted": historical.get("is_undrafted", True),
+                "draft_class_year": historical.get("draft_year", pd.NA),
+                "rapm": prior_rating,
+                "prior_rating": prior_rating,
+                "season_update": np.nan,
+                "additive_profile_adjustment": np.nan,
+                "observed_context_exposure": np.nan,
+                "possessions": 0.0,
+                "games": 0,
+                "age": float(roster["age"]),
+                "rookie_season": (
+                    SEASON if not has_forward_prior else pd.NA
+                ),
+                "profile_source": (
+                    "in_season_historical_forward_prior"
+                    if has_forward_prior
+                    else "in_season_replacement_cold_start_prior"
+                ),
+                "forecast_source": (
+                    "in_season_historical_forward_prior"
+                    if has_forward_prior
+                    else "in_season_replacement_cold_start_prior"
+                ),
+                "additive_profile_breakdown_json": None,
+            }
+        )
+        ranking_rows.append(row)
+    if ranking_rows:
+        rankings = pd.concat(
+            [rankings, pd.DataFrame(ranking_rows, columns=rankings.columns)],
+            ignore_index=True,
+        )
+
+    active_team = current_by_id["team_abbreviation"].astype(str).to_dict()
+    active_name = current_by_id["player_name"].astype(str).to_dict()
+    active_position = current_by_id["listed_position"].astype(str).to_dict()
+    rankings["team"] = rankings.apply(
+        lambda row: active_team.get(int(row["player_id"]), str(row["team"])), axis=1
+    )
+    rankings["player_name"] = rankings.apply(
+        lambda row: active_name.get(int(row["player_id"]), str(row["player_name"])),
+        axis=1,
+    )
+    rankings["position"] = rankings.apply(
+        lambda row: active_position.get(int(row["player_id"]), str(row["position"])),
+        axis=1,
+    )
+    rankings = rankings.sort_values("player_id", kind="stable").reset_index(drop=True)
+    rankings.to_parquet(rankings_output_path, index=False)
+
+    historical_profiles = pd.read_parquet(historical_profiles_path)
+    historical_profiles["player_id"] = pd.to_numeric(
+        historical_profiles["player_id"], errors="raise"
+    ).astype(int)
+    generic_profile = profiles.select_dtypes(include="number").median(numeric_only=True)
+    profile_rows: list[dict[str, object]] = []
+    for player_id in additions:
+        roster = current_by_id.loc[player_id]
+        history = historical_profiles.loc[
+            historical_profiles["player_id"].eq(player_id)
+        ].sort_values("season", kind="stable")
+        if history.empty:
+            row = {column: pd.NA for column in profiles.columns}
+            for column, value in generic_profile.items():
+                row[column] = value
+            source = "runtime_replacement_profile"
+            imputed = 1
+            replacement_weight = 1.0
+        else:
+            row = history.iloc[-1].to_dict()
+            source = "last_materialized_profile_runtime_padding"
+            imputed = int(row.get("profile_imputed", 0))
+            replacement_weight = float(row.get("profile_replacement_weight", 0.0))
+        row.update(
+            {
+                "target_season": SEASON,
+                "season": SEASON,
+                "player_id": player_id,
+                "player_name": str(roster["player_name"]),
+                "is_rookie": player_id not in latest_panel.index,
+                "profile_source": source,
+                "profile_imputed": imputed,
+                "profile_replacement_weight": replacement_weight,
+            }
+        )
+        profile_rows.append({column: row.get(column, pd.NA) for column in profiles.columns})
+    if profile_rows:
+        profiles = pd.concat(
+            [profiles, pd.DataFrame(profile_rows, columns=profiles.columns)],
+            ignore_index=True,
+        )
+    profiles = profiles.sort_values("player_id", kind="stable").reset_index(drop=True)
+    profiles.to_parquet(profiles_output_path, index=False)
+    metadata_path = rankings_output_path.with_suffix(".json")
+    source_metadata_path = base_rankings_path.with_suffix(".json")
+    metadata = (
+        json.loads(source_metadata_path.read_text())
+        if source_metadata_path.is_file()
+        else {}
+    )
+    metadata.update(
+        {
+            "frozen_catalog_extended": True,
+            "player_count": len(rankings),
+            "added_player_ids": additions,
+            "runtime_contract": (
+                "incumbent preseason states are immutable; historical additions "
+                "receive an aligned fitted forward prior; true cold starts receive "
+                "the frozen replacement prior"
+            ),
+        }
+    )
+    _atomic_write_bytes(metadata_path, _canonical_json_bytes(metadata))
+    return additions
+
+
 def _merge_minutes_catalog(
     *,
     base_cache_path: Path,
@@ -472,34 +719,27 @@ def run(
     )
     rankings_path = run_root / "preseason_rankings.parquet"
     profiles_path = run_root / "preseason_profiles.parquet"
+    historical_profiles_path = _single_match(
+        release_root,
+        "artifacts/web/historical_profiles/forward_nail_rapm_v1212_residualized_lambda/*.parquet",
+        "historical player profile",
+    )
     old_cwd = Path.cwd()
     try:
         # Published model/data paths are release-relative by design.
         import os
 
         os.chdir(release_root)
-        materialize_preseason_rankings(
-            target_season=SEASON,
+        added_ids = _extend_preseason_catalogs(
+            base_rankings_path=prior_rankings,
+            base_profiles_path=prior_profiles,
+            current_roster=current,
             panel_path=panel_path,
-            roster_path=roster_path,
-            output_path=rankings_path,
+            historical_profiles_path=historical_profiles_path,
+            rankings_output_path=rankings_path,
             profiles_output_path=profiles_path,
-            frozen_rankings_path=prior_rankings,
-            frozen_profiles_path=prior_profiles,
-            allow_missing_build_inputs=True,
         )
         rankings = pd.read_parquet(rankings_path)
-        active_team = dict(
-            zip(
-                pd.to_numeric(current["player_id"], errors="raise").astype(int),
-                current["team_abbreviation"].astype(str),
-                strict=True,
-            )
-        )
-        rankings["team"] = rankings.apply(
-            lambda row: active_team.get(int(row["player_id"]), str(row["team"])), axis=1
-        )
-        rankings.to_parquet(rankings_path, index=False)
         candidate_minutes = build_forward_conditional_preseason_minutes_payload(
             preseason_rankings=rankings,
             roster_path=roster_path,
@@ -525,7 +765,8 @@ def run(
     )
     frozen_ids = set(pd.read_parquet(frozen_rankings)["player_id"].astype(int))
     ranking_ids = set(pd.read_parquet(rankings_path)["player_id"].astype(int))
-    added_ids = sorted(ranking_ids - frozen_ids)
+    if sorted(ranking_ids - frozen_ids) != added_ids:
+        raise ValueError("Published roster additions do not match ranking catalog growth")
     added = current.loc[
         pd.to_numeric(current["player_id"], errors="raise").astype(int).isin(added_ids)
     ].copy()
