@@ -1284,7 +1284,12 @@ def _daily_injury_report(payload: Any) -> Mapping[str, Any]:
 
 def _normalize_name(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode()
-    text = re.sub(r"\s+(?:Jr\.?|Sr\.?|II|III|IV|V)$", "", text, flags=re.I)
+    suffix = r"(?:Jr\.?|Sr\.?|II|III|IV|V)"
+    # The official PDF occasionally renders a suffix as the comma-leading
+    # field ("Jr., Ernest Udeh"), while liveData renders it after the surname
+    # ("Ernest Udeh, Jr."). Both refer to the same canonical NBA identity.
+    text = re.sub(rf"^{suffix}\s*,\s*", "", text, flags=re.I)
+    text = re.sub(rf"(?:\s*,\s*|\s+){suffix}$", "", text, flags=re.I)
     return re.sub(r"[^a-z0-9]", "", text.casefold())
 
 

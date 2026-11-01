@@ -17,6 +17,7 @@ from nba_lineup_model.season.daily_model_artifact import verify_daily_model_arti
 from nba_lineup_model.season.daily_model_replay import (
     DailyModelReplayBlocked,
     _early_role_minutes,
+    _normalize_name,
     replay_daily_model_chain,
 )
 
@@ -360,3 +361,10 @@ def test_early_role_reconciles_only_a_small_verified_stint_gap() -> None:
             boundary_seconds=2640.0,
             maximum_reconciled_gap_seconds=5.0,
         )
+
+
+def test_official_nba_suffix_formats_share_one_identity_key() -> None:
+    expected = _normalize_name("Ernest Udeh")
+
+    assert _normalize_name("Ernest Udeh, Jr.") == expected
+    assert _normalize_name("Jr., Ernest Udeh") == expected
