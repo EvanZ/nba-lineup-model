@@ -69,6 +69,7 @@ def _publish_data(
     tmp_path: Path,
     *,
     injury_players: list[dict[str, object]] | None = None,
+    roster_name_overrides: dict[int, str] | None = None,
 ):
     game_id = "0022600001"
     player_ids = [1631104, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -101,10 +102,13 @@ def _publish_data(
     ):
         players = []
         for player_id in ids:
+            player_name = (roster_name_overrides or {}).get(
+                player_id, f"Player {player_id}"
+            )
             players.append(
                 {
                     "player_id": player_id,
-                    "player_name": f"Player {player_id}",
+                    "player_name": player_name,
                     "played": True,
                     "starter": True,
                     "status": "ACTIVE",
@@ -117,7 +121,7 @@ def _publish_data(
                     "game_date_pacific": "2026-10-20",
                     "team": team,
                     "player_id": player_id,
-                    "player_name": f"Player {player_id}",
+                    "player_name": player_name,
                     "minutes": 48.0,
                 }
             )
@@ -125,7 +129,7 @@ def _publish_data(
                 {
                     "game_id": game_id,
                     "team": team,
-                    "player_name": f"Player {player_id}",
+                    "player_name": player_name,
                     "player_id": player_id,
                     "played": True,
                     "resolution": "nba_person_id",
@@ -437,6 +441,45 @@ def test_daily_model_replay_infers_blank_injury_team_from_coupled_prior(
     )
     player = observations.loc[observations["player_id"].eq(1631104)].iloc[0]
     assert player["team"] == "HOM"
+    assert player["injury_status"] == "Available"
+
+
+def test_daily_model_replay_uses_official_roster_name_alias(
+    tmp_path: Path,
+) -> None:
+    _publish_data(
+        tmp_path,
+        roster_name_overrides={1631104: "Hansen Yang"},
+        injury_players=[
+            {
+                "game_date": "2026-10-20",
+                "matchup": "AWY@HOM",
+                "team": "HOM",
+                "player_name": "Hansen Yang",
+                "status": "Available",
+                "reason": "Injury/Illness",
+            }
+        ],
+    )
+    rankings, minutes = _prior_files(tmp_path)
+
+    published = replay_daily_model_chain(
+        start_date=date(2026, 10, 20),
+        end_date=date(2026, 10, 20),
+        preseason_rankings_path=rankings,
+        preseason_minutes_path=minutes,
+        data_root=tmp_path / "data",
+        output_root=tmp_path / "model",
+        code_revision="test-revision",
+        context_provider=_zero_context,
+    )
+
+    manifest = verify_daily_model_artifact(published[0].path)
+    observations = pd.read_parquet(
+        published[0].path
+        / manifest["identity"]["components"]["minutes_observations"]["path"]
+    )
+    player = observations.loc[observations["player_id"].eq(1631104)].iloc[0]
     assert player["injury_status"] == "Available"
 
 

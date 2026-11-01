@@ -633,14 +633,24 @@ def _minutes_observations(
 ) -> tuple[pd.DataFrame, dict[str, dict[str, Any]], list[str]]:
     state = minutes_state.copy()
     state["player_id"] = state["player_id"].astype(int)
-    identity: dict[tuple[str, str], list[int]] = {}
-    identity_by_name: dict[str, list[tuple[str, int]]] = {}
+    identity: dict[tuple[str, str], set[int]] = {}
+    identity_by_name: dict[str, set[tuple[str, int]]] = {}
+
+    def add_identity(team: str, player_name: object, player_id: int) -> None:
+        normalized_name = _normalize_name(player_name)
+        identity.setdefault((team, normalized_name), set()).add(player_id)
+        identity_by_name.setdefault(normalized_name, set()).add((team, player_id))
+
     for row in state.itertuples(index=False):
-        team = str(row.team)
-        normalized_name = _normalize_name(row.player_name)
-        player_id = int(row.player_id)
-        identity.setdefault((team, normalized_name), []).append(player_id)
-        identity_by_name.setdefault(normalized_name, []).append((team, player_id))
+        add_identity(str(row.team), row.player_name, int(row.player_id))
+    state_ids = set(state["player_id"].astype(int))
+    for roster in rosters.values():
+        for team_row in roster["teams"]:
+            team = str(team_row["team"])
+            for player in team_row["players"]:
+                player_id = int(player["player_id"])
+                if player_id in state_ids:
+                    add_identity(team, player["player_name"], player_id)
     rows: list[dict[str, object]] = []
     injury_by_game: dict[str, dict[str, Any]] = {}
     warnings: list[str] = []
@@ -667,17 +677,17 @@ def _minutes_observations(
             normalized_name = _normalize_name(report.get("player_name"))
             if not team:
                 matchup_teams = set(matchup.split("@"))
-                inferred = [
+                inferred = sorted(
                     (candidate_team, player_id)
                     for candidate_team, player_id in identity_by_name.get(
-                        normalized_name, []
+                        normalized_name, set()
                     )
                     if candidate_team in matchup_teams
-                ]
+                )
                 if len(inferred) == 1:
                     team = inferred[0][0]
             key = (team, normalized_name)
-            candidates = identity.get(key, [])
+            candidates = sorted(identity.get(key, set()))
             if len(candidates) == 1:
                 normalized = dict(report)
                 normalized["team"] = team
