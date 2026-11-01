@@ -1400,8 +1400,8 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-rotation-team h4 a:hover, .schedule-rotation-team h4 a:focus-visible { color: #245a47; text-decoration: underline; text-decoration-color: #e8502f; text-underline-offset: 2px; }
 .schedule-report-pending { min-height: 34px; margin: 0 0 7px; color: #8a641c; font-size: 9px; line-height: 1.4; }
 .schedule-rotation-table { border-top: 1px solid #d9d6ce; }
-.schedule-rotation-table > div { min-height: 29px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e2dfd7; }
-.schedule-rotation-table.has-actual > div { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 44px); gap: 6px; text-align: right; }
+.schedule-rotation-table > div { min-height: 29px; display: grid; grid-template-columns: minmax(0, 1fr) 42px 48px 72px; align-items: center; gap: 6px; border-bottom: 1px solid #e2dfd7; text-align: right; }
+.schedule-rotation-table.has-actual > div { grid-template-columns: minmax(0, 1fr) 42px 48px 72px repeat(2, 44px); }
 .schedule-rotation-table.has-actual > div > span:first-child { text-align: left; }
 .schedule-rotation-header { color: #8a918b; font-size: 7px; font-weight: 900; text-transform: uppercase; }
 .schedule-rotation-header small { margin: 0; color: inherit; text-align: right; }
@@ -1413,6 +1413,13 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-rotation-table strong { color: #245a47; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
 .schedule-rotation-table strong.negative { color: #a33e28; }
 .schedule-rotation-table strong.positive { color: #167157; }
+.schedule-ledger { margin-top: 22px; padding: 16px 18px 2px; border: 1px solid #d9d6ce; background: #fffdf8; }
+.schedule-ledger-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.schedule-ledger-heading span { color: #245a47; font-size: 9px; font-weight: 900; text-transform: uppercase; }
+.schedule-ledger-heading small { color: #69716b; font-size: 8px; }
+.schedule-rating-ledger { margin: 10px 0 12px; }
+.schedule-rating-ledger th small { display: block; margin-top: 2px; color: #8a918b; font-size: 8px; font-weight: 600; }
+.schedule-ledger > p { margin: 0 0 13px; color: #69716b; font-size: 9px; line-height: 1.45; }
 .schedule-retrospective { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 3px 12px; margin: 12px 0; padding: 11px; border-left: 3px solid #245a47; background: #edf2e9; }
 .schedule-retrospective span { color: #245a47; font-size: 8px; font-weight: 900; text-transform: uppercase; }
 .schedule-retrospective strong { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
@@ -1460,4 +1467,12 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .schedule-edge { grid-column: 1; grid-row: auto; min-height: 72px; grid-template-columns: auto auto auto; gap: 7px; }
   .schedule-assumptions summary { align-items: flex-start; flex-direction: column; justify-content: center; gap: 2px; padding-top: 8px; padding-bottom: 8px; }
   .schedule-rotations { grid-template-columns: 1fr; gap: 18px; }
+  .schedule-rotation-header { display: none !important; }
+  .schedule-rotation-table > div:not(.schedule-rotation-header), .schedule-rotation-table.has-actual > div:not(.schedule-rotation-header) { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 8px 0; }
+  .schedule-rotation-table > div:not(.schedule-rotation-header) .schedule-rotation-player { grid-column: 1 / -1; border-bottom: 1px dotted #d9d6ce; text-align: left; }
+  .schedule-rotation-table strong { display: grid; gap: 2px; text-align: left; }
+  .schedule-rotation-table strong::before { color: #8a918b; content: attr(data-label); font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 7px; font-weight: 900; text-transform: uppercase; }
+  .schedule-ledger { padding-right: 10px; padding-left: 10px; overflow-x: auto; }
+  .schedule-ledger-heading { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .schedule-rating-ledger { min-width: 430px; }
 }

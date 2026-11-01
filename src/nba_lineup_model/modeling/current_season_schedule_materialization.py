@@ -30,6 +30,7 @@ from nba_lineup_model.modeling.current_season_serving_materialization import (
 from nba_lineup_model.web_api.win_projections import (
     _build_final_game_archive,
     _game_rotation,
+    _projection_ledger,
 )
 
 DEFAULT_SOURCE_ROOT = Path("/var/lib/nba-gestalt/schedule")
@@ -38,6 +39,27 @@ DEFAULT_MINUTES_ROOT = Path("/var/lib/nba-gestalt/in-season-minutes")
 DEFAULT_OUTPUT_ROOT = Path("/var/lib/nba-gestalt-dev/schedule")
 MODEL_TRACK = "updated_ratings_updated_minutes"
 EVALUATION_CELL = "updated_updated"
+
+
+def _rating_trajectory_path(
+    rating_root: Path,
+    publication: dict[str, Any],
+    *,
+    through_date: str,
+) -> Path:
+    run_id = publication.get("dagster_run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("Rating publication Dagster run ID is missing")
+    path = (
+        rating_root
+        / "runs"
+        / f"through_date={through_date}"
+        / run_id
+        / "player_game_trajectory.parquet"
+    )
+    if not path.is_file():
+        raise FileNotFoundError(f"Rating trajectory artifact is missing: {path}")
+    return path
 
 
 def materialize_current_season_schedule(
@@ -66,6 +88,16 @@ def materialize_current_season_schedule(
     )
 
     through_date = str(minutes_publication["through_date"])
+    rating_trajectory_path = _rating_trajectory_path(
+        rating_root,
+        rating_publication,
+        through_date=through_date,
+    )
+    _verify_published_artifact(
+        rating_trajectory_path,
+        rating_publication,
+        "player_game_trajectory",
+    )
     if current_forecast_response is not None:
         forecast = current_forecast_response.get("win_projection")
         if not isinstance(forecast, dict) or str(forecast.get("as_of")) != through_date:
@@ -90,6 +122,7 @@ def materialize_current_season_schedule(
         "through_date": through_date,
         "source_schedule_sha256": _schedule_source_sha256(source_root),
         "ratings_manifest_sha256": _sha256(rating_publication_path),
+        "rating_trajectory_sha256": _sha256(rating_trajectory_path),
         "minutes_manifest_sha256": _sha256(minutes_publication_path),
         "game_evaluation_sha256": _sha256(game_path),
         "player_evaluation_sha256": _sha256(player_path),
@@ -116,6 +149,7 @@ def materialize_current_season_schedule(
                 player_path=player_path,
                 rating_publication=rating_publication,
                 rating_publication_path=rating_publication_path,
+                rating_trajectory_path=rating_trajectory_path,
                 minutes_publication=minutes_publication,
                 minutes_publication_path=minutes_publication_path,
                 identity=identity,
@@ -140,6 +174,7 @@ def _build_release(
     player_path: Path,
     rating_publication: dict[str, Any],
     rating_publication_path: Path,
+    rating_trajectory_path: Path,
     minutes_publication: dict[str, Any],
     minutes_publication_path: Path,
     identity: str,
@@ -155,6 +190,7 @@ def _build_release(
 
     games = pd.read_csv(game_path, dtype={"game_id": "string"})
     players = pd.read_parquet(player_path)
+    rating_trajectory = pd.read_parquet(rating_trajectory_path)
     _require_columns(
         games,
         {
@@ -181,11 +217,33 @@ def _build_release(
     )
     games["game_id"] = games["game_id"].map(_normalize_game_id)
     players["game_id"] = players["game_id"].map(_normalize_game_id)
+    players = _attach_strict_forward_ratings(players, rating_trajectory)
     _validate_player_evaluation(players)
     player_groups = {
         game_id: frame.copy()
         for game_id, frame in players.groupby("game_id", sort=False)
     }
+    current_forecast = (
+        current_forecast_response.get("win_projection")
+        if isinstance(current_forecast_response, dict)
+        else None
+    )
+    current_forecast = current_forecast if isinstance(current_forecast, dict) else {}
+    schedule_by_game_id = {
+        _normalize_game_id(row.get("game_id")): row
+        for row in current_forecast.get("scheduled_games", [])
+        if isinstance(row, dict) and row.get("game_id") is not None
+    }
+    home_court = (
+        float(current_forecast["home_court"])
+        if current_forecast.get("home_court") is not None
+        else None
+    )
+    back_to_back = (
+        float(current_forecast["back_to_back"])
+        if current_forecast.get("back_to_back") is not None
+        else None
+    )
     summaries = _summary_paths_by_game_id(source_root / "final")
     replayed: list[dict[str, Any]] = []
     replayed_game_ids: set[str] = set()
@@ -216,6 +274,9 @@ def _build_release(
             rating_publication_path=rating_publication_path,
             minutes_publication=minutes_publication,
             minutes_publication_path=minutes_publication_path,
+            scheduled=schedule_by_game_id.get(game_id),
+            home_court=home_court,
+            back_to_back=back_to_back,
         )
         espn_game_id = str(source_summary["espn_game_id"])
         _write_json(staging / "frozen" / f"{espn_game_id}.json", replay_pregame)
@@ -554,15 +615,24 @@ def _reforecast_pregame_from_current_state(
         game_date=game_date,
         matchup=matchup,
     )
+    home_back_to_back = float(scheduled.get("home_back_to_back", 0))
+    away_back_to_back = float(scheduled.get("away_back_to_back", 0))
     margin = (
         float(home_rotation["team_strength"])
         - float(away_rotation["team_strength"])
         + home_court
-        + back_to_back
-        * (
-            float(scheduled.get("home_back_to_back", 0))
-            - float(scheduled.get("away_back_to_back", 0))
-        )
+        + back_to_back * (home_back_to_back - away_back_to_back)
+    )
+    ledger = _projection_ledger(
+        away_team=away_team,
+        home_team=home_team,
+        away_team_strength=float(away_rotation["team_strength"]),
+        home_team_strength=float(home_rotation["team_strength"]),
+        home_court=home_court,
+        back_to_back_coefficient=back_to_back,
+        home_back_to_back=home_back_to_back,
+        away_back_to_back=away_back_to_back,
+        home_margin=margin,
     )
     original_projection = replay.get("projection")
     original_projection = (
@@ -577,6 +647,7 @@ def _reforecast_pregame_from_current_state(
         "serving_bundle_sha256": forecast.get("serving_bundle_sha256"),
         "home_margin": margin,
         "home_win_probability": float(1.0 / (1.0 + math.exp(-beta * margin))),
+        "ledger": ledger,
     }
     replay["projected_minutes"] = {
         "away": away_rotation["players"],
@@ -613,11 +684,17 @@ def _build_replay_pregame(
     rating_publication_path: Path,
     minutes_publication: dict[str, Any],
     minutes_publication_path: Path,
+    scheduled: dict[str, Any] | None,
+    home_court: float | None,
+    back_to_back: float | None,
 ) -> dict[str, Any]:
     replay = copy.deepcopy(source_pregame)
     original_projection = replay.get("projection")
     original_projection = (
         original_projection if isinstance(original_projection, dict) else {}
+    )
+    evidence_through_date = _previous_evidence_date(
+        players, str(game_row["game_date"])
     )
     replay["projection"] = {
         **original_projection,
@@ -626,9 +703,8 @@ def _build_replay_pregame(
         "state_kind": "in_season_strict_forward_replay",
         "home_margin": float(game_row["updated_updated_margin"]),
         "home_win_probability": float(game_row["updated_updated_probability"]),
-        "evidence_through_date": _previous_evidence_date(
-            players, str(game_row["game_date"])
-        ),
+        "evidence_through_date": evidence_through_date,
+        "rating_as_of": evidence_through_date,
     }
     replay["projected_minutes"] = _updated_minutes_groups(
         replay.get("projected_minutes"),
@@ -636,6 +712,26 @@ def _build_replay_pregame(
         away_team=str(source_summary["away_team"]),
         home_team=str(source_summary["home_team"]),
     )
+    if scheduled is not None and home_court is not None and back_to_back is not None:
+        away_team = str(source_summary["away_team"])
+        home_team = str(source_summary["home_team"])
+        away_strength = _projected_team_strength(
+            replay["projected_minutes"]["away"], team=away_team
+        )
+        home_strength = _projected_team_strength(
+            replay["projected_minutes"]["home"], team=home_team
+        )
+        replay["projection"]["ledger"] = _projection_ledger(
+            away_team=away_team,
+            home_team=home_team,
+            away_team_strength=away_strength,
+            home_team_strength=home_strength,
+            home_court=home_court,
+            back_to_back_coefficient=back_to_back,
+            home_back_to_back=float(scheduled.get("home_back_to_back", 0)),
+            away_back_to_back=float(scheduled.get("away_back_to_back", 0)),
+            home_margin=float(game_row["updated_updated_margin"]),
+        )
     injury_report = replay.get("injury_report")
     if isinstance(injury_report, dict) and isinstance(
         injury_report.get("assumptions"), list
@@ -682,6 +778,24 @@ def _updated_minutes_groups(
     }
 
 
+def _projected_team_strength(
+    players: list[dict[str, Any]], *, team: str
+) -> float:
+    missing = [
+        str(row.get("player_name") or row.get("player_id"))
+        for row in players
+        if float(row.get("projected_minutes") or 0.0) > 0.0
+        and row.get("expected_contribution") is None
+    ]
+    if missing:
+        raise ValueError(
+            f"Projected contribution is missing for {team}: {', '.join(missing[:10])}"
+        )
+    return float(
+        sum(float(row.get("expected_contribution") or 0.0) for row in players)
+    )
+
+
 def _validate_player_evaluation(players: pd.DataFrame) -> None:
     """Reject updater artifacts that contain impossible individual minutes."""
 
@@ -697,6 +811,107 @@ def _validate_player_evaluation(players: pd.DataFrame) -> None:
         "Player evaluation contains physically impossible projected minutes: "
         + rows.to_dict(orient="records").__repr__()
     )
+
+
+def _attach_strict_forward_ratings(
+    players: pd.DataFrame,
+    trajectory: pd.DataFrame,
+) -> pd.DataFrame:
+    """Attach the exact rating available before each game in the replay."""
+
+    _require_columns(
+        trajectory,
+        {
+            "game_id",
+            "game_date",
+            "player_id",
+            "preseason_rating",
+            "updated_rating",
+        },
+        label="player rating trajectory",
+    )
+    history = trajectory.copy()
+    history["game_id"] = history["game_id"].map(_normalize_game_id)
+    history["game_date"] = pd.to_datetime(history["game_date"], errors="raise").dt.date
+    history["player_id"] = pd.to_numeric(
+        history["player_id"], errors="raise"
+    ).astype(int)
+    history = history.sort_values(
+        ["player_id", "game_date", "game_id"], kind="stable"
+    )
+
+    rating_rows: list[dict[str, object]] = []
+    for player_id, player_history in history.groupby("player_id", sort=False):
+        preseason = pd.to_numeric(
+            player_history["preseason_rating"], errors="raise"
+        ).to_numpy(dtype=float)
+        if not np.isfinite(preseason).all() or not np.allclose(
+            preseason, preseason[0], rtol=0.0, atol=1e-10
+        ):
+            raise ValueError(f"Inconsistent preseason rating for player {player_id}")
+        current_rating = float(preseason[0])
+        for game_date, slate in player_history.groupby("game_date", sort=True):
+            del game_date
+            for row in slate.itertuples(index=False):
+                rating_rows.append(
+                    {
+                        "game_id": str(row.game_id),
+                        "player_id": int(player_id),
+                        "trajectory_pregame_nail": current_rating,
+                    }
+                )
+            postgame = pd.to_numeric(
+                slate["updated_rating"], errors="raise"
+            ).to_numpy(dtype=float)
+            if not np.isfinite(postgame).all() or not np.allclose(
+                postgame, postgame[0], rtol=0.0, atol=1e-10
+            ):
+                raise ValueError(
+                    f"Rating trajectory is not slate-batched for player {player_id}"
+                )
+            current_rating = float(postgame[0])
+
+    lookup = pd.DataFrame(rating_rows)
+    if lookup.duplicated(["game_id", "player_id"]).any():
+        raise ValueError("Player rating trajectory contains duplicate game rows")
+    output = players.copy()
+    output["player_id"] = pd.to_numeric(output["player_id"], errors="raise").astype(int)
+    output = output.merge(
+        lookup,
+        how="left",
+        on=["game_id", "player_id"],
+        validate="many_to_one",
+    )
+    if "pregame_nail" in output:
+        published = pd.to_numeric(output["pregame_nail"], errors="coerce")
+        comparable = published.notna() & output["trajectory_pregame_nail"].notna()
+        if comparable.any() and not np.allclose(
+            published.loc[comparable].to_numpy(dtype=float),
+            output.loc[comparable, "trajectory_pregame_nail"].to_numpy(dtype=float),
+            rtol=0.0,
+            atol=1e-8,
+        ):
+            raise ValueError(
+                "Player evaluation ratings do not match the immutable trajectory"
+            )
+        output["pregame_nail"] = published.fillna(
+            output["trajectory_pregame_nail"]
+        )
+    else:
+        output["pregame_nail"] = output["trajectory_pregame_nail"]
+    missing = output["pregame_nail"].isna() & pd.to_numeric(
+        output["updated_projected_minutes"], errors="raise"
+    ).gt(1e-9)
+    if missing.any():
+        rows = output.loc[
+            missing,
+            ["game_id", "team", "player_id", "player_name"],
+        ].head(10)
+        raise ValueError(
+            "Positive projected minutes lack a strict-forward player rating: "
+            + rows.to_dict(orient="records").__repr__()
+        )
+    return output.drop(columns=["trajectory_pregame_nail"])
 
 
 def _updated_team_minutes(
@@ -715,8 +930,24 @@ def _updated_team_minutes(
         if update is not None:
             original["conditional_minutes"] = float(update.updated_conditional_minutes)
             original["projected_minutes"] = float(update.updated_projected_minutes)
+            original["projected_nail"] = float(update.pregame_nail)
+            original["expected_contribution"] = (
+                float(update.updated_projected_minutes)
+                / 48.0
+                * float(update.pregame_nail)
+            )
             original["minutes_model"] = "in_season_conditional_minutes"
             seen.add(player_id)
+        elif float(original.get("projected_minutes") or 0.0) > 0.0:
+            if original.get("projected_nail") is None:
+                raise ValueError(
+                    f"Projected player {player_id} on {team} lacks a frozen rating"
+                )
+            original["expected_contribution"] = (
+                float(original["projected_minutes"])
+                / 48.0
+                * float(original["projected_nail"])
+            )
         output.append(original)
     for player_id, update in updates.items():
         if player_id in seen or float(update.updated_projected_minutes) <= 0.0:
@@ -729,6 +960,12 @@ def _updated_team_minutes(
                 "play_probability": 1.0,
                 "conditional_minutes": float(update.updated_conditional_minutes),
                 "projected_minutes": float(update.updated_projected_minutes),
+                "projected_nail": float(update.pregame_nail),
+                "expected_contribution": (
+                    float(update.updated_projected_minutes)
+                    / 48.0
+                    * float(update.pregame_nail)
+                ),
                 "reason": None,
                 "minutes_model": "in_season_conditional_minutes",
             }

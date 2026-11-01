@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -2632,8 +2633,13 @@ def _game_rotation(
         row["projected_minutes"] = (
             240.0 * float(row["weight"]) / total_weight if row in selected else 0.0
         )
+        row["expected_contribution"] = (
+            float(row["projected_minutes"])
+            / 48.0
+            * float(row["projected_nail"])
+        )
     team_strength = sum(
-        float(row["projected_minutes"]) / 48.0 * float(row["projected_nail"])
+        float(row["expected_contribution"])
         for row in allocations
     )
     assumptions = []
@@ -2657,7 +2663,7 @@ def _game_rotation(
             }
         )
     public_players = [
-        {key: value for key, value in row.items() if key not in {"weight", "projected_nail"}}
+        {key: value for key, value in row.items() if key != "weight"}
         for row in sorted(
             allocations,
             key=lambda item: (-float(item["projected_minutes"]), str(item["player_name"])),
@@ -2672,6 +2678,54 @@ def _game_rotation(
             assumptions, key=lambda row: (str(row["team"]), str(row["player_name"]))
         ),
         "report_status": report_status,
+    }
+
+
+def _projection_ledger(
+    *,
+    away_team: str,
+    home_team: str,
+    away_team_strength: float,
+    home_team_strength: float,
+    home_court: float,
+    back_to_back_coefficient: float,
+    home_back_to_back: float,
+    away_back_to_back: float,
+    home_margin: float | None = None,
+) -> dict[str, object]:
+    """Return the exact, auditable bridge from player contributions to spread."""
+
+    neutral_home_edge = float(home_team_strength) - float(away_team_strength)
+    back_to_back_adjustment = float(back_to_back_coefficient) * (
+        float(home_back_to_back) - float(away_back_to_back)
+    )
+    reconciled_margin = neutral_home_edge + float(home_court) + back_to_back_adjustment
+    if home_margin is not None and not math.isclose(
+        reconciled_margin, float(home_margin), rel_tol=0.0, abs_tol=1e-8
+    ):
+        raise ValueError(
+            "Projection ledger does not reconcile: "
+            f"ledger={reconciled_margin}, projection={float(home_margin)}"
+        )
+    return {
+        "schema_version": 1,
+        "units": "points_per_100_possessions",
+        "formula": (
+            "home_team_strength - away_team_strength + home_court_adjustment "
+            "+ back_to_back_adjustment"
+        ),
+        "away_team": away_team,
+        "home_team": home_team,
+        "away_team_strength": float(away_team_strength),
+        "home_team_strength": float(home_team_strength),
+        "neutral_home_edge": neutral_home_edge,
+        "home_court_adjustment": float(home_court),
+        "back_to_back_coefficient": float(back_to_back_coefficient),
+        "home_back_to_back": bool(home_back_to_back),
+        "away_back_to_back": bool(away_back_to_back),
+        "back_to_back_adjustment": back_to_back_adjustment,
+        "home_margin": reconciled_margin,
+        "fair_home_spread": -reconciled_margin,
     }
 
 
@@ -2731,15 +2785,25 @@ def _normalize_espn_schedule(
             game_date=game_date,
             matchup=f"{away_team}@{home_team}",
         )
+        home_back_to_back = float(scheduled.get("home_back_to_back", 0))
+        away_back_to_back = float(scheduled.get("away_back_to_back", 0))
         margin = (
             float(home_rotation["team_strength"])
             - float(away_rotation["team_strength"])
             + home_court
             + back_to_back
-            * (
-                float(scheduled.get("home_back_to_back", 0))
-                - float(scheduled.get("away_back_to_back", 0))
-            )
+            * (home_back_to_back - away_back_to_back)
+        )
+        ledger = _projection_ledger(
+            away_team=away_team,
+            home_team=home_team,
+            away_team_strength=float(away_rotation["team_strength"]),
+            home_team_strength=float(home_rotation["team_strength"]),
+            home_court=home_court,
+            back_to_back_coefficient=back_to_back,
+            home_back_to_back=home_back_to_back,
+            away_back_to_back=away_back_to_back,
+            home_margin=margin,
         )
         status = event.get("status", {}).get("type", {})
         if not isinstance(status, dict):
@@ -2777,6 +2841,7 @@ def _normalize_espn_schedule(
                     "serving_bundle_sha256": forecast.get("serving_bundle_sha256"),
                     "home_margin": margin,
                     "home_win_probability": float(1.0 / (1.0 + np.exp(-beta * margin))),
+                    "ledger": ledger,
                 },
                 "injury_report": {
                     "source": "NBA official injury report",

@@ -21,6 +21,7 @@ DEV_APP_ROOT="${GESTALT_DEV_APP_ROOT:-/opt/nba-gestalt-dev}"
 DEV_STATE_ROOT="${GESTALT_DEV_STATE_ROOT:-/var/lib/nba-gestalt-dev}"
 DEV_WEB_ROOT="${GESTALT_DEV_WEB_ROOT:-/var/www/nba-gestalt-dev}"
 PROD_SCHEDULE_ROOT="${GESTALT_PROD_SCHEDULE_ROOT:-/var/lib/nba-gestalt/schedule-serving/current}"
+PROD_MODEL_INPUT_SCHEDULE_ROOT="${GESTALT_PROD_MODEL_INPUT_SCHEDULE_ROOT:-/var/lib/nba-gestalt/schedule}"
 DEV_DAILY_DATA_ROOT="${GESTALT_DEV_DAILY_DATA_ROOT:-$DEV_STATE_ROOT/daily-data-nba-v2}"
 DEV_DAILY_MODEL_ROOT="${GESTALT_DEV_DAILY_MODEL_ROOT:-$DEV_STATE_ROOT/daily-model-nba-v1}"
 DEV_ROSTER_POINTER="${GESTALT_DEV_ROSTER_POINTER:-$DEV_STATE_ROOT/in-season-rosters/latest.json}"
@@ -118,12 +119,29 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
     --daily-data-root "$DEV_DAILY_DATA_ROOT" \
     --output-root "$DEV_STATE_ROOT/current-season-lineups"
 
-  # Historical pregame snapshots are records of what was actually in play and
-  # must not be recalculated from the new postgame state. Seed the isolated dev
-  # archive from production's reviewed serving archive, then refresh only the
-  # current/future board after the dev API starts.
-  install -d "$DEV_STATE_ROOT/schedule/current"
-  rsync -a --delete "$PROD_SCHEDULE_ROOT/" "$DEV_STATE_ROOT/schedule/current/"
+  if [[ "${GESTALT_DEV_REBUILD_SCHEDULE_LEDGER:-0}" == "1" ]]; then
+    # Rebuild the isolated strict-forward replay from its immutable rating and
+    # minutes children. The materializer freezes each game's own pregame NAIL
+    # state and fails if its player ledger does not reproduce the stored line.
+    PYTHONPATH="$RELEASE_ROOT/src" \
+    GESTALT_CURRENT_SEASON_SERVING_ROOT="$DEV_STATE_ROOT/current-season-serving" \
+    GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$DEV_STATE_ROOT/current-season-lineups" \
+    GESTALT_SCHEDULE_STATE_DIR="$PROD_MODEL_INPUT_SCHEDULE_ROOT" \
+    GESTALT_PRESEASON_RANKINGS_PATH="$DEV_PRESEASON_RANKINGS_PATH" \
+    GESTALT_PRESEASON_PROFILES_PATH="$DEV_PRESEASON_PROFILES_PATH" \
+      "$PROD_RELEASE/.venv/bin/python" \
+      -m nba_lineup_model.modeling.current_season_schedule_materialization \
+      --source-root "$PROD_MODEL_INPUT_SCHEDULE_ROOT" \
+      --output-root "$DEV_STATE_ROOT/schedule" \
+      --catalog-path "$DEV_STATE_ROOT/catalog/games.parquet" \
+      --include-current-forecast
+  else
+    # Historical pregame snapshots are records of what was actually in play.
+    # Seed dev from the reviewed production serving archive unless this release
+    # explicitly requests the strict-forward ledger rebuild above.
+    install -d "$DEV_STATE_ROOT/schedule/current"
+    rsync -a --delete "$PROD_SCHEDULE_ROOT/" "$DEV_STATE_ROOT/schedule/current/"
+  fi
 fi
 
 if [[ -n "$FRONTEND_DIST" ]]; then
