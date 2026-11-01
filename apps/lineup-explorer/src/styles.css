@@ -1391,6 +1391,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-report-warning { margin: 12px 0; padding: 10px 12px; border-left: 3px solid #c27a22; background: #f6ead5; color: #695024; font-size: 10px; line-height: 1.5; }
 .schedule-report-warning strong { color: #6c470d; }
 .schedule-assumption-policy { margin: 12px 0; color: #69716b; font-size: 10px; line-height: 1.5; }
+.schedule-attribution-unavailable { margin: 12px 0; padding: 9px 11px; border-left: 3px solid #8a918b; background: #efede7; color: #69716b; font-size: 9px; line-height: 1.5; }
 .schedule-player-link { color: #17201c; font-weight: 800; text-decoration: none; }
 .schedule-player-link:hover, .schedule-player-link:focus-visible { color: #245a47; text-decoration: underline; text-decoration-color: #e8502f; text-underline-offset: 2px; }
 .schedule-rotations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 18px; }
@@ -1400,8 +1401,10 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-report-pending { min-height: 34px; margin: 0 0 7px; color: #8a641c; font-size: 9px; line-height: 1.4; }
 .schedule-rotation-table { border-top: 1px solid #d9d6ce; }
 .schedule-rotation-table > div { min-height: 29px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e2dfd7; }
-.schedule-rotation-table.has-actual > div { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 44px); gap: 6px; text-align: right; }
-.schedule-rotation-table.has-actual > div > span:first-child { text-align: left; }
+.schedule-rotation-table.has-actual:not(.has-attribution) > div { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 44px); gap: 6px; text-align: right; }
+.schedule-rotation-table.has-attribution > div { display: grid; grid-template-columns: minmax(0, 1fr) 49px 49px 74px; gap: 6px; text-align: right; }
+.schedule-rotation-table.has-attribution.has-actual > div { grid-template-columns: minmax(0, 1fr) 49px 49px 74px 49px 49px; }
+.schedule-rotation-table.has-actual > div > span:first-child, .schedule-rotation-table.has-attribution > div > span:first-child { text-align: left; }
 .schedule-rotation-header { color: #8a918b; font-size: 7px; font-weight: 900; text-transform: uppercase; }
 .schedule-rotation-header small { margin: 0; color: inherit; text-align: right; }
 .schedule-rotation-table > div.injury-listed { background: rgb(244 223 215 / 0.35); }
@@ -1412,6 +1415,28 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-rotation-table strong { color: #245a47; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
 .schedule-rotation-table strong.negative { color: #a33e28; }
 .schedule-rotation-table strong.positive { color: #167157; }
+.schedule-rotation-total { background: #ebece5; font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.schedule-rotation-total > span { color: #4e5650; }
+.schedule-rotation-total strong { color: #17201c; }
+.schedule-spread-ledger { max-width: 720px; margin: 22px auto 4px; border: 1px solid #c9c9bf; background: #fffefa; }
+.schedule-spread-ledger-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding: 11px 13px; border-bottom: 1px solid #d9d6ce; }
+.schedule-spread-ledger-heading > div { display: grid; gap: 2px; }
+.schedule-spread-ledger-heading span { color: #245a47; font-size: 7px; font-weight: 900; letter-spacing: 0.05em; text-transform: uppercase; }
+.schedule-spread-ledger-heading strong { color: #17201c; font-size: 11px; }
+.schedule-spread-ledger-heading > small { color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 7px; }
+.schedule-spread-ledger-rows { padding: 5px 13px; }
+.schedule-spread-ledger-rows > div { min-height: 27px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; border-bottom: 1px solid #ebe8e0; }
+.schedule-spread-ledger-rows > div:last-child { border-bottom: 0; }
+.schedule-spread-ledger-rows span { color: #58605b; font-size: 9px; }
+.schedule-spread-ledger-rows span a { color: #245a47; font-weight: 900; text-decoration: none; }
+.schedule-spread-ledger-rows span a:hover, .schedule-spread-ledger-rows span a:focus-visible { text-decoration: underline; text-decoration-color: #e8502f; text-underline-offset: 2px; }
+.schedule-spread-ledger-rows span small { display: block; margin-top: 2px; color: #8a918b; font-size: 7px; }
+.schedule-spread-ledger-rows strong { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.schedule-spread-ledger-rows .result { margin: 0 -13px; padding: 0 13px; background: #f0f2eb; }
+.schedule-spread-ledger-rows .result span { color: #245a47; font-weight: 900; text-transform: uppercase; }
+.schedule-spread-ledger-rows .result strong { font-size: 12px; }
+.schedule-spread-ledger-rows .result.final { background: #dce8db; }
+.schedule-spread-ledger > p { margin: 0; padding: 8px 13px; border-top: 1px solid #d9d6ce; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 7px; line-height: 1.5; }
 .schedule-retrospective { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 3px 12px; margin: 12px 0; padding: 11px; border-left: 3px solid #245a47; background: #edf2e9; }
 .schedule-retrospective span { color: #245a47; font-size: 8px; font-weight: 900; text-transform: uppercase; }
 .schedule-retrospective strong { color: #17201c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
@@ -1459,4 +1484,12 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .schedule-edge { grid-column: 1; grid-row: auto; min-height: 72px; grid-template-columns: auto auto auto; gap: 7px; }
   .schedule-assumptions summary { align-items: flex-start; flex-direction: column; justify-content: center; gap: 2px; padding-top: 8px; padding-bottom: 8px; }
   .schedule-rotations { grid-template-columns: 1fr; gap: 18px; }
+  .schedule-rotation-table.has-attribution .schedule-rotation-header { display: none; }
+  .schedule-rotation-table.has-attribution > div:not(.schedule-rotation-header) { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; padding: 7px 6px; }
+  .schedule-rotation-table.has-attribution.has-actual > div:not(.schedule-rotation-header) { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .schedule-rotation-table.has-attribution .schedule-rotation-player, .schedule-rotation-table.has-attribution .schedule-rotation-total > span { grid-column: 1 / -1; padding: 0 0 6px; border-bottom: 1px dashed #d9d6ce; }
+  .schedule-rotation-table.has-attribution strong { display: grid; gap: 2px; text-align: left; }
+  .schedule-rotation-table.has-attribution strong::before { content: attr(data-label); color: #8a918b; font-family: system-ui, sans-serif; font-size: 6px; font-weight: 900; text-transform: uppercase; }
+  .schedule-spread-ledger { margin-top: 18px; }
+  .schedule-spread-ledger-heading { align-items: start; flex-direction: column; gap: 4px; }
 }
