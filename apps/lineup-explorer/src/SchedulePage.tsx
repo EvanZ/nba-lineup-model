@@ -515,7 +515,7 @@ function RotationTable({
         <span>Player</span>
         {hasAttribution && <><small>NAIL</small><small>Proj. min.</small><small>Proj. contrib.</small></>}
         {!hasAttribution && actualPlayers && <small>Pred.</small>}
-        {actualPlayers && <><small>Actual min.</small><small>Actual contrib.</small><small>Δ contrib.</small><small>Δ min.</small></>}
+        {actualPlayers && <><small>Act. min.</small><small>Act. contrib.</small><small>Δ contrib.</small><small>Δ min.</small></>}
       </div>}
       {rows.map((player) => {
         const actual = actualByPlayer.get(player.player_id) ?? actualByPlayer.get(player.player_name);
