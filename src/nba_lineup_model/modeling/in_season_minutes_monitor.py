@@ -965,23 +965,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                             if shadow_row is not None
                                             else 0.0
                                         ),
-                                        "pregame_nail": float(
-                                            combined_ratings.get(
-                                                player_id, ratings.get(player_id, 0.0)
-                                            )
-                                        ),
-                                        "updated_expected_contribution": (
-                                            float(shadow_row["final_normalized_minutes"])
-                                            / 48.0
-                                            * float(
-                                                combined_ratings.get(
-                                                    player_id,
-                                                    ratings.get(player_id, 0.0),
-                                                )
-                                            )
-                                            if shadow_row is not None
-                                            else 0.0
-                                        ),
                                     }
                                 ]
                             )

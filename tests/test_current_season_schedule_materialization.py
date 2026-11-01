@@ -8,7 +8,6 @@ import pandas as pd
 import pytest
 
 from nba_lineup_model.modeling.current_season_schedule_materialization import (
-    _attach_strict_forward_ratings,
     _reforecast_pregame_from_current_state,
     _reforecast_uncovered_frozen_games,
     _schedule_source_sha256,
@@ -224,29 +223,6 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
     )
     player_path = run_root / "player_game_evaluation.parquet"
     player_evaluation.to_parquet(player_path, index=False)
-    rating_run_id = "ratings-run"
-    rating_run_root = ratings / "runs" / f"through_date={through_date}" / rating_run_id
-    rating_run_root.mkdir(parents=True)
-    rating_trajectory = pd.DataFrame(
-        [
-            {
-                "game_id": game_id,
-                "game_date": "2026-10-20",
-                "player_id": 1,
-                "preseason_rating": 0.0,
-                "updated_rating": 0.1,
-            },
-            {
-                "game_id": game_id,
-                "game_date": "2026-10-20",
-                "player_id": 2,
-                "preseason_rating": 2.0 / 3.0,
-                "updated_rating": 0.8,
-            },
-        ]
-    )
-    rating_trajectory_path = rating_run_root / "player_game_trajectory.parquet"
-    rating_trajectory.to_parquet(rating_trajectory_path, index=False)
     common = {
         "schema_version": 1,
         "season": "2026-27",
@@ -258,14 +234,8 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
         ratings / "latest.json",
         {
             **common,
-            "dagster_run_id": rating_run_id,
-            "artifacts": {
-                "player_state": "s3://test/rating-state.parquet",
-                "player_game_trajectory": (
-                    "s3://test/player_game_trajectory-"
-                    f"{_sha256(rating_trajectory_path)}.parquet"
-                ),
-            },
+            "dagster_run_id": "ratings-run",
+            "artifacts": {"player_state": "s3://test/rating-state.parquet"},
         },
     )
     _write_json(
@@ -318,20 +288,6 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
     assert replay["projection"]["home_win_probability"] == 0.57
     assert replay["projection"]["model_track"] == "updated_ratings_updated_minutes"
     assert replay["projected_minutes"]["away"][0]["projected_minutes"] == 35.0
-    assert replay["projected_minutes"]["away"][0]["projected_nail"] == 0.0
-    assert replay["projected_minutes"]["home"][0]["projected_nail"] == pytest.approx(
-        2.0 / 3.0
-    )
-    assert replay["projected_minutes"]["home"][0][
-        "expected_contribution"
-    ] == pytest.approx(0.5)
-    ledger = replay["projection"]["ledger"]
-    assert ledger["away_team_strength"] == 0.0
-    assert ledger["home_team_strength"] == pytest.approx(0.5)
-    assert ledger["home_court_adjustment"] == 2.0
-    assert ledger["back_to_back_adjustment"] == 0.0
-    assert ledger["home_margin"] == pytest.approx(2.5)
-    assert ledger["fair_home_spread"] == pytest.approx(-2.5)
     assert replay["injury_report"]["assumptions"][0]["projected_minutes"] == 35.0
     replay_summary = json.loads(
         (release / "final" / f"{espn_game_id}.summary.json").read_text()
@@ -383,51 +339,6 @@ def test_rejects_impossible_player_minutes_before_materialization() -> None:
 
     with pytest.raises(ValueError, match="physically impossible"):
         _validate_player_evaluation(players)
-
-
-def test_strict_forward_rating_is_frozen_before_each_game() -> None:
-    players = pd.DataFrame(
-        [
-            {
-                "game_id": "0022600001",
-                "game_date": "2026-10-20",
-                "team": "GSW",
-                "player_id": 201939,
-                "player_name": "Stephen Curry",
-                "updated_projected_minutes": 34.0,
-            },
-            {
-                "game_id": "0022600017",
-                "game_date": "2026-10-22",
-                "team": "GSW",
-                "player_id": 201939,
-                "player_name": "Stephen Curry",
-                "updated_projected_minutes": 35.0,
-            },
-        ]
-    )
-    trajectory = pd.DataFrame(
-        [
-            {
-                "game_id": "0022600001",
-                "game_date": "2026-10-20",
-                "player_id": 201939,
-                "preseason_rating": 1.5,
-                "updated_rating": 1.7,
-            },
-            {
-                "game_id": "0022600017",
-                "game_date": "2026-10-22",
-                "player_id": 201939,
-                "preseason_rating": 1.5,
-                "updated_rating": 1.6,
-            },
-        ]
-    )
-
-    result = _attach_strict_forward_ratings(players, trajectory)
-
-    assert result["pregame_nail"].tolist() == [1.5, 1.7]
 
 
 def test_schedule_source_identity_changes_when_a_final_is_added(tmp_path: Path) -> None:

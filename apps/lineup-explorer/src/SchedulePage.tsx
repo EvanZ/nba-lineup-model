@@ -78,26 +78,7 @@ type ProjectedMinute = {
   play_probability: number | null;
   conditional_minutes: number;
   projected_minutes: number;
-  projected_nail?: number | null;
-  expected_contribution?: number | null;
   reason: string | null;
-};
-
-type ProjectionLedger = {
-  schema_version: number;
-  units: "points_per_100_possessions";
-  away_team: string;
-  home_team: string;
-  away_team_strength: number;
-  home_team_strength: number;
-  neutral_home_edge: number;
-  home_court_adjustment: number;
-  back_to_back_coefficient: number;
-  home_back_to_back: boolean;
-  away_back_to_back: boolean;
-  back_to_back_adjustment: number;
-  home_margin: number;
-  fair_home_spread: number;
 };
 
 type ActualMinute = {
@@ -124,7 +105,7 @@ type ArchivedGame = {
   away_score: number | null;
   broadcasts: string[];
   status: { state: string; completed: boolean; description: string; detail: string | null; display_clock?: string | null; period?: number | null };
-  projection: { model: string; state_kind?: string; model_track?: string; rating_as_of?: string; evidence_through_date?: string; home_margin: number; home_win_probability: number; ledger?: ProjectionLedger };
+  projection: { model: string; state_kind?: string; model_track?: string; home_margin: number; home_win_probability: number };
   market: MarketLine | null;
   prediction_market?: PredictionMarket | null;
   injury_report: {
@@ -425,16 +406,9 @@ function playersWithLatestStatuses(
         play_probability: assumption.play_probability,
         conditional_minutes: 0,
         projected_minutes: 0,
-        projected_nail: null,
-        expected_contribution: null,
         reason: assumption.reason === "-" ? null : assumption.reason,
       })),
   ];
-}
-
-function signedRating(value: number | null | undefined) {
-  if (value === null || value === undefined) return "—";
-  return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
 }
 
 function RotationTable({ team, players, actualPlayers, reportStatus }: { team: string; players: ProjectedMinute[]; actualPlayers?: ActualMinute[]; reportStatus?: string }) {
@@ -451,8 +425,6 @@ function RotationTable({ team, players, actualPlayers, reportStatus }: { team: s
       play_probability: 1,
       conditional_minutes: 0,
       projected_minutes: 0,
-      projected_nail: null,
-      expected_contribution: null,
       reason: null,
     })),
   ];
@@ -460,7 +432,7 @@ function RotationTable({ team, players, actualPlayers, reportStatus }: { team: s
     <h4><a href={teamHref(team)}>{team}</a> projected minutes</h4>
     {hasUnknownPlayers && <p className="schedule-report-pending">Unlisted availability remains unknown — team report coverage is incomplete. Listed statuses are shown below.</p>}
     <div className={`schedule-rotation-table ${actualPlayers ? "has-actual" : ""}`}>
-      <div className="schedule-rotation-header"><span>Player</span><small>Min.</small><small>NAIL</small><small>Contribution</small>{actualPlayers && <><small>Actual</small><small>Δ</small></>}</div>
+      {actualPlayers && <div className="schedule-rotation-header"><span>Player</span><small>Pred.</small><small>Actual</small><small>Δ</small></div>}
       {rows.map((player) => {
         const actual = actualByPlayer.get(player.player_id) ?? actualByPlayer.get(player.player_name);
         const difference = actual ? actual.actual_minutes - player.projected_minutes : null;
@@ -469,49 +441,11 @@ function RotationTable({ team, players, actualPlayers, reportStatus }: { team: s
           : `${player.status}${player.reason ? ` · ${player.reason}` : ""}`;
         return <div key={player.player_id} className={player.status !== "Available" ? "injury-listed" : ""}>
         <span className="schedule-rotation-player">{player.player_id > 0 ? <a className="schedule-player-link" href={playerHref(player.player_id)}>{player.player_name}</a> : player.player_name}<small>{availability}</small></span>
-        <strong data-label="Minutes">{player.projected_minutes.toFixed(1)}</strong>
-        <strong data-label="NAIL" className={player.projected_nail !== null && player.projected_nail !== undefined && player.projected_nail < 0 ? "negative" : ""}>{signedRating(player.projected_nail)}</strong>
-        <strong data-label="Contribution" className={player.expected_contribution !== null && player.expected_contribution !== undefined && player.expected_contribution < 0 ? "negative" : ""}>{signedRating(player.expected_contribution)}</strong>
-        {actualPlayers && <><strong data-label="Actual">{actual?.actual_minutes.toFixed(1) ?? "0.0"}</strong><strong data-label="Δ" className={difference !== null && difference < 0 ? "negative" : "positive"}>{difference === null ? "—" : `${difference > 0 ? "+" : ""}${difference.toFixed(1)}`}</strong></>}
+        <strong>{player.projected_minutes.toFixed(1)}</strong>
+        {actualPlayers && <><strong>{actual?.actual_minutes.toFixed(1) ?? "0.0"}</strong><strong className={difference !== null && difference < 0 ? "negative" : "positive"}>{difference === null ? "—" : `${difference > 0 ? "+" : ""}${difference.toFixed(1)}`}</strong></>}
       </div>;})}
     </div>
   </div>;
-}
-
-function GameProjectionLedger({ ledger }: { ledger: ProjectionLedger }) {
-  const restLabel = ledger.home_back_to_back || ledger.away_back_to_back
-    ? `${ledger.home_back_to_back ? ledger.home_team : ledger.away_team} on B2B`
-    : "Both rested";
-  return <section className="schedule-ledger" aria-label="Model spread calculation">
-    <div className="schedule-ledger-heading">
-      <span>Model spread ledger</span>
-      <small>Player contributions reconcile to the frozen pregame line</small>
-    </div>
-    <table className="rating-ledger schedule-rating-ledger">
-      <thead><tr><th scope="col">Component</th><th scope="col">{ledger.away_team}</th><th scope="col">{ledger.home_team}</th><th scope="col">Home edge</th></tr></thead>
-      <tbody>
-        <tr>
-          <th scope="row">Minutes-weighted NAIL</th>
-          <td>{signedRating(ledger.away_team_strength)}</td>
-          <td>{signedRating(ledger.home_team_strength)}</td>
-          <td>{signedRating(ledger.neutral_home_edge)}</td>
-        </tr>
-        <tr>
-          <th scope="row">Home court</th><td /><td /><td>{signedRating(ledger.home_court_adjustment)}</td>
-        </tr>
-        <tr>
-          <th scope="row">Back-to-back <small>{restLabel}</small></th><td /><td /><td>{signedRating(ledger.back_to_back_adjustment)}</td>
-        </tr>
-        <tr className="ledger-total">
-          <th scope="row">Model margin</th><td /><td /><td>{ledger.home_team} {signedRating(ledger.home_margin)}</td>
-        </tr>
-        <tr className="ledger-descriptive">
-          <th scope="row">Fair spread</th><td /><td /><td>{ledger.home_team} {formatSpread(ledger.fair_home_spread)}</td>
-        </tr>
-      </tbody>
-    </table>
-    <p>Values are points per 100 possessions. The current model still uses an implicit 100-possession game; pace scaling is tracked separately.</p>
-  </section>;
 }
 
 function gameCountLabel(count: number) {
@@ -634,8 +568,6 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
   const predictionMarket = pregame?.prediction_market ?? archived?.prediction_market ?? null;
   const injuryReport = archived?.injury_report ?? pregame?.injury_report;
   const projectedMinutes = pregame?.projected_minutes ?? archived?.projected_minutes;
-  const projectionLedger = pregame?.projection.ledger;
-  const ratingAsOf = pregame?.projection.rating_as_of ?? pregame?.projection.evidence_through_date;
   const reportUpdatedAfterFreeze = Boolean(
     pregame
     && injuryReport
@@ -733,7 +665,7 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
       {injuryReport && displayedMinutes && <details className="schedule-assumptions">
         <summary>
           <span>Rotation &amp; injury assumptions</span>
-          <small>{pendingReportTeams.length ? `${pendingReportTeams.join(" & ")} pending · ${injuryReport.assumptions.length} listed` : `${injuryReport.assumptions.length} listed`} · NAIL {ratingAsOf ?? "pregame"} · NBA report {reportTime(injuryReport.published_at)}</small>
+          <small>{pendingReportTeams.length ? `${pendingReportTeams.join(" & ")} pending · ${injuryReport.assumptions.length} listed` : `${injuryReport.assumptions.length} listed`} · NBA report {reportTime(injuryReport.published_at)}</small>
         </summary>
         <div className="schedule-assumptions-body">
           {pendingReportTeams.length > 0 && <p className="schedule-report-warning"><strong>{pendingReportTeams.join(" & ")} report coverage is incomplete.</strong> Filed player statuses are preserved below; players not listed in the report remain unknown and retain their frozen baseline estimates.</p>}
@@ -748,7 +680,6 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
             <RotationTable team={game.away_team} players={displayedMinutes.away} actualPlayers={retrospective?.actual_minutes.away} reportStatus={injuryReport.team_reports?.[game.away_team]?.status} />
             <RotationTable team={game.home_team} players={displayedMinutes.home} actualPlayers={retrospective?.actual_minutes.home} reportStatus={injuryReport.team_reports?.[game.home_team]?.status} />
           </div>
-          {projectionLedger && <GameProjectionLedger ledger={projectionLedger} />}
           <a href={injuryReport.source_url} target="_blank" rel="noreferrer">Open official NBA injury report</a>
         </div>
       </details>}

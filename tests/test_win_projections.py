@@ -20,7 +20,6 @@ from nba_lineup_model.web_api.win_projections import (
     _fetch_polymarket_moneyline_snapshot,
     _game_rotation,
     _parse_official_injury_report,
-    _projection_ledger,
     _team_win_totals,
     build_current_season_minutes_payload,
     build_current_season_win_projection_payload,
@@ -1606,8 +1605,6 @@ def test_suffix_injury_status_matches_roster_player() -> None:
     assert butler["status"] == "Out"
     assert butler["play_probability"] == 0.0
     assert butler["projected_minutes"] == 0.0
-    assert butler["projected_nail"] == 3.0
-    assert butler["expected_contribution"] == 0.0
 
 
 def test_pending_team_report_does_not_claim_players_are_available() -> None:
@@ -1643,28 +1640,6 @@ def test_pending_team_report_does_not_claim_players_are_available() -> None:
     assert sum(player["projected_minutes"] for player in rotation["players"]) == pytest.approx(
         240.0
     )
-    assert sum(
-        player["expected_contribution"] for player in rotation["players"]
-    ) == pytest.approx(rotation["team_strength"])
-
-
-def test_projection_ledger_reconciles_team_strength_and_context() -> None:
-    ledger = _projection_ledger(
-        away_team="BOS",
-        home_team="DET",
-        away_team_strength=3.0,
-        home_team_strength=4.5,
-        home_court=2.8,
-        back_to_back_coefficient=-1.5,
-        home_back_to_back=1,
-        away_back_to_back=0,
-        home_margin=2.8,
-    )
-
-    assert ledger["neutral_home_edge"] == pytest.approx(1.5)
-    assert ledger["back_to_back_adjustment"] == pytest.approx(-1.5)
-    assert ledger["home_margin"] == pytest.approx(2.8)
-    assert ledger["fair_home_spread"] == pytest.approx(-2.8)
 
 
 def test_game_rotation_uses_only_the_exact_date_and_matchup_report() -> None:
