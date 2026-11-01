@@ -538,7 +538,7 @@ function RotationTable({
   </div>;
 }
 
-function SpreadLedgerView({ ledger, actual = false }: { ledger: SpreadLedger; actual?: boolean }) {
+function SpreadLedgerView({ ledger, actualLedger }: { ledger: SpreadLedger; actualLedger?: SpreadLedger }) {
   const awayTeam = ledger.away.team;
   const homeTeam = ledger.home.team;
   const backToBackTeams = [
@@ -557,21 +557,22 @@ function SpreadLedgerView({ ledger, actual = false }: { ledger: SpreadLedger; ac
     provenance.injury_report_sha256 ? `Injury report: ${provenance.injury_report_sha256}` : null,
   ].filter(Boolean).join("\n");
 
-  return <section className={`schedule-spread-ledger ${actual ? "actual" : ""}`} aria-label={actual ? "Actual-minutes spread ledger" : "Model spread ledger"}>
+  return <section className={`schedule-spread-ledger ${actualLedger ? "has-actual" : ""}`} aria-label="Model spread ledger">
     <div className="schedule-spread-ledger-heading">
-      <div><span>{actual ? "Retrospective actual-minutes ledger" : "Model spread ledger"}</span><strong>{actual ? "Same frozen ratings, final minute mix" : "From player value to the line"}</strong></div>
-      <small>points per 100 possessions</small>
+      <div><span>Model spread ledger</span><strong>From player value to the line</strong></div>
+      <small>assuming 100 possessions per game</small>
     </div>
     <div className="schedule-spread-ledger-rows">
-      <div><span><a href={teamHref(awayTeam)}>{awayTeam}</a> player contributions</span><strong>{signedValue(ledger.away.team_strength)}</strong></div>
-      <div><span><a href={teamHref(homeTeam)}>{homeTeam}</a> player contributions</span><strong>{signedValue(ledger.home.team_strength)}</strong></div>
-      <div><span>{homeTeam} minus {awayTeam}</span><strong>{signedValue(ledger.team_strength_difference)}</strong></div>
-      <div><span>Home court</span><strong>{signedValue(ledger.home_court_adjustment)}</strong></div>
-      <div><span>Back-to-back adjustment<small>{backToBackNote}</small></span><strong>{signedValue(ledger.back_to_back.adjustment)}</strong></div>
-      <div className="result"><span>{actual ? "Retrospective home margin" : "Projected home margin"}</span><strong>{homeTeam} {signedValue(ledger.home_margin, 1)}</strong></div>
-      <div className="result final"><span>{actual ? "Actual-minute mix spread" : "Fair spread"}</span><strong>{homeTeam} {formatSpread(ledger.fair_home_spread)}</strong></div>
+      {actualLedger && <div className="columns"><span></span><small>Projected</small><small>Actual minutes</small></div>}
+      <div><span><a href={teamHref(awayTeam)}>{awayTeam}</a> player contributions</span><strong>{signedValue(ledger.away.team_strength)}</strong>{actualLedger && <strong>{signedValue(actualLedger.away.team_strength)}</strong>}</div>
+      <div><span><a href={teamHref(homeTeam)}>{homeTeam}</a> player contributions</span><strong>{signedValue(ledger.home.team_strength)}</strong>{actualLedger && <strong>{signedValue(actualLedger.home.team_strength)}</strong>}</div>
+      <div><span>{homeTeam} minus {awayTeam}</span><strong>{signedValue(ledger.team_strength_difference)}</strong>{actualLedger && <strong>{signedValue(actualLedger.team_strength_difference)}</strong>}</div>
+      <div><span>Home court</span><strong>{signedValue(ledger.home_court_adjustment)}</strong>{actualLedger && <strong>{signedValue(actualLedger.home_court_adjustment)}</strong>}</div>
+      <div><span>Back-to-back adjustment<small>{backToBackNote}</small></span><strong>{signedValue(ledger.back_to_back.adjustment)}</strong>{actualLedger && <strong>{signedValue(actualLedger.back_to_back.adjustment)}</strong>}</div>
+      <div className="result"><span>Home margin</span><strong>{homeTeam} {signedValue(ledger.home_margin, 1)}</strong>{actualLedger && <strong>{homeTeam} {signedValue(actualLedger.home_margin, 1)}</strong>}</div>
+      <div className="result final"><span>Fair spread</span><strong>{homeTeam} {formatSpread(ledger.fair_home_spread)}</strong>{actualLedger && <strong>{homeTeam} {formatSpread(actualLedger.fair_home_spread)}</strong>}</div>
     </div>
-    <p title={provenanceTitle}>{actual ? "Final NBA minutes · same frozen pregame ratings and context" : `Frozen ratings through ${provenance.rating_as_of ?? "unknown"} · coupled snapshot ${snapshotLabel}`}</p>
+    <p title={provenanceTitle}>Frozen ratings through {provenance.rating_as_of ?? "unknown"} · coupled snapshot {snapshotLabel}{actualLedger ? " · actual column uses final NBA minutes with the same frozen ratings and context" : ""}</p>
   </section>;
 }
 
@@ -800,13 +801,7 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
           {reportUpdatedAfterFreeze && <p className="schedule-assumption-policy">Player statuses use the latest official report captured for this matchup. Predicted minutes and the model line remain the immutable pregame values.</p>}
           <p className="schedule-assumption-policy">Submitted reports: Out 0% · Doubtful 25% · Questionable 50% · Probable 75% · Unlisted 100%. Expected minutes are renormalized to 240 per team.</p>
           {!spreadLedger && <p className="schedule-attribution-unavailable">Frozen NAIL attribution is unavailable for this legacy pregame snapshot. Its archived minutes and model line remain unchanged.</p>}
-          {retrospective && <div className="schedule-retrospective">
-            <span>Retrospective actual-minute mix</span>
-            <strong>{game.home_team} {formatSpread(-retrospective.home_margin)}</strong>
-            <small>{game.home_team} {(retrospective.home_win_probability * 100).toFixed(0)}% · uses final minutes, not a pregame prediction</small>
-          </div>}
-          {spreadLedger && <SpreadLedgerView ledger={spreadLedger} />}
-          {retrospective?.ledger && <SpreadLedgerView ledger={retrospective.ledger} actual />}
+          {spreadLedger && <SpreadLedgerView ledger={spreadLedger} actualLedger={retrospective?.ledger} />}
           <div className="schedule-rotations">
             <RotationTable team={game.away_team} players={displayedMinutes.away} teamLedger={spreadLedger?.away} actualTeamLedger={retrospective?.ledger?.away} actualPlayers={retrospective?.actual_minutes.away} reportStatus={injuryReport.team_reports?.[game.away_team]?.status} />
             <RotationTable team={game.home_team} players={displayedMinutes.home} teamLedger={spreadLedger?.home} actualTeamLedger={retrospective?.ledger?.home} actualPlayers={retrospective?.actual_minutes.home} reportStatus={injuryReport.team_reports?.[game.home_team]?.status} />

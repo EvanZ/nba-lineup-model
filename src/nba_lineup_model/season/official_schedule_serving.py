@@ -234,7 +234,9 @@ def materialize_official_schedule_state(
         identity = {
             "schema_version": 2,
             "artifact_kind": "official_schedule_serving",
-            "prediction_attribution_contract": "pregame_and_actual_minutes_v1",
+            "prediction_attribution_contract": (
+                "complete_displayed_player_universe_v2"
+            ),
             "season": str(data_chain[-1][2]["identity"]["season"]),
             "through_date": through_date.isoformat(),
             "game_ids": sorted(source_inventory),
