@@ -310,6 +310,9 @@ def _rapm_stints(
     actual_margin = float(summary["final"]["actual_home_margin"])
     if not math.isclose(float(stints["home_margin"].sum()), actual_margin, abs_tol=1e-9):
         raise ValueError("Reconstructed stint margin does not match the immutable final")
+    stints.attrs["reconstructed_possessions"] = len(
+        reconstruction.possessions.possessions
+    )
     return stints, team_ids, issue_count
 
 
