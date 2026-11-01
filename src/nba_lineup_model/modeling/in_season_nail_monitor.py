@@ -318,7 +318,7 @@ def _rapm_stints(
             "code": str(issue.code),
             "severity": str(issue.severity),
             "detail": str(issue.detail),
-            "player_id": issue.player_id,
+            "player_id": getattr(issue, "player_id", None),
         }
         for issue in issues
     ]
