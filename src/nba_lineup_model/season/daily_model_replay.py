@@ -641,6 +641,7 @@ def _minutes_observations(
     rows: list[dict[str, object]] = []
     injury_by_game: dict[str, dict[str, Any]] = {}
     warnings: list[str] = []
+    identity_errors: list[str] = []
     for game_id, game in sorted(games.items()):
         matchup = f"{game['away_team']}@{game['home_team']}"
         player_reports = [
@@ -668,10 +669,15 @@ def _minutes_observations(
                 mapped_report[key] = normalized
                 game_injuries.setdefault(team, []).append(normalized)
             else:
-                warnings.append(
+                identity_errors.append(
                     f"{game_id}/{team}/{report.get('player_name')}: "
                     + ("unmapped" if not candidates else "ambiguous")
                 )
+        if identity_errors:
+            raise ValueError(
+                "Official NBA injury player identity is unresolved: "
+                + "; ".join(identity_errors)
+            )
         injury_by_game[game_id] = {
             "teams": game_injuries,
             "report_status": report_status,

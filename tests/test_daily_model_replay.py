@@ -60,7 +60,11 @@ def _prior_files(tmp_path: Path, *, omit_player: int | None = None) -> tuple[Pat
     return rankings_path, minutes_path
 
 
-def _publish_data(tmp_path: Path):
+def _publish_data(
+    tmp_path: Path,
+    *,
+    injury_players: list[dict[str, object]] | None = None,
+):
     game_id = "0022600001"
     player_ids = [1631104, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     home_ids, away_ids = player_ids[:5], player_ids[5:]
@@ -204,7 +208,7 @@ def _publish_data(tmp_path: Path):
                                 "AWY": {"status": "submitted"},
                             }
                         },
-                        "players": [],
+                        "players": injury_players or [],
                     }
                 }
             ]
@@ -329,6 +333,46 @@ def test_daily_model_replay_fails_closed_on_missing_player_prior(tmp_path: Path)
         ).read_text()
     )
     assert "Player universe is incomplete" in error["error"]
+
+
+def test_daily_model_replay_fails_closed_on_unmapped_injury_player(
+    tmp_path: Path,
+) -> None:
+    _publish_data(
+        tmp_path,
+        injury_players=[
+            {
+                "game_date": "2026-10-20",
+                "matchup": "AWY@HOM",
+                "team": "HOM",
+                "player_name": "Unknown Player, Jr.",
+                "status": "Out",
+                "reason": "Injury/Illness",
+            }
+        ],
+    )
+    rankings, minutes = _prior_files(tmp_path)
+
+    with pytest.raises(DailyModelReplayBlocked, match="2026-10-20 failed"):
+        replay_daily_model_chain(
+            start_date=date(2026, 10, 20),
+            end_date=date(2026, 10, 20),
+            preseason_rankings_path=rankings,
+            preseason_minutes_path=minutes,
+            data_root=tmp_path / "data",
+            output_root=tmp_path / "model",
+            code_revision="test-revision",
+            context_provider=_zero_context,
+        )
+
+    error = json.loads(
+        (
+            tmp_path
+            / "model/failures/game_date_pacific=2026-10-20/error.json"
+        ).read_text()
+    )
+    assert "Official NBA injury player identity is unresolved" in error["error"]
+    assert "Unknown Player, Jr.: unmapped" in error["error"]
 
 
 def test_early_role_reconciles_only_a_small_verified_stint_gap() -> None:
