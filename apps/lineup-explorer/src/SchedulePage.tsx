@@ -585,8 +585,7 @@ function SpreadLedgerView({ ledger, actualLedger }: { ledger: SpreadLedger; actu
       <div><span>{homeTeam} minus {awayTeam}</span><strong>{signedValue(ledger.team_strength_difference)}</strong>{actualLedger && <strong>{signedValue(actualLedger.team_strength_difference)}</strong>}</div>
       <div><span>Home court</span><strong>{signedValue(ledger.home_court_adjustment)}</strong>{actualLedger && <strong>{signedValue(actualLedger.home_court_adjustment)}</strong>}</div>
       <div><span>Back-to-back adjustment<small>{backToBackNote}</small></span><strong>{signedValue(ledger.back_to_back.adjustment)}</strong>{actualLedger && <strong>{signedValue(actualLedger.back_to_back.adjustment)}</strong>}</div>
-      <div className="result"><span>Home margin</span><strong>{homeTeam} {signedValue(ledger.home_margin, 1)}</strong>{actualLedger && <strong>{homeTeam} {signedValue(actualLedger.home_margin, 1)}</strong>}</div>
-      <div className="result final"><span>Fair spread</span><strong>{homeTeam} {formatSpread(ledger.fair_home_spread)}</strong>{actualLedger && <strong>{homeTeam} {formatSpread(actualLedger.fair_home_spread)}</strong>}</div>
+      <div className="result final"><span>Model spread</span><strong>{homeTeam} {formatSpread(ledger.fair_home_spread)}</strong>{actualLedger && <strong>{homeTeam} {formatSpread(actualLedger.fair_home_spread)}</strong>}</div>
     </div>
     <p>Frozen pregame ratings and minutes{actualLedger ? " · actual column uses final NBA minutes with the same frozen ratings and context" : ""}</p>
   </section>;
