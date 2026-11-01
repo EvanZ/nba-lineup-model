@@ -94,7 +94,7 @@ if [[ -d "$DEV_SCHEDULE_ROOT/frozen" ]]; then
   frozen_artifact_root="$DEV_SCHEDULE_ROOT"
 fi
 PYTHONPATH="$RELEASE_ROOT/src" \
-  "$PROD_RELEASE/.venv/bin/python" \
+  "$PROD_RELEASE/.venv/bin/python" -P \
   -m nba_lineup_model.season.official_schedule_serving \
   --data-root "$DEV_DAILY_DATA_ROOT" \
   --model-root "$DEV_DAILY_MODEL_ROOT" \
@@ -112,7 +112,7 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
   fi
 
   PYTHONPATH="$RELEASE_ROOT/src" \
-    "$PROD_RELEASE/.venv/bin/python" \
+    "$PROD_RELEASE/.venv/bin/python" -P \
     -m nba_lineup_model.modeling.current_season_serving_materialization \
     --daily-model-root "$DEV_DAILY_MODEL_ROOT" \
     --daily-data-root "$DEV_DAILY_DATA_ROOT" \
@@ -128,7 +128,7 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
   GESTALT_SCHEDULE_STATE_DIR="$DEV_SCHEDULE_ROOT" \
   GESTALT_PRESEASON_RANKINGS_PATH="$DEV_PRESEASON_RANKINGS_PATH" \
   GESTALT_PRESEASON_PROFILES_PATH="$DEV_PRESEASON_PROFILES_PATH" \
-    "$PROD_RELEASE/.venv/bin/python" \
+    "$PROD_RELEASE/.venv/bin/python" -P \
     -m nba_lineup_model.modeling.current_season_lineup_materialization \
     --daily-data-root "$DEV_DAILY_DATA_ROOT" \
     --output-root "$DEV_STATE_ROOT/current-season-lineups"
@@ -187,7 +187,7 @@ curl --fail --silent --show-error http://127.0.0.1:8011/api/health >/dev/null
 # remain the strict-forward replay materialized above, and no dev artifact is
 # uploaded to the production S3 archive.
 PYTHONPATH="$RELEASE_ROOT/src" \
-  "$PROD_RELEASE/.venv/bin/python" \
+  "$PROD_RELEASE/.venv/bin/python" -P \
   -m nba_lineup_model.season.official_schedule_runtime \
   --date "$(TZ=America/Los_Angeles date +%F)" \
   --state-dir "$DEV_SCHEDULE_ROOT" \
@@ -207,7 +207,7 @@ PYTHONPATH="$RELEASE_ROOT/src" \
 # Bind the verified data/model tips and every serving surface into one release
 # identity only after representative API and browser-facing contracts pass.
 PYTHONPATH="$RELEASE_ROOT/src" \
-  "$PROD_RELEASE/.venv/bin/python" \
+  "$PROD_RELEASE/.venv/bin/python" -P \
   -m nba_lineup_model.season.dev_site_release \
   --daily-data-root "$DEV_DAILY_DATA_ROOT" \
   --daily-model-root "$DEV_DAILY_MODEL_ROOT" \
