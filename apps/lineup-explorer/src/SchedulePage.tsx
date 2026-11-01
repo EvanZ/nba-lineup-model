@@ -548,14 +548,6 @@ function SpreadLedgerView({ ledger, actualLedger }: { ledger: SpreadLedger; actu
   const backToBackNote = backToBackTeams.length
     ? `${backToBackTeams.join(" & ")} ${backToBackTeams.length > 1 ? "are" : "is"} on a back-to-back`
     : "Neither team is on a back-to-back";
-  const provenance = ledger.provenance;
-  const provenanceTitle = [
-    provenance.serving_bundle_sha256 ? `Serving bundle: ${provenance.serving_bundle_sha256}` : null,
-    provenance.rating_state_sha256 ? `Rating state: ${provenance.rating_state_sha256}` : null,
-    provenance.minutes_state_sha256 ? `Minutes state: ${provenance.minutes_state_sha256}` : null,
-    provenance.injury_report_sha256 ? `Injury report: ${provenance.injury_report_sha256}` : null,
-  ].filter(Boolean).join("\n");
-
   return <section className={`schedule-spread-ledger ${actualLedger ? "has-actual" : ""}`} aria-label="Model spread ledger">
     <div className="schedule-spread-ledger-heading">
       <div><span>Model spread ledger</span><strong>From player value to the line</strong></div>
@@ -571,7 +563,7 @@ function SpreadLedgerView({ ledger, actualLedger }: { ledger: SpreadLedger; actu
       <div className="result"><span>Home margin</span><strong>{homeTeam} {signedValue(ledger.home_margin, 1)}</strong>{actualLedger && <strong>{homeTeam} {signedValue(actualLedger.home_margin, 1)}</strong>}</div>
       <div className="result final"><span>Fair spread</span><strong>{homeTeam} {formatSpread(ledger.fair_home_spread)}</strong>{actualLedger && <strong>{homeTeam} {formatSpread(actualLedger.fair_home_spread)}</strong>}</div>
     </div>
-    <p title={provenanceTitle}>Frozen pregame ratings and minutes{actualLedger ? " · actual column uses final NBA minutes with the same frozen ratings and context" : ""}</p>
+    <p>Frozen pregame ratings and minutes{actualLedger ? " · actual column uses final NBA minutes with the same frozen ratings and context" : ""}</p>
   </section>;
 }
 
