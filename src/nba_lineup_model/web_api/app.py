@@ -236,8 +236,9 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         return FileResponse(report_path, media_type="text/html")
 
     @app.get("/api/reports/dev-release")
+    @app.get("/api/reports/site-release")
     def dev_release_report() -> FileResponse:
-        """Serve the release-level dev verification report when configured."""
+        """Serve the approved release-level verification report when configured."""
 
         root = os.environ.get("GESTALT_SITE_RELEASE_ROOT")
         if not root:

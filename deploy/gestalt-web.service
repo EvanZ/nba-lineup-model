@@ -8,16 +8,22 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/nba-gestalt/current
 Environment=PYTHONUNBUFFERED=1
-Environment=PYTHONPATH=/opt/nba-gestalt-code/current/src
-Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt/current-season-serving
-Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt/current-season-lineups
-Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
+Environment=PYTHONPATH=/var/lib/nba-gestalt/live-release/code/src
+Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt/live-release/current-season-serving
+Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt/live-release/current-season-lineups
+Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/live-release/schedule
 Environment=GESTALT_SCHEDULE_S3_URI=s3://nba-gestalt-data/nba-gestalt/schedule/model_track=updated_ratings_updated_minutes
-Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt/catalog/games.parquet
+Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt/live-release/catalog/games.parquet
+Environment=GESTALT_SITE_RELEASE_ROOT=/var/lib/nba-gestalt/live-release/site-releases
+EnvironmentFile=/var/lib/nba-gestalt/live-release/site-release.env
 ExecStart=/opt/nba-gestalt/current/.venv/bin/uvicorn nba_lineup_model.web_api.app:app --host 127.0.0.1 --port 8010 --workers 1
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadOnlyPaths=/var/lib/nba-gestalt/live-release
 
 [Install]
 WantedBy=multi-user.target

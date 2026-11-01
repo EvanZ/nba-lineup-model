@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Promote one reviewed Git ref to production without copying the immutable
-# model/data bundle. Production gets its own code worktree and freshly
-# materialized serving pointers; the legacy schedule remains an untouched
-# archive of the originally published forecasts.
+# Promote one reviewed dev release through a single rollback-safe runtime
+# pointer. All immutable components are staged and preflighted before the
+# public process changes. Schedule collection remains a separate mutable
+# overlay initialized from the approved snapshot.
 
 export PATH="$HOME/.local/bin:$PATH"
 if ! command -v npm >/dev/null 2>&1; then
@@ -20,30 +20,36 @@ SOURCE_REPO="${GESTALT_SOURCE_REPO:-$HOME/nba-lineup-model}"
 APP_ROOT="${GESTALT_APP_ROOT:-/opt/nba-gestalt}"
 CODE_ROOT="${GESTALT_CODE_ROOT:-/opt/nba-gestalt-code}"
 STATE_ROOT="${GESTALT_STATE_ROOT:-/var/lib/nba-gestalt}"
-WEB_RELEASE_ROOT="${GESTALT_WEB_RELEASE_ROOT:-/var/www/nba-gestalt-releases}"
+DEV_APP_ROOT="${GESTALT_DEV_APP_ROOT:-/opt/nba-gestalt-dev}"
+DEV_STATE_ROOT="${GESTALT_DEV_STATE_ROOT:-/var/lib/nba-gestalt-dev}"
 PROD_RELEASE="$APP_ROOT/current"
-DEV_RELEASE="${GESTALT_DEV_RELEASE:-/opt/nba-gestalt-dev/current}"
-SOURCE_SCHEDULE_ROOT="${GESTALT_SOURCE_SCHEDULE_ROOT:-$STATE_ROOT/schedule}"
+DEV_RELEASE="$DEV_APP_ROOT/current"
+DEV_SERVING_ROOT="$DEV_STATE_ROOT/current-season-serving"
+DEV_LINEUPS_ROOT="$DEV_STATE_ROOT/current-season-lineups"
+DEV_SCHEDULE_ROOT="$DEV_STATE_ROOT/schedule/current"
+DEV_SITE_RELEASE_ROOT="$DEV_STATE_ROOT/site-releases"
+DEV_CATALOG_PATH="$DEV_STATE_ROOT/catalog/games.parquet"
+DEV_PRESEASON_ENV="$DEV_STATE_ROOT/site-release.env"
+PRODUCTION_RELEASE_ROOT="$STATE_ROOT/site-releases"
+LIVE_POINTER="$STATE_ROOT/live-release"
+SCHEDULE_RELEASE_ROOT="$STATE_ROOT/schedule-serving/releases"
+SCHEDULE_CURRENT="$STATE_ROOT/schedule-serving/current"
+PUBLIC_WEB=/var/www/nba-gestalt
+FRONTEND_DIST="${GESTALT_PROD_FRONTEND_DIST:-}"
 
 test -d "$SOURCE_REPO/.git"
+test -x "$PROD_RELEASE/.venv/bin/python"
+test -d "$PROD_RELEASE/artifacts"
+test -d "$PROD_RELEASE/data"
+test -d "$DEV_RELEASE"
+test -f "$DEV_SITE_RELEASE_ROOT/latest.json"
+test -f "$DEV_PRESEASON_ENV"
+
 if [[ "$PROD_REF" == origin/* ]]; then
   prod_branch="${PROD_REF#origin/}"
   git -C "$SOURCE_REPO" fetch --no-tags origin \
     "refs/heads/$prod_branch:refs/remotes/origin/$prod_branch"
 fi
-
-RELEASE_ID="${GESTALT_PROD_RELEASE_ID:-$(git -C "$SOURCE_REPO" rev-parse --short=12 "$PROD_REF")}"
-RELEASE_ROOT="$CODE_ROOT/releases/$RELEASE_ID"
-FRONTEND_DIST="${GESTALT_PROD_FRONTEND_DIST:-}"
-
-test -x "$PROD_RELEASE/.venv/bin/python"
-test -d "$PROD_RELEASE/artifacts"
-test -d "$PROD_RELEASE/data"
-test -d "$DEV_RELEASE"
-if [[ ! -d "$SOURCE_SCHEDULE_ROOT/final" ]]; then
-  SOURCE_SCHEDULE_ROOT="$STATE_ROOT/schedule"
-fi
-
 prod_commit="$(git -C "$SOURCE_REPO" rev-parse "$PROD_REF^{commit}")"
 dev_commit="$(git -C "$DEV_RELEASE" rev-parse HEAD)"
 if [[ "$dev_commit" != "$prod_commit" ]]; then
@@ -51,128 +57,195 @@ if [[ "$dev_commit" != "$prod_commit" ]]; then
     "$dev_commit" "$prod_commit" >&2
   exit 1
 fi
+
 "$DEV_RELEASE/scripts/validate_gestalt_serving_contract.sh" \
   http://127.0.0.1:8011
-coverage_mode=()
-if [[ "${GESTALT_ALLOW_DEV_FINAL_SUPERSET:-0}" == "1" ]]; then
-  coverage_mode+=(--allow-left-final-superset)
-fi
 "$DEV_RELEASE/scripts/compare_gestalt_data_coverage.sh" \
   http://127.0.0.1:8011 \
   http://127.0.0.1:8010 \
-  "${coverage_mode[@]}"
+  --allow-left-evidence-superset
 
-sudo install -d -o "$USER" -g "$(id -gn)" "$CODE_ROOT/releases"
-sudo install -d -o "$USER" -g "$(id -gn)" "$STATE_ROOT/catalog"
-sudo install -d -o "$USER" -g "$(id -gn)" "$STATE_ROOT/current-season-serving"
-sudo install -d -o "$USER" -g "$(id -gn)" "$STATE_ROOT/current-season-lineups"
-sudo install -d -o "$USER" -g "$(id -gn)" "$STATE_ROOT/schedule-serving"
-sudo install -d -o "$USER" -g "$(id -gn)" "$WEB_RELEASE_ROOT"
-
-if [[ ! -d "$RELEASE_ROOT" ]]; then
-  git -C "$SOURCE_REPO" worktree add --detach "$RELEASE_ROOT" "$PROD_REF"
+approved_release_path="$(jq -er '.release_path' "$DEV_SITE_RELEASE_ROOT/latest.json")"
+approved_release_sha="$(jq -er '.release_sha256' "$DEV_SITE_RELEASE_ROOT/latest.json")"
+approved_release="$DEV_SITE_RELEASE_ROOT/$approved_release_path"
+test -d "$approved_release"
+if [[ "$(jq -er '.identity.code_revision' "$approved_release/manifest.json")" != "$prod_commit" ]]; then
+  printf 'Production promotion blocked: approved manifest has different code\n' >&2
+  exit 1
+fi
+if [[ "$(jq -er '.identity.game_count' "$approved_release/manifest.json")" != "88" ]]; then
+  printf 'Production promotion blocked: approved release does not have 88 games\n' >&2
+  exit 1
+fi
+if [[ "$(jq -er '.identity.evidence_through_date' "$approved_release/manifest.json")" != "2026-10-31" ]]; then
+  printf 'Production promotion blocked: approved release is not through 2026-10-31\n' >&2
+  exit 1
 fi
 
+release_id="${GESTALT_PROD_RELEASE_ID:-$(git -C "$SOURCE_REPO" rev-parse --short=12 "$PROD_REF")}"
+release_root="$CODE_ROOT/releases/$release_id"
+sudo install -d -o "$USER" -g "$(id -gn)" "$CODE_ROOT/releases"
+sudo install -d -o "$USER" -g "$(id -gn)" "$PRODUCTION_RELEASE_ROOT"
+sudo install -d -o "$USER" -g "$(id -gn)" "$SCHEDULE_RELEASE_ROOT"
+if [[ ! -d "$release_root" ]]; then
+  git -C "$SOURCE_REPO" worktree add --detach "$release_root" "$PROD_REF"
+fi
+if [[ "$(git -C "$release_root" rev-parse HEAD)" != "$prod_commit" ]]; then
+  printf 'Production code worktree has the wrong commit\n' >&2
+  exit 1
+fi
+if [[ -n "$(git -C "$release_root" status --porcelain)" ]]; then
+  printf 'Production code worktree is dirty\n' >&2
+  exit 1
+fi
 ln -sfn \
   "$SOURCE_REPO/apps/lineup-explorer/node_modules" \
-  "$RELEASE_ROOT/apps/lineup-explorer/node_modules"
-
-cd "$PROD_RELEASE"
-
-# Repair any deployment-time pregames and completed audits in the isolated
-# model-input archive before building the production strict-forward view.
-PYTHONPATH="$RELEASE_ROOT/src" \
-  "$PROD_RELEASE/.venv/bin/nba-refresh-gestalt-schedule" \
-  --date "$(TZ=America/Los_Angeles date +%F)" \
-  --state-dir "$STATE_ROOT/schedule-serving/current" \
-  --mirror-frozen-to "$SOURCE_SCHEDULE_ROOT" \
-  --projection-url http://127.0.0.1:8010/api/win-projections \
-  --days-ahead 0 \
-  --no-s3
-PYTHONPATH="$RELEASE_ROOT/src" \
-  "$PROD_RELEASE/.venv/bin/nba-watch-gestalt-live-scores" \
-  --date "$(TZ=America/Los_Angeles date +%F)" \
-  --state-dir "$SOURCE_SCHEDULE_ROOT" \
-  --once \
-  --no-s3
-
-aws s3 cp \
-  s3://nba-gestalt-data/lake/catalog/games.parquet \
-  "$STATE_ROOT/catalog/games.parquet.next" \
-  --only-show-errors
-mv "$STATE_ROOT/catalog/games.parquet.next" "$STATE_ROOT/catalog/games.parquet"
-
-PYTHONPATH="$RELEASE_ROOT/src" \
-  "$PROD_RELEASE/.venv/bin/python" \
-  -m nba_lineup_model.modeling.current_season_serving_materialization \
-  --rating-root "$STATE_ROOT/in-season-nail" \
-  --minutes-root "$STATE_ROOT/in-season-minutes" \
-  --release-root "$PROD_RELEASE" \
-  --output-root "$STATE_ROOT/current-season-serving"
-
-PYTHONPATH="$RELEASE_ROOT/src" \
-GESTALT_CURRENT_SEASON_SERVING_ROOT="$STATE_ROOT/current-season-serving" \
-GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$STATE_ROOT/lineup-materialization-input" \
-GESTALT_SCHEDULE_STATE_DIR="$SOURCE_SCHEDULE_ROOT" \
-  "$PROD_RELEASE/.venv/bin/python" \
-  -m nba_lineup_model.modeling.current_season_lineup_materialization \
-  --schedule-state-dir "$SOURCE_SCHEDULE_ROOT" \
-  --coverage-path "$STATE_ROOT/cdn/coverage.json" \
-  --output-root "$STATE_ROOT/current-season-lineups"
-
-PYTHONPATH="$RELEASE_ROOT/src" \
-GESTALT_CURRENT_SEASON_SERVING_ROOT="$STATE_ROOT/current-season-serving" \
-GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$STATE_ROOT/lineup-materialization-input" \
-  "$PROD_RELEASE/.venv/bin/python" \
-  -m nba_lineup_model.modeling.current_season_schedule_materialization \
-  --source-root "$SOURCE_SCHEDULE_ROOT" \
-  --rating-root "$STATE_ROOT/in-season-nail" \
-  --minutes-root "$STATE_ROOT/in-season-minutes" \
-  --output-root "$STATE_ROOT/schedule-serving" \
-  --catalog-path "$STATE_ROOT/catalog/games.parquet" \
-  --include-current-forecast
+  "$release_root/apps/lineup-explorer/node_modules"
 
 if [[ -n "$FRONTEND_DIST" ]]; then
   test -f "$FRONTEND_DIST/index.html"
 elif command -v npm >/dev/null 2>&1; then
-  npm --prefix "$RELEASE_ROOT/apps/lineup-explorer" run build
-  FRONTEND_DIST="$RELEASE_ROOT/apps/lineup-explorer/dist"
+  npm --prefix "$release_root/apps/lineup-explorer" run build
+  FRONTEND_DIST="$release_root/apps/lineup-explorer/dist"
 else
-  printf 'npm is unavailable; set GESTALT_PROD_FRONTEND_DIST to a prebuilt dist directory\n' >&2
+  printf 'npm is unavailable; set GESTALT_PROD_FRONTEND_DIST\n' >&2
   exit 1
 fi
 
-WEB_RELEASE="$WEB_RELEASE_ROOT/$RELEASE_ID"
-sudo install -d -m 0755 "$WEB_RELEASE"
-sudo rsync -a --delete --chmod=D755,F644 "$FRONTEND_DIST/" "$WEB_RELEASE/"
-
-# First migration: preserve the previous static site as a rollback release.
-if [[ -d /var/www/nba-gestalt && ! -L /var/www/nba-gestalt ]]; then
-  rollback_web="$WEB_RELEASE_ROOT/pre-code-overlay-$(date -u +%Y%m%dT%H%M%SZ)"
-  sudo mv /var/www/nba-gestalt "$rollback_web"
+schedule_overlay="$SCHEDULE_RELEASE_ROOT/$approved_release_sha"
+if [[ ! -d "$schedule_overlay" ]]; then
+  schedule_staging="$SCHEDULE_RELEASE_ROOT/.schedule.tmp-$approved_release_sha-$$"
+  install -d "$schedule_staging"
+  rsync -a --delete "$DEV_SCHEDULE_ROOT/" "$schedule_staging/"
+  mv "$schedule_staging" "$schedule_overlay"
 fi
 
-sudo ln -sfn "$RELEASE_ROOT" "$CODE_ROOT/current"
-sudo ln -sfn "$WEB_RELEASE" /var/www/nba-gestalt
-sudo install -m 0644 "$RELEASE_ROOT/deploy/gestalt-web.service" /etc/systemd/system/gestalt-web.service
-sudo install -m 0644 "$RELEASE_ROOT/deploy/gestalt-dagster-code-server.service" /etc/systemd/system/gestalt-dagster-code-server.service
-sudo install -m 0644 "$RELEASE_ROOT/deploy/gestalt-dagster-daemon.service" /etc/systemd/system/gestalt-dagster-daemon.service
-sudo install -m 0644 "$RELEASE_ROOT/deploy/gestalt-dagster-webserver.service" /etc/systemd/system/gestalt-dagster-webserver.service
-sudo install -m 0644 "$RELEASE_ROOT/deploy/gestalt-dagster-workspace.yaml" "$STATE_ROOT/dagster/workspace.yaml"
+preseason_rankings_path="$(sed -n 's/^GESTALT_PRESEASON_RANKINGS_PATH=//p' "$DEV_PRESEASON_ENV")"
+preseason_profiles_path="$(sed -n 's/^GESTALT_PRESEASON_PROFILES_PATH=//p' "$DEV_PRESEASON_ENV")"
+test -f "$preseason_rankings_path"
+test -f "$preseason_profiles_path"
 
-sudo systemctl daemon-reload
-sudo systemctl restart gestalt-web
-sudo systemctl restart gestalt-dagster-code-server
+candidate="$(
+  cd "$PROD_RELEASE"
+  PYTHONPATH="$release_root/src" \
+    "$PROD_RELEASE/.venv/bin/python" \
+    -m nba_lineup_model.season.production_site_release stage \
+    --dev-site-release-root "$DEV_SITE_RELEASE_ROOT" \
+    --serving-root "$DEV_SERVING_ROOT" \
+    --lineups-root "$DEV_LINEUPS_ROOT" \
+    --schedule-snapshot-root "$DEV_SCHEDULE_ROOT" \
+    --schedule-overlay-path "$schedule_overlay" \
+    --catalog-path "$DEV_CATALOG_PATH" \
+    --preseason-rankings-path "$preseason_rankings_path" \
+    --preseason-profiles-path "$preseason_profiles_path" \
+    --code-root "$release_root" \
+    --frontend-root "$FRONTEND_DIST" \
+    --output-root "$PRODUCTION_RELEASE_ROOT" \
+    --live-pointer "$LIVE_POINTER"
+)"
+test -d "$candidate"
+
+# Candidate API preflight. This exercises the exact staged code, models,
+# lineups, catalogs, Schedule overlay and frontend before any live pointer moves.
+preflight_log="/tmp/gestalt-production-preflight-$approved_release_sha.log"
+(
+  cd "$PROD_RELEASE"
+  exec env \
+    PYTHONPATH="$candidate/code/src" \
+    GESTALT_CURRENT_SEASON_SERVING_ROOT="$candidate/current-season-serving" \
+    GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$candidate/current-season-lineups" \
+    GESTALT_SCHEDULE_STATE_DIR="$candidate/schedule" \
+    GESTALT_GAME_CATALOG_PATH="$candidate/catalog/games.parquet" \
+    GESTALT_SITE_RELEASE_ROOT="$candidate/site-releases" \
+    GESTALT_PRESEASON_RANKINGS_PATH="$candidate/preseason/rankings.parquet" \
+    GESTALT_PRESEASON_PROFILES_PATH="$candidate/preseason/profiles.parquet" \
+    "$PROD_RELEASE/.venv/bin/uvicorn" nba_lineup_model.web_api.app:app \
+    --host 127.0.0.1 --port 8012 --workers 1
+) >"$preflight_log" 2>&1 &
+preflight_pid=$!
+cleanup_preflight() {
+  if kill -0 "$preflight_pid" >/dev/null 2>&1; then
+    kill "$preflight_pid" >/dev/null 2>&1 || true
+    wait "$preflight_pid" 2>/dev/null || true
+  fi
+}
+trap cleanup_preflight EXIT
 for _ in {1..60}; do
-  if "$PROD_RELEASE/.venv/bin/dagster" api grpc-health-check \
-    --host 127.0.0.1 --port 4000 >/dev/null 2>&1; then
+  if curl --fail --silent http://127.0.0.1:8012/api/health >/dev/null; then
     break
+  fi
+  if ! kill -0 "$preflight_pid" >/dev/null 2>&1; then
+    cat "$preflight_log" >&2
+    exit 1
   fi
   sleep 1
 done
-"$PROD_RELEASE/.venv/bin/dagster" api grpc-health-check \
-  --host 127.0.0.1 --port 4000
-sudo systemctl restart gestalt-dagster-webserver gestalt-dagster-daemon
+curl --fail --silent --show-error http://127.0.0.1:8012/api/health >/dev/null
+if [[ "$(curl --fail --silent http://127.0.0.1:8012/api/health | jq -er '.site_release.release_sha256')" != "$approved_release_sha" ]]; then
+  printf 'Candidate API loaded the wrong release identity\n' >&2
+  exit 1
+fi
+"$release_root/scripts/validate_gestalt_serving_contract.sh" \
+  http://127.0.0.1:8012
+cleanup_preflight
+trap - EXIT
+
+backup_root="$STATE_ROOT/promotion-backups/$(date -u +%Y%m%dT%H%M%SZ)-$approved_release_sha"
+sudo install -d -o "$USER" -g "$(id -gn)" "$backup_root"
+sudo cp /etc/systemd/system/gestalt-web.service "$backup_root/gestalt-web.service"
+old_live_target="$(readlink -f "$LIVE_POINTER" 2>/dev/null || true)"
+old_web_target="$(readlink "$PUBLIC_WEB" 2>/dev/null || true)"
+old_schedule_target="$(readlink -f "$SCHEDULE_CURRENT" 2>/dev/null || true)"
+mutation_started=0
+
+atomic_symlink() {
+  local target="$1"
+  local link="$2"
+  local temporary="${link}.tmp.$$"
+  sudo ln -s "$target" "$temporary"
+  sudo mv -Tf "$temporary" "$link"
+}
+
+rollback() {
+  local status=$?
+  trap - ERR
+  set +e
+  if [[ "$mutation_started" == "1" ]]; then
+    if [[ -n "$old_live_target" ]]; then
+      PYTHONPATH="$release_root/src" \
+        "$PROD_RELEASE/.venv/bin/python" \
+        -m nba_lineup_model.season.production_site_release switch \
+        "$old_live_target" --live-pointer "$LIVE_POINTER" >/dev/null
+    else
+      sudo unlink "$LIVE_POINTER" 2>/dev/null || true
+    fi
+    if [[ -n "$old_web_target" ]]; then
+      atomic_symlink "$old_web_target" "$PUBLIC_WEB"
+    fi
+    if [[ -n "$old_schedule_target" ]]; then
+      atomic_symlink "$old_schedule_target" "$SCHEDULE_CURRENT"
+    fi
+    sudo cp "$backup_root/gestalt-web.service" /etc/systemd/system/gestalt-web.service
+    sudo systemctl daemon-reload
+    sudo systemctl restart gestalt-web
+    sudo nginx -t && sudo systemctl reload nginx
+  fi
+  printf 'Production promotion failed; previous release restored\n' >&2
+  exit "$status"
+}
+trap rollback ERR
+
+mutation_started=1
+sudo install -m 0644 "$release_root/deploy/gestalt-web.service" \
+  /etc/systemd/system/gestalt-web.service
+PYTHONPATH="$release_root/src" \
+  "$PROD_RELEASE/.venv/bin/python" \
+  -m nba_lineup_model.season.production_site_release switch \
+  "$candidate" --live-pointer "$LIVE_POINTER" >/dev/null
+atomic_symlink "$LIVE_POINTER/web" "$PUBLIC_WEB"
+atomic_symlink "$schedule_overlay" "$SCHEDULE_CURRENT"
+sudo systemctl daemon-reload
+sudo systemctl restart gestalt-web
 sudo nginx -t
 sudo systemctl reload nginx
 
@@ -183,41 +256,31 @@ for _ in {1..60}; do
   sleep 1
 done
 curl --fail --silent --show-error http://127.0.0.1:8010/api/health >/dev/null
-
-# Reconcile the current board after the API cutover. Do not upload this one-time
-# historical migration to the immutable production archive; normal Dagster
-# collections resume against schedule-serving/current after the service restart.
-PYTHONPATH="$RELEASE_ROOT/src" \
-  "$PROD_RELEASE/.venv/bin/nba-refresh-gestalt-schedule" \
-  --date "$(TZ=America/Los_Angeles date +%F)" \
-  --state-dir "$STATE_ROOT/schedule-serving/current" \
-  --mirror-frozen-to "$SOURCE_SCHEDULE_ROOT" \
-  --projection-url http://127.0.0.1:8010/api/win-projections \
-  --days-ahead 7 \
-  --no-s3
-
-# A deployment-time freeze must be available to both the public serving view
-# and the immutable model-input archive. Live-score finalization writes to both
-# trees and assumes this pregame snapshot already exists in both places.
-PYTHONPATH="$RELEASE_ROOT/src" \
-  "$PROD_RELEASE/.venv/bin/nba-refresh-gestalt-schedule" \
-  --date "$(TZ=America/Los_Angeles date +%F)" \
-  --state-dir "$SOURCE_SCHEDULE_ROOT" \
-  --projection-url http://127.0.0.1:8010/api/win-projections \
-  --days-ahead 7 \
-  --no-s3
-
-# If a deploy supplied a missing pregame freeze for a game that is already
-# final, complete the corresponding immutable model-input audit immediately.
-PYTHONPATH="$RELEASE_ROOT/src" \
-  "$PROD_RELEASE/.venv/bin/nba-watch-gestalt-live-scores" \
-  --date "$(TZ=America/Los_Angeles date +%F)" \
-  --state-dir "$SOURCE_SCHEDULE_ROOT" \
-  --once \
-  --no-s3
-
-
-"$RELEASE_ROOT/scripts/validate_gestalt_serving_contract.sh" \
+production_release_sha="$(curl --fail --silent http://127.0.0.1:8010/api/health | jq -er '.site_release.release_sha256')"
+if [[ "$production_release_sha" != "$approved_release_sha" ]]; then
+  printf 'Production loaded release %s instead of %s\n' \
+    "$production_release_sha" "$approved_release_sha" >&2
+  false
+fi
+"$release_root/scripts/validate_gestalt_serving_contract.sh" \
   http://127.0.0.1:8010
+"$release_root/scripts/compare_gestalt_data_coverage.sh" \
+  http://127.0.0.1:8011 \
+  http://127.0.0.1:8010
+curl --fail --silent --show-error \
+  http://127.0.0.1:8010/api/reports/site-release >/dev/null
 
-printf 'Promoted NBA GESTALT production code release %s from %s\n' "$RELEASE_ID" "$PROD_REF"
+# Legacy jobs may continue building candidates in their isolated roots, but
+# they may no longer promote or reload the live release.
+for sensor in \
+  in_season_nail_production_ready \
+  in_season_minutes_production_ready \
+  current_season_serving_ready \
+  promoted_current_season_lineups_ready; do
+  "$PROD_RELEASE/.venv/bin/dagster" sensor stop \
+    -w "$STATE_ROOT/dagster/workspace.yaml" "$sensor" >/dev/null 2>&1 || true
+done
+
+trap - ERR
+printf 'Promoted approved GESTALT release %s at code %s\n' \
+  "$approved_release_sha" "$release_id"
