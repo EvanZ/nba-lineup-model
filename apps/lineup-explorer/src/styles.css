@@ -1462,6 +1462,14 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .schedule-edge { grid-column: 3; grid-row: 2 / span 2; }
 }
 
+@media (max-width: 900px) {
+  .schedule-rotation-table.has-attribution .schedule-rotation-header { display: none; }
+  .schedule-rotation-table.has-attribution > div:not(.schedule-rotation-header) { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 12px; padding: 9px 7px; }
+  .schedule-rotation-table.has-attribution .schedule-rotation-player, .schedule-rotation-table.has-attribution .schedule-rotation-total > span { grid-column: 1 / -1; padding: 0 0 6px; border-bottom: 1px dashed #d9d6ce; }
+  .schedule-rotation-table.has-attribution strong { display: grid; gap: 2px; text-align: left; }
+  .schedule-rotation-table.has-attribution strong::before { content: attr(data-label); color: #8a918b; font-family: system-ui, sans-serif; font-size: 6px; font-weight: 900; text-transform: uppercase; }
+}
+
 @media (max-width: 720px) {
   .schedule-page { padding-top: 52px; }
   .schedule-hero-row { grid-template-columns: 1fr; align-items: stretch; gap: 25px; padding-bottom: 31px; }
@@ -1491,11 +1499,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .schedule-assumptions summary { align-items: flex-start; flex-direction: column; justify-content: center; gap: 2px; padding-top: 8px; padding-bottom: 8px; }
   .schedule-rotations { gap: 18px; }
   .schedule-rotation-team + .schedule-rotation-team { padding-top: 18px; }
-  .schedule-rotation-table.has-attribution .schedule-rotation-header { display: none; }
-  .schedule-rotation-table.has-attribution > div:not(.schedule-rotation-header) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; padding: 9px 7px; }
-  .schedule-rotation-table.has-attribution .schedule-rotation-player, .schedule-rotation-table.has-attribution .schedule-rotation-total > span { grid-column: 1 / -1; padding: 0 0 6px; border-bottom: 1px dashed #d9d6ce; }
-  .schedule-rotation-table.has-attribution strong { display: grid; gap: 2px; text-align: left; }
-  .schedule-rotation-table.has-attribution strong::before { content: attr(data-label); color: #8a918b; font-family: system-ui, sans-serif; font-size: 6px; font-weight: 900; text-transform: uppercase; }
+  .schedule-rotation-table.has-attribution > div:not(.schedule-rotation-header) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .schedule-spread-ledger { margin-top: 18px; }
   .schedule-spread-ledger-heading { align-items: start; flex-direction: column; gap: 4px; }
 }
