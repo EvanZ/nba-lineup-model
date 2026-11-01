@@ -5,15 +5,20 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from datetime import datetime, timedelta
+import tempfile
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+import numpy as np
+import pandas as pd
 
 from nba_lineup_model.season.current_serving import (
     ServingPromotionConfig,
     promote_serving_bundle,
     publish_serving_bundle,
 )
+from nba_lineup_model.season.daily_data_artifact import verify_daily_data_artifact
 from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
 from nba_lineup_model.season.slate_time import PACIFIC
 
@@ -22,6 +27,7 @@ DEFAULT_MINUTES_ROOT = Path("/var/lib/nba-gestalt/in-season-minutes")
 DEFAULT_RELEASE_ROOT = Path("/opt/nba-gestalt/current")
 DEFAULT_OUTPUT_ROOT = Path("/var/lib/nba-gestalt-dev/current-season-serving")
 DEFAULT_DAILY_MODEL_ROOT = Path("/var/lib/nba-gestalt-dev/daily-model-nba-v1")
+DEFAULT_DAILY_DATA_ROOT = Path("/var/lib/nba-gestalt-dev/daily-data-nba-v2")
 
 
 def materialize_current_season_serving(
@@ -147,6 +153,7 @@ def materialize_current_season_serving(
 def materialize_daily_model_serving(
     *,
     daily_model_root: Path | str = DEFAULT_DAILY_MODEL_ROOT,
+    daily_data_root: Path | str = DEFAULT_DAILY_DATA_ROOT,
     release_root: Path | str = DEFAULT_RELEASE_ROOT,
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
 ) -> Path:
@@ -159,6 +166,7 @@ def materialize_daily_model_serving(
     """
 
     model_root = Path(daily_model_root).resolve()
+    data_root = Path(daily_data_root).resolve()
     release_root = Path(release_root)
     output_root = Path(output_root)
     pointer = _load_json(model_root / "latest.json")
@@ -195,30 +203,39 @@ def materialize_daily_model_serving(
     model_sha = str(manifest["bundle_sha256"])
     game_count = int(identity["cumulative_game_count"])
     coverage = {"games": game_count, "excluded": 0}
-    bundle = publish_serving_bundle(
-        rating_path,
-        minutes_path,
-        root=output_root,
-        season=str(identity["season"]),
-        evidence_through_date=evidence_date,
-        as_of_cutoff_time=next_midnight_pacific,
-        config=ServingPromotionConfig(
-            preseason_run_id=run_id,
-            rating_prior_possessions=6000.0,
-            minutes_participation_prior_games=4.0,
-            minutes_conditional_prior_games=0.2,
-            minutes_conditional_lookback_games=3,
-            minutes_role_cutoff_minutes=44,
-        ),
-        rating_source_uri=f"artifact://daily-model/{model_sha}/player_ratings",
-        minutes_source_uri=f"artifact://daily-model/{model_sha}/minutes_state",
-        rating_trajectory_path=trajectory_path,
-        rating_trajectory_source_uri=(
-            f"artifact://daily-model/{model_sha}/rating_trajectory"
-        ),
-        source_exclusions={"ratings": [], "minutes": []},
-        source_coverage={"ratings": coverage, "minutes": coverage},
-    )
+    with tempfile.TemporaryDirectory(prefix="daily-serving-trajectory-") as temp_dir:
+        adapted_trajectory = Path(temp_dir) / "rating_trajectory.parquet"
+        _adapt_daily_rating_trajectory(
+            source_path=trajectory_path,
+            rating_state_path=rating_path,
+            daily_data_root=data_root,
+            evidence_date=evidence_date,
+            output_path=adapted_trajectory,
+        )
+        bundle = publish_serving_bundle(
+            rating_path,
+            minutes_path,
+            root=output_root,
+            season=str(identity["season"]),
+            evidence_through_date=evidence_date,
+            as_of_cutoff_time=next_midnight_pacific,
+            config=ServingPromotionConfig(
+                preseason_run_id=run_id,
+                rating_prior_possessions=6000.0,
+                minutes_participation_prior_games=4.0,
+                minutes_conditional_prior_games=0.2,
+                minutes_conditional_lookback_games=3,
+                minutes_role_cutoff_minutes=44,
+            ),
+            rating_source_uri=f"artifact://daily-model/{model_sha}/player_ratings",
+            minutes_source_uri=f"artifact://daily-model/{model_sha}/minutes_state",
+            rating_trajectory_path=adapted_trajectory,
+            rating_trajectory_source_uri=(
+                f"artifact://daily-model/{model_sha}/rating_trajectory#serving-v1"
+            ),
+            source_exclusions={"ratings": [], "minutes": []},
+            source_coverage={"ratings": coverage, "minutes": coverage},
+        )
     promoted_pointer, _ = promote_serving_bundle(bundle.path, root=output_root)
     if str(promoted_pointer["evidence_through_date"]) != through_date:
         raise ValueError("Serving pointer did not retain the daily-model date")
@@ -229,6 +246,173 @@ def materialize_daily_model_serving(
     if str(provenance.get("prior_sha256", "")) == "":
         raise ValueError("Daily-model serving state has no coupled-prior identity")
     return bundle.path
+
+
+def _adapt_daily_rating_trajectory(
+    *,
+    source_path: Path,
+    rating_state_path: Path,
+    daily_data_root: Path,
+    evidence_date: date,
+    output_path: Path,
+) -> None:
+    """Translate the official daily trajectory into the public web schema."""
+
+    trajectory = pd.read_parquet(source_path).copy()
+    ratings = pd.read_parquet(rating_state_path).copy()
+    required = {
+        "season",
+        "game_date_pacific",
+        "game_id",
+        "game_time_utc",
+        "player_id",
+        "team",
+        "opponent",
+        "played",
+        "injury_status",
+        "injury_reason",
+        "rating_after",
+    }
+    missing = sorted(required - set(trajectory))
+    if missing:
+        raise ValueError("Daily rating trajectory is missing: " + ", ".join(missing))
+    rating_required = {
+        "player_id",
+        "frozen_preseason_nail",
+        "raw_on_court_possessions",
+        "prior_equivalent_possessions",
+        "state_updater_version",
+    }
+    missing_ratings = sorted(rating_required - set(ratings))
+    if missing_ratings:
+        raise ValueError("Daily rating state is missing: " + ", ".join(missing_ratings))
+
+    game_possessions: dict[tuple[str, int], float] = {}
+    for game_date, bundle, manifest in _daily_data_chain(daily_data_root):
+        if game_date > evidence_date:
+            continue
+        stints = pd.read_parquet(
+            _daily_data_component_path(
+                bundle, manifest["identity"]["components"], "observed_stints"
+            )
+        )
+        for row in stints.itertuples(index=False):
+            for column in ("home_player_ids", "away_player_ids"):
+                for player_id in getattr(row, column):
+                    key = (str(row.game_id), int(player_id))
+                    game_possessions[key] = game_possessions.get(key, 0.0) + float(
+                        row.possessions
+                    )
+
+    trajectory["player_id"] = trajectory["player_id"].astype(int)
+    trajectory["game_id"] = trajectory["game_id"].astype(str)
+    trajectory["game_on_court_possessions"] = [
+        game_possessions.get((game_id, player_id), 0.0)
+        for game_id, player_id in zip(
+            trajectory["game_id"], trajectory["player_id"], strict=True
+        )
+    ]
+    played = trajectory["played"].astype(bool)
+    if (trajectory.loc[played, "game_on_court_possessions"] <= 0).any():
+        missing_keys = trajectory.loc[
+            played & trajectory["game_on_court_possessions"].le(0),
+            ["game_id", "player_id"],
+        ]
+        raise ValueError(
+            "Played trajectory rows lack official stint exposure: "
+            + ", ".join(
+                f"{row.game_id}/{row.player_id}"
+                for row in missing_keys.itertuples(index=False)
+            )
+        )
+    trajectory = trajectory.sort_values(
+        ["player_id", "game_time_utc", "game_id"], kind="stable"
+    ).reset_index(drop=True)
+    grouped = trajectory.groupby("player_id", sort=False)
+    trajectory["game_number"] = grouped.cumcount() + 1
+    appearances = grouped["played"].cumsum()
+    trajectory["appearance_number"] = appearances.where(trajectory["played"], np.nan)
+    trajectory["cumulative_on_court_possessions"] = grouped[
+        "game_on_court_possessions"
+    ].cumsum()
+
+    baseline = ratings.set_index("player_id")["frozen_preseason_nail"].astype(float)
+    prior = ratings.set_index("player_id")["prior_equivalent_possessions"].astype(float)
+    updater = ratings["state_updater_version"].astype(str).unique().tolist()
+    if len(updater) != 1:
+        raise ValueError("Daily rating state has multiple updater versions")
+    trajectory["updater_version"] = updater[0]
+    trajectory["game_date"] = trajectory["game_date_pacific"].astype(str)
+    trajectory["pregame_status"] = trajectory["injury_status"]
+    trajectory["pregame_reason"] = trajectory["injury_reason"]
+    trajectory["preseason_rating"] = trajectory["player_id"].map(baseline)
+    trajectory["updated_rating"] = trajectory["rating_after"].astype(float)
+    trajectory["in_season_delta"] = (
+        trajectory["updated_rating"] - trajectory["preseason_rating"]
+    )
+    trajectory["effective_information"] = trajectory[
+        "cumulative_on_court_possessions"
+    ]
+    prior_values = trajectory["player_id"].map(prior)
+    trajectory["evidence_weight"] = trajectory["effective_information"] / (
+        trajectory["effective_information"] + prior_values
+    )
+
+    final_exposure = (
+        trajectory.groupby("player_id", sort=False)["cumulative_on_court_possessions"]
+        .last()
+        .reindex(ratings["player_id"].astype(int), fill_value=0.0)
+        .to_numpy(dtype=float)
+    )
+    expected_exposure = ratings["raw_on_court_possessions"].to_numpy(dtype=float)
+    if not np.allclose(final_exposure, expected_exposure, atol=1e-8):
+        raise ValueError("Adapted trajectory does not reconstruct final player exposure")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    trajectory.to_parquet(output_path, index=False)
+
+
+def _daily_data_chain(root: Path) -> list[tuple[date, Path, dict[str, Any]]]:
+    pointer = _load_json(root / "latest.json")
+    bundle = (root / str(pointer["bundle_path"])).resolve()
+    rows: list[tuple[date, Path, dict[str, Any]]] = []
+    while True:
+        try:
+            bundle.relative_to(root)
+        except ValueError as error:
+            raise ValueError("Daily-data chain escapes its root") from error
+        manifest = verify_daily_data_artifact(bundle)
+        identity = manifest["identity"]
+        game_date = date.fromisoformat(str(identity["game_date_pacific"]))
+        rows.append((game_date, bundle, manifest))
+        parent_sha = identity.get("parent_data_sha256")
+        if parent_sha is None:
+            break
+        prior_date = game_date - timedelta(days=1)
+        bundle = (
+            root
+            / f"season={identity['season']}"
+            / f"game_date_pacific={prior_date.isoformat()}"
+            / f"data_sha256={parent_sha}"
+        ).resolve()
+    rows.reverse()
+    if str(pointer.get("bundle_sha256", "")) != str(rows[-1][2]["bundle_sha256"]):
+        raise ValueError("Daily-data pointer checksum does not match its chain tip")
+    return rows
+
+
+def _daily_data_component_path(
+    bundle: Path, components: dict[str, Any], name: str
+) -> Path:
+    entry = components.get(name)
+    raw_path = str(entry.get("path", "")).strip() if isinstance(entry, dict) else ""
+    if not raw_path:
+        raise ValueError(f"Daily-data component is missing: {name}")
+    path = (bundle / raw_path).resolve()
+    try:
+        path.relative_to(bundle)
+    except ValueError as error:
+        raise ValueError(f"Daily-data component escapes its bundle: {name}") from error
+    return path
 
 
 def _daily_component_path(
@@ -322,6 +506,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--release-root", type=Path, default=DEFAULT_RELEASE_ROOT)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--daily-model-root", type=Path)
+    parser.add_argument("--daily-data-root", type=Path, default=DEFAULT_DAILY_DATA_ROOT)
     return parser
 
 
@@ -330,6 +515,7 @@ def main() -> None:
     if args.daily_model_root is not None:
         path = materialize_daily_model_serving(
             daily_model_root=args.daily_model_root,
+            daily_data_root=args.daily_data_root,
             release_root=args.release_root,
             output_root=args.output_root,
         )

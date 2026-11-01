@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 
 from nba_lineup_model.modeling import current_season_serving_materialization as subject
@@ -184,6 +186,11 @@ def test_daily_model_materialization_binds_all_serving_inputs_to_one_tip(
         },
     }
     monkeypatch.setattr(subject, "verify_daily_model_artifact", lambda path: manifest)
+    monkeypatch.setattr(
+        subject,
+        "_adapt_daily_rating_trajectory",
+        lambda **kwargs: kwargs["output_path"].write_bytes(b"adapted-trajectory"),
+    )
     captured: dict[str, object] = {}
 
     def fake_publish(*args, **kwargs):
@@ -232,3 +239,76 @@ def test_daily_model_materialization_binds_all_serving_inputs_to_one_tip(
         "ratings": {"games": 88, "excluded": 0},
         "minutes": {"games": 88, "excluded": 0},
     }
+
+
+def test_daily_trajectory_adapter_reconstructs_game_and_cumulative_exposure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.parquet"
+    ratings_path = tmp_path / "ratings.parquet"
+    output = tmp_path / "adapted.parquet"
+    stints_path = tmp_path / "stints.parquet"
+    pd.DataFrame(
+        {
+            "season": ["2026-27", "2026-27"],
+            "game_date_pacific": ["2026-10-30", "2026-10-31"],
+            "game_id": ["game-1", "game-2"],
+            "game_time_utc": ["2026-10-31T02:00:00Z", "2026-11-01T02:00:00Z"],
+            "player_id": [1, 1],
+            "team": ["GSW", "GSW"],
+            "opponent": ["LAL", "PHX"],
+            "played": [True, False],
+            "injury_status": [None, "OUT"],
+            "injury_reason": [None, "Ankle"],
+            "rating_after": [2.2, 2.2],
+        }
+    ).to_parquet(source, index=False)
+    pd.DataFrame(
+        {
+            "player_id": [1],
+            "frozen_preseason_nail": [2.0],
+            "raw_on_court_possessions": [10.0],
+            "prior_equivalent_possessions": [6000.0],
+            "state_updater_version": ["updater-v1"],
+        }
+    ).to_parquet(ratings_path, index=False)
+    pd.DataFrame(
+        {
+            "game_id": ["game-1"],
+            "home_player_ids": [[1, 2, 3, 4, 5]],
+            "away_player_ids": [[6, 7, 8, 9, 10]],
+            "possessions": [10.0],
+        }
+    ).to_parquet(stints_path, index=False)
+    bundle = tmp_path / "data-bundle"
+    bundle.mkdir()
+    manifest = {
+        "identity": {
+            "components": {"observed_stints": {"path": "../stints.parquet"}}
+        }
+    }
+    monkeypatch.setattr(
+        subject,
+        "_daily_data_chain",
+        lambda root: [(date(2026, 10, 31), bundle, manifest)],
+    )
+    monkeypatch.setattr(
+        subject,
+        "_daily_data_component_path",
+        lambda bundle, components, name: stints_path,
+    )
+
+    subject._adapt_daily_rating_trajectory(
+        source_path=source,
+        rating_state_path=ratings_path,
+        daily_data_root=tmp_path,
+        evidence_date=date(2026, 10, 31),
+        output_path=output,
+    )
+
+    adapted = pd.read_parquet(output)
+    assert adapted["game_number"].tolist() == [1, 2]
+    assert adapted["game_on_court_possessions"].tolist() == [10.0, 0.0]
+    assert adapted["cumulative_on_court_possessions"].tolist() == [10.0, 10.0]
+    assert adapted["updated_rating"].tolist() == [2.2, 2.2]
+    assert adapted["in_season_delta"].tolist() == pytest.approx([0.2, 0.2])

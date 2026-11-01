@@ -90,6 +90,7 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
     "$PROD_RELEASE/.venv/bin/python" \
     -m nba_lineup_model.modeling.current_season_serving_materialization \
     --daily-model-root "$DEV_DAILY_MODEL_ROOT" \
+    --daily-data-root "$DEV_DAILY_DATA_ROOT" \
     --release-root "$PROD_RELEASE" \
     --output-root "$DEV_STATE_ROOT/current-season-serving"
 
