@@ -104,10 +104,29 @@ def test_terminal_play_by_play_score_uses_the_last_scored_action() -> None:
     payload = {
         "game": {
             "actions": [
-                {"actionNumber": 1, "scoreHome": "2", "scoreAway": "0"},
+                {
+                    "actionNumber": 1,
+                    "period": 1,
+                    "orderNumber": 10000,
+                    "scoreHome": "2",
+                    "scoreAway": "0",
+                },
                 {"actionNumber": 2},
-                {"actionNumber": 3, "scoreHome": "110", "scoreAway": "105"},
+                {
+                    "actionNumber": 3,
+                    "period": 4,
+                    "orderNumber": 30000,
+                    "scoreHome": "110",
+                    "scoreAway": "105",
+                },
                 {"actionNumber": 4},
+                {
+                    "actionNumber": 2,
+                    "period": 1,
+                    "orderNumber": 20000,
+                    "scoreHome": "2",
+                    "scoreAway": "0",
+                },
             ]
         }
     }

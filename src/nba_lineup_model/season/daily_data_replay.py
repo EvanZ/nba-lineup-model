@@ -536,11 +536,27 @@ def _nba_box_scores(boxscore: Mapping[str, Any]) -> tuple[int, int]:
 
 def _terminal_play_by_play_scores(play_by_play: Mapping[str, Any]) -> tuple[int, int]:
     actions = play_by_play.get("game", {}).get("actions", [])
-    for action in reversed(actions if isinstance(actions, list) else []):
-        home = action.get("scoreHome") if isinstance(action, Mapping) else None
-        away = action.get("scoreAway") if isinstance(action, Mapping) else None
-        if home not in (None, "") and away not in (None, ""):
-            return int(float(home)), int(float(away))
+    action_rows = actions if isinstance(actions, list) else []
+    scored = [
+        action
+        for action in action_rows
+        if isinstance(action, Mapping)
+        if action.get("scoreHome") not in (None, "")
+        and action.get("scoreAway") not in (None, "")
+    ]
+    if scored:
+        # NBA corrections can be appended to the JSON after the game even when
+        # they refer to an earlier period. Provider list order is therefore not
+        # chronological; the canonical action ordering fields are authoritative.
+        action = max(
+            scored,
+            key=lambda row: (
+                int(row.get("period") or 0),
+                int(row.get("orderNumber") or 0),
+                int(row.get("actionNumber") or 0),
+            ),
+        )
+        return int(float(action["scoreHome"])), int(float(action["scoreAway"]))
     raise ValueError("NBA play-by-play has no terminal score")
 
 
