@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -39,6 +39,9 @@ from nba_lineup_model.season.stats_v3_lake import (
     AwsCliImmutableObjectStore,
     ImmutableObjectStore,
 )
+from nba_lineup_model.web_api.win_projections import (
+    _fetch_latest_official_injury_report,
+)
 
 DEFAULT_SEASON = "2026-27"
 DEFAULT_COVERAGE_PATH = Path("/var/lib/nba-gestalt/cdn/coverage.json")
@@ -46,6 +49,7 @@ DEFAULT_OUTPUT_ROOT = Path("/var/lib/nba-gestalt-dev/daily-data")
 DEFAULT_GAME_CATALOG_PATH = Path("/var/lib/nba-gestalt-dev/catalog/games.parquet")
 DEFAULT_PLAY_BY_PLAY_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/cdn/playbyplay"
 DEFAULT_BOXSCORE_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/cdn/boxscore"
+DEFAULT_INJURY_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/nba/injury-reports"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 NBA_DURATION_RE = re.compile(
     r"^PT(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+(?:\.\d+)?)S)?$"
@@ -67,6 +71,17 @@ class OfficialBoxscore:
 BoxscoreLoader = Callable[[str], OfficialBoxscore]
 
 
+@dataclass(frozen=True)
+class OfficialInjuryReport:
+    payload: dict[str, Any]
+    sha256: str
+    immutable_uri: str
+    source_url: str
+
+
+InjuryReportLoader = Callable[[date], OfficialInjuryReport]
+
+
 def replay_daily_data_chain(
     *,
     start_date: date,
@@ -76,8 +91,10 @@ def replay_daily_data_chain(
     game_catalog_path: Path | str = DEFAULT_GAME_CATALOG_PATH,
     play_by_play_s3_prefix: str = DEFAULT_PLAY_BY_PLAY_S3_PREFIX,
     boxscore_s3_prefix: str = DEFAULT_BOXSCORE_S3_PREFIX,
+    injury_s3_prefix: str = DEFAULT_INJURY_S3_PREFIX,
     season: str = DEFAULT_SEASON,
     boxscore_loader: BoxscoreLoader | None = None,
+    injury_report_loader: InjuryReportLoader | None = None,
 ) -> list[PublishedDailyDataArtifact]:
     """Replay dates chronologically and stop before the first bad publication."""
 
@@ -114,6 +131,11 @@ def replay_daily_data_chain(
                 season=season,
                 s3_prefix=boxscore_s3_prefix,
             )
+            injury_loader = injury_report_loader or _official_injury_report_loader(
+                store=store,
+                season=season,
+                s3_prefix=injury_s3_prefix,
+            )
             current_date = start_date
             while current_date <= end_date:
                 games = games_by_date.get(current_date, [])
@@ -126,6 +148,7 @@ def replay_daily_data_chain(
                     parent_bundle=parent_bundle,
                     play_by_play_s3_prefix=play_by_play_s3_prefix,
                     boxscore_loader=loader,
+                    injury_report_loader=injury_loader,
                     season=season,
                 )
                 promote_daily_data_artifact(artifact.path, root=chain_root)
@@ -146,6 +169,7 @@ def _build_date(
     parent_bundle: Path | None,
     play_by_play_s3_prefix: str,
     boxscore_loader: BoxscoreLoader,
+    injury_report_loader: InjuryReportLoader,
     season: str,
 ) -> PublishedDailyDataArtifact:
     errors: list[dict[str, str]] = []
@@ -161,6 +185,7 @@ def _build_date(
     injuries: list[dict[str, Any]] = []
 
     catalog_sha256 = file_sha256(game_catalog_path)
+    official_injury = injury_report_loader(game_date_pacific) if games else None
     for catalog_game in games:
         game_id = str(catalog_game.get("game_id", "")).strip()
         if not game_id:
@@ -234,6 +259,10 @@ def _build_date(
                     "uri": play_by_play_uri,
                     "sha256": play_by_play_sha,
                 },
+                "nba_injury_report": {
+                    "uri": str(official_injury.immutable_uri),
+                    "sha256": str(official_injury.sha256),
+                },
             }
             game_quality[game_id] = {
                 "final_home_score": final_home,
@@ -257,17 +286,20 @@ def _build_date(
             identity_rows.append(game_identity)
             stints.append(game_stints)
             rosters.append(game_roster)
-            injuries.append(
-                {
-                    "game_id": game_id,
-                    "status": "not_used_for_observed_update",
-                    "source": "official NBA injury reports are separate pregame artifacts",
-                }
-            )
         except Exception as error:  # date-level report must inventory every failed game
             errors.append({"game_id": game_id, "message": f"{type(error).__name__}: {error}"})
 
     expected_game_ids = sorted(str(game["game_id"]) for game in games)
+    if official_injury is not None:
+        injuries.append(
+            {
+                "report_date": game_date_pacific.isoformat(),
+                "source_url": official_injury.source_url,
+                "immutable_uri": official_injury.immutable_uri,
+                "sha256": official_injury.sha256,
+                "payload": official_injury.payload,
+            }
+        )
     if errors:
         report_path = _write_failure_report(output_root, game_date_pacific, errors)
         raise DailyDataReplayBlocked(
@@ -385,6 +417,33 @@ def _official_boxscore_loader(
             sha256=digest,
             immutable_uri=uri,
             source_url=response.url,
+        )
+
+    return load
+
+
+def _official_injury_report_loader(
+    *,
+    store: ImmutableObjectStore,
+    season: str,
+    s3_prefix: str,
+) -> InjuryReportLoader:
+    def load(report_date: date) -> OfficialInjuryReport:
+        report, pdf = _fetch_latest_official_injury_report(
+            report_date=report_date.isoformat(),
+            now=datetime.now(UTC),
+        )
+        digest = hashlib.sha256(pdf).hexdigest()
+        uri = (
+            f"{s3_prefix.rstrip('/')}/season={season}/"
+            f"report_date={report_date.isoformat()}/{digest}.pdf"
+        )
+        store.put_bytes(uri, pdf)
+        return OfficialInjuryReport(
+            payload=report,
+            sha256=digest,
+            immutable_uri=uri,
+            source_url=str(report["source_url"]),
         )
 
     return load
@@ -799,6 +858,7 @@ def _parser() -> argparse.ArgumentParser:
         "--play-by-play-s3-prefix", default=DEFAULT_PLAY_BY_PLAY_S3_PREFIX
     )
     parser.add_argument("--boxscore-s3-prefix", default=DEFAULT_BOXSCORE_S3_PREFIX)
+    parser.add_argument("--injury-s3-prefix", default=DEFAULT_INJURY_S3_PREFIX)
     return parser
 
 
@@ -812,6 +872,7 @@ def main() -> None:
         game_catalog_path=args.game_catalog_path,
         play_by_play_s3_prefix=args.play_by_play_s3_prefix,
         boxscore_s3_prefix=args.boxscore_s3_prefix,
+        injury_s3_prefix=args.injury_s3_prefix,
         season=args.season,
     )
     for artifact in artifacts:

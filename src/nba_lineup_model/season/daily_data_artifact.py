@@ -46,7 +46,7 @@ DEFAULT_REQUIRED_COMPONENTS = frozenset(
     }
 )
 DEFAULT_REQUIRED_GAME_SOURCES = frozenset(
-    {"nba_schedule", "nba_box_score", "nba_play_by_play"}
+    {"nba_schedule", "nba_box_score", "nba_play_by_play", "nba_injury_report"}
 )
 
 

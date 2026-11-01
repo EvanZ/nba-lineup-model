@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+import nba_lineup_model.season.daily_data_replay as replay
 from nba_lineup_model.modeling.in_season_nail_monitor import (
     _rapm_stints_from_nba_boxscore,
 )
@@ -185,3 +186,37 @@ def test_official_catalog_assigns_games_by_pacific_tip_date(tmp_path: Path) -> N
     assert [row["game_id"] for row in grouped[date(2026, 10, 20)]] == [
         "0022600001"
     ]
+
+
+def test_official_injury_report_is_content_addressed(monkeypatch) -> None:
+    stored: dict[str, bytes] = {}
+
+    class Store:
+        def put_bytes(self, uri: str, payload: bytes) -> bool:
+            stored[uri] = payload
+            return True
+
+    monkeypatch.setattr(
+        replay,
+        "_fetch_latest_official_injury_report",
+        lambda **_kwargs: (
+            {
+                "source_url": (
+                    "https://ak-static.cms.nba.com/referee/injury/"
+                    "Injury-Report_2026-10-20_11_45PM.pdf"
+                ),
+                "game_team_reports": {},
+            },
+            b"official-nba-pdf",
+        ),
+    )
+    loader = replay._official_injury_report_loader(
+        store=Store(),
+        season="2026-27",
+        s3_prefix="s3://test/lake/raw/nba/injury-reports",
+    )
+
+    report = loader(date(2026, 10, 20))
+
+    assert report.immutable_uri.endswith(f"/{report.sha256}.pdf")
+    assert stored == {report.immutable_uri: b"official-nba-pdf"}
