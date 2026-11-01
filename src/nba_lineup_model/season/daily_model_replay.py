@@ -634,10 +634,13 @@ def _minutes_observations(
     state = minutes_state.copy()
     state["player_id"] = state["player_id"].astype(int)
     identity: dict[tuple[str, str], list[int]] = {}
+    identity_by_name: dict[str, list[tuple[str, int]]] = {}
     for row in state.itertuples(index=False):
-        identity.setdefault((str(row.team), _normalize_name(row.player_name)), []).append(
-            int(row.player_id)
-        )
+        team = str(row.team)
+        normalized_name = _normalize_name(row.player_name)
+        player_id = int(row.player_id)
+        identity.setdefault((team, normalized_name), []).append(player_id)
+        identity_by_name.setdefault(normalized_name, []).append((team, player_id))
     rows: list[dict[str, object]] = []
     injury_by_game: dict[str, dict[str, Any]] = {}
     warnings: list[str] = []
@@ -661,10 +664,23 @@ def _minutes_observations(
         mapped_report: dict[tuple[str, str], dict[str, object]] = {}
         for report in player_reports:
             team = str(report.get("team", ""))
-            key = (team, _normalize_name(report.get("player_name")))
+            normalized_name = _normalize_name(report.get("player_name"))
+            if not team:
+                matchup_teams = set(matchup.split("@"))
+                inferred = [
+                    (candidate_team, player_id)
+                    for candidate_team, player_id in identity_by_name.get(
+                        normalized_name, []
+                    )
+                    if candidate_team in matchup_teams
+                ]
+                if len(inferred) == 1:
+                    team = inferred[0][0]
+            key = (team, normalized_name)
             candidates = identity.get(key, [])
             if len(candidates) == 1:
                 normalized = dict(report)
+                normalized["team"] = team
                 normalized["player_id"] = candidates[0]
                 mapped_report[key] = normalized
                 game_injuries.setdefault(team, []).append(normalized)
