@@ -106,22 +106,24 @@ def publish_dev_site_release(
     if sorted(map(str, lineup_identity["source_game_ids"])) != expected_game_ids:
         raise ValueError("Lineup coverage differs from the daily model chain")
     final_game_ids = _schedule_final_game_ids(schedule_root)
-    if final_game_ids != expected_game_ids:
+    missing_model_finals = sorted(set(expected_game_ids) - set(final_game_ids))
+    if missing_model_finals:
         raise ValueError(
-            "Schedule final coverage differs from the verified daily chain: "
-            f"schedule={len(final_game_ids)} model={len(expected_game_ids)}"
+            "Schedule finals omit games from the verified daily chain: "
+            f"missing={missing_model_finals}"
         )
     attribution_audit = _schedule_attribution_audit(schedule_root)
-    if attribution_audit["completed_games"] != len(expected_game_ids):
+    if attribution_audit["completed_games"] != len(final_game_ids):
         raise ValueError(
-            "Schedule attribution coverage differs from the verified daily chain: "
+            "Schedule attribution coverage differs from schedule finals: "
             f"attributed={attribution_audit['completed_games']} "
-            f"model={len(expected_game_ids)}"
+            f"final={len(final_game_ids)}"
         )
     normalized_api = _normalize_api_validation(
         api_validation,
         evidence_date=str(model_identity["game_date_pacific"]),
         expected_game_count=len(expected_game_ids),
+        expected_final_game_count=len(final_game_ids),
         serving_sha=str(serving_manifest["bundle_sha256"]),
         lineup_sha=str(lineup_manifest["bundle_sha256"]),
     )
@@ -310,6 +312,7 @@ def _normalize_api_validation(
     *,
     evidence_date: str,
     expected_game_count: int,
+    expected_final_game_count: int,
     serving_sha: str,
     lineup_sha: str,
 ) -> dict[str, object]:
@@ -323,7 +326,7 @@ def _normalize_api_validation(
         "rankings_bundle_sha256": serving_sha,
         "lineup_serving_bundle_sha256": serving_sha,
         "lineup_bundle_sha256": lineup_sha,
-        "season_performance_games": expected_game_count,
+        "season_performance_games": expected_final_game_count,
         "player_id": 201939,
     }
     for key, expected in required_equal.items():

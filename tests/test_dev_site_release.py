@@ -229,6 +229,50 @@ def test_dev_site_release_binds_all_selected_components(tmp_path: Path, monkeypa
     assert subject.resolve_latest_dev_site_release(tmp_path / "releases") == release
 
 
+def test_dev_site_release_allows_schedule_finals_ahead_of_nightly_model(
+    tmp_path: Path, monkeypatch
+) -> None:
+    inputs = _inputs(tmp_path, monkeypatch)
+    schedule_root = inputs[4]
+
+    original_summary = json.loads(
+        (schedule_root / "final" / "game.summary.json").read_text()
+    )
+    extra_summary = dict(original_summary)
+    extra_summary["game_id"] = "game-2"
+    (schedule_root / "final" / "game-2.summary.json").write_text(
+        json.dumps(extra_summary)
+    )
+
+    day_path = schedule_root / "latest" / "2026-10-31.json"
+    day = json.loads(day_path.read_text())
+    extra_game = dict(day["games"][0])
+    extra_game["game_id"] = "game-2"
+    day["games"].append(extra_game)
+    day_path.write_text(json.dumps(day))
+
+    validation = _api_validation()
+    validation["season_performance_games"] = 2
+    release = subject.publish_dev_site_release(
+        daily_data_root=inputs[0],
+        daily_model_root=inputs[1],
+        serving_root=inputs[2],
+        lineups_root=inputs[3],
+        schedule_state_dir=schedule_root,
+        catalog_path=inputs[5],
+        preseason_rankings_path=inputs[6],
+        preseason_profiles_path=inputs[7],
+        code_revision="a" * 40,
+        api_validation=validation,
+        output_root=tmp_path / "releases",
+    )
+
+    identity = subject.verify_dev_site_release(release)["identity"]
+    assert identity["game_count"] == 1
+    assert identity["schedule"]["final_game_count"] == 2
+    assert identity["schedule"]["attribution_audit"]["completed_games"] == 2
+
+
 def test_dev_site_release_rejects_mixed_api_state(tmp_path: Path, monkeypatch) -> None:
     inputs = _inputs(tmp_path, monkeypatch)
     validation = _api_validation()
