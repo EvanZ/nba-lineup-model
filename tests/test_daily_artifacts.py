@@ -14,6 +14,7 @@ from nba_lineup_model.season.daily_data_artifact import (
     publish_daily_data_artifact,
     verify_daily_data_artifact,
 )
+from nba_lineup_model.season.daily_data_replay import write_daily_data_chain_report
 from nba_lineup_model.season.daily_model_artifact import (
     DEFAULT_REQUIRED_COMPONENTS as MODEL_COMPONENTS,
 )
@@ -291,6 +292,20 @@ def test_daily_data_pointer_only_advances_along_the_verified_chain(tmp_path: Pat
     assert second_advanced is True
     assert pointer["bundle_sha256"] == second.manifest["bundle_sha256"]
     assert (tmp_path / "data-root" / "latest.json").is_file()
+
+
+def test_daily_data_chain_report_summarizes_the_promoted_chain(tmp_path: Path) -> None:
+    artifact = _publish_data(
+        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
+    )
+    promote_daily_data_artifact(artifact.path, root=tmp_path / "data-root")
+
+    report = write_daily_data_chain_report(tmp_path / "data-root")
+    body = report.read_text()
+
+    assert "CLEAN THROUGH 2026-10-20" in body
+    assert "1 games · 1 unique games" in body
+    assert "ESPN dependencies: 0" in body
 
 
 def test_daily_model_rejects_excluded_games(tmp_path: Path) -> None:

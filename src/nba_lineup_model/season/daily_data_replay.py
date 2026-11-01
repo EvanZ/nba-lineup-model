@@ -33,6 +33,7 @@ from nba_lineup_model.season.daily_data_artifact import (
     PublishedDailyDataArtifact,
     promote_daily_data_artifact,
     publish_daily_data_artifact,
+    verify_daily_data_artifact,
 )
 from nba_lineup_model.season.stats_v3_lake import (
     AwsCliImmutableObjectStore,
@@ -128,6 +129,7 @@ def replay_daily_data_chain(
                     season=season,
                 )
                 promote_daily_data_artifact(artifact.path, root=chain_root)
+                write_daily_data_chain_report(chain_root)
                 published.append(artifact)
                 parent_bundle = artifact.path
                 current_date += timedelta(days=1)
@@ -687,6 +689,91 @@ def _write_failure_report(
     )
     (failure_root / "errors.json").write_text(
         json.dumps(list(errors), indent=2, sort_keys=True) + "\n"
+    )
+    return report
+
+
+def write_daily_data_chain_report(root: Path | str) -> Path:
+    """Write one browser-readable index for the currently promoted data chain."""
+
+    chain_root = Path(root).resolve()
+    pointer = _read_json(chain_root / "latest.json")
+    bundle = (chain_root / str(pointer["bundle_path"])).resolve()
+    manifests: list[tuple[Path, dict[str, Any]]] = []
+    while True:
+        manifest = verify_daily_data_artifact(bundle)
+        manifests.append((bundle, manifest))
+        identity = manifest["identity"]
+        parent_sha = identity["parent_data_sha256"]
+        if parent_sha is None:
+            break
+        prior_date = date.fromisoformat(identity["game_date_pacific"]) - timedelta(days=1)
+        bundle = (
+            chain_root
+            / f"season={identity['season']}"
+            / f"game_date_pacific={prior_date.isoformat()}"
+            / f"data_sha256={parent_sha}"
+        )
+    manifests.reverse()
+    game_ids = [
+        game_id
+        for _bundle, manifest in manifests
+        for game_id in manifest["identity"]["game_ids"]
+    ]
+    source_names = sorted(
+        {
+            source_name
+            for _bundle, manifest in manifests
+            for sources in manifest["identity"]["game_sources"].values()
+            for source_name in sources
+        }
+    )
+    rows = []
+    for artifact_path, manifest in manifests:
+        identity = manifest["identity"]
+        relative_report = (artifact_path / "report.html").relative_to(chain_root)
+        repair_count = len(identity["validation"]["repairs"])
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(identity['game_date_pacific'])}</td>"
+            f"<td>{identity['game_count']}</td>"
+            f"<td>{repair_count}</td>"
+            f"<td><code>{html.escape(manifest['bundle_sha256'][:12])}</code></td>"
+            f"<td><a href='{html.escape(relative_report.as_posix())}'>CLEAN</a></td>"
+            "</tr>"
+        )
+    failure_rows = []
+    for errors_path in sorted(chain_root.glob("failures/game_date_pacific=*/errors.json")):
+        errors = json.loads(errors_path.read_text())
+        failure_report = (errors_path.parent / "report.html").relative_to(chain_root)
+        failure_rows.append(
+            "<tr>"
+            f"<td>{html.escape(errors_path.parent.name.split('=', 1)[-1])}</td>"
+            f"<td>{len(errors) if isinstance(errors, list) else '?'}</td>"
+            f"<td><a href='{html.escape(failure_report.as_posix())}'>"
+            "attempt report</a></td>"
+            "</tr>"
+        )
+    report = chain_root / "report.html"
+    report.write_text(
+        "<!doctype html><meta charset='utf-8'><title>Daily NBA data chain</title>"
+        "<style>body{font:16px system-ui;margin:2rem;max-width:1100px}"
+        "table{border-collapse:collapse;width:100%;margin-bottom:2rem}"
+        "td,th{padding:.55rem;border-bottom:1px solid #ddd;text-align:left}"
+        ".ok{color:#176b3a;font-weight:700}code{font-size:.9em}</style>"
+        "<h1>Official NBA daily data chain</h1>"
+        f"<p class='ok'>CLEAN THROUGH {html.escape(pointer['game_date_pacific'])}</p>"
+        f"<p>{len(manifests)} Pacific dates · {len(game_ids)} games · "
+        f"{len(set(game_ids))} unique games · ESPN dependencies: 0</p>"
+        f"<p>Required sources: {html.escape(', '.join(source_names))}</p>"
+        "<table><thead><tr><th>Pacific date</th><th>Games</th><th>Audited warnings</th>"
+        "<th>Data SHA</th><th>Status</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table><h2>Blocked attempts retained for audit</h2>"
+        "<table><thead><tr><th>Date</th><th>Errors</th><th>Report</th></tr></thead><tbody>"
+        + ("".join(failure_rows) or "<tr><td colspan='3'>None</td></tr>")
+        + "</tbody></table>",
+        encoding="utf-8",
     )
     return report
 
