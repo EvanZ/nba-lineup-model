@@ -205,6 +205,7 @@ def materialize_daily_model_serving(
     coverage = {"games": game_count, "excluded": 0}
     with tempfile.TemporaryDirectory(prefix="daily-serving-trajectory-") as temp_dir:
         adapted_trajectory = Path(temp_dir) / "rating_trajectory.parquet"
+        adapted_minutes = Path(temp_dir) / "minutes_state.parquet"
         _adapt_daily_rating_trajectory(
             source_path=trajectory_path,
             rating_state_path=rating_path,
@@ -212,9 +213,16 @@ def materialize_daily_model_serving(
             evidence_date=evidence_date,
             output_path=adapted_trajectory,
         )
+        _adapt_daily_minutes_state(
+            source_path=minutes_path,
+            output_path=adapted_minutes,
+            cutoff_time=next_midnight_pacific,
+            participation_prior_games=4.0,
+            conditional_prior_games=0.2,
+        )
         bundle = publish_serving_bundle(
             rating_path,
-            minutes_path,
+            adapted_minutes,
             root=output_root,
             season=str(identity["season"]),
             evidence_through_date=evidence_date,
@@ -228,7 +236,9 @@ def materialize_daily_model_serving(
                 minutes_role_cutoff_minutes=44,
             ),
             rating_source_uri=f"artifact://daily-model/{model_sha}/player_ratings",
-            minutes_source_uri=f"artifact://daily-model/{model_sha}/minutes_state",
+            minutes_source_uri=(
+                f"artifact://daily-model/{model_sha}/minutes_state#serving-v1"
+            ),
             rating_trajectory_path=adapted_trajectory,
             rating_trajectory_source_uri=(
                 f"artifact://daily-model/{model_sha}/rating_trajectory#serving-v1"
@@ -246,6 +256,26 @@ def materialize_daily_model_serving(
     if str(provenance.get("prior_sha256", "")) == "":
         raise ValueError("Daily-model serving state has no coupled-prior identity")
     return bundle.path
+
+
+def _adapt_daily_minutes_state(
+    *,
+    source_path: Path,
+    output_path: Path,
+    cutoff_time: datetime,
+    participation_prior_games: float,
+    conditional_prior_games: float,
+) -> None:
+    """Add serving-contract config fields to the immutable daily state."""
+
+    state = pd.read_parquet(source_path).copy()
+    if state.empty or state["player_id"].duplicated().any():
+        raise ValueError("Daily minutes state must contain one row per player")
+    state["cutoff_time"] = cutoff_time
+    state["prior_participation_weight"] = float(participation_prior_games)
+    state["prior_conditional_weight"] = float(conditional_prior_games)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    state.to_parquet(output_path, index=False)
 
 
 def _adapt_daily_rating_trajectory(

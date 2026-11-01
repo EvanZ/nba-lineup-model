@@ -191,6 +191,11 @@ def test_daily_model_materialization_binds_all_serving_inputs_to_one_tip(
         "_adapt_daily_rating_trajectory",
         lambda **kwargs: kwargs["output_path"].write_bytes(b"adapted-trajectory"),
     )
+    monkeypatch.setattr(
+        subject,
+        "_adapt_daily_minutes_state",
+        lambda **kwargs: kwargs["output_path"].write_bytes(b"adapted-minutes"),
+    )
     captured: dict[str, object] = {}
 
     def fake_publish(*args, **kwargs):
@@ -233,7 +238,7 @@ def test_daily_model_materialization_binds_all_serving_inputs_to_one_tip(
         f"artifact://daily-model/{'a' * 64}/player_ratings"
     )
     assert captured["minutes_source_uri"] == (
-        f"artifact://daily-model/{'a' * 64}/minutes_state"
+        f"artifact://daily-model/{'a' * 64}/minutes_state#serving-v1"
     )
     assert captured["source_coverage"] == {
         "ratings": {"games": 88, "excluded": 0},
@@ -312,3 +317,25 @@ def test_daily_trajectory_adapter_reconstructs_game_and_cumulative_exposure(
     assert adapted["cumulative_on_court_possessions"].tolist() == [10.0, 10.0]
     assert adapted["updated_rating"].tolist() == [2.2, 2.2]
     assert adapted["in_season_delta"].tolist() == pytest.approx([0.2, 0.2])
+
+
+def test_daily_minutes_adapter_adds_locked_serving_configuration(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "minutes.parquet"
+    output = tmp_path / "adapted-minutes.parquet"
+    pd.DataFrame({"player_id": [1, 2]}).to_parquet(source, index=False)
+    cutoff = pd.Timestamp("2026-11-01T07:00:00Z").to_pydatetime()
+
+    subject._adapt_daily_minutes_state(
+        source_path=source,
+        output_path=output,
+        cutoff_time=cutoff,
+        participation_prior_games=4.0,
+        conditional_prior_games=0.2,
+    )
+
+    adapted = pd.read_parquet(output)
+    assert adapted["prior_participation_weight"].tolist() == [4.0, 4.0]
+    assert adapted["prior_conditional_weight"].tolist() == [0.2, 0.2]
+    assert adapted["cutoff_time"].tolist() == [cutoff, cutoff]
