@@ -495,24 +495,37 @@ function RotationTable({
       play_probability: 1,
       conditional_minutes: 0,
       projected_minutes: 0,
-      projected_nail: null,
-      expected_contribution: null,
+      projected_nail: player.frozen_nail ?? null,
+      expected_contribution: 0,
       reason: null,
     })),
   ];
+  const teamContributionDifference = actualTeamLedger
+    ? actualTeamLedger.team_strength - (teamLedger?.team_strength ?? 0)
+    : null;
+  const teamMinutesDifference = actualTeamLedger?.actual_minutes != null
+    && teamLedger?.projected_minutes != null
+    ? actualTeamLedger.actual_minutes - teamLedger.projected_minutes
+    : null;
   return <div className="schedule-rotation-team">
     <h4><a href={teamHref(team)}>{team}</a> projected rotation</h4>
     {hasUnknownPlayers && <p className="schedule-report-pending">Unlisted availability remains unknown — team report coverage is incomplete. Listed statuses are shown below.</p>}
     <div className={`schedule-rotation-table ${hasAttribution ? "has-attribution" : ""} ${actualPlayers ? "has-actual" : ""}`}>
       {(hasAttribution || actualPlayers) && <div className="schedule-rotation-header">
         <span>Player</span>
-        {hasAttribution && <><small>NAIL</small><small>Min.</small><small>Contribution</small></>}
+        {hasAttribution && <><small>NAIL</small><small>Proj. min.</small><small>Proj. contrib.</small></>}
         {!hasAttribution && actualPlayers && <small>Pred.</small>}
-        {actualPlayers && <><small>Actual min.</small><small>Actual contribution</small><small>Δ min.</small></>}
+        {actualPlayers && <><small>Actual min.</small><small>Actual contrib.</small><small>Δ contrib.</small><small>Δ min.</small></>}
       </div>}
       {rows.map((player) => {
         const actual = actualByPlayer.get(player.player_id) ?? actualByPlayer.get(player.player_name);
-        const difference = actual ? actual.actual_minutes - player.projected_minutes : null;
+        const difference = actualPlayers
+          ? (actual?.actual_minutes ?? 0) - player.projected_minutes
+          : null;
+        const actualContribution = actualPlayers ? actual?.actual_contribution ?? 0 : null;
+        const contributionDifference = actualContribution != null && player.expected_contribution != null
+          ? actualContribution - player.expected_contribution
+          : null;
         const displayedRating = player.projected_nail ?? actual?.frozen_nail;
         const availability = player.status === "Report pending"
           ? "Status unknown — team report pending"
@@ -525,14 +538,14 @@ function RotationTable({
           <strong data-label="Contribution" className={player.expected_contribution != null && player.expected_contribution < 0 ? "negative" : "positive"}>{signedValue(player.expected_contribution)}</strong>
         </>}
         {!hasAttribution && <strong data-label="Predicted">{player.projected_minutes.toFixed(1)}</strong>}
-        {actualPlayers && <><strong data-label="Actual minutes">{actual?.actual_minutes.toFixed(1) ?? "0.0"}</strong><strong data-label="Actual contribution" className={actual?.actual_contribution != null && actual.actual_contribution < 0 ? "negative" : "positive"}>{signedValue(actual?.actual_contribution)}</strong><strong data-label="Minutes delta" className={difference !== null && difference < 0 ? "negative" : "positive"}>{difference === null ? "—" : `${difference > 0 ? "+" : ""}${difference.toFixed(1)}`}</strong></>}
+        {actualPlayers && <><strong data-label="Actual minutes">{actual?.actual_minutes.toFixed(1) ?? "0.0"}</strong><strong data-label="Actual contribution" className={actualContribution !== null && actualContribution < 0 ? "negative" : "positive"}>{signedValue(actualContribution)}</strong><strong data-label="Contribution delta" className={contributionDifference !== null && contributionDifference < 0 ? "negative" : "positive"}>{signedValue(contributionDifference)}</strong><strong data-label="Minutes delta" className={difference !== null && difference < 0 ? "negative" : "positive"}>{difference === null ? "—" : `${difference > 0 ? "+" : ""}${difference.toFixed(1)}`}</strong></>}
       </div>;})}
       {hasAttribution && teamLedger && <div className="schedule-rotation-total">
         <span>Team total</span>
         <strong data-label="NAIL">—</strong>
         <strong data-label="Minutes">{teamLedger.projected_minutes?.toFixed(1) ?? "—"}</strong>
         <strong data-label="Contribution">{signedValue(teamLedger.team_strength)}</strong>
-        {actualPlayers && <><strong data-label="Actual minutes">{actualTeamLedger?.actual_minutes?.toFixed(1) ?? "—"}</strong><strong data-label="Actual contribution">{signedValue(actualTeamLedger?.team_strength)}</strong><strong data-label="Minutes delta">—</strong></>}
+        {actualPlayers && <><strong data-label="Actual minutes">{actualTeamLedger?.actual_minutes?.toFixed(1) ?? "—"}</strong><strong data-label="Actual contribution">{signedValue(actualTeamLedger?.team_strength)}</strong><strong data-label="Contribution delta" className={teamContributionDifference !== null && teamContributionDifference < 0 ? "negative" : "positive"}>{signedValue(teamContributionDifference)}</strong><strong data-label="Minutes delta" className={teamMinutesDifference !== null && teamMinutesDifference < 0 ? "negative" : "positive"}>{signedValue(teamMinutesDifference, 1)}</strong></>}
       </div>}
     </div>
   </div>;

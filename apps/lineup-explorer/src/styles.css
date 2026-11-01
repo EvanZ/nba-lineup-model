@@ -1404,10 +1404,10 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-rotation-table > div { min-height: 29px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e2dfd7; }
 .schedule-rotation-table.has-actual:not(.has-attribution) > div { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 44px); gap: 6px; text-align: right; }
 .schedule-rotation-table.has-attribution > div { display: grid; grid-template-columns: minmax(0, 1fr) 49px 49px 74px; gap: 6px; text-align: right; }
-.schedule-rotation-table.has-attribution.has-actual > div { grid-template-columns: minmax(0, 1fr) 49px 49px 74px 58px 74px 49px; }
+.schedule-rotation-table.has-attribution.has-actual > div { grid-template-columns: minmax(135px, 1fr) 48px 52px 70px 56px 72px 62px 48px; }
 .schedule-rotation-table.has-actual > div > span:first-child, .schedule-rotation-table.has-attribution > div > span:first-child { text-align: left; }
 .schedule-rotation-header { color: #8a918b; font-size: 7px; font-weight: 900; text-transform: uppercase; }
-.schedule-rotation-header small { margin: 0; color: inherit; text-align: right; }
+.schedule-rotation-header small { min-width: 0; margin: 0; color: inherit; line-height: 1.15; text-align: right; white-space: normal; }
 .schedule-rotation-table > div.injury-listed { background: rgb(244 223 215 / 0.35); }
 .schedule-rotation-table span { color: #17201c; font-size: 10px; }
 .schedule-rotation-player { min-width: 0; display: grid; gap: 2px; padding: 5px 0; }
@@ -1493,7 +1493,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .schedule-rotation-team + .schedule-rotation-team { padding: 18px 0 0; border-top: 1px solid #d9d6ce; border-left: 0; }
   .schedule-rotation-table.has-attribution .schedule-rotation-header { display: none; }
   .schedule-rotation-table.has-attribution > div:not(.schedule-rotation-header) { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; padding: 7px 6px; }
-  .schedule-rotation-table.has-attribution.has-actual > div:not(.schedule-rotation-header) { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .schedule-rotation-table.has-attribution.has-actual > div:not(.schedule-rotation-header) { grid-template-columns: repeat(7, minmax(0, 1fr)); }
   .schedule-rotation-table.has-attribution .schedule-rotation-player, .schedule-rotation-table.has-attribution .schedule-rotation-total > span { grid-column: 1 / -1; padding: 0 0 6px; border-bottom: 1px dashed #d9d6ce; }
   .schedule-rotation-table.has-attribution strong { display: grid; gap: 2px; text-align: left; }
   .schedule-rotation-table.has-attribution strong::before { content: attr(data-label); color: #8a918b; font-family: system-ui, sans-serif; font-size: 6px; font-weight: 900; text-transform: uppercase; }
