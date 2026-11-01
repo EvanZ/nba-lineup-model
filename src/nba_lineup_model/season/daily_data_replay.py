@@ -87,11 +87,11 @@ def replay_daily_data_chain(
     catalog_reference = catalog[["player_id", "display_name"]].rename(
         columns={"display_name": "player_name"}
     )
-    name_lookup = _player_name_lookup(
-        pd.concat(
-            [reference[["player_id", "player_name"]], catalog_reference],
-            ignore_index=True,
-        ).drop_duplicates()
+    # The historical catalog can contain retired namesakes. Prefer the current
+    # season's reconciled player universe, then use globally unique catalog
+    # aliases only as a fallback for inactive/DNP rows.
+    name_lookup = _player_identity_lookup(
+        reference[["player_id", "player_name"]], catalog_reference
     )
 
     parent_bundle = _current_chain_tip(chain_root)
@@ -377,6 +377,16 @@ def _actual_minutes(
     if actual.empty:
         raise ValueError("ESPN box score has no played athletes")
     return actual, pd.DataFrame(identity_rows)
+
+
+def _player_identity_lookup(
+    current_reference: pd.DataFrame,
+    historical_catalog: pd.DataFrame,
+) -> dict[str, int]:
+    return {
+        **_player_name_lookup(historical_catalog),
+        **_player_name_lookup(current_reference),
+    }
 
 
 def _minutes_value(value: object) -> float:
