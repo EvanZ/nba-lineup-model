@@ -193,7 +193,10 @@ trap - EXIT
 backup_root="$STATE_ROOT/promotion-backups/$(date -u +%Y%m%dT%H%M%SZ)-$approved_release_sha"
 sudo install -d -o "$USER" -g "$(id -gn)" "$backup_root"
 sudo cp /etc/systemd/system/gestalt-web.service "$backup_root/gestalt-web.service"
-old_live_target="$(readlink -f "$LIVE_POINTER" 2>/dev/null || true)"
+old_live_target=""
+if [[ -L "$LIVE_POINTER" ]]; then
+  old_live_target="$(readlink -f "$LIVE_POINTER")"
+fi
 old_web_target="$(readlink "$PUBLIC_WEB" 2>/dev/null || true)"
 old_schedule_target="$(readlink -f "$SCHEDULE_CURRENT" 2>/dev/null || true)"
 mutation_started=0
@@ -212,7 +215,7 @@ rollback() {
   set +e
   if [[ "$mutation_started" == "1" ]]; then
     if [[ -n "$old_live_target" ]]; then
-      PYTHONPATH="$release_root/src" \
+      sudo env PYTHONPATH="$release_root/src" \
         "$PROD_RELEASE/.venv/bin/python" \
         -m nba_lineup_model.season.production_site_release switch \
         "$old_live_target" --live-pointer "$LIVE_POINTER" >/dev/null
@@ -238,7 +241,7 @@ trap rollback ERR
 mutation_started=1
 sudo install -m 0644 "$release_root/deploy/gestalt-web.service" \
   /etc/systemd/system/gestalt-web.service
-PYTHONPATH="$release_root/src" \
+sudo env PYTHONPATH="$release_root/src" \
   "$PROD_RELEASE/.venv/bin/python" \
   -m nba_lineup_model.season.production_site_release switch \
   "$candidate" --live-pointer "$LIVE_POINTER" >/dev/null
