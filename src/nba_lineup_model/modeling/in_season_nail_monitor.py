@@ -313,6 +313,15 @@ def _rapm_stints(
     stints.attrs["reconstructed_possessions"] = len(
         reconstruction.possessions.possessions
     )
+    stints.attrs["reconstruction_issues"] = [
+        {
+            "code": str(issue.code),
+            "severity": str(issue.severity),
+            "detail": str(issue.detail),
+            "player_id": issue.player_id,
+        }
+        for issue in issues
+    ]
     return stints, team_ids, issue_count
 
 

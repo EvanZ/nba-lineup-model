@@ -186,10 +186,19 @@ def _build_date(
             )
             stint_possessions = float(game_stints["possessions"].sum())
             if issue_count:
+                issue_codes = sorted(
+                    {
+                        str(issue["code"])
+                        for issue in game_stints.attrs.get("reconstruction_issues", [])
+                    }
+                )
                 repairs.append(
                     {
                         "game_id": game_id,
-                        "action": f"accepted {issue_count} audited reconstruction warning(s)",
+                        "action": (
+                            f"accepted {issue_count} audited reconstruction warning(s): "
+                            + ", ".join(issue_codes)
+                        ),
                         "source": "CDN play-by-play",
                     }
                 )
