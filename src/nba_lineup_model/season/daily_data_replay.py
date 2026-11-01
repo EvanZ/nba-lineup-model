@@ -178,8 +178,11 @@ def _build_date(
             )
             final_home, final_away = _final_scores(summary)
             box_home, box_away = _espn_scores(summary, espn)
-            reconstructed_possessions = float(
-                game_stints.attrs.get("reconstructed_possessions", -1)
+            # The event reconstruction counts each team's possessions. RAPM stints
+            # use paired game possessions (half that total), so conservation is
+            # checked in the same unit rather than comparing 198 to 99.
+            reconstructed_possessions = (
+                float(game_stints.attrs.get("reconstructed_possessions", -1)) / 2.0
             )
             stint_possessions = float(game_stints["possessions"].sum())
             if issue_count:
@@ -258,17 +261,28 @@ def _build_date(
             injuries=injuries,
             roster_manifest=roster_manifest,
         )
-        return publish_daily_data_artifact(
-            root=output_root,
-            season=season,
-            game_date_pacific=game_date_pacific,
-            game_ids=expected_game_ids,
-            game_sources=game_sources,
-            game_quality=game_quality,
-            components=components,
-            parent_bundle=parent_bundle,
-            repairs=repairs,
-        )
+        try:
+            return publish_daily_data_artifact(
+                root=output_root,
+                season=season,
+                game_date_pacific=game_date_pacific,
+                game_ids=expected_game_ids,
+                game_sources=game_sources,
+                game_quality=game_quality,
+                components=components,
+                parent_bundle=parent_bundle,
+                repairs=repairs,
+            )
+        except Exception as error:
+            validation_errors = [
+                {"game_id": "", "message": f"{type(error).__name__}: {error}"}
+            ]
+            report_path = _write_failure_report(
+                output_root, game_date_pacific, validation_errors
+            )
+            raise DailyDataReplayBlocked(
+                f"Pacific date {game_date_pacific.isoformat()} failed; report: {report_path}"
+            ) from error
 
 
 def _actual_minutes(
