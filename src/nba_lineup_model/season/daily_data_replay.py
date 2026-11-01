@@ -40,6 +40,9 @@ DEFAULT_STATE_DIR = Path("/var/lib/nba-gestalt/schedule")
 DEFAULT_COVERAGE_PATH = Path("/var/lib/nba-gestalt/cdn/coverage.json")
 DEFAULT_OUTPUT_ROOT = Path("/var/lib/nba-gestalt-dev/daily-data")
 DEFAULT_ROSTER_POINTER = Path("/var/lib/nba-gestalt-dev/in-season-rosters/latest.json")
+DEFAULT_PLAYER_CATALOG_PATH = Path(
+    "/opt/nba-gestalt/current/data/catalog/players.parquet"
+)
 DEFAULT_CDN_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/cdn/playbyplay"
 
 
@@ -55,6 +58,7 @@ def replay_daily_data_chain(
     coverage_path: Path | str = DEFAULT_COVERAGE_PATH,
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
     roster_pointer: Path | str = DEFAULT_ROSTER_POINTER,
+    player_catalog_path: Path | str = DEFAULT_PLAYER_CATALOG_PATH,
     cdn_s3_prefix: str = DEFAULT_CDN_S3_PREFIX,
     season: str = DEFAULT_SEASON,
 ) -> list[PublishedDailyDataArtifact]:
@@ -78,7 +82,17 @@ def replay_daily_data_chain(
     if not reference_path.is_file():
         raise FileNotFoundError(f"Player identity reference is missing: {reference_path}")
     reference = pd.read_parquet(reference_path)
-    name_lookup = _player_name_lookup(reference[["player_id", "player_name"]])
+    catalog_path = Path(player_catalog_path)
+    catalog = pd.read_parquet(catalog_path)
+    catalog_reference = catalog[["player_id", "display_name"]].rename(
+        columns={"display_name": "player_name"}
+    )
+    name_lookup = _player_name_lookup(
+        pd.concat(
+            [reference[["player_id", "player_name"]], catalog_reference],
+            ignore_index=True,
+        ).drop_duplicates()
+    )
 
     parent_bundle = _current_chain_tip(chain_root)
     if parent_bundle is not None:
@@ -106,6 +120,7 @@ def replay_daily_data_chain(
             name_lookup=name_lookup,
             roster_manifest=roster_manifest,
             reference_path=reference_path,
+            player_catalog_path=catalog_path,
             output_root=chain_root,
             parent_bundle=parent_bundle,
             cdn_s3_prefix=cdn_s3_prefix,
@@ -126,6 +141,7 @@ def _build_date(
     name_lookup: dict[str, int],
     roster_manifest: Mapping[str, Any],
     reference_path: Path,
+    player_catalog_path: Path,
     output_root: Path,
     parent_bundle: Path | None,
     cdn_s3_prefix: str,
@@ -218,6 +234,10 @@ def _build_date(
                 "player_reference": {
                     "uri": reference_path.resolve().as_uri(),
                     "sha256": file_sha256(reference_path),
+                },
+                "player_catalog": {
+                    "uri": player_catalog_path.resolve().as_uri(),
+                    "sha256": file_sha256(player_catalog_path),
                 },
             }
             game_quality[game_id] = {
@@ -327,9 +347,9 @@ def _actual_minutes(
                 raw_minutes = stat_map.get("MIN", stats[0] if stats else "0")
                 minutes = _minutes_value(raw_minutes)
                 played = minutes > 0
-                if played and player_id is None:
+                if player_id is None:
                     raise ValueError(
-                        f"Could not map played ESPN athlete {player_name!r} for {team}"
+                        f"Could not map ESPN athlete {player_name!r} for {team}"
                     )
                 identity_rows.append(
                     {
@@ -339,7 +359,7 @@ def _actual_minutes(
                         "player_name": player_name,
                         "player_id": player_id,
                         "played": played,
-                        "resolution": "name_alias" if player_id is not None else "unresolved_dnp",
+                        "resolution": "name_alias",
                     }
                 )
                 if played:
@@ -543,6 +563,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--coverage-path", type=Path, default=DEFAULT_COVERAGE_PATH)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--roster-pointer", type=Path, default=DEFAULT_ROSTER_POINTER)
+    parser.add_argument(
+        "--player-catalog-path", type=Path, default=DEFAULT_PLAYER_CATALOG_PATH
+    )
     parser.add_argument("--cdn-s3-prefix", default=DEFAULT_CDN_S3_PREFIX)
     return parser
 
@@ -556,6 +579,7 @@ def main() -> None:
         coverage_path=args.coverage_path,
         output_root=args.output_root,
         roster_pointer=args.roster_pointer,
+        player_catalog_path=args.player_catalog_path,
         cdn_s3_prefix=args.cdn_s3_prefix,
         season=args.season,
     )
