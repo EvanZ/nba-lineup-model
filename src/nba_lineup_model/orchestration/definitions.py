@@ -52,7 +52,6 @@ DEFAULT_ODDS_API_BOOKMAKERS = (
     "fanduel",
     "betmgm",
     "betrivers",
-    "espnbet",
     "hardrockbet",
     "betparx",
     "ballybet",
@@ -67,6 +66,7 @@ DEFAULT_CDN_LAKE_URI = "s3://nba-gestalt-data/lake"
 DEFAULT_CDN_SEASON = "2026-27"
 DEFAULT_CDN_GRACE_MINUTES = 60
 DEFAULT_CDN_COVERAGE_PATH = Path("/var/lib/nba-gestalt/cdn/coverage.json")
+DEFAULT_GAME_CATALOG_PATH = Path("/var/lib/nba-gestalt/catalog/games.parquet")
 DEFAULT_IN_SEASON_NAIL_ROOT = Path("/var/lib/nba-gestalt/in-season-nail")
 DEFAULT_IN_SEASON_NAIL_LAKE_URI = "s3://nba-gestalt-data/lake"
 DEFAULT_IN_SEASON_NAIL_PRIOR_POSSESSIONS = 6000
@@ -350,51 +350,30 @@ def _schedule_run_config(*, start_date: str, days_ahead: int) -> dict[str, objec
     retry_policy=RETRY_POLICY,
 )
 def refresh_schedule_op(context: OpExecutionContext) -> dict[str, object]:
-    """Refresh ESPN, lines, injury reports, projections, and immutable snapshots."""
+    """Refresh official NBA boards, lines, injuries, and immutable snapshots."""
 
-    from nba_lineup_model.web_api.win_projections import (
-        mirror_missing_frozen_pregame_snapshots,
-        refresh_schedule_window,
+    from nba_lineup_model.season.official_schedule_runtime import (
+        refresh_official_schedule_window,
     )
 
-    payload = refresh_schedule_window(
+    payload = refresh_official_schedule_window(
         start_date=str(context.op_config["start_date"]),
         days_ahead=int(context.op_config["days_ahead"]),
         state_dir=_state_dir(),
+        game_catalog_path=Path(
+            os.environ.get("GESTALT_GAME_CATALOG_PATH", DEFAULT_GAME_CATALOG_PATH)
+        ),
         projection_url=os.environ.get(
             "GESTALT_SCHEDULE_API_URL", DEFAULT_SCHEDULE_API_URL
         ),
         s3_uri=_schedule_s3_uri(),
     )
-    model_input_dir = _model_input_state_dir()
-    mirrored_frozen_games = 0
-    if model_input_dir.resolve() != _state_dir().resolve():
-        first_date = datetime.fromisoformat(
-            str(context.op_config["start_date"])
-        ).date()
-        for offset in range(int(context.op_config["days_ahead"]) + 1):
-            mirrored_frozen_games += len(
-                mirror_missing_frozen_pregame_snapshots(
-                    game_date=(first_date + timedelta(days=offset)).isoformat(),
-                    source_state_dir=_state_dir(),
-                    target_state_dir=model_input_dir,
-                )
-            )
-        refresh_schedule_window(
-            start_date=str(context.op_config["start_date"]),
-            days_ahead=int(context.op_config["days_ahead"]),
-            state_dir=model_input_dir,
-            projection_url=os.environ.get(
-                "GESTALT_SCHEDULE_API_URL", DEFAULT_SCHEDULE_API_URL
-            ),
-            s3_uri=None,
-        )
     context.add_output_metadata(
         {
             "archived_days": int(payload["archived_day_count"]),
             "games": int(payload["game_count"]),
             "newly_frozen_games": int(payload["newly_frozen_game_count"]),
-            "mirrored_frozen_games": mirrored_frozen_games,
+            "provider_fallbacks": 0,
         }
     )
     return payload
@@ -554,32 +533,16 @@ nba_market_odds_schedule = ScheduleDefinition(
 def update_live_scores_op(context: OpExecutionContext) -> dict[str, object]:
     """Perform one short score/clock update; the sensor controls when it runs."""
 
-    from nba_lineup_model.web_api.win_projections import (
-        mirror_missing_frozen_pregame_snapshots,
-        refresh_live_score_state,
+    from nba_lineup_model.season.official_schedule_runtime import (
+        refresh_official_live_score_state,
     )
 
     game_date = str(context.op_config["game_date"])
-    result = refresh_live_score_state(
+    result = refresh_official_live_score_state(
         game_date=game_date,
         state_dir=_state_dir(),
         s3_uri=_schedule_s3_uri(),
     )
-    model_input_dir = _model_input_state_dir()
-    mirrored_frozen_games = 0
-    if model_input_dir.resolve() != _state_dir().resolve():
-        mirrored_frozen_games = len(
-            mirror_missing_frozen_pregame_snapshots(
-                game_date=game_date,
-                source_state_dir=_state_dir(),
-                target_state_dir=model_input_dir,
-            )
-        )
-        refresh_live_score_state(
-            game_date=game_date,
-            state_dir=model_input_dir,
-            s3_uri=None,
-        )
     context.add_output_metadata(
         {
             "game_date": game_date,
@@ -588,7 +551,7 @@ def update_live_scores_op(context: OpExecutionContext) -> dict[str, object]:
             "all_final": bool(result["all_final"]),
             "newly_finalized_games": int(result["newly_finalized_game_count"]),
             "uploaded_final_artifacts": int(result["uploaded_final_artifact_count"]),
-            "mirrored_frozen_games": mirrored_frozen_games,
+            "provider_fallbacks": 0,
         }
     )
     return result
@@ -611,15 +574,15 @@ def update_live_scores_job() -> None:
 def reconcile_final_game_archives_op(context: OpExecutionContext) -> dict[str, object]:
     """Verify yesterday's immutable final audit artifacts against S3."""
 
-    from nba_lineup_model.web_api.win_projections import (
-        reconcile_final_game_artifacts_to_s3,
+    from nba_lineup_model.season.official_schedule_runtime import (
+        reconcile_official_final_artifacts_to_s3,
     )
 
     game_date = str(context.op_config["game_date"])
     s3_uri = _schedule_s3_uri()
     if not s3_uri:
         raise ValueError("GESTALT_SCHEDULE_S3_URI must be set for final reconciliation")
-    result = reconcile_final_game_artifacts_to_s3(
+    result = reconcile_official_final_artifacts_to_s3(
         game_date=game_date,
         state_dir=_state_dir(),
         s3_uri=s3_uri,
@@ -694,14 +657,14 @@ def active_live_game_date(
         missing_final_audit = any(
             isinstance(game.get("status"), dict)
             and bool(game["status"].get("completed"))
-            and bool(str(game.get("espn_game_id", "")).strip())
-            and (state_root / "frozen" / f"{game['espn_game_id']}.json").is_file()
+            and bool(str(game.get("game_id", "")).strip())
+            and (state_root / "frozen" / f"{game['game_id']}.json").is_file()
             and (
                 not (
-                    state_root / "final" / f"{game['espn_game_id']}.summary.json"
+                    state_root / "final" / f"{game['game_id']}.summary.json"
                 ).is_file()
                 or not (
-                    state_root / "final" / f"{game['espn_game_id']}.espn.json"
+                    state_root / "final" / f"{game['game_id']}.nba.json"
                 ).is_file()
             )
             for game in games
@@ -2455,7 +2418,6 @@ defs = Definitions(
         update_live_scores_job,
         reconcile_final_game_archives_job,
         ingest_completed_cdn_play_by_play_job,
-        reconcile_in_season_rosters_job,
         update_in_season_nail_production_job,
         update_in_season_minutes_production_job,
         promote_current_season_serving_job,
@@ -2469,7 +2431,6 @@ defs = Definitions(
         yesterday_finalization_schedule,
         final_game_archive_morning_reconciliation_schedule,
         cdn_morning_reconciliation_schedule,
-        in_season_roster_schedule,
         stats_v3_morning_reconciliation_schedule,
         daily_lake_health_schedule,
     ],

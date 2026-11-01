@@ -6,6 +6,7 @@ import { RosterMovesPage } from "./RosterMovesPage";
 import { WinProjectionsPage } from "./WinProjectionsPage";
 import { ComparePage } from "./ComparePage";
 import { SchedulePage } from "./SchedulePage";
+import { teamLogoUrl } from "./teamLogos";
 import {
   ArrowLeft,
   ArrowRight,
@@ -210,16 +211,6 @@ function formatGameLogDate(value: string) {
 
 function formatWinPct(value: number) {
   return `${(value * 100).toFixed(1)}%`;
-}
-
-const TEAM_LOGO_SLUGS: Record<string, string> = {
-  NOP: "no",
-  UTA: "utah",
-};
-
-function teamLogoUrl(team: string) {
-  const slug = TEAM_LOGO_SLUGS[team] ?? team.toLowerCase();
-  return `https://a.espncdn.com/i/teamlogos/nba/500/${slug}.png`;
 }
 
 function playerHeadshotUrl(playerId: number) {

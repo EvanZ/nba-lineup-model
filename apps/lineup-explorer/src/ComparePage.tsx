@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Download, LoaderCircle, Search, X } from "lucide-react";
 
 import type { Player } from "./types";
+import { teamLogoUrl } from "./teamLogos";
 
 type Alignment = "age" | "season";
 type RatingView = "total" | "offense" | "defense";
@@ -69,10 +70,6 @@ const SERIES_COLORS = [
   "#b6544a",
   "#55769a",
 ];
-const TEAM_LOGO_SLUGS: Record<string, string> = {
-  NOP: "no",
-  UTA: "utah",
-};
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
@@ -128,11 +125,6 @@ function playerProfileHref(playerId: number) {
 
 function headshotUrl(playerId: number) {
   return `/api/headshots/${playerId}.png`;
-}
-
-function teamLogoUrl(team: string) {
-  const slug = TEAM_LOGO_SLUGS[team] ?? team.toLowerCase();
-  return `https://a.espncdn.com/i/teamlogos/nba/500/${slug}.png`;
 }
 
 function trajectoryPoints(player: Player, view: RatingView): TrajectoryPoint[] {

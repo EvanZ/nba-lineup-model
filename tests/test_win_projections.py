@@ -635,12 +635,12 @@ def test_polymarket_moneyline_snapshot_uses_main_market_midpoints(monkeypatch) -
 
 def test_schedule_day_attaches_immutable_final_audit(tmp_path) -> None:
     latest = tmp_path / "latest" / "2026-10-20.json"
-    frozen = tmp_path / "frozen" / "401909088.json"
-    final = tmp_path / "final" / "401909088.summary.json"
+    frozen = tmp_path / "frozen" / "0022600001.json"
+    final = tmp_path / "final" / "0022600001.summary.json"
     for path in (latest, frozen, final):
         path.parent.mkdir(parents=True, exist_ok=True)
     latest.write_text(
-        '{"games":[{"espn_game_id":"401909088","status":{"state":"post"}}]}'
+        '{"games":[{"game_id":"0022600001","status":{"state":"post"}}]}'
     )
     frozen.write_text('{"projection":{"home_margin":4.5}}')
     final.write_text(
@@ -663,11 +663,10 @@ def test_player_game_trajectory_uses_frozen_minutes_and_archived_box_score(
 ) -> None:
     final = tmp_path / "final"
     final.mkdir()
-    (final / "401.summary.json").write_text(
+    (final / "0022600001.summary.json").write_text(
         json.dumps(
             {
                 "game_id": "0022600001",
-                "espn_game_id": "401",
                 "away_team": "GSW",
                 "home_team": "LAL",
                 "final": {"away_score": 105, "home_score": 127},
@@ -700,26 +699,33 @@ def test_player_game_trajectory_uses_frozen_minutes_and_archived_box_score(
             }
         )
     )
-    (final / "401.espn.json").write_text(
+    (final / "0022600001.nba.json").write_text(
         json.dumps(
             {
-                "boxscore": {
-                    "players": [
+                "game": {
+                    "homeTeam": {"players": []},
+                    "awayTeam": {
+                        "players": [
                         {
-                            "statistics": [
-                                {
-                                    "labels": ["MIN", "FG", "3PT", "FT", "PTS", "REB", "AST", "TO", "STL", "BLK", "+/-"],
-                                    "athletes": [
-                                        {
-                                            "athlete": {"displayName": "Stephen Curry"},
-                                            "stats": ["21", "9-17", "4-9", "1-1", "23", "2", "1", "4", "2", "1", "-22"],
-                                            "didNotPlay": False,
-                                        }
-                                    ],
-                                }
-                            ]
+                            "personId": 201939,
+                            "statistics": {
+                                "points": 23,
+                                "reboundsTotal": 2,
+                                "assists": 1,
+                                "turnovers": 4,
+                                "steals": 2,
+                                "blocks": 1,
+                                "fieldGoalsMade": 9,
+                                "fieldGoalsAttempted": 17,
+                                "threePointersMade": 4,
+                                "threePointersAttempted": 9,
+                                "freeThrowsMade": 1,
+                                "freeThrowsAttempted": 1,
+                                "plusMinusPoints": -22,
+                            },
                         }
-                    ]
+                        ]
+                    },
                 }
             }
         )
@@ -1830,11 +1836,10 @@ def test_mirror_missing_frozen_pregame_snapshots_is_validated_and_idempotent(
     (source / "latest").mkdir(parents=True)
     (source / "frozen").mkdir()
     (source / "latest" / "2026-10-28.json").write_text(
-        json.dumps({"games": [{"espn_game_id": "401909888"}]})
+        json.dumps({"games": [{"game_id": "0022600139"}]})
     )
     frozen = {
         "game_id": "0022600139",
-        "espn_game_id": "401909888",
         "status": {"state": "pre", "completed": False},
         "late_freeze": False,
         "projection": {
@@ -1842,24 +1847,24 @@ def test_mirror_missing_frozen_pregame_snapshots_is_validated_and_idempotent(
             "serving_bundle_sha256": "b" * 64,
         },
     }
-    (source / "frozen" / "401909888.json").write_text(json.dumps(frozen))
+    (source / "frozen" / "0022600139.json").write_text(json.dumps(frozen))
 
     assert mirror_missing_frozen_pregame_snapshots(
         game_date="2026-10-28",
         source_state_dir=source,
         target_state_dir=target,
-    ) == ["401909888"]
-    assert json.loads((target / "frozen" / "401909888.json").read_text()) == frozen
+    ) == ["0022600139"]
+    assert json.loads((target / "frozen" / "0022600139.json").read_text()) == frozen
     assert mirror_missing_frozen_pregame_snapshots(
         game_date="2026-10-28",
         source_state_dir=source,
         target_state_dir=target,
     ) == []
 
-    (target / "frozen" / "401909888.json").unlink()
+    (target / "frozen" / "0022600139.json").unlink()
     frozen["status"] = {"state": "post", "completed": True}
     frozen["late_freeze"] = True
-    (source / "frozen" / "401909888.json").write_text(json.dumps(frozen))
+    (source / "frozen" / "0022600139.json").write_text(json.dumps(frozen))
     with pytest.raises(ValueError, match="non-pregame"):
         mirror_missing_frozen_pregame_snapshots(
             game_date="2026-10-28",

@@ -24,6 +24,7 @@ import "@xyflow/react/dist/style.css";
 import { CircleAlert, Copy, Download, Filter, Hand, LoaderCircle, MousePointer2, X } from "lucide-react";
 
 import type { ExternalRosterArrival, Player, RosterMove, RosterMovesPayload } from "./types";
+import { teamLogoUrl } from "./teamLogos";
 
 type MoveFilter = "all" | "external" | "rookies" | RosterMove["move_type"];
 type TeamNodeData = { team: string; conference: "East" | "West" };
@@ -164,16 +165,6 @@ function animationLink(team: string, filter: MoveFilter) {
   if (filter !== "all") parameters.set("filter", filter);
   return `${window.location.origin}${window.location.pathname}#moves?${parameters.toString()}`;
 }
-const TEAM_LOGO_SLUGS: Record<string, string> = {
-  NOP: "no",
-  UTA: "utah",
-};
-
-function teamLogoUrl(team: string) {
-  const slug = TEAM_LOGO_SLUGS[team] ?? team.toLowerCase();
-  return `https://a.espncdn.com/i/teamlogos/nba/500/${slug}.png`;
-}
-
 function curveGeometry(sourceX: number, sourceY: number, targetX: number, targetY: number, playerId: number): CurveGeometry {
   const deltaX = targetX - sourceX;
   const deltaY = targetY - sourceY;

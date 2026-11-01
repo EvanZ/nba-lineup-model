@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, CircleAlert, Radio, TrendingUp } from "lucide-react";
 
 import type { MinutesProjectionPayload, WinProjectionPayload, WinProjectionScheduledGame } from "./types";
+import { teamLogoUrl } from "./teamLogos";
 
 type MarketLine = {
   provider: string;
@@ -35,7 +36,6 @@ const BOOKMAKER_BADGES: Record<string, { short: string; label: string }> = {
   fanduel: { short: "FD", label: "FanDuel" },
   betmgm: { short: "MGM", label: "BetMGM" },
   betrivers: { short: "BR", label: "BetRivers" },
-  espnbet: { short: "TS", label: "theScore Bet" },
   hardrockbet: { short: "HR", label: "Hard Rock Bet" },
   betparx: { short: "PX", label: "betPARX" },
   ballybet: { short: "BB", label: "Bally Bet" },
@@ -97,7 +97,6 @@ type FinalAudit = {
 
 type ArchivedGame = {
   game_id: string | null;
-  espn_game_id: string;
   start_time: string;
   home_team: string;
   away_team: string;
@@ -211,12 +210,6 @@ type SchedulePerformance = {
   replay_through_date?: string | null;
   windows: PerformanceWindow[];
 };
-
-const TEAM_LOGO_SLUGS: Record<string, string> = { NOP: "no", UTA: "utah" };
-
-function teamLogoUrl(team: string) {
-  return `https://a.espncdn.com/i/teamlogos/nba/500/${TEAM_LOGO_SLUGS[team] ?? team.toLowerCase()}.png`;
-}
 
 function dateKey(date: Date) {
   const year = date.getFullYear();
@@ -872,7 +865,7 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
           <p className="eyebrow">Daily board</p>
           <h2>{longDate(selectedDate)}</h2>
         </div>
-        <div className="schedule-source-note"><span>Scores &amp; market</span><strong>ESPN · Multi-book consensus</strong><small>{archiveAge(scheduleDay?.live_score_collected_at ?? scheduleDay?.collected_at)}</small></div>
+        <div className="schedule-source-note"><span>Scores &amp; market</span><strong>NBA official · Multi-book consensus</strong><small>{archiveAge(scheduleDay?.live_score_collected_at ?? scheduleDay?.collected_at)}</small></div>
       </div>
 
       {error ? <p className="error schedule-error"><CircleAlert size={16} /> {error}</p> : !forecast ? <p className="schedule-loading">Loading the schedule…</p> : games.length ? <div className="schedule-games">

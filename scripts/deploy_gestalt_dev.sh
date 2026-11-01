@@ -24,6 +24,8 @@ PROD_SCHEDULE_ROOT="${GESTALT_PROD_SCHEDULE_ROOT:-/var/lib/nba-gestalt/schedule-
 DEV_DAILY_DATA_ROOT="${GESTALT_DEV_DAILY_DATA_ROOT:-$DEV_STATE_ROOT/daily-data-nba-v2}"
 DEV_DAILY_MODEL_ROOT="${GESTALT_DEV_DAILY_MODEL_ROOT:-$DEV_STATE_ROOT/daily-model-nba-v1}"
 DEV_ROSTER_POINTER="${GESTALT_DEV_ROSTER_POINTER:-$DEV_STATE_ROOT/in-season-rosters/latest.json}"
+DEV_OFFICIAL_SCHEDULE_ROOT="${GESTALT_DEV_OFFICIAL_SCHEDULE_ROOT:-$DEV_STATE_ROOT/official-schedule}"
+DEV_SCHEDULE_ROOT="$DEV_OFFICIAL_SCHEDULE_ROOT/current"
 FRONTEND_DIST="${GESTALT_DEV_FRONTEND_DIST:-}"
 
 test -d "$SOURCE_REPO/.git"
@@ -49,7 +51,7 @@ sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/catalog"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/current-season-serving"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/current-season-lineups"
-sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/schedule"
+sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_OFFICIAL_SCHEDULE_ROOT"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/site-releases"
 
 test -f "$DEV_DAILY_DATA_ROOT/latest.json"
@@ -87,10 +89,23 @@ mv \
   "$DEV_STATE_ROOT/catalog/games.parquet.next" \
   "$DEV_STATE_ROOT/catalog/games.parquet"
 
+frozen_artifact_root="$PROD_SCHEDULE_ROOT"
+if [[ -d "$DEV_SCHEDULE_ROOT/frozen" ]]; then
+  frozen_artifact_root="$DEV_SCHEDULE_ROOT"
+fi
+PYTHONPATH="$RELEASE_ROOT/src" \
+  "$PROD_RELEASE/.venv/bin/python" \
+  -m nba_lineup_model.season.official_schedule_serving \
+  --data-root "$DEV_DAILY_DATA_ROOT" \
+  --model-root "$DEV_DAILY_MODEL_ROOT" \
+  --frozen-artifact-root "$frozen_artifact_root" \
+  --output-root "$DEV_OFFICIAL_SCHEDULE_ROOT" \
+  --game-catalog-path "$DEV_STATE_ROOT/catalog/games.parquet"
+
 if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
    [[ ! -f "$DEV_STATE_ROOT/current-season-serving/latest.json" ]] || \
    [[ ! -f "$DEV_STATE_ROOT/current-season-lineups/latest.json" ]] || \
-   [[ ! -d "$DEV_STATE_ROOT/schedule/current/final" ]] || \
+   [[ ! -d "$DEV_SCHEDULE_ROOT/final" ]] || \
    [[ ! -f "$DEV_STATE_ROOT/site-releases/latest.json" ]]; then
   if systemctl cat gestalt-web-dev >/dev/null 2>&1; then
     sudo systemctl stop gestalt-web-dev
@@ -110,7 +125,7 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
   PYTHONPATH="$RELEASE_ROOT/src" \
   GESTALT_CURRENT_SEASON_SERVING_ROOT="$DEV_STATE_ROOT/current-season-serving" \
   GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$DEV_STATE_ROOT/lineup-materialization-input" \
-  GESTALT_SCHEDULE_STATE_DIR="$PROD_SCHEDULE_ROOT" \
+  GESTALT_SCHEDULE_STATE_DIR="$DEV_SCHEDULE_ROOT" \
   GESTALT_PRESEASON_RANKINGS_PATH="$DEV_PRESEASON_RANKINGS_PATH" \
   GESTALT_PRESEASON_PROFILES_PATH="$DEV_PRESEASON_PROFILES_PATH" \
     "$PROD_RELEASE/.venv/bin/python" \
@@ -118,12 +133,6 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
     --daily-data-root "$DEV_DAILY_DATA_ROOT" \
     --output-root "$DEV_STATE_ROOT/current-season-lineups"
 
-  # Historical pregame snapshots are records of what was actually in play and
-  # must not be recalculated from the new postgame state. Seed the isolated dev
-  # archive from production's reviewed serving archive, then refresh only the
-  # current/future board after the dev API starts.
-  install -d "$DEV_STATE_ROOT/schedule/current"
-  rsync -a --delete "$PROD_SCHEDULE_ROOT/" "$DEV_STATE_ROOT/schedule/current/"
 fi
 
 if [[ -n "$FRONTEND_DIST" ]]; then
@@ -178,9 +187,11 @@ curl --fail --silent --show-error http://127.0.0.1:8011/api/health >/dev/null
 # remain the strict-forward replay materialized above, and no dev artifact is
 # uploaded to the production S3 archive.
 PYTHONPATH="$RELEASE_ROOT/src" \
-  "$PROD_RELEASE/.venv/bin/nba-refresh-gestalt-schedule" \
+  "$PROD_RELEASE/.venv/bin/python" \
+  -m nba_lineup_model.season.official_schedule_runtime \
   --date "$(TZ=America/Los_Angeles date +%F)" \
-  --state-dir "$DEV_STATE_ROOT/schedule/current" \
+  --state-dir "$DEV_SCHEDULE_ROOT" \
+  --game-catalog-path "$DEV_STATE_ROOT/catalog/games.parquet" \
   --projection-url http://127.0.0.1:8011/api/win-projections \
   --days-ahead 7 \
   --no-s3
@@ -201,7 +212,7 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   --daily-model-root "$DEV_DAILY_MODEL_ROOT" \
   --serving-root "$DEV_STATE_ROOT/current-season-serving" \
   --lineups-root "$DEV_STATE_ROOT/current-season-lineups" \
-  --schedule-state-dir "$DEV_STATE_ROOT/schedule/current" \
+  --schedule-state-dir "$DEV_SCHEDULE_ROOT" \
   --catalog-path "$DEV_STATE_ROOT/catalog/games.parquet" \
   --preseason-rankings-path "$DEV_PRESEASON_RANKINGS_PATH" \
   --preseason-profiles-path "$DEV_PRESEASON_PROFILES_PATH" \

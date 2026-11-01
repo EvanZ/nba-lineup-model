@@ -10,6 +10,7 @@ import type {
   WinProjectionScheduledGame,
   WinProjectionTeam,
 } from "./types";
+import { teamLogoUrl } from "./teamLogos";
 
 type PlayerInputOverride = {
   availabilityProbability?: number;
@@ -76,19 +77,9 @@ type WinLossEnvelopeGame = {
 };
 
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const TEAM_LOGO_SLUGS: Record<string, string> = {
-  NOP: "no",
-  UTA: "utah",
-};
-
 function monthLabel(date: string) {
   const month = Number(date.slice(5, 7));
   return MONTH_LABELS[month - 1] ?? "";
-}
-
-function teamLogoUrl(team: string) {
-  const slug = TEAM_LOGO_SLUGS[team] ?? team.toLowerCase();
-  return `https://a.espncdn.com/i/teamlogos/nba/500/${slug}.png`;
 }
 
 function playerHeadshotUrl(playerId: number) {

@@ -1058,7 +1058,7 @@ def read_schedule_day(
         return {
             "available": False,
             "game_date": game_date,
-            "source": "ESPN",
+            "source": "NBA official schedule and liveData",
             "games": [],
         }
     payload = json.loads(path.read_text())
@@ -1070,13 +1070,16 @@ def read_schedule_day(
     for game in games:
         if not isinstance(game, dict):
             continue
-        frozen_path = Path(state_dir) / "frozen" / f"{game.get('espn_game_id')}.json"
+        game_id = str(game.get("game_id", "")).strip()
+        if not game_id:
+            continue
+        frozen_path = Path(state_dir) / "frozen" / f"{game_id}.json"
         if frozen_path.is_file():
             frozen = json.loads(frozen_path.read_text())
             if isinstance(frozen, dict):
                 game["pregame"] = frozen
         final_path = (
-            Path(state_dir) / "final" / f"{game.get('espn_game_id')}.summary.json"
+            Path(state_dir) / "final" / f"{game_id}.summary.json"
         )
         if final_path.is_file():
             final_audit = json.loads(final_path.read_text())
@@ -1108,7 +1111,7 @@ def enrich_player_game_trajectory(
 
     The updater trajectory is the authoritative chronological rating record.
     This helper only decorates its team-game rows from the already archived
-    schedule finals, so player pages never depend on a live ESPN request.
+    schedule finals, so player pages never depend on a live provider request.
     """
 
     enriched = [dict(point) for point in trajectory]
@@ -1143,10 +1146,9 @@ def enrich_player_game_trajectory(
             if not isinstance(game, dict):
                 continue
             game_id = str(game.get("game_id", ""))
-            espn_game_id = str(game.get("espn_game_id", ""))
-            if game_id not in game_ids or not espn_game_id:
+            if game_id not in game_ids:
                 continue
-            path = final_dir / f"{espn_game_id}.summary.json"
+            path = final_dir / f"{game_id}.summary.json"
             try:
                 summary = json.loads(path.read_text())
             except (OSError, json.JSONDecodeError):
@@ -1356,23 +1358,17 @@ def _decorate_player_game_point(
     elif point.get("played") is False:
         point["actual_minutes"] = 0.0
 
-    espn_path = summary_path.with_name(
-        f"{summary.get('espn_game_id', summary_path.name.split('.', 1)[0])}.espn.json"
-    )
-    if not espn_path.is_file():
+    game_id = str(summary.get("game_id", summary_path.name.split(".", 1)[0]))
+    boxscore_path = summary_path.with_name(f"{game_id}.nba.json")
+    if not boxscore_path.is_file():
         return
     try:
-        espn_summary = json.loads(espn_path.read_text())
+        nba_boxscore = json.loads(boxscore_path.read_text())
     except (OSError, json.JSONDecodeError):
         return
-    if not isinstance(espn_summary, dict):
+    if not isinstance(nba_boxscore, dict):
         return
-    archived_name = (
-        str(projected_player.get("player_name"))
-        if projected_player is not None and projected_player.get("player_name")
-        else player_name
-    )
-    box_score = _player_box_score(espn_summary, archived_name)
+    box_score = _player_box_score(nba_boxscore, player_id=player_id)
     if box_score is not None:
         point["box_score"] = box_score
 
@@ -1401,83 +1397,62 @@ def _find_archived_player(
 
 
 def _player_box_score(
-    espn_summary: dict[str, object],
-    player_name: str,
+    nba_boxscore: dict[str, object],
+    *,
+    player_id: int,
 ) -> dict[str, object] | None:
-    boxscore = espn_summary.get("boxscore")
-    groups = boxscore.get("players") if isinstance(boxscore, dict) else None
-    if not isinstance(groups, list):
+    game = nba_boxscore.get("game")
+    if not isinstance(game, dict):
         return None
-    normalized_name = _normalized_player_name(player_name)
-    for group in groups:
-        if not isinstance(group, dict):
+    for side in ("homeTeam", "awayTeam"):
+        team = game.get(side)
+        players = team.get("players") if isinstance(team, dict) else None
+        if not isinstance(players, list):
             continue
-        statistics = group.get("statistics")
-        if not isinstance(statistics, list):
-            continue
-        for statistic in statistics:
-            if not isinstance(statistic, dict):
+        for player in players:
+            if (
+                not isinstance(player, dict)
+                or _integer_or_none(player.get("personId")) != player_id
+            ):
                 continue
-            labels = statistic.get("labels")
-            athletes = statistic.get("athletes")
-            if not isinstance(labels, list) or not isinstance(athletes, list):
-                continue
-            label_index = {str(label): index for index, label in enumerate(labels)}
-            for athlete_row in athletes:
-                if not isinstance(athlete_row, dict):
-                    continue
-                athlete = athlete_row.get("athlete")
-                athlete_name = (
-                    athlete.get("displayName") if isinstance(athlete, dict) else None
-                )
-                if _normalized_player_name(athlete_name) != normalized_name:
-                    continue
-                if athlete_row.get("didNotPlay") is True:
-                    return None
-                values = athlete_row.get("stats")
-                if not isinstance(values, list):
-                    return None
-
-                def value(label: str) -> object | None:
-                    index = label_index.get(label)
-                    return values[index] if index is not None and index < len(values) else None
-
-                def first_value(*labels: str) -> object | None:
-                    for label in labels:
-                        candidate = value(label)
-                        if candidate is not None:
-                            return candidate
-                    return None
-
-                field_goals_made, field_goals_attempted = _made_attempted(value("FG"))
-                threes_made, threes_attempted = _made_attempted(value("3PT"))
-                free_throws_made, free_throws_attempted = _made_attempted(value("FT"))
-                twos_made = (
+            statistics = player.get("statistics")
+            if not isinstance(statistics, dict):
+                return None
+            field_goals_made = _integer_or_none(statistics.get("fieldGoalsMade"))
+            field_goals_attempted = _integer_or_none(
+                statistics.get("fieldGoalsAttempted")
+            )
+            threes_made = _integer_or_none(statistics.get("threePointersMade"))
+            threes_attempted = _integer_or_none(
+                statistics.get("threePointersAttempted")
+            )
+            return {
+                "points": _integer_or_none(statistics.get("points")),
+                "rebounds": _integer_or_none(statistics.get("reboundsTotal")),
+                "assists": _integer_or_none(statistics.get("assists")),
+                "turnovers": _integer_or_none(statistics.get("turnovers")),
+                "steals": _integer_or_none(statistics.get("steals")),
+                "blocks": _integer_or_none(statistics.get("blocks")),
+                "two_points_made": (
                     field_goals_made - threes_made
                     if field_goals_made is not None and threes_made is not None
                     else None
-                )
-                twos_attempted = (
+                ),
+                "two_points_attempted": (
                     field_goals_attempted - threes_attempted
                     if field_goals_attempted is not None and threes_attempted is not None
                     else None
-                )
-
-                return {
-                    "points": _integer_or_none(value("PTS")),
-                    "rebounds": _integer_or_none(value("REB")),
-                    "assists": _integer_or_none(value("AST")),
-                    "turnovers": _integer_or_none(first_value("TO", "TOV")),
-                    "steals": _integer_or_none(value("STL")),
-                    "blocks": _integer_or_none(value("BLK")),
-                    "two_points_made": twos_made,
-                    "two_points_attempted": twos_attempted,
-                    "three_points_made": threes_made,
-                    "three_points_attempted": threes_attempted,
-                    "free_throws_made": free_throws_made,
-                    "free_throws_attempted": free_throws_attempted,
-                    "plus_minus": _signed_integer_or_none(value("+/-")),
-                }
+                ),
+                "three_points_made": threes_made,
+                "three_points_attempted": threes_attempted,
+                "free_throws_made": _integer_or_none(statistics.get("freeThrowsMade")),
+                "free_throws_attempted": _integer_or_none(
+                    statistics.get("freeThrowsAttempted")
+                ),
+                "plus_minus": _signed_integer_or_none(
+                    statistics.get("plusMinusPoints")
+                ),
+            }
     return None
 
 
@@ -1574,7 +1549,7 @@ def read_current_season_records(
         "as_of": latest_game_date,
         "through_date": through_date,
         "updated_at": latest_archive_time,
-        "source": "Immutable completed-game archive (ESPN scoreboard)",
+        "source": "Immutable completed-game archive (NBA official liveData)",
         "completed_game_ids": sorted(set(completed_game_ids)),
         "teams": sorted(records.values(), key=lambda item: str(item["team"])),
     }
@@ -2215,17 +2190,17 @@ def mirror_missing_frozen_pregame_snapshots(
     for game in games:
         if not isinstance(game, dict):
             continue
-        espn_game_id = str(game.get("espn_game_id", "")).strip()
-        if not espn_game_id:
+        game_id = str(game.get("game_id", "")).strip()
+        if not game_id:
             continue
-        source_path = source_root / "frozen" / f"{espn_game_id}.json"
-        target_path = target_root / "frozen" / f"{espn_game_id}.json"
+        source_path = source_root / "frozen" / f"{game_id}.json"
+        target_path = target_root / "frozen" / f"{game_id}.json"
         if target_path.is_file() or not source_path.is_file():
             continue
         frozen = json.loads(source_path.read_text())
         if not isinstance(frozen, dict):
             raise ValueError(f"Invalid frozen pregame record: {source_path}")
-        if str(frozen.get("espn_game_id", "")) != espn_game_id:
+        if str(frozen.get("game_id", "")) != game_id:
             raise ValueError(f"Frozen pregame game ID mismatch: {source_path}")
         status = frozen.get("status")
         state = status.get("state") if isinstance(status, dict) else None
@@ -2235,7 +2210,7 @@ def mirror_missing_frozen_pregame_snapshots(
             )
         _write_json_exclusive(target_path, frozen)
         if target_path.is_file():
-            mirrored.append(espn_game_id)
+            mirrored.append(game_id)
     return mirrored
 
 
@@ -2891,7 +2866,7 @@ def _integer_or_none(value: object) -> int | None:
 
 
 def _fetch_polymarket_moneyline_snapshot(
-    espn_payload: dict[str, object],
+    schedule_payload: dict[str, object],
     *,
     game_date: str,
     collected_at: datetime,
@@ -2909,19 +2884,33 @@ def _fetch_polymarket_moneyline_snapshot(
     specifications: list[dict[str, object]] = []
     unavailable: list[dict[str, object]] = []
     seen_games: set[str] = set()
-    for espn_event in espn_payload.get("events", []):
-        if not isinstance(espn_event, dict):
-            continue
-        competitions = espn_event.get("competitions", [])
-        if not competitions or not isinstance(competitions[0], dict):
-            continue
-        competitors = {
-            str(row.get("homeAway")): row
-            for row in competitions[0].get("competitors", [])
+    matchups = schedule_payload.get("games")
+    if isinstance(matchups, list):
+        normalized_matchups = [
+            (str(row.get("away_team", "")), str(row.get("home_team", "")))
+            for row in matchups
             if isinstance(row, dict)
-        }
-        home_team = _espn_team(competitors.get("home", {}))
-        away_team = _espn_team(competitors.get("away", {}))
+        ]
+    else:
+        normalized_matchups = []
+        for event in schedule_payload.get("events", []):
+            if not isinstance(event, dict):
+                continue
+            competitions = event.get("competitions", [])
+            if not competitions or not isinstance(competitions[0], dict):
+                continue
+            competitors = {
+                str(row.get("homeAway")): row
+                for row in competitions[0].get("competitors", [])
+                if isinstance(row, dict)
+            }
+            normalized_matchups.append(
+                (
+                    _espn_team(competitors.get("away", {})),
+                    _espn_team(competitors.get("home", {})),
+                )
+            )
+    for away_team, home_team in normalized_matchups:
         game_key = _prediction_market_game_key(away_team, home_team)
         if not home_team or not away_team or game_key in seen_games:
             continue
@@ -3433,12 +3422,12 @@ def _build_final_game_archive(
     home_score = _integer_or_none(game.get("home_score"))
     away_score = _integer_or_none(game.get("away_score"))
     if home_score is None or away_score is None:
-        raise ValueError(f"Final game {game.get('espn_game_id')} is missing a score")
+        raise ValueError(f"Final NBA game {game.get('game_id')} is missing a score")
     actual_home_margin = home_score - away_score
 
     projection = pregame.get("projection", {})
     if not isinstance(projection, dict) or projection.get("home_margin") is None:
-        raise ValueError(f"Frozen game {game.get('espn_game_id')} is missing its projection")
+        raise ValueError(f"Frozen NBA game {game.get('game_id')} is missing its projection")
     projected_home_margin = float(projection["home_margin"])
     model_side = home_team if projected_home_margin > 0.0 else away_team
     model_side_correct = (
@@ -3504,7 +3493,6 @@ def _build_final_game_archive(
         "season": PROJECTION_SEASON,
         "game_date": pacific_date(game.get("start_time")).isoformat(),
         "game_id": game.get("game_id"),
-        "espn_game_id": str(game.get("espn_game_id", "")),
         "start_time": game.get("start_time"),
         "away_team": away_team,
         "home_team": home_team,

@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
-nba-refresh-gestalt-schedule = "nba_lineup_model.web_api.win_projections:refresh_schedule_main"
+nba-refresh-gestalt-schedule = "nba_lineup_model.season.official_schedule_runtime:refresh_schedule_main"
 nba-watch-gestalt-live-scores = "nba_lineup_model.web_api.win_projections:live_score_watcher_main"
 nba-collect-odds-api = "nba_lineup_model.web_api.the_odds_api:main"
 nba-s3-lake-migration = "nba_lineup_model.storage.s3_lake:main"
