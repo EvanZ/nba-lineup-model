@@ -188,7 +188,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         state = get_evaluator()
         site_release = None
         site_release_root = os.environ.get("GESTALT_SITE_RELEASE_ROOT")
-        if site_release_root:
+        if site_release_root and (Path(site_release_root) / "latest.json").is_file():
             release_path = resolve_latest_dev_site_release(site_release_root)
             release_manifest = verify_dev_site_release(release_path)
             release_identity = release_manifest["identity"]
