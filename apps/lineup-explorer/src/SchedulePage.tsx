@@ -549,7 +549,6 @@ function SpreadLedgerView({ ledger, actualLedger }: { ledger: SpreadLedger; actu
     ? `${backToBackTeams.join(" & ")} ${backToBackTeams.length > 1 ? "are" : "is"} on a back-to-back`
     : "Neither team is on a back-to-back";
   const provenance = ledger.provenance;
-  const snapshotLabel = provenance.serving_bundle_sha256?.slice(0, 10) ?? "frozen pregame ledger";
   const provenanceTitle = [
     provenance.serving_bundle_sha256 ? `Serving bundle: ${provenance.serving_bundle_sha256}` : null,
     provenance.rating_state_sha256 ? `Rating state: ${provenance.rating_state_sha256}` : null,
@@ -572,7 +571,7 @@ function SpreadLedgerView({ ledger, actualLedger }: { ledger: SpreadLedger; actu
       <div className="result"><span>Home margin</span><strong>{homeTeam} {signedValue(ledger.home_margin, 1)}</strong>{actualLedger && <strong>{homeTeam} {signedValue(actualLedger.home_margin, 1)}</strong>}</div>
       <div className="result final"><span>Fair spread</span><strong>{homeTeam} {formatSpread(ledger.fair_home_spread)}</strong>{actualLedger && <strong>{homeTeam} {formatSpread(actualLedger.fair_home_spread)}</strong>}</div>
     </div>
-    <p title={provenanceTitle}>Frozen ratings through {provenance.rating_as_of ?? "unknown"} · coupled snapshot {snapshotLabel}{actualLedger ? " · actual column uses final NBA minutes with the same frozen ratings and context" : ""}</p>
+    <p title={provenanceTitle}>Frozen pregame ratings and minutes{actualLedger ? " · actual column uses final NBA minutes with the same frozen ratings and context" : ""}</p>
   </section>;
 }
 
