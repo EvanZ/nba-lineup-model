@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import pandas as pd
+
 from nba_lineup_model.season.current_serving import (
     resolve_latest_bundle,
     verify_serving_bundle,
@@ -47,6 +49,8 @@ def publish_dev_site_release(
     lineups_root: Path | str,
     schedule_state_dir: Path | str,
     catalog_path: Path | str,
+    preseason_rankings_path: Path | str,
+    preseason_profiles_path: Path | str,
     code_revision: str,
     api_validation: Mapping[str, object],
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
@@ -60,6 +64,8 @@ def publish_dev_site_release(
     lineups_root = Path(lineups_root).resolve()
     schedule_root = Path(schedule_state_dir).resolve()
     catalog = Path(catalog_path).resolve()
+    preseason_rankings = Path(preseason_rankings_path).resolve()
+    preseason_profiles = Path(preseason_profiles_path).resolve()
     output = Path(output_root).resolve()
 
     data_bundle, data_manifest = _resolved_pointer_bundle(
@@ -116,6 +122,18 @@ def publish_dev_site_release(
         raise ValueError("Code revision must be a full lowercase Git commit SHA")
     if not catalog.is_file():
         raise FileNotFoundError(f"Game catalog is missing: {catalog}")
+    if not preseason_rankings.is_file() or not preseason_profiles.is_file():
+        raise FileNotFoundError("Bound preseason rankings or profiles are missing")
+    rankings_frame = pd.read_parquet(preseason_rankings)
+    profiles_frame = pd.read_parquet(preseason_profiles)
+    ranking_ids = set(rankings_frame["player_id"].astype(int))
+    profile_ids = set(profiles_frame["player_id"].astype(int))
+    if ranking_ids != profile_ids:
+        raise ValueError("Bound preseason rankings and profiles use different players")
+    serving_state = pd.read_parquet(serving_bundle / "serving_state.parquet")
+    serving_ids = set(serving_state["player_id"].astype(int))
+    if ranking_ids != serving_ids:
+        raise ValueError("Bound preseason catalogs differ from the serving universe")
 
     identity = {
         "schema_version": SCHEMA_VERSION,
@@ -149,6 +167,13 @@ def publish_dev_site_release(
         "catalog": {
             "sha256": file_sha256(catalog),
             "path": catalog.as_posix(),
+        },
+        "preseason_catalog": {
+            "player_count": len(ranking_ids),
+            "rankings_sha256": file_sha256(preseason_rankings),
+            "rankings_path": preseason_rankings.as_posix(),
+            "profiles_sha256": file_sha256(preseason_profiles),
+            "profiles_path": preseason_profiles.as_posix(),
         },
         "api_validation": normalized_api,
     }
@@ -359,6 +384,8 @@ def _render_report(identity: Mapping[str, Any], release_sha: str) -> str:
             ("Lineups", identity["lineups"]["bundle_sha256"]),
             ("Schedule", identity["schedule"]["tree_sha256"]),
             ("Catalog", identity["catalog"]["sha256"]),
+            ("Preseason rankings", identity["preseason_catalog"]["rankings_sha256"]),
+            ("Preseason profiles", identity["preseason_catalog"]["profiles_sha256"]),
             ("Code", identity["code_revision"]),
         )
     )
@@ -428,6 +455,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--lineups-root", type=Path, required=True)
     parser.add_argument("--schedule-state-dir", type=Path, required=True)
     parser.add_argument("--catalog-path", type=Path, required=True)
+    parser.add_argument("--preseason-rankings-path", type=Path, required=True)
+    parser.add_argument("--preseason-profiles-path", type=Path, required=True)
     parser.add_argument("--code-revision", required=True)
     parser.add_argument("--api-root", required=True)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
@@ -446,6 +475,8 @@ def main() -> None:
         lineups_root=args.lineups_root,
         schedule_state_dir=args.schedule_state_dir,
         catalog_path=args.catalog_path,
+        preseason_rankings_path=args.preseason_rankings_path,
+        preseason_profiles_path=args.preseason_profiles_path,
         code_revision=args.code_revision,
         api_validation=validation,
         output_root=args.output_root,

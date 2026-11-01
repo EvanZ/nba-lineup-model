@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from nba_lineup_model.season import dev_site_release as subject
@@ -35,6 +36,8 @@ def _inputs(tmp_path: Path, monkeypatch):
     lineups_root = tmp_path / "lineups"
     schedule_root = tmp_path / "schedule"
     catalog = tmp_path / "games.parquet"
+    preseason_rankings = tmp_path / "preseason-rankings.parquet"
+    preseason_profiles = tmp_path / "preseason-profiles.parquet"
     for root in (data_root, model_root, serving_root, lineups_root):
         root.mkdir()
     data_bundle = data_root / "data-bundle"
@@ -56,6 +59,8 @@ def _inputs(tmp_path: Path, monkeypatch):
     schedule_final.mkdir(parents=True)
     (schedule_final / "game.summary.json").write_text(json.dumps({"game_id": "game-1"}))
     catalog.write_bytes(b"catalog")
+    pd.DataFrame({"player_id": [1]}).to_parquet(preseason_rankings, index=False)
+    pd.DataFrame({"player_id": [1]}).to_parquet(preseason_profiles, index=False)
     data_manifest = {
         "bundle_sha256": "d" * 64,
         "identity": {"game_date_pacific": "2026-10-31"},
@@ -108,7 +113,25 @@ def _inputs(tmp_path: Path, monkeypatch):
         "verify_current_season_lineup_bundle",
         lambda path: lineup_manifest,
     )
-    return data_root, model_root, serving_root, lineups_root, schedule_root, catalog
+    monkeypatch.setattr(
+        subject.pd,
+        "read_parquet",
+        lambda path: (
+            pd.DataFrame({"player_id": [1]})
+            if Path(path) in {preseason_rankings, preseason_profiles}
+            else pd.DataFrame({"player_id": [1]})
+        ),
+    )
+    return (
+        data_root,
+        model_root,
+        serving_root,
+        lineups_root,
+        schedule_root,
+        catalog,
+        preseason_rankings,
+        preseason_profiles,
+    )
 
 
 def test_dev_site_release_binds_all_selected_components(tmp_path: Path, monkeypatch) -> None:
@@ -120,6 +143,8 @@ def test_dev_site_release_binds_all_selected_components(tmp_path: Path, monkeypa
         lineups_root=inputs[3],
         schedule_state_dir=inputs[4],
         catalog_path=inputs[5],
+        preseason_rankings_path=inputs[6],
+        preseason_profiles_path=inputs[7],
         code_revision="a" * 40,
         api_validation=_api_validation(),
         output_root=tmp_path / "releases",
@@ -148,6 +173,8 @@ def test_dev_site_release_rejects_mixed_api_state(tmp_path: Path, monkeypatch) -
             lineups_root=inputs[3],
             schedule_state_dir=inputs[4],
             catalog_path=inputs[5],
+            preseason_rankings_path=inputs[6],
+            preseason_profiles_path=inputs[7],
             code_revision="a" * 40,
             api_validation=validation,
             output_root=tmp_path / "releases",

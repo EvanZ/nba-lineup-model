@@ -23,6 +23,7 @@ DEV_WEB_ROOT="${GESTALT_DEV_WEB_ROOT:-/var/www/nba-gestalt-dev}"
 PROD_SCHEDULE_ROOT="${GESTALT_PROD_SCHEDULE_ROOT:-/var/lib/nba-gestalt/schedule-serving/current}"
 DEV_DAILY_DATA_ROOT="${GESTALT_DEV_DAILY_DATA_ROOT:-$DEV_STATE_ROOT/daily-data-nba-v2}"
 DEV_DAILY_MODEL_ROOT="${GESTALT_DEV_DAILY_MODEL_ROOT:-$DEV_STATE_ROOT/daily-model-nba-v1}"
+DEV_ROSTER_POINTER="${GESTALT_DEV_ROSTER_POINTER:-$DEV_STATE_ROOT/in-season-rosters/latest.json}"
 FRONTEND_DIST="${GESTALT_DEV_FRONTEND_DIST:-}"
 
 test -d "$SOURCE_REPO/.git"
@@ -53,6 +54,15 @@ sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/site-releases"
 
 test -f "$DEV_DAILY_DATA_ROOT/latest.json"
 test -f "$DEV_DAILY_MODEL_ROOT/latest.json"
+test -f "$DEV_ROSTER_POINTER"
+
+DEV_PRESEASON_RANKINGS_PATH="$(jq -er '.artifacts.preseason_rankings' "$DEV_ROSTER_POINTER")"
+DEV_PRESEASON_PROFILES_PATH="$(jq -er '.artifacts.preseason_profiles' "$DEV_ROSTER_POINTER")"
+test -f "$DEV_PRESEASON_RANKINGS_PATH"
+test -f "$DEV_PRESEASON_PROFILES_PATH"
+printf 'GESTALT_PRESEASON_RANKINGS_PATH=%s\nGESTALT_PRESEASON_PROFILES_PATH=%s\n' \
+  "$DEV_PRESEASON_RANKINGS_PATH" \
+  "$DEV_PRESEASON_PROFILES_PATH" > "$DEV_STATE_ROOT/site-release.env"
 
 if [[ ! -d "$RELEASE_ROOT" ]]; then
   git -C "$SOURCE_REPO" worktree add --detach "$RELEASE_ROOT" "$DEV_REF"
@@ -101,6 +111,8 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
   GESTALT_CURRENT_SEASON_SERVING_ROOT="$DEV_STATE_ROOT/current-season-serving" \
   GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$DEV_STATE_ROOT/lineup-materialization-input" \
   GESTALT_SCHEDULE_STATE_DIR="$PROD_SCHEDULE_ROOT" \
+  GESTALT_PRESEASON_RANKINGS_PATH="$DEV_PRESEASON_RANKINGS_PATH" \
+  GESTALT_PRESEASON_PROFILES_PATH="$DEV_PRESEASON_PROFILES_PATH" \
     "$PROD_RELEASE/.venv/bin/python" \
     -m nba_lineup_model.modeling.current_season_lineup_materialization \
     --daily-data-root "$DEV_DAILY_DATA_ROOT" \
@@ -195,6 +207,8 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   --lineups-root "$DEV_STATE_ROOT/current-season-lineups" \
   --schedule-state-dir "$DEV_STATE_ROOT/schedule/current" \
   --catalog-path "$DEV_STATE_ROOT/catalog/games.parquet" \
+  --preseason-rankings-path "$DEV_PRESEASON_RANKINGS_PATH" \
+  --preseason-profiles-path "$DEV_PRESEASON_PROFILES_PATH" \
   --code-revision "$(git -C "$RELEASE_ROOT" rev-parse HEAD)" \
   --api-root http://127.0.0.1:8011 \
   --output-root "$DEV_STATE_ROOT/site-releases"

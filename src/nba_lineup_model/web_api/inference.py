@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import unicodedata
 from dataclasses import dataclass, field
@@ -519,6 +520,15 @@ class LineupEvaluator:
             constrained_split_ratings,
         )
         preseason_path = preseason_rankings_path(MODEL_ARTIFACT, run_id, PRESEASON_PREVIEW_SEASON)
+        configured_preseason_rankings = os.environ.get(
+            "GESTALT_PRESEASON_RANKINGS_PATH"
+        )
+        if configured_preseason_rankings:
+            preseason_path = Path(configured_preseason_rankings)
+            if not preseason_path.is_file():
+                raise FileNotFoundError(
+                    f"Configured preseason rankings are missing: {preseason_path}"
+                )
         preseason_rankings = (
             pd.read_parquet(preseason_path)
             if preseason_path.is_file()
@@ -535,11 +545,32 @@ class LineupEvaluator:
         preseason_profile_cache_path = preseason_profiles_path(
             MODEL_ARTIFACT, run_id, PRESEASON_PREVIEW_SEASON
         )
+        configured_preseason_profiles = os.environ.get(
+            "GESTALT_PRESEASON_PROFILES_PATH"
+        )
+        if bool(configured_preseason_rankings) != bool(configured_preseason_profiles):
+            raise LineupEvaluationError(
+                "Preseason rankings and profiles must be overridden together"
+            )
+        if configured_preseason_profiles:
+            preseason_profile_cache_path = Path(configured_preseason_profiles)
+            if not preseason_profile_cache_path.is_file():
+                raise FileNotFoundError(
+                    f"Configured preseason profiles are missing: "
+                    f"{preseason_profile_cache_path}"
+                )
         preseason_profiles = (
             pd.read_parquet(preseason_profile_cache_path)
             if preseason_profile_cache_path.is_file()
             else pd.DataFrame()
         )
+        if configured_preseason_rankings:
+            ranking_ids = set(preseason_rankings["player_id"].astype(int))
+            profile_ids = set(preseason_profiles["player_id"].astype(int))
+            if ranking_ids != profile_ids:
+                raise LineupEvaluationError(
+                    "Configured preseason rankings and profiles use different players"
+                )
         current_season = load_current_season_serving_catalog(preseason_rankings)
         current_lineups = (
             load_current_season_lineup_catalog(
