@@ -401,6 +401,18 @@ function reportTime(value?: string) {
   }).format(new Date(value));
 }
 
+function formatGameClock(value?: string | null) {
+  if (!value) return "";
+  const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/i.exec(value.trim());
+  if (!match) return value;
+  const minutes = Number(match[1] ?? 0) * 60 + Number(match[2] ?? 0);
+  const seconds = Number(match[3] ?? 0);
+  const secondsText = Number.isInteger(seconds)
+    ? String(seconds).padStart(2, "0")
+    : seconds.toFixed(1).padStart(4, "0");
+  return `${minutes}:${secondsText}`;
+}
+
 function liveStatus(game: ArchivedGame | undefined) {
   if (!game) return "Pregame";
   if (game.status.completed) return "Final";
@@ -408,7 +420,7 @@ function liveStatus(game: ArchivedGame | undefined) {
   if (game.status.description.toLowerCase().includes("halftime")) return "Halftime";
   const period = game.status.period ?? 0;
   const periodText = period <= 4 ? `Q${period}` : period === 5 ? "OT" : `${period - 4}OT`;
-  return `${periodText} · ${game.status.display_clock ?? ""}`.replace(/ · $/, "");
+  return `${periodText} · ${formatGameClock(game.status.display_clock)}`.replace(/ · $/, "");
 }
 
 function playersWithLatestStatuses(
