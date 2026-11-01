@@ -27,8 +27,6 @@ import pandas as pd
 from nba_lineup_model.modeling.current_season_serving_materialization import (
     _publication_exclusions,
 )
-from nba_lineup_model.modeling.in_season_minutes_monitor import _rating_state_by_date
-from nba_lineup_model.season.slate_time import summary_slate_date
 from nba_lineup_model.web_api.win_projections import (
     _build_final_game_archive,
     _game_rotation,
@@ -38,7 +36,6 @@ from nba_lineup_model.web_api.win_projections import (
 DEFAULT_SOURCE_ROOT = Path("/var/lib/nba-gestalt/schedule")
 DEFAULT_RATING_ROOT = Path("/var/lib/nba-gestalt/in-season-nail")
 DEFAULT_MINUTES_ROOT = Path("/var/lib/nba-gestalt/in-season-minutes")
-DEFAULT_RATING_COVERAGE_PATH = Path("/var/lib/nba-gestalt/cdn/coverage.json")
 DEFAULT_OUTPUT_ROOT = Path("/var/lib/nba-gestalt-dev/schedule")
 MODEL_TRACK = "updated_ratings_updated_minutes"
 EVALUATION_CELL = "updated_updated"
@@ -65,26 +62,10 @@ def _rating_trajectory_path(
     return path
 
 
-def _rating_summary_path(
-    rating_root: Path,
-    publication: dict[str, Any],
-    *,
-    through_date: str,
-) -> Path:
-    run_id = publication.get("dagster_run_id")
-    if not isinstance(run_id, str) or not run_id:
-        raise ValueError("Rating publication Dagster run ID is missing")
-    path = rating_root / "runs" / f"through_date={through_date}" / run_id / "summary.json"
-    if not path.is_file():
-        raise FileNotFoundError(f"Rating summary artifact is missing: {path}")
-    return path
-
-
 def materialize_current_season_schedule(
     *,
     source_root: Path | str = DEFAULT_SOURCE_ROOT,
     rating_root: Path | str = DEFAULT_RATING_ROOT,
-    rating_coverage_path: Path | str = DEFAULT_RATING_COVERAGE_PATH,
     minutes_root: Path | str = DEFAULT_MINUTES_ROOT,
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
     current_forecast_response: dict[str, Any] | None = None,
@@ -93,7 +74,6 @@ def materialize_current_season_schedule(
 
     source_root = Path(source_root)
     rating_root = Path(rating_root)
-    rating_coverage_path = Path(rating_coverage_path)
     minutes_root = Path(minutes_root)
     output_root = Path(output_root)
     rating_publication_path = rating_root / "latest.json"
@@ -118,25 +98,6 @@ def materialize_current_season_schedule(
         rating_publication,
         "player_game_trajectory",
     )
-    rating_summary_path = _rating_summary_path(
-        rating_root,
-        rating_publication,
-        through_date=through_date,
-    )
-    _verify_published_artifact(rating_summary_path, rating_publication, "summary")
-    rating_summary = _load_object(rating_summary_path)
-    rating_method = rating_summary.get("method")
-    prior_possessions = (
-        rating_method.get("prior_equivalent_possessions")
-        if isinstance(rating_method, dict)
-        else None
-    )
-    if prior_possessions is None or float(prior_possessions) <= 0.0:
-        raise ValueError("Rating summary has no valid prior-equivalent possessions")
-    if not rating_coverage_path.is_file():
-        raise FileNotFoundError(
-            f"Rating source coverage artifact is missing: {rating_coverage_path}"
-        )
     if current_forecast_response is not None:
         forecast = current_forecast_response.get("win_projection")
         if not isinstance(forecast, dict) or str(forecast.get("as_of")) != through_date:
@@ -162,9 +123,6 @@ def materialize_current_season_schedule(
         "source_schedule_sha256": _schedule_source_sha256(source_root),
         "ratings_manifest_sha256": _sha256(rating_publication_path),
         "rating_trajectory_sha256": _sha256(rating_trajectory_path),
-        "rating_summary_sha256": _sha256(rating_summary_path),
-        "rating_coverage_sha256": _sha256(rating_coverage_path),
-        "rating_prior_equivalent_possessions": float(prior_possessions),
         "minutes_manifest_sha256": _sha256(minutes_publication_path),
         "game_evaluation_sha256": _sha256(game_path),
         "player_evaluation_sha256": _sha256(player_path),
@@ -192,8 +150,6 @@ def materialize_current_season_schedule(
                 rating_publication=rating_publication,
                 rating_publication_path=rating_publication_path,
                 rating_trajectory_path=rating_trajectory_path,
-                rating_coverage_path=rating_coverage_path,
-                rating_prior_possessions=float(prior_possessions),
                 minutes_publication=minutes_publication,
                 minutes_publication_path=minutes_publication_path,
                 identity=identity,
@@ -219,8 +175,6 @@ def _build_release(
     rating_publication: dict[str, Any],
     rating_publication_path: Path,
     rating_trajectory_path: Path,
-    rating_coverage_path: Path,
-    rating_prior_possessions: float,
     minutes_publication: dict[str, Any],
     minutes_publication_path: Path,
     identity: str,
@@ -263,38 +217,7 @@ def _build_release(
     )
     games["game_id"] = games["game_id"].map(_normalize_game_id)
     players["game_id"] = players["game_id"].map(_normalize_game_id)
-    summaries = _summary_paths_by_game_id(source_root / "final")
-    rating_summaries = [
-        _load_object(path)
-        for path in summaries.values()
-    ]
-    rating_summaries = [
-        row
-        for row in rating_summaries
-        if row.get("final", {}).get("status", {}).get("completed")
-        and str(row.get("game_id", "")).startswith("002")
-        and summary_slate_date(row) <= datetime.fromisoformat(
-            str(minutes_publication["through_date"])
-        ).date()
-    ]
-    rating_summaries.sort(
-        key=lambda row: (
-            summary_slate_date(row),
-            str(row["pregame"]["start_time"]),
-            str(row["game_id"]),
-        )
-    )
-    rating_by_date = _rating_state_by_date(
-        rating_summaries,
-        rating_cache_root=rating_publication_path.parent,
-        rating_coverage_path=rating_coverage_path,
-        prior_possessions=rating_prior_possessions,
-    )
-    players = _attach_strict_forward_ratings(
-        players,
-        rating_trajectory,
-        rating_by_date=rating_by_date,
-    )
+    players = _attach_strict_forward_ratings(players, rating_trajectory)
     _validate_player_evaluation(players)
     player_groups = {
         game_id: frame.copy()
@@ -321,6 +244,7 @@ def _build_release(
         if current_forecast.get("back_to_back") is not None
         else None
     )
+    summaries = _summary_paths_by_game_id(source_root / "final")
     replayed: list[dict[str, Any]] = []
     replayed_game_ids: set[str] = set()
     skipped: list[dict[str, str]] = []
@@ -892,25 +816,31 @@ def _validate_player_evaluation(players: pd.DataFrame) -> None:
 def _attach_strict_forward_ratings(
     players: pd.DataFrame,
     trajectory: pd.DataFrame,
-    *,
-    rating_by_date: dict[Any, dict[int, float]],
 ) -> pd.DataFrame:
-    """Attach the exact date-batched rating available before each game."""
+    """Attach the exact rating available before each game in the replay."""
 
     _require_columns(
         trajectory,
         {
+            "game_id",
+            "game_date",
             "player_id",
             "preseason_rating",
+            "updated_rating",
         },
         label="player rating trajectory",
     )
-    _require_columns(players, {"game_date"}, label="player evaluation")
     history = trajectory.copy()
+    history["game_id"] = history["game_id"].map(_normalize_game_id)
+    history["game_date"] = pd.to_datetime(history["game_date"], errors="raise").dt.date
     history["player_id"] = pd.to_numeric(
         history["player_id"], errors="raise"
     ).astype(int)
-    preseason_by_player: dict[int, float] = {}
+    history = history.sort_values(
+        ["player_id", "game_date", "game_id"], kind="stable"
+    )
+
+    rating_rows: list[dict[str, object]] = []
     for player_id, player_history in history.groupby("player_id", sort=False):
         preseason = pd.to_numeric(
             player_history["preseason_rating"], errors="raise"
@@ -919,41 +849,56 @@ def _attach_strict_forward_ratings(
             preseason, preseason[0], rtol=0.0, atol=1e-10
         ):
             raise ValueError(f"Inconsistent preseason rating for player {player_id}")
-        preseason_by_player[int(player_id)] = float(preseason[0])
+        current_rating = float(preseason[0])
+        for game_date, slate in player_history.groupby("game_date", sort=True):
+            del game_date
+            for row in slate.itertuples(index=False):
+                rating_rows.append(
+                    {
+                        "game_id": str(row.game_id),
+                        "player_id": int(player_id),
+                        "trajectory_pregame_nail": current_rating,
+                    }
+                )
+            postgame = pd.to_numeric(
+                slate["updated_rating"], errors="raise"
+            ).to_numpy(dtype=float)
+            if not np.isfinite(postgame).all() or not np.allclose(
+                postgame, postgame[0], rtol=0.0, atol=1e-10
+            ):
+                raise ValueError(
+                    f"Rating trajectory is not slate-batched for player {player_id}"
+                )
+            current_rating = float(postgame[0])
 
+    lookup = pd.DataFrame(rating_rows)
+    if lookup.duplicated(["game_id", "player_id"]).any():
+        raise ValueError("Player rating trajectory contains duplicate game rows")
     output = players.copy()
     output["player_id"] = pd.to_numeric(output["player_id"], errors="raise").astype(int)
-    output["rating_game_date"] = pd.to_datetime(
-        output["game_date"], errors="raise"
-    ).dt.date
-    output["reconstructed_pregame_nail"] = [
-        (
-            preseason_by_player[player_id]
-            + rating_by_date.get(game_date, {}).get(player_id, 0.0)
-        )
-        if player_id in preseason_by_player and game_date in rating_by_date
-        else np.nan
-        for player_id, game_date in zip(
-            output["player_id"], output["rating_game_date"], strict=True
-        )
-    ]
+    output = output.merge(
+        lookup,
+        how="left",
+        on=["game_id", "player_id"],
+        validate="many_to_one",
+    )
     if "pregame_nail" in output:
         published = pd.to_numeric(output["pregame_nail"], errors="coerce")
-        comparable = published.notna() & output["reconstructed_pregame_nail"].notna()
+        comparable = published.notna() & output["trajectory_pregame_nail"].notna()
         if comparable.any() and not np.allclose(
             published.loc[comparable].to_numpy(dtype=float),
-            output.loc[comparable, "reconstructed_pregame_nail"].to_numpy(dtype=float),
+            output.loc[comparable, "trajectory_pregame_nail"].to_numpy(dtype=float),
             rtol=0.0,
             atol=1e-8,
         ):
             raise ValueError(
-                "Player evaluation ratings do not match the immutable date-batched state"
+                "Player evaluation ratings do not match the immutable trajectory"
             )
         output["pregame_nail"] = published.fillna(
-            output["reconstructed_pregame_nail"]
+            output["trajectory_pregame_nail"]
         )
     else:
-        output["pregame_nail"] = output["reconstructed_pregame_nail"]
+        output["pregame_nail"] = output["trajectory_pregame_nail"]
     missing = output["pregame_nail"].isna() & pd.to_numeric(
         output["updated_projected_minutes"], errors="raise"
     ).gt(1e-9)
@@ -966,7 +911,7 @@ def _attach_strict_forward_ratings(
             "Positive projected minutes lack a strict-forward player rating: "
             + rows.to_dict(orient="records").__repr__()
         )
-    return output.drop(columns=["rating_game_date", "reconstructed_pregame_nail"])
+    return output.drop(columns=["trajectory_pregame_nail"])
 
 
 def _updated_team_minutes(
@@ -1280,11 +1225,6 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, default=DEFAULT_SOURCE_ROOT)
     parser.add_argument("--rating-root", type=Path, default=DEFAULT_RATING_ROOT)
-    parser.add_argument(
-        "--rating-coverage-path",
-        type=Path,
-        default=DEFAULT_RATING_COVERAGE_PATH,
-    )
     parser.add_argument("--minutes-root", type=Path, default=DEFAULT_MINUTES_ROOT)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--catalog-path", type=Path, default=Path("data/catalog/games.parquet"))
@@ -1309,7 +1249,6 @@ def main() -> None:
     path = materialize_current_season_schedule(
         source_root=args.source_root,
         rating_root=args.rating_root,
-        rating_coverage_path=args.rating_coverage_path,
         minutes_root=args.minutes_root,
         output_root=args.output_root,
         current_forecast_response=current_forecast_response,

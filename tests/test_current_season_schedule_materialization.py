@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -207,7 +206,6 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
         [
             {
                 "game_id": game_id,
-                "game_date": "2026-10-20",
                 "team": "BOS",
                 "player_id": 1,
                 "player_name": "Away Player",
@@ -216,7 +214,6 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
             },
             {
                 "game_id": game_id,
-                "game_date": "2026-10-20",
                 "team": "DET",
                 "player_id": 2,
                 "player_name": "Home Player",
@@ -250,16 +247,6 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
     )
     rating_trajectory_path = rating_run_root / "player_game_trajectory.parquet"
     rating_trajectory.to_parquet(rating_trajectory_path, index=False)
-    rating_summary_path = rating_run_root / "summary.json"
-    _write_json(
-        rating_summary_path,
-        {
-            "method": {"prior_equivalent_possessions": 6000.0},
-            "excluded_contributions": [],
-        },
-    )
-    rating_coverage_path = tmp_path / "cdn" / "coverage.json"
-    _write_json(rating_coverage_path, {"games": {}})
     common = {
         "schema_version": 1,
         "season": "2026-27",
@@ -278,7 +265,6 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
                     "s3://test/player_game_trajectory-"
                     f"{_sha256(rating_trajectory_path)}.parquet"
                 ),
-                "summary": f"s3://test/summary-{_sha256(rating_summary_path)}.json",
             },
         },
     )
@@ -301,7 +287,6 @@ def test_materializes_strict_forward_schedule_without_mutating_source(
     release = materialize_current_season_schedule(
         source_root=source,
         rating_root=ratings,
-        rating_coverage_path=rating_coverage_path,
         minutes_root=minutes,
         output_root=output,
         current_forecast_response={
@@ -440,18 +425,9 @@ def test_strict_forward_rating_is_frozen_before_each_game() -> None:
         ]
     )
 
-    result = _attach_strict_forward_ratings(
-        players,
-        trajectory,
-        rating_by_date={
-            date(2026, 10, 20): {201939: 0.0},
-            # The global solve can move Curry on an off day for GSW, so the
-            # exact date state need not equal his last team-game trajectory.
-            date(2026, 10, 22): {201939: 0.15},
-        },
-    )
+    result = _attach_strict_forward_ratings(players, trajectory)
 
-    assert result["pregame_nail"].tolist() == [1.5, 1.65]
+    assert result["pregame_nail"].tolist() == [1.5, 1.7]
 
 
 def test_schedule_source_identity_changes_when_a_final_is_added(tmp_path: Path) -> None:
