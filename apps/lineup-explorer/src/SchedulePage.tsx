@@ -784,8 +784,8 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
 
       {injuryReport && displayedMinutes && <details className="schedule-assumptions">
         <summary>
-          <span>Rotation &amp; injury assumptions</span>
-          <small>{pendingReportTeams.length ? `${pendingReportTeams.join(" & ")} pending · ${injuryReport.assumptions.length} listed` : `${injuryReport.assumptions.length} listed`} · NBA report {reportTime(injuryReport.published_at)}</small>
+          <span>{spreadLedger ? "Rotation, ratings & spread ledger" : "Rotation & injury assumptions"}</span>
+          <small>{pendingReportTeams.length ? `${pendingReportTeams.join(" & ")} pending · ${injuryReport.assumptions.length} listed` : `${injuryReport.assumptions.length} listed`} · NBA report {reportTime(injuryReport.published_at)}{spreadLedger ? " · ledger available" : ""}</small>
         </summary>
         <div className="schedule-assumptions-body">
           {pendingReportTeams.length > 0 && <p className="schedule-report-warning"><strong>{pendingReportTeams.join(" & ")} report coverage is incomplete.</strong> Filed player statuses are preserved below; players not listed in the report remain unknown and retain their frozen baseline estimates.</p>}
@@ -797,11 +797,11 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
             <strong>{game.home_team} {formatSpread(-retrospective.home_margin)}</strong>
             <small>{game.home_team} {(retrospective.home_win_probability * 100).toFixed(0)}% · uses final minutes, not a pregame prediction</small>
           </div>}
+          {spreadLedger && <SpreadLedgerView ledger={spreadLedger} />}
           <div className="schedule-rotations">
             <RotationTable team={game.away_team} players={displayedMinutes.away} teamLedger={spreadLedger?.away} actualPlayers={retrospective?.actual_minutes.away} reportStatus={injuryReport.team_reports?.[game.away_team]?.status} />
             <RotationTable team={game.home_team} players={displayedMinutes.home} teamLedger={spreadLedger?.home} actualPlayers={retrospective?.actual_minutes.home} reportStatus={injuryReport.team_reports?.[game.home_team]?.status} />
           </div>
-          {spreadLedger && <SpreadLedgerView ledger={spreadLedger} />}
           <a href={injuryReport.source_url} target="_blank" rel="noreferrer">Open official NBA injury report</a>
         </div>
       </details>}
