@@ -1,0 +1,288 @@
+from __future__ import annotations
+
+import copy
+import json
+from datetime import UTC, datetime
+
+import pytest
+
+from nba_lineup_model.season.official_schedule_runtime import (
+    _normalize_official_board,
+    _publish_board,
+)
+
+GAME_DATE = "2026-11-01"
+GAME_ID = "0022600100"
+MATCHUP = "AAA@BBB"
+START = "2026-11-01T02:00:00Z"
+
+
+def _forecast(*, home_star_rating: float = 2.0) -> dict[str, object]:
+    players = [
+        (1, "Away One", "AAA", 30.0, 1.0),
+        (2, "Away Two", "AAA", 20.0, 0.0),
+        (3, "Away Three", "AAA", 10.0, -1.0),
+        (4, "Home Star", "BBB", 30.0, home_star_rating),
+        (5, "Home Two", "BBB", 20.0, 1.0),
+        (6, "Home Three", "BBB", 10.0, 0.0),
+    ]
+    return {
+        "win_projection": {
+            "model": "test-model",
+            "model_track": "updated_ratings_updated_minutes",
+            "state_kind": "in_season_updated",
+            "as_of": "2026-10-31",
+            "serving_bundle_sha256": "f" * 64,
+            "home_court": 2.0,
+            "back_to_back": -1.0,
+            "win_probability_scale": 0.2,
+            "scheduled_games": [
+                {
+                    "game_id": GAME_ID,
+                    "home_back_to_back": 1,
+                    "away_back_to_back": 0,
+                }
+            ],
+        },
+        "minutes": {
+            "initial_rotation_size": 3,
+            "projection_provenance": {
+                "schema_version": 1,
+                "serving_bundle_sha256": "f" * 64,
+                "rating_state_sha256": "a" * 64,
+                "minutes_state_sha256": "b" * 64,
+                "rating_as_of": "2026-10-31",
+                "as_of_cutoff_time": "2026-11-01T07:00:00Z",
+            },
+            "players": [
+                {
+                    "player_id": player_id,
+                    "player_name": player_name,
+                    "team": team,
+                    "conditional_minutes_per_game": conditional_minutes,
+                    "projected_nail": rating,
+                }
+                for player_id, player_name, team, conditional_minutes, rating in players
+            ],
+        },
+    }
+
+
+def _injury_report(
+    *,
+    home_star_status: str | None = None,
+    submitted: bool = True,
+    published_at: str = "2026-11-01T20:00:00-04:00",
+) -> dict[str, object]:
+    report_status = "submitted" if submitted else "not_yet_submitted"
+    players: list[dict[str, object]] = []
+    if home_star_status is not None:
+        players.append(
+            {
+                "player_name": "Home Star",
+                "team": "BBB",
+                "status": home_star_status,
+                "reason": "Test injury",
+                "play_probability": {
+                    "Out": 0.0,
+                    "Questionable": 0.5,
+                }[home_star_status],
+                "game_date": GAME_DATE,
+                "matchup": MATCHUP,
+            }
+        )
+    scoped = {
+        "AAA": {"status": report_status},
+        "BBB": {"status": report_status},
+    }
+    return {
+        "source_url": "https://official.example/injury.pdf",
+        "published_at": published_at,
+        "players": players,
+        "team_reports": scoped,
+        "game_team_reports": {f"{GAME_DATE}|{MATCHUP}": scoped},
+    }
+
+
+def _board(
+    *,
+    collected_at: datetime,
+    home_star_status: str | None = None,
+    submitted: bool = True,
+    artifact_character: str = "c",
+    home_star_rating: float = 2.0,
+) -> dict[str, object]:
+    return _normalize_official_board(
+        games=[
+            {
+                "game_id": GAME_ID,
+                "start_time": START,
+                "away_team": "AAA",
+                "home_team": "BBB",
+            }
+        ],
+        scoreboard={},
+        forecast_response=_forecast(home_star_rating=home_star_rating),
+        injury_report=_injury_report(
+            home_star_status=home_star_status,
+            submitted=submitted,
+        ),
+        bookmaker_lines={},
+        prediction_markets={},
+        game_date=GAME_DATE,
+        collected_at=collected_at,
+        catalog_sha256="d" * 64,
+        injury_artifact={"sha256": artifact_character * 64},
+    )
+
+
+def test_player_ledger_exactly_reproduces_existing_spread_math() -> None:
+    payload = _board(collected_at=datetime(2026, 11, 1, 1, 0, tzinfo=UTC))
+    game = payload["games"][0]
+    projection = game["projection"]
+    ledger = projection["ledger"]
+
+    for side in ("away", "home"):
+        team = ledger[side]
+        assert team["projected_minutes"] == pytest.approx(240.0)
+        assert sum(
+            row["expected_contribution"] for row in team["players"]
+        ) == pytest.approx(team["team_strength"], abs=1e-12)
+        for row in team["players"]:
+            assert row["expected_contribution"] == pytest.approx(
+                row["projected_minutes"] / 48.0 * row["frozen_nail"],
+                abs=1e-12,
+            )
+
+    expected_margin = (
+        ledger["home"]["team_strength"]
+        - ledger["away"]["team_strength"]
+        + 2.0
+        - 1.0
+    )
+    assert ledger["home_margin"] == pytest.approx(expected_margin, abs=1e-12)
+    assert projection["home_margin"] == pytest.approx(expected_margin, abs=1e-12)
+    assert projection["fair_home_spread"] == pytest.approx(-expected_margin)
+    assert ledger["provenance"]["rating_state_sha256"] == "a" * 64
+    assert ledger["provenance"]["minutes_state_sha256"] == "b" * 64
+    assert ledger["provenance"]["injury_report_sha256"] == "c" * 64
+
+
+def test_injury_probability_reallocates_the_whole_team_and_remains_auditable() -> None:
+    questionable = _board(
+        collected_at=datetime(2026, 11, 1, 1, 0, tzinfo=UTC),
+        home_star_status="Questionable",
+    )["games"][0]
+    out = _board(
+        collected_at=datetime(2026, 11, 1, 1, 5, tzinfo=UTC),
+        home_star_status="Out",
+        artifact_character="e",
+    )["games"][0]
+
+    questionable_players = {
+        row["player_name"]: row
+        for row in questionable["projection"]["ledger"]["home"]["players"]
+    }
+    out_players = {
+        row["player_name"]: row
+        for row in out["projection"]["ledger"]["home"]["players"]
+    }
+    assert questionable_players["Home Star"]["play_probability"] == 0.5
+    assert out_players["Home Star"]["play_probability"] == 0.0
+    assert out_players["Home Star"]["projected_minutes"] == 0.0
+    assert out_players["Home Two"]["projected_minutes"] > questionable_players[
+        "Home Two"
+    ]["projected_minutes"]
+    assert sum(row["projected_minutes"] for row in out_players.values()) == pytest.approx(
+        240.0
+    )
+    assert out["projection"]["home_margin"] != questionable["projection"][
+        "home_margin"
+    ]
+
+
+def test_report_pending_is_unknown_not_available() -> None:
+    game = _board(
+        collected_at=datetime(2026, 11, 1, 1, 0, tzinfo=UTC),
+        submitted=False,
+    )["games"][0]
+
+    players = game["projection"]["ledger"]["home"]["players"]
+    assert {row["status"] for row in players} == {"Report pending"}
+    assert {row["play_probability"] for row in players} == {None}
+    assert sum(row["projected_minutes"] for row in players) == pytest.approx(240.0)
+
+
+def test_latest_valid_pre_tip_candidate_freezes_and_post_tip_update_cannot_mutate(
+    tmp_path,
+) -> None:
+    first = _board(
+        collected_at=datetime(2026, 11, 1, 1, 20, tzinfo=UTC),
+        home_star_status="Questionable",
+    )
+    first_result = _publish_board(
+        first,
+        state_root=tmp_path,
+        s3_uri=None,
+        collected_at=datetime(2026, 11, 1, 1, 20, tzinfo=UTC),
+    )
+    assert first_result["newly_published_candidate_count"] == 1
+    assert first_result["newly_frozen_game_count"] == 0
+    assert not (tmp_path / "frozen" / f"{GAME_ID}.json").exists()
+
+    final_pregame = _board(
+        collected_at=datetime(2026, 11, 1, 1, 55, tzinfo=UTC),
+        home_star_status="Out",
+        artifact_character="e",
+        home_star_rating=2.5,
+    )
+    _publish_board(
+        final_pregame,
+        state_root=tmp_path,
+        s3_uri=None,
+        collected_at=datetime(2026, 11, 1, 1, 55, tzinfo=UTC),
+    )
+
+    live = copy.deepcopy(final_pregame)
+    live["games"][0]["status"] = {
+        "state": "in",
+        "completed": False,
+        "description": "Q1",
+    }
+    freeze_result = _publish_board(
+        live,
+        state_root=tmp_path,
+        s3_uri=None,
+        collected_at=datetime(2026, 11, 1, 2, 1, tzinfo=UTC),
+    )
+    assert freeze_result["newly_frozen_game_count"] == 1
+    frozen_path = tmp_path / "frozen" / f"{GAME_ID}.json"
+    frozen = json.loads(frozen_path.read_text())
+    frozen_bytes = frozen_path.read_bytes()
+    assert frozen["freeze_policy"] == "latest valid pre-tip candidate"
+    assert frozen["pregame_captured_at"] == "2026-11-01T01:55:00Z"
+    assert frozen["injury_report"]["artifact_sha256"] == "e" * 64
+    frozen_home = {
+        row["player_name"]: row
+        for row in frozen["projection"]["ledger"]["home"]["players"]
+    }
+    assert frozen_home["Home Star"]["frozen_nail"] == pytest.approx(2.5)
+
+    changed_after_tip = _board(
+        collected_at=datetime(2026, 11, 1, 2, 10, tzinfo=UTC),
+        home_star_status=None,
+        artifact_character="9",
+        home_star_rating=9.0,
+    )
+    changed_after_tip["games"][0]["status"] = live["games"][0]["status"]
+    _publish_board(
+        changed_after_tip,
+        state_root=tmp_path,
+        s3_uri=None,
+        collected_at=datetime(2026, 11, 1, 2, 10, tzinfo=UTC),
+    )
+
+    assert frozen_path.read_bytes() == frozen_bytes
+    latest = json.loads((tmp_path / "latest" / f"{GAME_DATE}.json").read_text())
+    assert latest["games"][0]["projection"] == frozen["projection"]
+    assert latest["games"][0]["injury_report"] == frozen["injury_report"]

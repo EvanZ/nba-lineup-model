@@ -372,7 +372,13 @@ def refresh_schedule_op(context: OpExecutionContext) -> dict[str, object]:
         {
             "archived_days": int(payload["archived_day_count"]),
             "games": int(payload["game_count"]),
+            "newly_published_candidates": int(
+                payload["newly_published_candidate_count"]
+            ),
             "newly_frozen_games": int(payload["newly_frozen_game_count"]),
+            "missing_pregame_candidates": len(
+                payload["missing_pregame_candidate_game_ids"]
+            ),
             "provider_fallbacks": 0,
         }
     )
@@ -421,6 +427,87 @@ yesterday_finalization_schedule = ScheduleDefinition(
     default_status=SCHEDULE_DEFAULT_STATUS,
     description="Revisit yesterday's board overnight until late games are final.",
 )
+
+
+def active_pregame_projection_date(
+    *,
+    state_dir: Path | str,
+    now: datetime | None = None,
+    lead_time: timedelta = timedelta(minutes=45),
+) -> str | None:
+    """Return a slate with a game approaching tipoff inside a bounded window."""
+
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    eastern_date = current.astimezone(EASTERN).date()
+    state_root = Path(state_dir)
+    for game_date in (
+        (eastern_date - timedelta(days=1)).isoformat(),
+        eastern_date.isoformat(),
+        (eastern_date + timedelta(days=1)).isoformat(),
+    ):
+        path = state_root / "latest" / f"{game_date}.json"
+        if not path.is_file():
+            continue
+        payload = json.loads(path.read_text())
+        games = payload.get("games", []) if isinstance(payload, dict) else []
+        future_starts = sorted(
+            datetime.fromisoformat(str(game["start_time"]).replace("Z", "+00:00"))
+            for game in games
+            if isinstance(game, dict)
+            and game.get("start_time")
+            and str(game.get("status", {}).get("state", "pre")) == "pre"
+            and datetime.fromisoformat(
+                str(game["start_time"]).replace("Z", "+00:00")
+            )
+            > current
+        )
+        if future_starts and future_starts[0] - lead_time <= current:
+            return game_date
+    return None
+
+
+@sensor(
+    name="pregame_projection_window",
+    job=refresh_schedule_job,
+    minimum_interval_seconds=60,
+    default_status=SENSOR_DEFAULT_STATUS,
+    description=(
+        "Refresh official injuries and projection candidates every five minutes only "
+        "during the 45 minutes before each tipoff."
+    ),
+)
+def pregame_projection_sensor(
+    context: SensorEvaluationContext,
+) -> RunRequest | SkipReason:
+    now = datetime.now(UTC)
+    game_date = active_pregame_projection_date(state_dir=_state_dir(), now=now)
+    if game_date is None:
+        return SkipReason("No game is within its bounded pregame projection window")
+    inflight = context.instance.get_runs(
+        filters=RunsFilter(
+            job_name="refresh_schedule_window",
+            statuses=(
+                DagsterRunStatus.QUEUED,
+                DagsterRunStatus.STARTING,
+                DagsterRunStatus.STARTED,
+                DagsterRunStatus.CANCELING,
+            ),
+        ),
+        limit=1,
+    )
+    if inflight:
+        return SkipReason(
+            f"Schedule refresh already queued or running: {inflight[0].run_id}"
+        )
+    interval_bucket = int(now.timestamp() // 300)
+    return RunRequest(
+        run_key=f"pregame:{game_date}:{interval_bucket}",
+        run_config=_schedule_run_config(start_date=game_date, days_ahead=0),
+        tags={
+            WORKLOAD_TAG: "pregame_projection",
+            "gestalt/game_date": game_date,
+        },
+    )
 
 
 @op(
@@ -2435,6 +2522,7 @@ defs = Definitions(
         daily_lake_health_schedule,
     ],
     sensors=[
+        pregame_projection_sensor,
         live_score_sensor,
         completed_game_cdn_play_by_play_sensor,
         in_season_nail_production_sensor,

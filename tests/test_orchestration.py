@@ -23,6 +23,7 @@ from nba_lineup_model.orchestration.definitions import (
     PACIFIC,
     _release_root,
     active_live_game_date,
+    active_pregame_projection_date,
     cdn_morning_reconciliation_schedule,
     completed_game_cdn_play_by_play_sensor,
     completed_game_stats_v3_sensor,
@@ -37,6 +38,7 @@ from nba_lineup_model.orchestration.definitions import (
     live_score_sensor,
     materialize_current_season_lineups_job,
     nba_market_odds_schedule,
+    pregame_projection_sensor,
     promote_current_season_serving_job,
     reconcile_in_season_rosters_job,
     schedule_refresh_schedule,
@@ -91,6 +93,35 @@ def test_live_window_only_returns_unfinished_active_slate(tmp_path: Path) -> Non
     assert active_live_game_date(state_dir=tmp_path, now=now) is None
 
 
+def test_pregame_projection_window_is_bounded_to_45_minutes(tmp_path: Path) -> None:
+    game_date = "2026-10-24"
+    _write_slate(
+        tmp_path,
+        game_date=game_date,
+        start_time="2026-10-24T22:30:00Z",
+        state="pre",
+    )
+
+    assert (
+        active_pregame_projection_date(
+            state_dir=tmp_path,
+            now=datetime(2026, 10, 24, 21, 44, tzinfo=UTC),
+        )
+        is None
+    )
+    assert active_pregame_projection_date(
+        state_dir=tmp_path,
+        now=datetime(2026, 10, 24, 21, 45, tzinfo=UTC),
+    ) == game_date
+    assert (
+        active_pregame_projection_date(
+            state_dir=tmp_path,
+            now=datetime(2026, 10, 24, 22, 30, tzinfo=UTC),
+        )
+        is None
+    )
+
+
 def test_live_window_recovers_completed_game_missing_final_audit(tmp_path: Path) -> None:
     now = datetime(2026, 10, 24, 23, 0, tzinfo=UTC)
     game_date = "2026-10-24"
@@ -101,7 +132,7 @@ def test_live_window_recovers_completed_game_missing_final_audit(tmp_path: Path)
             {
                 "games": [
                     {
-                        "espn_game_id": "401909860",
+                        "game_id": "0022600100",
                         "start_time": "2026-10-24T22:30:00Z",
                         "status": {"state": "post", "completed": True},
                     }
@@ -109,7 +140,7 @@ def test_live_window_recovers_completed_game_missing_final_audit(tmp_path: Path)
             }
         )
     )
-    frozen = tmp_path / "frozen" / "401909860.json"
+    frozen = tmp_path / "frozen" / "0022600100.json"
     frozen.parent.mkdir()
     frozen.write_text("{}")
 
@@ -117,8 +148,8 @@ def test_live_window_recovers_completed_game_missing_final_audit(tmp_path: Path)
 
     final = tmp_path / "final"
     final.mkdir()
-    (final / "401909860.summary.json").write_text("{}")
-    (final / "401909860.espn.json").write_text("{}")
+    (final / "0022600100.summary.json").write_text("{}")
+    (final / "0022600100.nba.json").write_text("{}")
 
     assert active_live_game_date(state_dir=tmp_path, now=now) is None
 
@@ -730,7 +761,9 @@ def test_current_season_lineups_sensor_suppresses_equivalent_inflight_run(
 
 def test_definitions_are_loadable_and_automations_default_stopped() -> None:
     Definitions.validate_loadable(defs)
-    assert DEFAULT_ODDS_API_BOOKMAKERS == DEFAULT_BOOKMAKERS
+    assert DEFAULT_ODDS_API_BOOKMAKERS == tuple(
+        bookmaker for bookmaker in DEFAULT_BOOKMAKERS if bookmaker != "espnbet"
+    )
     assert schedule_refresh_schedule.default_status is DefaultScheduleStatus.STOPPED
     assert (
         yesterday_finalization_schedule.default_status is DefaultScheduleStatus.STOPPED
@@ -755,6 +788,7 @@ def test_definitions_are_loadable_and_automations_default_stopped() -> None:
         is DefaultScheduleStatus.STOPPED
     )
     assert live_score_sensor.default_status is DefaultSensorStatus.STOPPED
+    assert pregame_projection_sensor.default_status is DefaultSensorStatus.STOPPED
     assert (
         completed_game_cdn_play_by_play_sensor.default_status
         is DefaultSensorStatus.STOPPED

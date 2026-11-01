@@ -52,6 +52,7 @@ NBA_DURATION_RE = re.compile(
 OFFICIAL_CONSENSUS_BOOKMAKERS = tuple(
     key for key in CONSENSUS_BOOKMAKERS if key.casefold() != "espnbet"
 )
+PREGAME_CANDIDATE_LEAD = timedelta(minutes=45)
 
 
 def refresh_official_schedule_window(
@@ -83,15 +84,15 @@ def refresh_official_schedule_window(
         now=collected_at,
     )
     state_root = Path(state_dir)
-    injury_artifact = (
-        _ensure_s3_injury_report(
+    injury_artifact: dict[str, str] = {
+        "sha256": hashlib.sha256(injury_pdf).hexdigest(),
+    }
+    if s3_uri:
+        injury_artifact = _ensure_s3_injury_report(
             injury_pdf=injury_pdf,
             state_root=state_root,
             s3_uri=s3_uri,
         )
-        if s3_uri
-        else None
-    )
     forecast_response = _fetch_json(projection_url)
     odds_snapshot = read_latest_odds_snapshot(
         state_dir=odds_state_dir if odds_state_dir is not None else state_root
@@ -104,6 +105,8 @@ def refresh_official_schedule_window(
     days: list[dict[str, object]] = []
     total_games = 0
     total_frozen = 0
+    total_candidates = 0
+    missing_candidates: list[str] = []
     for game_date, catalog_games in games_by_date.items():
         prediction_market = _fetch_polymarket_moneyline_snapshot(
             {"games": catalog_games},
@@ -120,22 +123,32 @@ def refresh_official_schedule_window(
             game_date=game_date,
             collected_at=collected_at,
             catalog_sha256=catalog_sha,
+            injury_artifact=injury_artifact,
         )
-        if injury_artifact is not None:
-            payload["injury_report_artifact"] = injury_artifact
-        frozen = _publish_board(
+        payload["injury_report_artifact"] = injury_artifact
+        publication = _publish_board(
             payload,
             state_root=state_root,
             s3_uri=s3_uri,
             collected_at=collected_at,
         )
         total_games += len(catalog_games)
+        frozen = int(publication["newly_frozen_game_count"])
+        candidates = int(publication["newly_published_candidate_count"])
         total_frozen += frozen
+        total_candidates += candidates
+        missing_candidates.extend(publication["missing_pregame_candidate_game_ids"])
         days.append(
             {
                 "game_date": game_date,
                 "game_count": len(catalog_games),
                 "newly_frozen_game_count": frozen,
+                "newly_published_candidate_count": int(
+                    publication["newly_published_candidate_count"]
+                ),
+                "missing_pregame_candidate_game_ids": publication[
+                    "missing_pregame_candidate_game_ids"
+                ],
             }
         )
     return {
@@ -145,6 +158,8 @@ def refresh_official_schedule_window(
         "archived_day_count": len(days),
         "game_count": total_games,
         "newly_frozen_game_count": total_frozen,
+        "newly_published_candidate_count": total_candidates,
+        "missing_pregame_candidate_game_ids": sorted(set(missing_candidates)),
         "days": days,
     }
 
@@ -165,7 +180,10 @@ def refresh_official_live_score_state(
         raise ValueError(f"Invalid schedule games payload: {latest_path}")
     scoreboard = _scoreboard_games(state_root)
     newly_completed: list[dict[str, object]] = []
-    observed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    observed_at_datetime = datetime.now(UTC)
+    observed_at = observed_at_datetime.isoformat().replace("+00:00", "Z")
+    newly_frozen = 0
+    missing_pregame_candidates: list[str] = []
     for game in games:
         if not isinstance(game, dict):
             continue
@@ -173,11 +191,34 @@ def refresh_official_live_score_state(
         event = scoreboard.get(game_id)
         if event is None:
             continue
-        was_completed = bool(
-            isinstance(game.get("status"), dict) and game["status"].get("completed")
-        )
         _overlay_scoreboard(game, event)
-        if game["status"]["completed"] and not was_completed:
+        state = str(game["status"].get("state", "pre"))
+        frozen_path = state_root / "frozen" / f"{game_id}.json"
+        if state != "pre" and not frozen_path.exists():
+            start = datetime.fromisoformat(
+                str(game["start_time"]).replace("Z", "+00:00")
+            )
+            if _freeze_latest_pregame_candidate(
+                game_id=game_id,
+                scheduled_start=start,
+                state_root=state_root,
+                frozen_at=observed_at_datetime,
+            ):
+                newly_frozen += 1
+                if s3_uri:
+                    prefix = (
+                        f"{s3_uri.rstrip('/')}/season={PROJECTION_SEASON}"
+                        f"/game_date={game_date}/frozen/{game_id}.json"
+                    )
+                    _aws_s3_cp_exclusive(frozen_path, prefix)
+            else:
+                missing_pregame_candidates.append(game_id)
+        if frozen_path.is_file():
+            _apply_frozen_pregame(game, _read_object(frozen_path))
+        summary_path = state_root / "final" / f"{game_id}.summary.json"
+        if game["status"]["completed"] and not summary_path.is_file():
+            if not frozen_path.is_file():
+                continue
             game["final_observed_at"] = observed_at
             newly_completed.append(game)
     uploaded = 0
@@ -239,6 +280,8 @@ def refresh_official_live_score_state(
         "all_final": bool(states) and all(state == "post" for state in states),
         "earliest_start": min(starts) if starts else None,
         "latest_start": max(starts) if starts else None,
+        "newly_frozen_game_count": newly_frozen,
+        "missing_pregame_candidate_game_ids": sorted(missing_pregame_candidates),
         "newly_finalized_game_count": len(newly_completed),
         "uploaded_final_artifact_count": uploaded,
     }
@@ -337,6 +380,96 @@ def _scoreboard_games(state_root: Path) -> dict[str, dict[str, Any]]:
     }
 
 
+def _build_spread_ledger(
+    *,
+    away_team: str,
+    home_team: str,
+    away_rotation: dict[str, object],
+    home_rotation: dict[str, object],
+    home_court_adjustment: float,
+    back_to_back_coefficient: float,
+    home_back_to_back: bool,
+    away_back_to_back: bool,
+    back_to_back_adjustment: float,
+    provenance: dict[str, object],
+) -> dict[str, object]:
+    """Return the exact player-to-spread attribution used by the projection."""
+
+    def team_ledger(team: str, rotation: dict[str, object]) -> dict[str, object]:
+        players = rotation.get("players")
+        if not isinstance(players, list):
+            raise ValueError(f"Projection rotation has no players for {team}")
+        rows: list[dict[str, object]] = []
+        for player in players:
+            if not isinstance(player, dict):
+                continue
+            minutes = float(player["projected_minutes"])
+            rating = float(player["projected_nail"])
+            contribution = float(player["expected_contribution"])
+            expected = minutes / 48.0 * rating
+            if not math.isclose(contribution, expected, rel_tol=0.0, abs_tol=1e-12):
+                raise ValueError(
+                    f"Player contribution does not reconcile for {player['player_id']}"
+                )
+            rows.append(
+                {
+                    "player_id": int(player["player_id"]),
+                    "player_name": str(player["player_name"]),
+                    "projected_minutes": minutes,
+                    "frozen_nail": rating,
+                    "expected_contribution": contribution,
+                    "status": player.get("status"),
+                    "play_probability": player.get("play_probability"),
+                    "reason": player.get("reason"),
+                }
+            )
+        total_minutes = sum(float(row["projected_minutes"]) for row in rows)
+        if not math.isclose(total_minutes, 240.0, rel_tol=0.0, abs_tol=1e-9):
+            raise ValueError(f"Projected minutes do not sum to 240 for {team}")
+        contribution_sum = sum(
+            float(row["expected_contribution"]) for row in rows
+        )
+        team_strength = float(rotation["team_strength"])
+        if not math.isclose(
+            contribution_sum, team_strength, rel_tol=0.0, abs_tol=1e-12
+        ):
+            raise ValueError(f"Player contributions do not reproduce {team} strength")
+        return {
+            "team": team,
+            "players": rows,
+            "projected_minutes": total_minutes,
+            "team_strength": team_strength,
+        }
+
+    away = team_ledger(away_team, away_rotation)
+    home = team_ledger(home_team, home_rotation)
+    team_strength_difference = float(home["team_strength"]) - float(
+        away["team_strength"]
+    )
+    home_margin = (
+        team_strength_difference
+        + home_court_adjustment
+        + back_to_back_adjustment
+    )
+    return {
+        "schema_version": 1,
+        "contract": "minutes / 48 * frozen NAIL; home minus away plus HCA plus B2B",
+        "away": away,
+        "home": home,
+        "team_strength_difference": team_strength_difference,
+        "home_court_adjustment": home_court_adjustment,
+        "back_to_back": {
+            "coefficient": back_to_back_coefficient,
+            "home_team_is_back_to_back": home_back_to_back,
+            "away_team_is_back_to_back": away_back_to_back,
+            "adjustment": back_to_back_adjustment,
+        },
+        "home_margin": home_margin,
+        "fair_home_spread": -home_margin,
+        "provenance": dict(provenance),
+    }
+
+
 def _normalize_official_board(
     *,
     games: list[dict[str, Any]],
@@ -348,6 +481,7 @@ def _normalize_official_board(
     game_date: str,
     collected_at: datetime,
     catalog_sha256: str,
+    injury_artifact: dict[str, str],
 ) -> dict[str, object]:
     forecast = forecast_response.get("win_projection", forecast_response)
     minutes = forecast_response.get("minutes", forecast_response)
@@ -356,6 +490,19 @@ def _normalize_official_board(
     market_lines = bookmaker_lines if isinstance(bookmaker_lines, dict) else {}
     markets = prediction_markets if isinstance(prediction_markets, dict) else {}
     minute_players = [row for row in minutes.get("players", []) if isinstance(row, dict)]
+    projection_provenance = minutes.get("projection_provenance")
+    projection_provenance = (
+        dict(projection_provenance)
+        if isinstance(projection_provenance, dict)
+        else {}
+    )
+    projection_provenance.update(
+        {
+            "injury_report_sha256": injury_artifact["sha256"],
+            "injury_report_published_at": injury_report.get("published_at"),
+            "injury_report_source_url": injury_report.get("source_url"),
+        }
+    )
     scheduled = {
         str(row.get("game_id")): row
         for row in forecast.get("scheduled_games", [])
@@ -383,16 +530,26 @@ def _normalize_official_board(
             game_date=game_date,
             matchup=f"{away_team}@{home_team}",
         )
-        margin = (
-            float(home_rotation["team_strength"])
-            - float(away_rotation["team_strength"])
-            + float(forecast["home_court"])
-            + float(forecast["back_to_back"])
-            * (
-                float(controls.get("home_back_to_back", 0))
-                - float(controls.get("away_back_to_back", 0))
-            )
+        home_court_adjustment = float(forecast["home_court"])
+        back_to_back_coefficient = float(forecast["back_to_back"])
+        home_back_to_back = bool(float(controls.get("home_back_to_back", 0)))
+        away_back_to_back = bool(float(controls.get("away_back_to_back", 0)))
+        back_to_back_adjustment = back_to_back_coefficient * (
+            float(home_back_to_back) - float(away_back_to_back)
         )
+        ledger = _build_spread_ledger(
+            away_team=away_team,
+            home_team=home_team,
+            away_rotation=away_rotation,
+            home_rotation=home_rotation,
+            home_court_adjustment=home_court_adjustment,
+            back_to_back_coefficient=back_to_back_coefficient,
+            home_back_to_back=home_back_to_back,
+            away_back_to_back=away_back_to_back,
+            back_to_back_adjustment=back_to_back_adjustment,
+            provenance=projection_provenance,
+        )
+        margin = float(ledger["home_margin"])
         game = {
             "game_id": game_id,
             "start_time": source["start_time"],
@@ -407,7 +564,9 @@ def _normalize_official_board(
                 "state_kind": forecast.get("state_kind", "current_season"),
                 "rating_as_of": forecast.get("as_of"),
                 "serving_bundle_sha256": forecast.get("serving_bundle_sha256"),
+                "input_provenance": projection_provenance,
                 "home_margin": margin,
+                "fair_home_spread": -margin,
                 "home_win_probability": float(
                     1.0
                     / (
@@ -415,11 +574,13 @@ def _normalize_official_board(
                         + np.exp(-float(forecast["win_probability_scale"]) * margin)
                     )
                 ),
+                "ledger": ledger,
             },
             "injury_report": {
                 "source": "NBA official injury report",
                 "source_url": injury_report.get("source_url"),
                 "published_at": injury_report.get("published_at"),
+                "artifact_sha256": injury_artifact["sha256"],
                 "status_probabilities": INJURY_STATUS_PLAY_PROBABILITY,
                 "team_reports": {
                     away_team: {"status": away_rotation["report_status"]},
@@ -476,7 +637,7 @@ def _publish_board(
     state_root: Path,
     s3_uri: str | None,
     collected_at: datetime,
-) -> int:
+) -> dict[str, object]:
     game_date = str(payload["game_date"])
     latest_path = state_root / "latest" / f"{game_date}.json"
     previous = _read_object(latest_path) if latest_path.is_file() else {}
@@ -486,6 +647,8 @@ def _publish_board(
         if isinstance(game, dict)
     }
     newly_frozen = 0
+    newly_published_candidates: list[Path] = []
+    missing_candidates: list[str] = []
     for game in payload["games"]:
         if not isinstance(game, dict):
             continue
@@ -494,26 +657,32 @@ def _publish_board(
         if isinstance(prior, dict) and isinstance(prior.get("retrospective"), dict):
             game["retrospective"] = prior["retrospective"]
         frozen_path = state_root / "frozen" / f"{game_id}.json"
-        if frozen_path.exists():
-            continue
         start = datetime.fromisoformat(str(game["start_time"]).replace("Z", "+00:00"))
         state = str(game.get("status", {}).get("state", "pre"))
-        if collected_at < start - timedelta(minutes=30) and state == "pre":
-            continue
-        candidate = (
-            prior
-            if isinstance(prior, dict)
-            and prior.get("status", {}).get("state") == "pre"
-            else game
-        )
-        frozen = {
-            **candidate,
-            "frozen_at": collected_at.isoformat().replace("+00:00", "Z"),
-            "freeze_policy": "last half-hour pregame capture",
-            "late_freeze": candidate is game and state != "pre",
-        }
-        _write_json_exclusive(frozen_path, frozen)
-        newly_frozen += 1
+        if (
+            not frozen_path.exists()
+            and state == "pre"
+            and start - PREGAME_CANDIDATE_LEAD <= collected_at < start
+        ):
+            candidate_path, created = _publish_pregame_candidate(
+                game,
+                state_root=state_root,
+                captured_at=collected_at,
+            )
+            if created:
+                newly_published_candidates.append(candidate_path)
+        if not frozen_path.exists() and (state != "pre" or collected_at >= start):
+            if _freeze_latest_pregame_candidate(
+                game_id=game_id,
+                scheduled_start=start,
+                state_root=state_root,
+                frozen_at=collected_at,
+            ):
+                newly_frozen += 1
+            elif not frozen_path.exists():
+                missing_candidates.append(game_id)
+        if frozen_path.is_file():
+            _apply_frozen_pregame(game, _read_object(frozen_path))
     _write_json(latest_path, payload)
     if s3_uri:
         timestamp = collected_at.strftime("%Y%m%dT%H%M%SZ")
@@ -522,6 +691,12 @@ def _publish_board(
         prefix = f"{s3_uri.rstrip('/')}/season={PROJECTION_SEASON}/game_date={game_date}"
         _aws_s3_cp_exclusive(pending, f"{prefix}/snapshots/{timestamp}.nba.json")
         _aws_s3_cp(latest_path, f"{prefix}/latest.json")
+        for candidate_path in newly_published_candidates:
+            game_id = candidate_path.parent.name
+            _aws_s3_cp_exclusive(
+                candidate_path,
+                f"{prefix}/pregame-candidates/{game_id}/{candidate_path.name}",
+            )
         for game in payload["games"]:
             if not isinstance(game, dict):
                 continue
@@ -530,7 +705,120 @@ def _publish_board(
             if frozen_path.is_file():
                 _aws_s3_cp_exclusive(frozen_path, f"{prefix}/frozen/{game_id}.json")
         shutil.rmtree(pending.parent)
-    return newly_frozen
+    return {
+        "newly_published_candidate_count": len(newly_published_candidates),
+        "newly_frozen_game_count": newly_frozen,
+        "missing_pregame_candidate_game_ids": sorted(missing_candidates),
+    }
+
+
+def _publish_pregame_candidate(
+    game: dict[str, object],
+    *,
+    state_root: Path,
+    captured_at: datetime,
+) -> tuple[Path, bool]:
+    """Write one immutable candidate projection observed strictly before tipoff."""
+
+    game_id = str(game["game_id"])
+    start = datetime.fromisoformat(str(game["start_time"]).replace("Z", "+00:00"))
+    if captured_at >= start:
+        raise ValueError(f"Pregame candidate for {game_id} was not captured before tipoff")
+    if str(game.get("status", {}).get("state", "pre")) != "pre":
+        raise ValueError(f"Pregame candidate for {game_id} is not in pregame state")
+    unsigned = {
+        "schema_version": 1,
+        "game_id": game_id,
+        "captured_at": captured_at.isoformat().replace("+00:00", "Z"),
+        "scheduled_start_time": start.isoformat().replace("+00:00", "Z"),
+        "game": game,
+    }
+    digest = _object_sha256(unsigned)
+    candidate = {**unsigned, "candidate_sha256": digest}
+    timestamp = captured_at.strftime("%Y%m%dT%H%M%S.%fZ")
+    path = (
+        state_root
+        / "pregame-candidates"
+        / game_id
+        / f"{timestamp}.{digest}.json"
+    )
+    created = not path.exists()
+    _write_json_exclusive(path, candidate)
+    return path, created
+
+
+def _freeze_latest_pregame_candidate(
+    *,
+    game_id: str,
+    scheduled_start: datetime,
+    state_root: Path,
+    frozen_at: datetime,
+) -> bool:
+    """Freeze the most recent verified candidate captured strictly before tipoff."""
+
+    frozen_path = state_root / "frozen" / f"{game_id}.json"
+    if frozen_path.exists():
+        return False
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
+    candidate_root = state_root / "pregame-candidates" / game_id
+    for path in sorted(candidate_root.glob("*.json")):
+        candidate = _read_object(path)
+        digest = str(candidate.get("candidate_sha256", ""))
+        unsigned = {
+            key: value for key, value in candidate.items() if key != "candidate_sha256"
+        }
+        if digest != _object_sha256(unsigned):
+            raise ValueError(f"Pregame candidate checksum changed: {path}")
+        if str(candidate.get("game_id")) != game_id:
+            raise ValueError(f"Pregame candidate game mismatch: {path}")
+        captured_at = datetime.fromisoformat(
+            str(candidate["captured_at"]).replace("Z", "+00:00")
+        )
+        if captured_at < scheduled_start:
+            candidates.append((captured_at, candidate))
+    if not candidates:
+        return False
+    captured_at, selected = max(candidates, key=lambda row: row[0])
+    selected_game = selected.get("game")
+    if not isinstance(selected_game, dict):
+        raise ValueError(f"Pregame candidate for {game_id} has no game payload")
+    frozen = {
+        **selected_game,
+        "pregame_candidate_sha256": selected["candidate_sha256"],
+        "pregame_captured_at": captured_at.isoformat().replace("+00:00", "Z"),
+        "frozen_at": frozen_at.isoformat().replace("+00:00", "Z"),
+        "freeze_policy": "latest valid pre-tip candidate",
+        "late_freeze": frozen_at >= scheduled_start,
+    }
+    _write_json_exclusive(frozen_path, frozen)
+    return True
+
+
+def _apply_frozen_pregame(
+    game: dict[str, object], frozen: dict[str, Any]
+) -> None:
+    """Keep observed score state current while retaining immutable pregame inputs."""
+
+    for key in (
+        "projection",
+        "injury_report",
+        "projected_minutes",
+        "market",
+        "prediction_market",
+        "pregame_candidate_sha256",
+        "pregame_captured_at",
+        "frozen_at",
+        "freeze_policy",
+        "late_freeze",
+    ):
+        if key in frozen:
+            game[key] = frozen[key]
+
+
+def _object_sha256(payload: object) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _overlay_scoreboard(game: dict[str, object], event: dict[str, Any]) -> None:

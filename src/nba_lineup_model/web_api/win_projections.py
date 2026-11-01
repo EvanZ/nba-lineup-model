@@ -273,6 +273,8 @@ def build_current_season_minutes_payload(
         kind="stable",
     )
     metadata = evaluator.current_season_metadata
+    artifact_sha256 = metadata.get("artifact_sha256", {})
+    artifact_sources = metadata.get("artifact_sources", {})
     return {
         **{
             key: value
@@ -285,6 +287,16 @@ def build_current_season_minutes_payload(
         "state_kind": "in_season_updated",
         "as_of": metadata.get("evidence_through_date"),
         "serving_bundle_sha256": metadata.get("bundle_sha256"),
+        "projection_provenance": {
+            "schema_version": 1,
+            "serving_bundle_sha256": metadata.get("bundle_sha256"),
+            "rating_state_sha256": artifact_sha256.get("rating_state"),
+            "minutes_state_sha256": artifact_sha256.get("minutes_state"),
+            "rating_source_uri": artifact_sources.get("rating_state"),
+            "minutes_source_uri": artifact_sources.get("minutes_state"),
+            "rating_as_of": metadata.get("evidence_through_date"),
+            "as_of_cutoff_time": metadata.get("as_of_cutoff_time"),
+        },
         "initial_rotation_size": rotation_size,
         "regulation_team_minutes": 240.0,
         "contract": (
@@ -2607,10 +2619,12 @@ def _game_rotation(
         row["projected_minutes"] = (
             240.0 * float(row["weight"]) / total_weight if row in selected else 0.0
         )
-    team_strength = sum(
-        float(row["projected_minutes"]) / 48.0 * float(row["projected_nail"])
-        for row in allocations
-    )
+        row["expected_contribution"] = (
+            float(row["projected_minutes"])
+            / 48.0
+            * float(row["projected_nail"])
+        )
+    team_strength = sum(float(row["expected_contribution"]) for row in allocations)
     assumptions = []
     for normalized_name, status_row in official.items():
         player = roster_by_name.get(normalized_name)
@@ -2632,7 +2646,7 @@ def _game_rotation(
             }
         )
     public_players = [
-        {key: value for key, value in row.items() if key not in {"weight", "projected_nail"}}
+        {key: value for key, value in row.items() if key != "weight"}
         for row in sorted(
             allocations,
             key=lambda item: (-float(item["projected_minutes"]), str(item["player_name"])),

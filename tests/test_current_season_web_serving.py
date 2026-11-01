@@ -232,6 +232,15 @@ def test_current_catalog_overlays_exact_promoted_values_and_builds_trajectory(
     assert catalog.metadata["kind"] == "in_season_updated"
     assert catalog.metadata["evidence_through_date"] == "2026-10-26"
     assert catalog.metadata["game_count"] == 2
+    manifest = json.loads((latest / "manifest.json").read_text())
+    assert catalog.metadata["artifact_sha256"] == {
+        "rating_state": manifest["identity"]["sources"]["rating_state"]["sha256"],
+        "minutes_state": manifest["identity"]["sources"]["minutes_state"]["sha256"],
+    }
+    assert catalog.metadata["artifact_sources"] == {
+        "rating_state": manifest["identity"]["sources"]["rating_state"]["uri"],
+        "minutes_state": manifest["identity"]["sources"]["minutes_state"]["uri"],
+    }
     assert set(catalog.rankings["player_id"]) == {1, 2}
     curry = catalog.rankings.set_index("player_id").loc[1]
     assert curry["rapm"] == pytest.approx(3.2)

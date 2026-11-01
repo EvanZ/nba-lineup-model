@@ -97,6 +97,7 @@ def load_current_season_serving_catalog(
         )
     )
     coverage = identity["coverage"]
+    sources = identity["sources"]
     metadata = {
         "kind": "in_season_updated",
         "season": season,
@@ -109,6 +110,14 @@ def load_current_season_serving_catalog(
         "source_game_ids": [str(game_id) for game_id in coverage["source_game_ids"]],
         "rating_updater_version": str(identity["sources"]["rating_state"]["updater_version"]),
         "minutes_updater_version": str(identity["sources"]["minutes_state"]["updater_version"]),
+        "artifact_sha256": {
+            "rating_state": str(sources["rating_state"]["sha256"]),
+            "minutes_state": str(sources["minutes_state"]["sha256"]),
+        },
+        "artifact_sources": {
+            "rating_state": str(sources["rating_state"]["uri"]),
+            "minutes_state": str(sources["minutes_state"]["uri"]),
+        },
         "data_quality": identity.get(
             "data_quality",
             {"status": "unknown", "issue_count": None},
