@@ -33,7 +33,7 @@ from nba_lineup_model.season.daily_model_artifact import verify_daily_model_arti
 from nba_lineup_model.season.game_prediction_artifact import (
     build_actual_minutes_ledger,
     build_spread_ledger,
-    enrich_projected_minutes,
+    complete_projected_minutes_attribution,
     require_projection_reconciliation,
 )
 
@@ -662,8 +662,15 @@ def _attach_game_prediction_attribution(
     projected = pregame.get("projected_minutes")
     if not isinstance(projected, Mapping):
         raise ValueError(f"Frozen projected minutes are missing for {game_id}")
-    enriched = enrich_projected_minutes(
+    enriched = complete_projected_minutes_attribution(
         projected,
+        injury_report=(
+            pregame.get("injury_report")
+            if isinstance(pregame.get("injury_report"), Mapping)
+            else None
+        ),
+        away_team=str(pregame["away_team"]),
+        home_team=str(pregame["home_team"]),
         ratings=ratings,
         game_id=game_id,
     )

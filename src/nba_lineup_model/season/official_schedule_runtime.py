@@ -20,7 +20,7 @@ from nba_lineup_model.ingest.nba_cdn import NbaCdnClient, RawJsonCache
 from nba_lineup_model.season.game_prediction_artifact import (
     build_actual_minutes_ledger,
     build_spread_ledger,
-    enrich_projected_minutes,
+    complete_projected_minutes_attribution,
     require_projection_reconciliation,
 )
 from nba_lineup_model.season.slate_time import PACIFIC
@@ -466,6 +466,21 @@ def _normalize_official_board(
             "away": away_rotation["players"],
             "home": home_rotation["players"],
         }
+        ratings = {
+            int(row["player_id"]): float(row["projected_nail"])
+            for row in minute_players
+            if isinstance(row, dict)
+            and row.get("player_id") is not None
+            and row.get("projected_nail") is not None
+        }
+        projected_minutes = complete_projected_minutes_attribution(
+            projected_minutes,
+            injury_report=injury_report,
+            away_team=away_team,
+            home_team=home_team,
+            ratings=ratings,
+            game_id=game_id,
+        )
         ledger = build_spread_ledger(
             game_id=game_id,
             away_team=away_team,
@@ -790,8 +805,15 @@ def _require_or_attach_frozen_attribution(
     frozen_minutes = game.get("projected_minutes")
     if not isinstance(frozen_minutes, dict):
         raise ValueError(f"Frozen projected minutes are missing for {game_id}")
-    enriched = enrich_projected_minutes(
+    enriched = complete_projected_minutes_attribution(
         frozen_minutes,
+        injury_report=(
+            frozen.get("injury_report")
+            if isinstance(frozen.get("injury_report"), dict)
+            else None
+        ),
+        away_team=str(game["away_team"]),
+        home_team=str(game["home_team"]),
         ratings=ratings,
         game_id=game_id,
     )

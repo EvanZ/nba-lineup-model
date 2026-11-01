@@ -406,6 +406,30 @@ def _schedule_attribution_audit(root: Path) -> dict[str, int]:
                 game_id=game_id,
                 actual=False,
             )
+            _require_schedule_projected_minutes(game, game_id=game_id)
+            frozen_path = root / "frozen" / f"{game_id}.json"
+            if frozen_path.is_file():
+                frozen = _read_json(frozen_path)
+                frozen_projection = frozen.get("projection")
+                if not isinstance(frozen_projection, dict):
+                    raise ValueError(f"Frozen projection is missing for {game_id}")
+                if not isinstance(frozen_projection.get("ledger"), dict):
+                    projection = game.get("projection")
+                    provenance = (
+                        projection.get("input_provenance")
+                        if isinstance(projection, dict)
+                        else None
+                    )
+                    frozen_sha = hashlib.sha256(canonical_json(frozen)).hexdigest()
+                    if (
+                        not isinstance(provenance, dict)
+                        or provenance.get("source_frozen_pregame_sha256")
+                        != frozen_sha
+                    ):
+                        raise ValueError(
+                            "Rendered attribution is not bound to frozen pregame "
+                            f"{game_id}"
+                        )
             served_ids.add(game_id)
             status = game.get("status")
             if isinstance(status, dict) and bool(status.get("completed")):
@@ -426,6 +450,110 @@ def _schedule_attribution_audit(root: Path) -> dict[str, int]:
         "completed_games": len(completed_ids),
         "actual_minutes_ledgers": len(served_completed_ids),
     }
+
+
+def _require_schedule_projected_minutes(
+    game: Mapping[str, object], *, game_id: str
+) -> None:
+    """Validate the exact player rows selected by the Schedule UI."""
+
+    projected = game.get("projected_minutes")
+    projection = game.get("projection")
+    ledger = projection.get("ledger") if isinstance(projection, dict) else None
+    if not isinstance(projected, dict) or not isinstance(ledger, dict):
+        raise ValueError(f"Schedule projected-minute attribution is missing for {game_id}")
+    projected_ids: set[int] = set()
+    for side in ("away", "home"):
+        rows = projected.get(side)
+        team_ledger = ledger.get(side)
+        ledger_rows = team_ledger.get("players") if isinstance(team_ledger, dict) else None
+        if not isinstance(rows, list) or not rows:
+            raise ValueError(f"Schedule has no {side} projected rows for {game_id}")
+        if not isinstance(ledger_rows, list):
+            raise ValueError(f"Schedule has no {side} ledger rows for {game_id}")
+        ledger_by_id = {
+            int(row["player_id"]): row
+            for row in ledger_rows
+            if isinstance(row, dict) and row.get("player_id") is not None
+        }
+        side_ids: set[int] = set()
+        for row in rows:
+            if not isinstance(row, dict) or row.get("player_id") is None:
+                raise ValueError(
+                    f"Schedule has an unidentified {side} projected row for {game_id}"
+                )
+            player_id = int(row["player_id"])
+            if player_id in side_ids:
+                raise ValueError(
+                    f"Schedule repeats player {player_id} on {side} for {game_id}"
+                )
+            side_ids.add(player_id)
+            projected_ids.add(player_id)
+            values = (
+                row.get("projected_nail"),
+                row.get("projected_minutes"),
+                row.get("expected_contribution"),
+            )
+            if any(value is None for value in values):
+                raise ValueError(
+                    f"Schedule has incomplete displayed attribution for player "
+                    f"{player_id} in {game_id}"
+                )
+            rating, minutes, contribution = map(float, values)
+            if not math.isclose(
+                contribution,
+                minutes / 48.0 * rating,
+                rel_tol=0.0,
+                abs_tol=1e-10,
+            ):
+                raise ValueError(
+                    f"Schedule contribution does not reconcile for player "
+                    f"{player_id} in {game_id}"
+                )
+            ledger_row = ledger_by_id.get(player_id)
+            if ledger_row is None:
+                raise ValueError(
+                    f"Schedule ledger lacks player {player_id} in {game_id}"
+                )
+            ledger_values = (
+                ledger_row.get("frozen_nail"),
+                ledger_row.get("projected_minutes"),
+                ledger_row.get("expected_contribution"),
+            )
+            if any(value is None for value in ledger_values) or any(
+                not math.isclose(left, right, rel_tol=0.0, abs_tol=1e-10)
+                for left, right in zip(
+                    map(float, ledger_values),
+                    (rating, minutes, contribution),
+                    strict=True,
+                )
+            ):
+                raise ValueError(
+                    f"Schedule displayed row differs from ledger for player "
+                    f"{player_id} in {game_id}"
+                )
+        if side_ids != set(ledger_by_id):
+            raise ValueError(
+                f"Schedule displayed and ledger player sets differ on {side} for {game_id}"
+            )
+    injury_report = game.get("injury_report")
+    assumptions = (
+        injury_report.get("assumptions")
+        if isinstance(injury_report, dict)
+        else None
+    )
+    if isinstance(assumptions, list):
+        missing = sorted(
+            int(row["player_id"])
+            for row in assumptions
+            if isinstance(row, dict)
+            and row.get("player_id") is not None
+            and int(row["player_id"]) not in projected_ids
+        )
+        if missing:
+            raise ValueError(
+                f"Schedule injury players lack displayed attribution for {game_id}: {missing}"
+            )
 
 
 def _require_schedule_ledger(

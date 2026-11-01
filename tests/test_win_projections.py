@@ -658,6 +658,57 @@ def test_schedule_day_attaches_immutable_final_audit(tmp_path) -> None:
     )
 
 
+def test_schedule_day_renders_verified_attribution_for_legacy_freeze(tmp_path) -> None:
+    latest = tmp_path / "latest" / "2026-11-01.json"
+    frozen_path = tmp_path / "frozen" / "0022600154.json"
+    latest.parent.mkdir(parents=True)
+    frozen_path.parent.mkdir(parents=True)
+    frozen = {
+        "game_id": "0022600154",
+        "projection": {"home_margin": -3.5},
+        "projected_minutes": {"away": [], "home": []},
+    }
+    frozen_path.write_text(json.dumps(frozen))
+    frozen_sha = hashlib.sha256(
+        json.dumps(frozen, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    attributed_player = {
+        "player_id": 1,
+        "player_name": "Player",
+        "projected_nail": 2.0,
+        "projected_minutes": 24.0,
+        "expected_contribution": 1.0,
+    }
+    attributed_projection = {
+        "home_margin": -3.5,
+        "input_provenance": {"source_frozen_pregame_sha256": frozen_sha},
+        "ledger": {"home_margin": -3.5},
+    }
+    latest.write_text(
+        json.dumps(
+            {
+                "games": [
+                    {
+                        "game_id": "0022600154",
+                        "projection": attributed_projection,
+                        "projected_minutes": {
+                            "away": [attributed_player],
+                            "home": [attributed_player],
+                        },
+                    }
+                ]
+            }
+        )
+    )
+
+    payload = read_schedule_day("2026-11-01", state_dir=tmp_path)
+    pregame = payload["games"][0]["pregame"]
+
+    assert pregame["projection"] == attributed_projection
+    assert pregame["projected_minutes"]["away"][0]["expected_contribution"] == 1.0
+    assert json.loads(frozen_path.read_text()) == frozen
+
+
 def test_player_game_trajectory_uses_frozen_minutes_and_archived_box_score(
     tmp_path,
 ) -> None:

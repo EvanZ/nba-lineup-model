@@ -5,6 +5,7 @@ import pytest
 from nba_lineup_model.season.game_prediction_artifact import (
     build_actual_minutes_ledger,
     build_spread_ledger,
+    complete_projected_minutes_attribution,
     enrich_projected_minutes,
 )
 
@@ -35,6 +36,40 @@ def _pregame_ledger() -> dict[str, object]:
         away_back_to_back=False,
         provenance={"source": "test"},
     )
+
+
+def test_injury_listed_player_gets_zero_minute_attribution() -> None:
+    projected = complete_projected_minutes_attribution(
+        {
+            "away": [
+                {"player_id": 1, "player_name": "Away One", "projected_minutes": 240.0}
+            ],
+            "home": [
+                {"player_id": 2, "player_name": "Home One", "projected_minutes": 240.0}
+            ],
+        },
+        injury_report={
+            "assumptions": [
+                {
+                    "player_id": 3,
+                    "player_name": "Listed Reserve",
+                    "team": "HME",
+                    "status": "Available",
+                    "play_probability": 1.0,
+                    "reason": "-",
+                }
+            ]
+        },
+        away_team="AWY",
+        home_team="HME",
+        ratings={1: 1.0, 2: 2.0, 3: -0.5},
+        game_id="game",
+    )
+
+    reserve = next(row for row in projected["home"] if row["player_id"] == 3)
+    assert reserve["projected_nail"] == pytest.approx(-0.5)
+    assert reserve["projected_minutes"] == 0.0
+    assert reserve["expected_contribution"] == 0.0
 
 
 def test_actual_minutes_ledger_uses_frozen_ratings_and_reconciles_margin() -> None:
@@ -84,4 +119,3 @@ def test_actual_minutes_ledger_normalizes_overtime_minutes_to_five_players() -> 
 
     assert ledger["away"]["team_strength"] == pytest.approx(5.0)
     assert ledger["home"]["team_strength"] == pytest.approx(10.0)
-

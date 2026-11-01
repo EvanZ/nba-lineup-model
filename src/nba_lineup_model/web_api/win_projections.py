@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import io
 import json
@@ -1089,7 +1090,11 @@ def read_schedule_day(
         if frozen_path.is_file():
             frozen = json.loads(frozen_path.read_text())
             if isinstance(frozen, dict):
-                game["pregame"] = frozen
+                game["pregame"] = _renderable_frozen_pregame(
+                    frozen,
+                    served_game=game,
+                    game_id=game_id,
+                )
         final_path = (
             Path(state_dir) / "final" / f"{game_id}.summary.json"
         )
@@ -1110,6 +1115,59 @@ def read_schedule_day(
                 "identity": manifest.get("identity"),
             }
     return payload
+
+
+def _renderable_frozen_pregame(
+    frozen: dict[str, object],
+    *,
+    served_game: dict[str, object],
+    game_id: str,
+) -> dict[str, object]:
+    """Expose verified derived attribution without mutating the freeze.
+
+    Older frozen candidates contain the exact prediction and minutes but were
+    captured before the attribution ledger became part of the schema. The
+    daily serving artifact enriches those same inputs after verifying the
+    matching serving bundle. Use that verified derivation for the rendered
+    pregame view only when its provenance binds it to this exact freeze.
+    """
+
+    rendered = copy.deepcopy(frozen)
+    frozen_projection = frozen.get("projection")
+    if not isinstance(frozen_projection, dict):
+        return rendered
+    if isinstance(frozen_projection.get("ledger"), dict):
+        return rendered
+
+    served_projection = served_game.get("projection")
+    served_minutes = served_game.get("projected_minutes")
+    if not isinstance(served_projection, dict) or not isinstance(
+        served_projection.get("ledger"), dict
+    ):
+        return rendered
+    if not isinstance(served_minutes, dict):
+        return rendered
+    provenance = served_projection.get("input_provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError(f"Attributed projection has no provenance for {game_id}")
+    expected_freeze_sha = hashlib.sha256(
+        json.dumps(frozen, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if provenance.get("source_frozen_pregame_sha256") != expected_freeze_sha:
+        raise ValueError(
+            f"Attributed projection is not bound to frozen pregame {game_id}"
+        )
+    frozen_margin = frozen_projection.get("home_margin")
+    served_margin = served_projection.get("home_margin")
+    if frozen_margin is None or served_margin is None or abs(
+        float(frozen_margin) - float(served_margin)
+    ) > 1e-10:
+        raise ValueError(
+            f"Attributed projection changes frozen pregame margin for {game_id}"
+        )
+    rendered["projection"] = copy.deepcopy(served_projection)
+    rendered["projected_minutes"] = copy.deepcopy(served_minutes)
+    return rendered
 
 
 def enrich_player_game_trajectory(

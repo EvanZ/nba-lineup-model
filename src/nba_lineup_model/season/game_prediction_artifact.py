@@ -42,6 +42,70 @@ def enrich_projected_minutes(
     return output
 
 
+def complete_projected_minutes_attribution(
+    projected_minutes: Mapping[str, object],
+    *,
+    injury_report: Mapping[str, object] | None,
+    away_team: str,
+    home_team: str,
+    ratings: Mapping[int, float],
+    game_id: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Include every injury-listed player before attaching exact ratings.
+
+    The UI shows official injury assumptions alongside the rotation. Therefore
+    the immutable game artifact must carry those players too, even when their
+    projected minutes are zero. This keeps the displayed player universe equal
+    to the prediction ledger instead of synthesizing nullable rows in the UI.
+    """
+
+    completed: dict[str, list[dict[str, Any]]] = {}
+    existing: dict[str, set[int]] = {}
+    for side in ("away", "home"):
+        source_rows = projected_minutes.get(side)
+        if not isinstance(source_rows, list) or not source_rows:
+            raise ValueError(f"Frozen projected {side} rotation is missing for {game_id}")
+        completed[side] = copy.deepcopy(source_rows)
+        existing[side] = {
+            int(row["player_id"])
+            for row in source_rows
+            if isinstance(row, dict) and row.get("player_id") is not None
+        }
+
+    team_side = {away_team: "away", home_team: "home"}
+    assumptions = (
+        injury_report.get("assumptions")
+        if isinstance(injury_report, Mapping)
+        else None
+    )
+    for assumption in assumptions if isinstance(assumptions, list) else []:
+        if not isinstance(assumption, dict) or assumption.get("player_id") is None:
+            continue
+        side = team_side.get(str(assumption.get("team") or ""))
+        if side is None:
+            continue
+        player_id = int(assumption["player_id"])
+        if player_id in existing[side]:
+            continue
+        if player_id not in ratings:
+            raise ValueError(
+                f"Injury-listed player {player_id} lacks a game rating for {game_id}"
+            )
+        completed[side].append(
+            {
+                "player_id": player_id,
+                "player_name": str(assumption.get("player_name") or player_id),
+                "status": assumption.get("status"),
+                "play_probability": assumption.get("play_probability"),
+                "conditional_minutes": 0.0,
+                "projected_minutes": 0.0,
+                "reason": assumption.get("reason"),
+            }
+        )
+        existing[side].add(player_id)
+    return enrich_projected_minutes(completed, ratings=ratings, game_id=game_id)
+
+
 def build_spread_ledger(
     *,
     game_id: str,

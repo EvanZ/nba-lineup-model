@@ -79,7 +79,21 @@ def _inputs(tmp_path: Path, monkeypatch):
     )
     schedule_final = schedule_root / "final"
     schedule_final.mkdir(parents=True)
-    pregame = {"projection": {"home_margin": 1.0, "ledger": _ledger(actual=False)}}
+    displayed_player = {
+        "player_id": 1,
+        "player_name": "Player",
+        "projected_nail": 1.0,
+        "projected_minutes": 240.0,
+        "expected_contribution": 5.0,
+    }
+    projected_minutes = {
+        "away": [displayed_player],
+        "home": [displayed_player],
+    }
+    pregame = {
+        "projection": {"home_margin": 1.0, "ledger": _ledger(actual=False)},
+        "projected_minutes": projected_minutes,
+    }
     retrospective = {"home_margin": 1.0, "ledger": _ledger(actual=True)}
     (schedule_final / "game.summary.json").write_text(
         json.dumps(
@@ -99,6 +113,7 @@ def _inputs(tmp_path: Path, monkeypatch):
                     {
                         "game_id": "game-1",
                         "projection": pregame["projection"],
+                        "projected_minutes": projected_minutes,
                         "retrospective": retrospective,
                         "status": {"completed": True},
                     }
