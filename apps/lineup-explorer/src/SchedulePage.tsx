@@ -588,7 +588,7 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
     <article className="schedule-game-card">
       <div className="schedule-game-context">
         <span className="schedule-game-time">{gameTime(archived?.start_time)}</span>
-        <span>{archived?.broadcasts.join(" · ") || "League Pass"}</span>
+        <span>{(archived?.broadcasts ?? []).join(" · ") || "League Pass"}</span>
         <span className="schedule-game-status"><Radio size={11} aria-hidden="true" /> {statusLabel}</span>
         {archived?.status.completed && finalAudit && <div className="schedule-result-badges" aria-label="Model results">
           <span className={finalAudit.grading.model_favorite_won ? "win" : "loss"} title="Whether the model selected the winning team">
