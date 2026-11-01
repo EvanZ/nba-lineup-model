@@ -1429,6 +1429,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-spread-ledger-rows { padding: 5px 13px; }
 .schedule-spread-ledger-rows > div { min-height: 27px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; border-bottom: 1px solid #ebe8e0; }
 .schedule-spread-ledger.has-actual .schedule-spread-ledger-rows > div { grid-template-columns: minmax(0, 1fr) minmax(72px, 0.25fr) minmax(88px, 0.25fr); }
+.schedule-spread-ledger.has-actual .schedule-spread-ledger-rows > div > strong { text-align: right; font-variant-numeric: tabular-nums; }
 .schedule-spread-ledger-rows > .columns { min-height: 21px; color: #7d857f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 7px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; }
 .schedule-spread-ledger-rows > .columns small { text-align: right; }
 .schedule-spread-ledger-rows > div:last-child { border-bottom: 0; }
