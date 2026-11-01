@@ -140,3 +140,95 @@ def test_materialization_rejects_missing_player_game_trajectory_artifact(
             release_root=release_root,
             output_root=output_root,
         )
+
+
+def test_daily_model_materialization_binds_all_serving_inputs_to_one_tip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_root = tmp_path / "daily-model"
+    bundle = (
+        model_root
+        / "season=2026-27"
+        / "game_date_pacific=2026-10-31"
+        / f"model_sha256={'a' * 64}"
+    )
+    bundle.mkdir(parents=True)
+    files = bundle / "files"
+    files.mkdir()
+    for filename in (
+        "player_ratings.parquet",
+        "minutes_state.parquet",
+        "rating_trajectory.parquet",
+    ):
+        (files / filename).write_bytes(filename.encode())
+    pointer = {
+        "bundle_path": bundle.relative_to(model_root).as_posix(),
+        "bundle_sha256": "a" * 64,
+    }
+    (model_root / "latest.json").write_text(json.dumps(pointer))
+    release_root = tmp_path / "release"
+    release_root.mkdir()
+    (release_root / "release.json").write_text(json.dumps({"run_id": "preseason-run"}))
+    manifest = {
+        "bundle_sha256": "a" * 64,
+        "identity": {
+            "season": "2026-27",
+            "game_date_pacific": "2026-10-31",
+            "cumulative_game_count": 88,
+            "model_provenance": {"prior_sha256": "b" * 64},
+            "components": {
+                "player_ratings": {"path": "files/player_ratings.parquet"},
+                "minutes_state": {"path": "files/minutes_state.parquet"},
+                "rating_trajectory": {"path": "files/rating_trajectory.parquet"},
+            },
+        },
+    }
+    monkeypatch.setattr(subject, "verify_daily_model_artifact", lambda path: manifest)
+    captured: dict[str, object] = {}
+
+    def fake_publish(*args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        output = tmp_path / "serving-bundle"
+        output.mkdir()
+        (output / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "identity": {
+                        "sources": {
+                            "rating_state": {"uri": kwargs["rating_source_uri"]},
+                            "minutes_state": {"uri": kwargs["minutes_source_uri"]},
+                            "rating_trajectory": {
+                                "uri": kwargs["rating_trajectory_source_uri"]
+                            },
+                        }
+                    }
+                }
+            )
+        )
+        return SimpleNamespace(path=output)
+
+    monkeypatch.setattr(subject, "publish_serving_bundle", fake_publish)
+    monkeypatch.setattr(
+        subject,
+        "promote_serving_bundle",
+        lambda *args, **kwargs: ({"evidence_through_date": "2026-10-31"}, True),
+    )
+
+    result = subject.materialize_daily_model_serving(
+        daily_model_root=model_root,
+        release_root=release_root,
+        output_root=tmp_path / "serving",
+    )
+
+    assert result == tmp_path / "serving-bundle"
+    assert captured["rating_source_uri"] == (
+        f"artifact://daily-model/{'a' * 64}/player_ratings"
+    )
+    assert captured["minutes_source_uri"] == (
+        f"artifact://daily-model/{'a' * 64}/minutes_state"
+    )
+    assert captured["source_coverage"] == {
+        "ratings": {"games": 88, "excluded": 0},
+        "minutes": {"games": 88, "excluded": 0},
+    }

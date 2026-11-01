@@ -20,6 +20,13 @@ from nba_lineup_model.season.current_serving import (
     REPORT_FILENAME,
     resolve_latest_bundle,
 )
+from nba_lineup_model.season.dev_site_release import (
+    REPORT_FILENAME as DEV_RELEASE_REPORT_FILENAME,
+)
+from nba_lineup_model.season.dev_site_release import (
+    resolve_latest_dev_site_release,
+    verify_dev_site_release,
+)
 from nba_lineup_model.web_api.inference import (
     MODEL_ARTIFACT,
     MODEL_DISPLAY_NAME,
@@ -179,6 +186,19 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, object]:
         state = get_evaluator()
+        site_release = None
+        site_release_root = os.environ.get("GESTALT_SITE_RELEASE_ROOT")
+        if site_release_root:
+            release_path = resolve_latest_dev_site_release(site_release_root)
+            release_manifest = verify_dev_site_release(release_path)
+            release_identity = release_manifest["identity"]
+            site_release = {
+                "release_sha256": release_manifest["release_sha256"],
+                "season": release_identity["season"],
+                "evidence_through_date": release_identity["evidence_through_date"],
+                "game_count": release_identity["game_count"],
+                "code_revision": release_identity["code_revision"],
+            }
         return {
             "status": "ok",
             "model": MODEL_NAME,
@@ -194,6 +214,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             "player_count": len(state.players),
             "lab_seasons": state.available_lab_seasons(),
             "current_season_state": state.current_season_metadata or None,
+            "site_release": site_release,
         }
 
     @app.get("/api/reports/current-season")
@@ -212,6 +233,21 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(error)) from error
         if not report_path.is_file():
             raise HTTPException(status_code=404, detail="Current-season report is missing")
+        return FileResponse(report_path, media_type="text/html")
+
+    @app.get("/api/reports/dev-release")
+    def dev_release_report() -> FileResponse:
+        """Serve the release-level dev verification report when configured."""
+
+        root = os.environ.get("GESTALT_SITE_RELEASE_ROOT")
+        if not root:
+            raise HTTPException(status_code=404, detail="Dev release reporting is disabled")
+        try:
+            report_path = (
+                resolve_latest_dev_site_release(root) / DEV_RELEASE_REPORT_FILENAME
+            )
+        except (FileNotFoundError, ValueError) as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
         return FileResponse(report_path, media_type="text/html")
 
     @app.get("/api/players")

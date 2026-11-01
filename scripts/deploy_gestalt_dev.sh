@@ -20,9 +20,9 @@ PROD_APP_ROOT="${GESTALT_PROD_APP_ROOT:-/opt/nba-gestalt}"
 DEV_APP_ROOT="${GESTALT_DEV_APP_ROOT:-/opt/nba-gestalt-dev}"
 DEV_STATE_ROOT="${GESTALT_DEV_STATE_ROOT:-/var/lib/nba-gestalt-dev}"
 DEV_WEB_ROOT="${GESTALT_DEV_WEB_ROOT:-/var/www/nba-gestalt-dev}"
-PROD_SCHEDULE_ROOT="${GESTALT_PROD_SCHEDULE_ROOT:-/var/lib/nba-gestalt/schedule}"
-DEV_RATING_ROOT="${GESTALT_DEV_RATING_ROOT:-/var/lib/nba-gestalt/in-season-nail}"
-DEV_MINUTES_ROOT="${GESTALT_DEV_MINUTES_ROOT:-/var/lib/nba-gestalt/in-season-minutes}"
+PROD_SCHEDULE_ROOT="${GESTALT_PROD_SCHEDULE_ROOT:-/var/lib/nba-gestalt/schedule-serving/current}"
+DEV_DAILY_DATA_ROOT="${GESTALT_DEV_DAILY_DATA_ROOT:-$DEV_STATE_ROOT/daily-data-nba-v2}"
+DEV_DAILY_MODEL_ROOT="${GESTALT_DEV_DAILY_MODEL_ROOT:-$DEV_STATE_ROOT/daily-model-nba-v1}"
 FRONTEND_DIST="${GESTALT_DEV_FRONTEND_DIST:-}"
 
 test -d "$SOURCE_REPO/.git"
@@ -49,6 +49,10 @@ sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/catalog"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/current-season-serving"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/current-season-lineups"
 sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/schedule"
+sudo install -d -o "$USER" -g "$(id -gn)" "$DEV_STATE_ROOT/site-releases"
+
+test -f "$DEV_DAILY_DATA_ROOT/latest.json"
+test -f "$DEV_DAILY_MODEL_ROOT/latest.json"
 
 if [[ ! -d "$RELEASE_ROOT" ]]; then
   git -C "$SOURCE_REPO" worktree add --detach "$RELEASE_ROOT" "$DEV_REF"
@@ -76,7 +80,8 @@ mv \
 if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
    [[ ! -f "$DEV_STATE_ROOT/current-season-serving/latest.json" ]] || \
    [[ ! -f "$DEV_STATE_ROOT/current-season-lineups/latest.json" ]] || \
-   [[ ! -f "$DEV_STATE_ROOT/schedule/current/manifest.json" ]]; then
+   [[ ! -d "$DEV_STATE_ROOT/schedule/current/final" ]] || \
+   [[ ! -f "$DEV_STATE_ROOT/site-releases/latest.json" ]]; then
   if systemctl cat gestalt-web-dev >/dev/null 2>&1; then
     sudo systemctl stop gestalt-web-dev
   fi
@@ -84,8 +89,7 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
   PYTHONPATH="$RELEASE_ROOT/src" \
     "$PROD_RELEASE/.venv/bin/python" \
     -m nba_lineup_model.modeling.current_season_serving_materialization \
-    --rating-root "$DEV_RATING_ROOT" \
-    --minutes-root "$DEV_MINUTES_ROOT" \
+    --daily-model-root "$DEV_DAILY_MODEL_ROOT" \
     --release-root "$PROD_RELEASE" \
     --output-root "$DEV_STATE_ROOT/current-season-serving"
 
@@ -98,21 +102,15 @@ if [[ "${GESTALT_DEV_REMATERIALIZE_CURRENT_STATE:-0}" == "1" ]] || \
   GESTALT_SCHEDULE_STATE_DIR="$PROD_SCHEDULE_ROOT" \
     "$PROD_RELEASE/.venv/bin/python" \
     -m nba_lineup_model.modeling.current_season_lineup_materialization \
-    --schedule-state-dir "$PROD_SCHEDULE_ROOT" \
-    --coverage-path /var/lib/nba-gestalt/cdn/coverage.json \
+    --daily-data-root "$DEV_DAILY_DATA_ROOT" \
     --output-root "$DEV_STATE_ROOT/current-season-lineups"
 
-  PYTHONPATH="$RELEASE_ROOT/src" \
-  GESTALT_CURRENT_SEASON_SERVING_ROOT="$DEV_STATE_ROOT/current-season-serving" \
-  GESTALT_CURRENT_SEASON_LINEUPS_ROOT="$DEV_STATE_ROOT/lineup-materialization-input" \
-    "$PROD_RELEASE/.venv/bin/python" \
-    -m nba_lineup_model.modeling.current_season_schedule_materialization \
-    --source-root "$PROD_SCHEDULE_ROOT" \
-    --rating-root "$DEV_RATING_ROOT" \
-    --minutes-root "$DEV_MINUTES_ROOT" \
-    --output-root "$DEV_STATE_ROOT/schedule" \
-    --catalog-path "$DEV_STATE_ROOT/catalog/games.parquet" \
-    --include-current-forecast
+  # Historical pregame snapshots are records of what was actually in play and
+  # must not be recalculated from the new postgame state. Seed the isolated dev
+  # archive from production's reviewed serving archive, then refresh only the
+  # current/future board after the dev API starts.
+  install -d "$DEV_STATE_ROOT/schedule/current"
+  rsync -a --delete "$PROD_SCHEDULE_ROOT/" "$DEV_STATE_ROOT/schedule/current/"
 fi
 
 if [[ -n "$FRONTEND_DIST" ]]; then
@@ -184,4 +182,22 @@ fi
   http://127.0.0.1:8011 \
   http://127.0.0.1:8010 \
   "${coverage_args[@]}"
+
+# Bind the verified data/model tips and every serving surface into one release
+# identity only after representative API and browser-facing contracts pass.
+PYTHONPATH="$RELEASE_ROOT/src" \
+  "$PROD_RELEASE/.venv/bin/python" \
+  -m nba_lineup_model.season.dev_site_release \
+  --daily-data-root "$DEV_DAILY_DATA_ROOT" \
+  --daily-model-root "$DEV_DAILY_MODEL_ROOT" \
+  --serving-root "$DEV_STATE_ROOT/current-season-serving" \
+  --lineups-root "$DEV_STATE_ROOT/current-season-lineups" \
+  --schedule-state-dir "$DEV_STATE_ROOT/schedule/current" \
+  --catalog-path "$DEV_STATE_ROOT/catalog/games.parquet" \
+  --code-revision "$(git -C "$RELEASE_ROOT" rev-parse HEAD)" \
+  --api-root http://127.0.0.1:8011 \
+  --output-root "$DEV_STATE_ROOT/site-releases"
+
+site_release_sha="$(curl --fail --silent http://127.0.0.1:8011/api/health | jq -er '.site_release.release_sha256')"
+printf 'Validated immutable dev site release %s\n' "$site_release_sha"
 printf 'Deployed NBA GESTALT dev release %s from %s\n' "$RELEASE_ID" "$DEV_REF"

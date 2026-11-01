@@ -14,12 +14,14 @@ from nba_lineup_model.season.current_serving import (
     promote_serving_bundle,
     publish_serving_bundle,
 )
+from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
 from nba_lineup_model.season.slate_time import PACIFIC
 
 DEFAULT_RATING_ROOT = Path("/var/lib/nba-gestalt/in-season-nail")
 DEFAULT_MINUTES_ROOT = Path("/var/lib/nba-gestalt/in-season-minutes")
 DEFAULT_RELEASE_ROOT = Path("/opt/nba-gestalt/current")
 DEFAULT_OUTPUT_ROOT = Path("/var/lib/nba-gestalt-dev/current-season-serving")
+DEFAULT_DAILY_MODEL_ROOT = Path("/var/lib/nba-gestalt-dev/daily-model-nba-v1")
 
 
 def materialize_current_season_serving(
@@ -142,6 +144,110 @@ def materialize_current_season_serving(
     return bundle.path
 
 
+def materialize_daily_model_serving(
+    *,
+    daily_model_root: Path | str = DEFAULT_DAILY_MODEL_ROOT,
+    release_root: Path | str = DEFAULT_RELEASE_ROOT,
+    output_root: Path | str = DEFAULT_OUTPUT_ROOT,
+) -> Path:
+    """Promote one serving bundle from the verified daily-model chain tip.
+
+    Unlike the legacy shadow-publication adapter above, this path consumes the
+    ratings, minutes, and trajectory components from one content-addressed
+    model checkpoint.  Those three products therefore cannot advance on
+    different dates or against different frozen-prior universes.
+    """
+
+    model_root = Path(daily_model_root).resolve()
+    release_root = Path(release_root)
+    output_root = Path(output_root)
+    pointer = _load_json(model_root / "latest.json")
+    raw_bundle_path = str(pointer.get("bundle_path", "")).strip()
+    if not raw_bundle_path:
+        raise ValueError("Daily-model pointer has no bundle path")
+    model_bundle = (model_root / raw_bundle_path).resolve()
+    try:
+        model_bundle.relative_to(model_root)
+    except ValueError as error:
+        raise ValueError("Daily-model pointer escapes its root") from error
+    manifest = verify_daily_model_artifact(model_bundle)
+    if str(pointer.get("bundle_sha256", "")) != str(manifest["bundle_sha256"]):
+        raise ValueError("Daily-model pointer checksum does not match its bundle")
+
+    identity = manifest["identity"]
+    components = identity["components"]
+    rating_path = _daily_component_path(model_bundle, components, "player_ratings")
+    minutes_path = _daily_component_path(model_bundle, components, "minutes_state")
+    trajectory_path = _daily_component_path(
+        model_bundle, components, "rating_trajectory"
+    )
+    through_date = str(identity["game_date_pacific"])
+    evidence_date = datetime.fromisoformat(through_date).date()
+    next_midnight_pacific = datetime.fromisoformat(
+        f"{through_date}T00:00:00"
+    ).replace(tzinfo=PACIFIC) + timedelta(days=1)
+
+    release = _load_json(release_root / "release.json")
+    run_id = str(release.get("run_id", "")).strip()
+    if not run_id:
+        raise ValueError("Production release metadata has no preseason run ID")
+    provenance = identity["model_provenance"]
+    model_sha = str(manifest["bundle_sha256"])
+    game_count = int(identity["cumulative_game_count"])
+    coverage = {"games": game_count, "excluded": 0}
+    bundle = publish_serving_bundle(
+        rating_path,
+        minutes_path,
+        root=output_root,
+        season=str(identity["season"]),
+        evidence_through_date=evidence_date,
+        as_of_cutoff_time=next_midnight_pacific,
+        config=ServingPromotionConfig(
+            preseason_run_id=run_id,
+            rating_prior_possessions=6000.0,
+            minutes_participation_prior_games=4.0,
+            minutes_conditional_prior_games=0.2,
+            minutes_conditional_lookback_games=3,
+            minutes_role_cutoff_minutes=44,
+        ),
+        rating_source_uri=f"artifact://daily-model/{model_sha}/player_ratings",
+        minutes_source_uri=f"artifact://daily-model/{model_sha}/minutes_state",
+        rating_trajectory_path=trajectory_path,
+        rating_trajectory_source_uri=(
+            f"artifact://daily-model/{model_sha}/rating_trajectory"
+        ),
+        source_exclusions={"ratings": [], "minutes": []},
+        source_coverage={"ratings": coverage, "minutes": coverage},
+    )
+    promoted_pointer, _ = promote_serving_bundle(bundle.path, root=output_root)
+    if str(promoted_pointer["evidence_through_date"]) != through_date:
+        raise ValueError("Serving pointer did not retain the daily-model date")
+    serving_manifest = _load_json(bundle.path / "manifest.json")
+    source_uris = serving_manifest["identity"]["sources"]
+    if not all(model_sha in str(source["uri"]) for source in source_uris.values()):
+        raise ValueError("Serving components do not share one daily-model identity")
+    if str(provenance.get("prior_sha256", "")) == "":
+        raise ValueError("Daily-model serving state has no coupled-prior identity")
+    return bundle.path
+
+
+def _daily_component_path(
+    bundle: Path, components: dict[str, Any], name: str
+) -> Path:
+    entry = components.get(name)
+    if not isinstance(entry, dict):
+        raise ValueError(f"Daily-model component is missing: {name}")
+    raw_path = str(entry.get("path", "")).strip()
+    if not raw_path:
+        raise ValueError(f"Daily-model component path is missing: {name}")
+    path = (bundle / raw_path).resolve()
+    try:
+        path.relative_to(bundle)
+    except ValueError as error:
+        raise ValueError(f"Daily-model component escapes its bundle: {name}") from error
+    return path
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text())
     if not isinstance(payload, dict):
@@ -215,17 +321,25 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--minutes-root", type=Path, default=DEFAULT_MINUTES_ROOT)
     parser.add_argument("--release-root", type=Path, default=DEFAULT_RELEASE_ROOT)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--daily-model-root", type=Path)
     return parser
 
 
 def main() -> None:
     args = _parser().parse_args()
-    path = materialize_current_season_serving(
-        rating_root=args.rating_root,
-        minutes_root=args.minutes_root,
-        release_root=args.release_root,
-        output_root=args.output_root,
-    )
+    if args.daily_model_root is not None:
+        path = materialize_daily_model_serving(
+            daily_model_root=args.daily_model_root,
+            release_root=args.release_root,
+            output_root=args.output_root,
+        )
+    else:
+        path = materialize_current_season_serving(
+            rating_root=args.rating_root,
+            minutes_root=args.minutes_root,
+            release_root=args.release_root,
+            output_root=args.output_root,
+        )
     print(path)
 
 
