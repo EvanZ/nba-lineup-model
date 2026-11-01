@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -16,6 +17,12 @@ import numpy as np
 import pandas as pd
 
 from nba_lineup_model.ingest.nba_cdn import NbaCdnClient, RawJsonCache
+from nba_lineup_model.season.game_prediction_artifact import (
+    build_actual_minutes_ledger,
+    build_spread_ledger,
+    enrich_projected_minutes,
+    require_projection_reconciliation,
+)
 from nba_lineup_model.season.slate_time import PACIFIC
 from nba_lineup_model.web_api.the_odds_api import (
     CONSENSUS_BOOKMAKERS,
@@ -214,7 +221,14 @@ def refresh_official_live_score_state(
             else:
                 missing_pregame_candidates.append(game_id)
         if frozen_path.is_file():
-            _apply_frozen_pregame(game, _read_object(frozen_path))
+            generated = copy.deepcopy(game)
+            frozen = _read_object(frozen_path)
+            _apply_frozen_pregame(game, frozen)
+            _require_or_attach_frozen_attribution(
+                game,
+                frozen=frozen,
+                generated=generated,
+            )
         summary_path = state_root / "final" / f"{game_id}.summary.json"
         if game["status"]["completed"] and not summary_path.is_file():
             if not frozen_path.is_file():
@@ -235,7 +249,11 @@ def refresh_official_live_score_state(
                     raise FileNotFoundError(
                         f"Cannot finalize NBA game {game_id} without its frozen pregame"
                     )
-                pregame = _read_object(frozen_path)
+                frozen = _read_object(frozen_path)
+                pregame = copy.deepcopy(frozen)
+                for key in ("projection", "projected_minutes"):
+                    if key in game:
+                        pregame[key] = copy.deepcopy(game[key])
                 retrospective = _build_official_actual_minutes_retrospective(
                     game,
                     pregame=pregame,
@@ -380,96 +398,6 @@ def _scoreboard_games(state_root: Path) -> dict[str, dict[str, Any]]:
     }
 
 
-def _build_spread_ledger(
-    *,
-    away_team: str,
-    home_team: str,
-    away_rotation: dict[str, object],
-    home_rotation: dict[str, object],
-    home_court_adjustment: float,
-    back_to_back_coefficient: float,
-    home_back_to_back: bool,
-    away_back_to_back: bool,
-    back_to_back_adjustment: float,
-    provenance: dict[str, object],
-) -> dict[str, object]:
-    """Return the exact player-to-spread attribution used by the projection."""
-
-    def team_ledger(team: str, rotation: dict[str, object]) -> dict[str, object]:
-        players = rotation.get("players")
-        if not isinstance(players, list):
-            raise ValueError(f"Projection rotation has no players for {team}")
-        rows: list[dict[str, object]] = []
-        for player in players:
-            if not isinstance(player, dict):
-                continue
-            minutes = float(player["projected_minutes"])
-            rating = float(player["projected_nail"])
-            contribution = float(player["expected_contribution"])
-            expected = minutes / 48.0 * rating
-            if not math.isclose(contribution, expected, rel_tol=0.0, abs_tol=1e-12):
-                raise ValueError(
-                    f"Player contribution does not reconcile for {player['player_id']}"
-                )
-            rows.append(
-                {
-                    "player_id": int(player["player_id"]),
-                    "player_name": str(player["player_name"]),
-                    "projected_minutes": minutes,
-                    "frozen_nail": rating,
-                    "expected_contribution": contribution,
-                    "status": player.get("status"),
-                    "play_probability": player.get("play_probability"),
-                    "reason": player.get("reason"),
-                }
-            )
-        total_minutes = sum(float(row["projected_minutes"]) for row in rows)
-        if not math.isclose(total_minutes, 240.0, rel_tol=0.0, abs_tol=1e-9):
-            raise ValueError(f"Projected minutes do not sum to 240 for {team}")
-        contribution_sum = sum(
-            float(row["expected_contribution"]) for row in rows
-        )
-        team_strength = float(rotation["team_strength"])
-        if not math.isclose(
-            contribution_sum, team_strength, rel_tol=0.0, abs_tol=1e-12
-        ):
-            raise ValueError(f"Player contributions do not reproduce {team} strength")
-        return {
-            "team": team,
-            "players": rows,
-            "projected_minutes": total_minutes,
-            "team_strength": team_strength,
-        }
-
-    away = team_ledger(away_team, away_rotation)
-    home = team_ledger(home_team, home_rotation)
-    team_strength_difference = float(home["team_strength"]) - float(
-        away["team_strength"]
-    )
-    home_margin = (
-        team_strength_difference
-        + home_court_adjustment
-        + back_to_back_adjustment
-    )
-    return {
-        "schema_version": 1,
-        "contract": "minutes / 48 * frozen NAIL; home minus away plus HCA plus B2B",
-        "away": away,
-        "home": home,
-        "team_strength_difference": team_strength_difference,
-        "home_court_adjustment": home_court_adjustment,
-        "back_to_back": {
-            "coefficient": back_to_back_coefficient,
-            "home_team_is_back_to_back": home_back_to_back,
-            "away_team_is_back_to_back": away_back_to_back,
-            "adjustment": back_to_back_adjustment,
-        },
-        "home_margin": home_margin,
-        "fair_home_spread": -home_margin,
-        "provenance": dict(provenance),
-    }
-
-
 def _normalize_official_board(
     *,
     games: list[dict[str, Any]],
@@ -534,19 +462,19 @@ def _normalize_official_board(
         back_to_back_coefficient = float(forecast["back_to_back"])
         home_back_to_back = bool(float(controls.get("home_back_to_back", 0)))
         away_back_to_back = bool(float(controls.get("away_back_to_back", 0)))
-        back_to_back_adjustment = back_to_back_coefficient * (
-            float(home_back_to_back) - float(away_back_to_back)
-        )
-        ledger = _build_spread_ledger(
+        projected_minutes = {
+            "away": away_rotation["players"],
+            "home": home_rotation["players"],
+        }
+        ledger = build_spread_ledger(
+            game_id=game_id,
             away_team=away_team,
             home_team=home_team,
-            away_rotation=away_rotation,
-            home_rotation=home_rotation,
+            projected_minutes=projected_minutes,
             home_court_adjustment=home_court_adjustment,
             back_to_back_coefficient=back_to_back_coefficient,
             home_back_to_back=home_back_to_back,
             away_back_to_back=away_back_to_back,
-            back_to_back_adjustment=back_to_back_adjustment,
             provenance=projection_provenance,
         )
         margin = float(ledger["home_margin"])
@@ -591,10 +519,7 @@ def _normalize_official_board(
                     *home_rotation["injury_assumptions"],
                 ],
             },
-            "projected_minutes": {
-                "away": away_rotation["players"],
-                "home": home_rotation["players"],
-            },
+            "projected_minutes": projected_minutes,
             "market": market_lines.get(f"{game_date}|{away_team}@{home_team}"),
             "prediction_market": markets.get(
                 _prediction_market_game_key(away_team, home_team)
@@ -682,7 +607,14 @@ def _publish_board(
             elif not frozen_path.exists():
                 missing_candidates.append(game_id)
         if frozen_path.is_file():
-            _apply_frozen_pregame(game, _read_object(frozen_path))
+            generated = copy.deepcopy(game)
+            frozen = _read_object(frozen_path)
+            _apply_frozen_pregame(game, frozen)
+            _require_or_attach_frozen_attribution(
+                game,
+                frozen=frozen,
+                generated=generated,
+            )
     _write_json(latest_path, payload)
     if s3_uri:
         timestamp = collected_at.strftime("%Y%m%dT%H%M%SZ")
@@ -815,6 +747,95 @@ def _apply_frozen_pregame(
             game[key] = frozen[key]
 
 
+def _require_or_attach_frozen_attribution(
+    game: dict[str, object],
+    *,
+    frozen: dict[str, Any],
+    generated: dict[str, object],
+) -> None:
+    """Serve every frozen game with the exact matching-bundle attribution."""
+
+    game_id = str(game["game_id"])
+    projection = game.get("projection")
+    if not isinstance(projection, dict):
+        raise ValueError(f"Frozen projection is missing for {game_id}")
+    if isinstance(projection.get("ledger"), dict):
+        require_projection_reconciliation(projection, game_id=game_id)
+        return
+
+    generated_projection = generated.get("projection")
+    if not isinstance(generated_projection, dict):
+        raise ValueError(f"Generated projection is missing for {game_id}")
+    frozen_bundle = str(projection.get("serving_bundle_sha256") or "")
+    generated_bundle = str(
+        generated_projection.get("serving_bundle_sha256") or ""
+    )
+    if not frozen_bundle or frozen_bundle != generated_bundle:
+        raise ValueError(
+            f"Cannot attribute frozen game {game_id}: serving bundles differ"
+        )
+
+    generated_minutes = generated.get("projected_minutes")
+    if not isinstance(generated_minutes, dict):
+        raise ValueError(f"Generated projected minutes are missing for {game_id}")
+    ratings: dict[int, float] = {}
+    for side in ("away", "home"):
+        rows = generated_minutes.get(side)
+        if not isinstance(rows, list):
+            raise ValueError(f"Generated {side} rotation is missing for {game_id}")
+        for row in rows:
+            if not isinstance(row, dict) or row.get("player_id") is None:
+                continue
+            ratings[int(row["player_id"])] = float(row["projected_nail"])
+    frozen_minutes = game.get("projected_minutes")
+    if not isinstance(frozen_minutes, dict):
+        raise ValueError(f"Frozen projected minutes are missing for {game_id}")
+    enriched = enrich_projected_minutes(
+        frozen_minutes,
+        ratings=ratings,
+        game_id=game_id,
+    )
+    generated_ledger = generated_projection.get("ledger")
+    if not isinstance(generated_ledger, dict):
+        raise ValueError(f"Generated attribution is missing for {game_id}")
+    back_to_back = generated_ledger.get("back_to_back")
+    if not isinstance(back_to_back, dict):
+        raise ValueError(f"Generated context is missing for {game_id}")
+    provenance = generated_projection.get("input_provenance")
+    provenance = dict(provenance) if isinstance(provenance, dict) else {}
+    provenance.update(
+        {
+            "source_frozen_pregame_sha256": _object_sha256(frozen),
+            "attribution_contract": "exact matching serving bundle",
+        }
+    )
+    ledger = build_spread_ledger(
+        game_id=game_id,
+        away_team=str(game["away_team"]),
+        home_team=str(game["home_team"]),
+        projected_minutes=enriched,
+        home_court_adjustment=float(generated_ledger["home_court_adjustment"]),
+        back_to_back_coefficient=float(back_to_back["coefficient"]),
+        home_back_to_back=bool(back_to_back["home_team_is_back_to_back"]),
+        away_back_to_back=bool(back_to_back["away_team_is_back_to_back"]),
+        provenance=provenance,
+    )
+    frozen_margin = float(projection["home_margin"])
+    if not math.isclose(
+        float(ledger["home_margin"]), frozen_margin, rel_tol=0.0, abs_tol=1e-10
+    ):
+        raise ValueError(
+            f"Frozen attribution does not reproduce the spread for {game_id}"
+        )
+    projection = copy.deepcopy(projection)
+    projection["input_provenance"] = provenance
+    projection["fair_home_spread"] = -frozen_margin
+    projection["ledger"] = ledger
+    require_projection_reconciliation(projection, game_id=game_id)
+    game["projection"] = projection
+    game["projected_minutes"] = enriched
+
+
 def _object_sha256(payload: object) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -851,7 +872,25 @@ def _build_official_actual_minutes_retrospective(
     players = [
         row for row in projection_payload.get("players", []) if isinstance(row, dict)
     ]
-    ratings = {int(row["player_id"]): row for row in players if row.get("player_id")}
+    ratings = {
+        int(row["player_id"]): float(row.get("projected_nail", 0.0))
+        for row in players
+        if row.get("player_id")
+    }
+    projection = pregame.get("projection")
+    if not isinstance(projection, dict) or projection.get("home_margin") is None:
+        raise ValueError("Frozen pregame has no projected margin")
+    pregame_ledger = projection.get("ledger")
+    if not isinstance(pregame_ledger, dict):
+        raise ValueError("Frozen pregame has no attribution ledger")
+    for side in ("away", "home"):
+        team_ledger = pregame_ledger.get(side)
+        if not isinstance(team_ledger, dict):
+            raise ValueError(f"Frozen pregame has no {side} attribution")
+        for row in team_ledger.get("players", []):
+            if not isinstance(row, dict) or row.get("player_id") is None:
+                continue
+            ratings[int(row["player_id"])] = float(row["frozen_nail"])
     actual: dict[str, list[dict[str, object]]] = {}
     nba_game = boxscore.get("game")
     if not isinstance(nba_game, dict) or str(nba_game.get("gameId")) != str(
@@ -874,8 +913,8 @@ def _build_official_actual_minutes_retrospective(
             if minutes <= 0:
                 continue
             player_id = int(player["personId"])
-            model = ratings.get(player_id)
-            if model is None:
+            rating = ratings.get(player_id)
+            if rating is None:
                 raise ValueError(
                     f"Official minutes player {player_id} has no rating-before state"
                 )
@@ -892,26 +931,26 @@ def _build_official_actual_minutes_retrospective(
                         )
                     ),
                     "actual_minutes": minutes,
-                    "projected_nail": float(model.get("projected_nail", 0.0)),
-                    "rating_matched": True,
                 }
             )
         actual[team] = rows
     home = str(game["home_team"])
     away = str(game["away_team"])
-    projected = pregame.get("projected_minutes")
-    projection = pregame.get("projection")
-    if not isinstance(projected, dict):
-        raise ValueError("Frozen pregame has no projected minutes")
-    if not isinstance(projection, dict) or projection.get("home_margin") is None:
-        raise ValueError("Frozen pregame has no projected margin")
     frozen_margin = float(projection["home_margin"])
-    projected_home = _projected_strength(projected.get("home"), ratings)
-    projected_away = _projected_strength(projected.get("away"), ratings)
-    context_offset = frozen_margin - (projected_home - projected_away)
-    actual_home = _actual_strength(actual[home])
-    actual_away = _actual_strength(actual[away])
-    retrospective_margin = actual_home - actual_away + context_offset
+    ledger = build_actual_minutes_ledger(
+        game_id=str(game["game_id"]),
+        away_team=away,
+        home_team=home,
+        actual_minutes={"away": actual[away], "home": actual[home]},
+        ratings=ratings,
+        pregame_ledger=pregame_ledger,
+        provenance={
+            "pregame_ledger_sha256": _object_sha256(pregame_ledger),
+            "rating_contract": "the same frozen rating-before state as the pregame ledger",
+            "minutes_source": "official NBA liveData box score",
+        },
+    )
+    retrospective_margin = float(ledger["home_margin"])
     return {
         "computed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "method": "NAIL rating-before state reweighted by official NBA actual minutes",
@@ -921,12 +960,14 @@ def _build_official_actual_minutes_retrospective(
             frozen_probability=projection.get("home_win_probability"),
             retrospective_margin=retrospective_margin,
         ),
-        "context_offset": context_offset,
-        "home_team_strength": actual_home,
-        "away_team_strength": actual_away,
+        "context_offset": float(ledger["home_court_adjustment"])
+        + float(ledger["back_to_back"]["adjustment"]),
+        "home_team_strength": float(ledger["home"]["team_strength"]),
+        "away_team_strength": float(ledger["away"]["team_strength"]),
+        "ledger": ledger,
         "actual_minutes": {
-            "away": _public_actual(actual[away]),
-            "home": _public_actual(actual[home]),
+            "away": copy.deepcopy(ledger["away"]["players"]),
+            "home": copy.deepcopy(ledger["home"]["players"]),
         },
         "source": "NBA official liveData box score",
     }
@@ -944,39 +985,6 @@ def _duration_minutes(value: object) -> float:
     )
 
 
-def _actual_strength(rows: list[dict[str, object]]) -> float:
-    total = sum(float(row["actual_minutes"]) for row in rows)
-    if total <= 0:
-        raise ValueError("Official NBA box score has no actual minutes")
-    return sum(
-        5.0
-        * float(row["actual_minutes"])
-        / total
-        * float(row["projected_nail"])
-        for row in rows
-    )
-
-
-def _projected_strength(value: object, ratings: dict[int, dict[str, object]]) -> float:
-    rows = [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
-    total = sum(float(row.get("projected_minutes", 0.0)) for row in rows)
-    if total <= 0:
-        raise ValueError("Frozen pregame has no positive projected minutes")
-    strength = 0.0
-    for row in rows:
-        player_id = int(row["player_id"])
-        model = ratings.get(player_id)
-        if model is None:
-            raise ValueError(f"Projected player {player_id} has no rating-before state")
-        strength += (
-            5.0
-            * float(row.get("projected_minutes", 0.0))
-            / total
-            * float(model.get("projected_nail", 0.0))
-        )
-    return strength
-
-
 def _rescale_probability(
     *,
     frozen_margin: float,
@@ -991,16 +999,6 @@ def _rescale_probability(
         return probability if abs(retrospective_margin - frozen_margin) < 1e-9 else None
     beta = math.log(probability / (1.0 - probability)) / frozen_margin
     return 1.0 / (1.0 + math.exp(-beta * retrospective_margin))
-
-
-def _public_actual(rows: list[dict[str, object]]) -> list[dict[str, object]]:
-    return [
-        {key: value for key, value in row.items() if key != "projected_nail"}
-        for row in sorted(
-            rows,
-            key=lambda row: (-float(row["actual_minutes"]), str(row["player_name"])),
-        )
-    ]
 
 
 def _scheduled_status() -> dict[str, object]:

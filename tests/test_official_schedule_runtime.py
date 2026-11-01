@@ -7,8 +7,12 @@ from datetime import UTC, datetime
 import pytest
 
 from nba_lineup_model.season.official_schedule_runtime import (
+    _apply_frozen_pregame,
+    _build_official_actual_minutes_retrospective,
     _normalize_official_board,
     _publish_board,
+    _require_or_attach_frozen_attribution,
+    refresh_official_live_score_state,
 )
 
 GAME_DATE = "2026-11-01"
@@ -168,6 +172,56 @@ def test_player_ledger_exactly_reproduces_existing_spread_math() -> None:
     assert ledger["provenance"]["injury_report_sha256"] == "c" * 64
 
 
+def test_final_minutes_create_a_second_auditable_ledger() -> None:
+    game = _board(collected_at=datetime(2026, 11, 1, 1, 0, tzinfo=UTC))["games"][0]
+    game["status"] = {"state": "post", "completed": True}
+    boxscore = {
+        "game": {
+            "gameId": GAME_ID,
+            "awayTeam": {
+                "teamTricode": "AAA",
+                "players": [
+                    {
+                        "personId": player_id,
+                        "firstName": "Away",
+                        "familyName": str(player_id),
+                        "statistics": {"minutes": minutes},
+                    }
+                    for player_id, minutes in ((1, "PT100M"), (2, "PT80M"), (3, "PT60M"))
+                ],
+            },
+            "homeTeam": {
+                "teamTricode": "BBB",
+                "players": [
+                    {
+                        "personId": player_id,
+                        "firstName": "Home",
+                        "familyName": str(player_id),
+                        "statistics": {"minutes": minutes},
+                    }
+                    for player_id, minutes in ((4, "PT120M"), (5, "PT80M"), (6, "PT40M"))
+                ],
+            },
+        }
+    }
+
+    retrospective = _build_official_actual_minutes_retrospective(
+        game,
+        pregame=game,
+        boxscore=boxscore,
+        projection_payload=_forecast(),
+    )
+
+    ledger = retrospective["ledger"]
+    assert ledger["artifact_kind"] == "retrospective_actual_minutes_attribution"
+    assert ledger["home_margin"] == pytest.approx(retrospective["home_margin"])
+    assert ledger["away"]["actual_minutes"] == pytest.approx(240.0)
+    assert ledger["home"]["actual_minutes"] == pytest.approx(240.0)
+    assert sum(
+        row["actual_contribution"] for row in ledger["home"]["players"]
+    ) == pytest.approx(ledger["home"]["team_strength"])
+
+
 def test_injury_probability_reallocates_the_whole_team_and_remains_auditable() -> None:
     questionable = _board(
         collected_at=datetime(2026, 11, 1, 1, 0, tzinfo=UTC),
@@ -286,3 +340,107 @@ def test_latest_valid_pre_tip_candidate_freezes_and_post_tip_update_cannot_mutat
     latest = json.loads((tmp_path / "latest" / f"{GAME_DATE}.json").read_text())
     assert latest["games"][0]["projection"] == frozen["projection"]
     assert latest["games"][0]["injury_report"] == frozen["injury_report"]
+
+
+def _legacy_frozen(game: dict[str, object]) -> dict[str, object]:
+    frozen = copy.deepcopy(game)
+    projection = frozen["projection"]
+    assert isinstance(projection, dict)
+    projection.pop("ledger")
+    projection.pop("input_provenance")
+    projection.pop("fair_home_spread")
+    minutes = frozen["projected_minutes"]
+    assert isinstance(minutes, dict)
+    for side in ("away", "home"):
+        for row in minutes[side]:
+            row.pop("projected_nail", None)
+            row.pop("expected_contribution", None)
+    return frozen
+
+
+def test_matching_bundle_materializes_legacy_attribution_without_mutating_frozen() -> None:
+    generated = _board(
+        collected_at=datetime(2026, 11, 1, 1, 0, tzinfo=UTC)
+    )["games"][0]
+    frozen = _legacy_frozen(generated)
+    frozen_before = copy.deepcopy(frozen)
+    game = copy.deepcopy(generated)
+
+    _apply_frozen_pregame(game, frozen)
+    _require_or_attach_frozen_attribution(
+        game,
+        frozen=frozen,
+        generated=generated,
+    )
+
+    assert frozen == frozen_before
+    assert game["projection"]["ledger"]["away"] == generated["projection"]["ledger"]["away"]
+    assert game["projection"]["ledger"]["home"] == generated["projection"]["ledger"]["home"]
+    assert game["projection"]["ledger"]["home_margin"] == pytest.approx(
+        generated["projection"]["ledger"]["home_margin"]
+    )
+    assert game["projected_minutes"] == generated["projected_minutes"]
+
+
+def test_legacy_attribution_rejects_a_different_serving_bundle() -> None:
+    generated = _board(
+        collected_at=datetime(2026, 11, 1, 1, 0, tzinfo=UTC)
+    )["games"][0]
+    frozen = _legacy_frozen(generated)
+    frozen["projection"]["serving_bundle_sha256"] = "0" * 64
+    game = copy.deepcopy(generated)
+    _apply_frozen_pregame(game, frozen)
+
+    with pytest.raises(ValueError, match="serving bundles differ"):
+        _require_or_attach_frozen_attribution(
+            game,
+            frozen=frozen,
+            generated=generated,
+        )
+
+
+def test_live_score_watcher_cannot_strip_prediction_attribution(
+    tmp_path, monkeypatch
+) -> None:
+    payload = _board(
+        collected_at=datetime(2026, 11, 1, 1, 0, tzinfo=UTC)
+    )
+    generated = payload["games"][0]
+    frozen = _legacy_frozen(generated)
+    latest_path = tmp_path / "latest" / f"{GAME_DATE}.json"
+    latest_path.parent.mkdir(parents=True)
+    latest_path.write_text(json.dumps(payload))
+    frozen_path = tmp_path / "frozen" / f"{GAME_ID}.json"
+    frozen_path.parent.mkdir(parents=True)
+    frozen_path.write_text(json.dumps(frozen))
+    monkeypatch.setattr(
+        "nba_lineup_model.season.official_schedule_runtime._scoreboard_games",
+        lambda _root: {
+            GAME_ID: {
+                "gameId": GAME_ID,
+                "gameStatus": 2,
+                "gameStatusText": "Q1 10:00",
+                "gameClock": "PT10M00.00S",
+                "period": 1,
+                "homeTeam": {"teamTricode": "BBB", "score": 4},
+                "awayTeam": {"teamTricode": "AAA", "score": 2},
+            }
+        },
+    )
+
+    refresh_official_live_score_state(
+        game_date=GAME_DATE,
+        state_dir=tmp_path,
+        s3_uri=None,
+    )
+
+    latest = json.loads(latest_path.read_text())
+    game = latest["games"][0]
+    assert game["status"]["state"] == "in"
+    assert game["home_score"] == 4
+    assert game["projection"]["ledger"]["away"] == generated["projection"]["ledger"]["away"]
+    assert game["projection"]["ledger"]["home"] == generated["projection"]["ledger"]["home"]
+    assert game["projection"]["ledger"]["home_margin"] == pytest.approx(
+        generated["projection"]["ledger"]["home_margin"]
+    )
+    assert game["projected_minutes"] == generated["projected_minutes"]

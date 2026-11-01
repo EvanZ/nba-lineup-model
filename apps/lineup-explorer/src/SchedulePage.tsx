@@ -95,12 +95,14 @@ type ProjectionProvenance = {
 
 type SpreadLedgerTeam = {
   team: string;
-  projected_minutes: number;
+  projected_minutes?: number;
+  actual_minutes?: number;
   team_strength: number;
 };
 
 type SpreadLedger = {
   schema_version: number;
+  artifact_kind?: "immutable_game_prediction_attribution" | "retrospective_actual_minutes_attribution";
   contract: string;
   away: SpreadLedgerTeam;
   home: SpreadLedgerTeam;
@@ -121,6 +123,8 @@ type ActualMinute = {
   player_id: number | null;
   player_name: string;
   actual_minutes: number;
+  frozen_nail?: number | null;
+  actual_contribution?: number | null;
   rating_matched: boolean;
 };
 
@@ -168,6 +172,7 @@ type ArchivedGame = {
     home_margin: number;
     home_win_probability: number;
     actual_minutes: { away: ActualMinute[]; home: ActualMinute[] };
+    ledger?: SpreadLedger;
   };
   final_audit?: FinalAudit;
   pregame?: ArchivedGame;
@@ -462,12 +467,14 @@ function RotationTable({
   team,
   players,
   teamLedger,
+  actualTeamLedger,
   actualPlayers,
   reportStatus,
 }: {
   team: string;
   players: ProjectedMinute[];
   teamLedger?: SpreadLedgerTeam;
+  actualTeamLedger?: SpreadLedgerTeam;
   actualPlayers?: ActualMinute[];
   reportStatus?: string;
 }) {
@@ -501,36 +508,37 @@ function RotationTable({
         <span>Player</span>
         {hasAttribution && <><small>NAIL</small><small>Min.</small><small>Contribution</small></>}
         {!hasAttribution && actualPlayers && <small>Pred.</small>}
-        {actualPlayers && <><small>Actual</small><small>Δ</small></>}
+        {actualPlayers && <><small>Actual min.</small><small>Actual contribution</small><small>Δ min.</small></>}
       </div>}
       {rows.map((player) => {
         const actual = actualByPlayer.get(player.player_id) ?? actualByPlayer.get(player.player_name);
         const difference = actual ? actual.actual_minutes - player.projected_minutes : null;
+        const displayedRating = player.projected_nail ?? actual?.frozen_nail;
         const availability = player.status === "Report pending"
           ? "Status unknown — team report pending"
           : `${player.status}${player.reason ? ` · ${player.reason}` : ""}`;
         return <div key={player.player_id} className={player.status !== "Available" ? "injury-listed" : ""}>
         <span className="schedule-rotation-player">{player.player_id > 0 ? <a className="schedule-player-link" href={playerHref(player.player_id)}>{player.player_name}</a> : player.player_name}<small>{availability}</small></span>
         {hasAttribution && <>
-          <strong data-label="NAIL">{signedValue(player.projected_nail)}</strong>
+          <strong data-label="NAIL">{signedValue(displayedRating)}</strong>
           <strong data-label="Minutes">{player.projected_minutes.toFixed(1)}</strong>
           <strong data-label="Contribution" className={player.expected_contribution != null && player.expected_contribution < 0 ? "negative" : "positive"}>{signedValue(player.expected_contribution)}</strong>
         </>}
         {!hasAttribution && <strong data-label="Predicted">{player.projected_minutes.toFixed(1)}</strong>}
-        {actualPlayers && <><strong data-label="Actual">{actual?.actual_minutes.toFixed(1) ?? "0.0"}</strong><strong data-label="Delta" className={difference !== null && difference < 0 ? "negative" : "positive"}>{difference === null ? "—" : `${difference > 0 ? "+" : ""}${difference.toFixed(1)}`}</strong></>}
+        {actualPlayers && <><strong data-label="Actual minutes">{actual?.actual_minutes.toFixed(1) ?? "0.0"}</strong><strong data-label="Actual contribution" className={actual?.actual_contribution != null && actual.actual_contribution < 0 ? "negative" : "positive"}>{signedValue(actual?.actual_contribution)}</strong><strong data-label="Minutes delta" className={difference !== null && difference < 0 ? "negative" : "positive"}>{difference === null ? "—" : `${difference > 0 ? "+" : ""}${difference.toFixed(1)}`}</strong></>}
       </div>;})}
       {hasAttribution && teamLedger && <div className="schedule-rotation-total">
         <span>Team total</span>
         <strong data-label="NAIL">—</strong>
-        <strong data-label="Minutes">{teamLedger.projected_minutes.toFixed(1)}</strong>
+        <strong data-label="Minutes">{teamLedger.projected_minutes?.toFixed(1) ?? "—"}</strong>
         <strong data-label="Contribution">{signedValue(teamLedger.team_strength)}</strong>
-        {actualPlayers && <><strong data-label="Actual">—</strong><strong data-label="Delta">—</strong></>}
+        {actualPlayers && <><strong data-label="Actual minutes">{actualTeamLedger?.actual_minutes?.toFixed(1) ?? "—"}</strong><strong data-label="Actual contribution">{signedValue(actualTeamLedger?.team_strength)}</strong><strong data-label="Minutes delta">—</strong></>}
       </div>}
     </div>
   </div>;
 }
 
-function SpreadLedgerView({ ledger }: { ledger: SpreadLedger }) {
+function SpreadLedgerView({ ledger, actual = false }: { ledger: SpreadLedger; actual?: boolean }) {
   const awayTeam = ledger.away.team;
   const homeTeam = ledger.home.team;
   const backToBackTeams = [
@@ -541,7 +549,7 @@ function SpreadLedgerView({ ledger }: { ledger: SpreadLedger }) {
     ? `${backToBackTeams.join(" & ")} ${backToBackTeams.length > 1 ? "are" : "is"} on a back-to-back`
     : "Neither team is on a back-to-back";
   const provenance = ledger.provenance;
-  const snapshotLabel = provenance.serving_bundle_sha256?.slice(0, 10) ?? "unavailable";
+  const snapshotLabel = provenance.serving_bundle_sha256?.slice(0, 10) ?? "frozen pregame ledger";
   const provenanceTitle = [
     provenance.serving_bundle_sha256 ? `Serving bundle: ${provenance.serving_bundle_sha256}` : null,
     provenance.rating_state_sha256 ? `Rating state: ${provenance.rating_state_sha256}` : null,
@@ -549,9 +557,9 @@ function SpreadLedgerView({ ledger }: { ledger: SpreadLedger }) {
     provenance.injury_report_sha256 ? `Injury report: ${provenance.injury_report_sha256}` : null,
   ].filter(Boolean).join("\n");
 
-  return <section className="schedule-spread-ledger" aria-label="Model spread ledger">
+  return <section className={`schedule-spread-ledger ${actual ? "actual" : ""}`} aria-label={actual ? "Actual-minutes spread ledger" : "Model spread ledger"}>
     <div className="schedule-spread-ledger-heading">
-      <div><span>Model spread ledger</span><strong>From player value to the line</strong></div>
+      <div><span>{actual ? "Retrospective actual-minutes ledger" : "Model spread ledger"}</span><strong>{actual ? "Same frozen ratings, final minute mix" : "From player value to the line"}</strong></div>
       <small>points per 100 possessions</small>
     </div>
     <div className="schedule-spread-ledger-rows">
@@ -560,10 +568,10 @@ function SpreadLedgerView({ ledger }: { ledger: SpreadLedger }) {
       <div><span>{homeTeam} minus {awayTeam}</span><strong>{signedValue(ledger.team_strength_difference)}</strong></div>
       <div><span>Home court</span><strong>{signedValue(ledger.home_court_adjustment)}</strong></div>
       <div><span>Back-to-back adjustment<small>{backToBackNote}</small></span><strong>{signedValue(ledger.back_to_back.adjustment)}</strong></div>
-      <div className="result"><span>Projected home margin</span><strong>{homeTeam} {signedValue(ledger.home_margin, 1)}</strong></div>
-      <div className="result final"><span>Fair spread</span><strong>{homeTeam} {formatSpread(ledger.fair_home_spread)}</strong></div>
+      <div className="result"><span>{actual ? "Retrospective home margin" : "Projected home margin"}</span><strong>{homeTeam} {signedValue(ledger.home_margin, 1)}</strong></div>
+      <div className="result final"><span>{actual ? "Actual-minute mix spread" : "Fair spread"}</span><strong>{homeTeam} {formatSpread(ledger.fair_home_spread)}</strong></div>
     </div>
-    <p title={provenanceTitle}>Frozen ratings through {provenance.rating_as_of ?? "unknown"} · coupled snapshot {snapshotLabel}</p>
+    <p title={provenanceTitle}>{actual ? "Final NBA minutes · same frozen pregame ratings and context" : `Frozen ratings through ${provenance.rating_as_of ?? "unknown"} · coupled snapshot ${snapshotLabel}`}</p>
   </section>;
 }
 
@@ -798,9 +806,10 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
             <small>{game.home_team} {(retrospective.home_win_probability * 100).toFixed(0)}% · uses final minutes, not a pregame prediction</small>
           </div>}
           {spreadLedger && <SpreadLedgerView ledger={spreadLedger} />}
+          {retrospective?.ledger && <SpreadLedgerView ledger={retrospective.ledger} actual />}
           <div className="schedule-rotations">
-            <RotationTable team={game.away_team} players={displayedMinutes.away} teamLedger={spreadLedger?.away} actualPlayers={retrospective?.actual_minutes.away} reportStatus={injuryReport.team_reports?.[game.away_team]?.status} />
-            <RotationTable team={game.home_team} players={displayedMinutes.home} teamLedger={spreadLedger?.home} actualPlayers={retrospective?.actual_minutes.home} reportStatus={injuryReport.team_reports?.[game.home_team]?.status} />
+            <RotationTable team={game.away_team} players={displayedMinutes.away} teamLedger={spreadLedger?.away} actualTeamLedger={retrospective?.ledger?.away} actualPlayers={retrospective?.actual_minutes.away} reportStatus={injuryReport.team_reports?.[game.away_team]?.status} />
+            <RotationTable team={game.home_team} players={displayedMinutes.home} teamLedger={spreadLedger?.home} actualTeamLedger={retrospective?.ledger?.home} actualPlayers={retrospective?.actual_minutes.home} reportStatus={injuryReport.team_reports?.[game.home_team]?.status} />
           </div>
           <a href={injuryReport.source_url} target="_blank" rel="noreferrer">Open official NBA injury report</a>
         </div>

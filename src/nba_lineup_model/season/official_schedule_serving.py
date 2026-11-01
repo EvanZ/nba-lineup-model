@@ -30,6 +30,12 @@ import pandas as pd
 
 from nba_lineup_model.season.daily_data_artifact import verify_daily_data_artifact
 from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
+from nba_lineup_model.season.game_prediction_artifact import (
+    build_actual_minutes_ledger,
+    build_spread_ledger,
+    enrich_projected_minutes,
+    require_projection_reconciliation,
+)
 
 DEFAULT_DATA_ROOT = Path("/var/lib/nba-gestalt-dev/daily-data-nba-v2")
 DEFAULT_MODEL_ROOT = Path("/var/lib/nba-gestalt-dev/daily-model-nba-v1")
@@ -46,6 +52,7 @@ def materialize_official_schedule_state(
     frozen_artifact_root: Path | str = DEFAULT_LEGACY_SCHEDULE_ROOT,
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
     game_catalog_path: Path | str = DEFAULT_GAME_CATALOG_PATH,
+    projection_controls: Mapping[str, object] | None = None,
 ) -> Path:
     """Publish one content-addressed completed-game schedule state.
 
@@ -60,6 +67,7 @@ def materialize_official_schedule_state(
     frozen_root = Path(frozen_artifact_root).resolve()
     output_root = Path(output_root).resolve()
     game_catalog_path = Path(game_catalog_path).resolve()
+    controls = _projection_controls(projection_controls)
     data_chain = _artifact_chain(data_root, kind="data")
     model_chain = _artifact_chain(model_root, kind="model")
     if not data_chain or not model_chain:
@@ -71,7 +79,7 @@ def materialize_official_schedule_state(
     completed: list[dict[str, Any]] = []
     official_boxscores: dict[str, dict[str, Any]] = {}
     source_inventory: dict[str, dict[str, str]] = {}
-    prior_ratings: dict[int, float] | None = None
+    player_page_ratings: dict[int, float] = {}
     data_tip_sha = data_chain[-1][2]["bundle_sha256"]
     model_tip_sha = model_chain[-1][2]["bundle_sha256"]
     through_date = data_chain[-1][0]
@@ -113,11 +121,29 @@ def materialize_official_schedule_state(
                     model_bundle, model_identity["components"], "player_ratings"
                 )
             )
-            pregame_ratings = _pregame_rating_map(
-                current_ratings=current_ratings,
-                prior_ratings=prior_ratings,
-                game_date=game_date,
+            rating_trajectory = pd.read_parquet(
+                _component_path(
+                    model_bundle, model_identity["components"], "rating_trajectory"
+                )
             )
+            game_projections = pd.read_parquet(
+                _component_path(
+                    model_bundle, model_identity["components"], "game_projections"
+                )
+            )
+            for row in current_ratings.itertuples(index=False):
+                player_page_ratings.setdefault(
+                    int(row.player_id), float(row.frozen_preseason_nail)
+                )
+            day_trajectory = rating_trajectory.loc[
+                rating_trajectory["game_date_pacific"].astype(str).eq(
+                    game_date.isoformat()
+                )
+            ].copy()
+            projection_by_game = {
+                str(row.game_id): row
+                for row in game_projections.itertuples(index=False)
+            }
             boxscore_by_game = {
                 str(row["game_id"]): row for row in _require_list(boxscores, "boxscores")
             }
@@ -126,12 +152,50 @@ def materialize_official_schedule_state(
                 data_identity["game_ids"]
             ):
                 raise ValueError(f"Final-game component mismatch for {game_date}")
+            final_rows.sort(key=lambda row: (str(row.get("start_time")), str(row["game_id"])))
             for final_game in final_rows:
                 game_id = str(final_game["game_id"])
                 pregame_entry = frozen_by_game.get(game_id)
                 if pregame_entry is None:
                     raise ValueError(f"Frozen GESTALT pregame is missing for NBA game {game_id}")
-                pregame, source_summary = pregame_entry
+                source_pregame, source_summary = pregame_entry
+                game_trajectory = day_trajectory.loc[
+                    day_trajectory["game_id"].astype(str).eq(game_id)
+                ]
+                game_ratings = dict(player_page_ratings)
+                game_ratings.update(
+                    game_trajectory.set_index("player_id")["rating_before"]
+                    .astype(float)
+                    .to_dict()
+                )
+                game_projection = projection_by_game.get(game_id)
+                if game_projection is None:
+                    raise ValueError(
+                        f"Daily model game projection is missing for {game_id}"
+                    )
+                pregame = _attach_game_prediction_attribution(
+                    source_pregame,
+                    ratings=game_ratings,
+                    home_court=float(controls["home_court"]),
+                    back_to_back=float(controls["back_to_back"]),
+                    win_probability_scale=float(controls["win_probability_scale"]),
+                    home_back_to_back=bool(game_projection.home_back_to_back),
+                    away_back_to_back=bool(game_projection.away_back_to_back),
+                    provenance={
+                        "model_artifact_sha256": str(model_manifest["bundle_sha256"]),
+                        "rating_trajectory_sha256": str(
+                            model_identity["components"]["rating_trajectory"]["sha256"]
+                        ),
+                        "frozen_projected_minutes_sha256": _object_sha256(
+                            source_pregame.get("projected_minutes")
+                        ),
+                        "source_pregame_sha256": _object_sha256(source_pregame),
+                        "rating_contract": (
+                            "player-page rating_before for this game; otherwise the "
+                            "latest prior player-page rating or frozen preseason baseline"
+                        ),
+                    },
+                )
                 boxscore_record = boxscore_by_game.get(game_id)
                 if not isinstance(boxscore_record, dict):
                     raise ValueError(f"Official NBA box score is missing for {game_id}")
@@ -145,7 +209,7 @@ def materialize_official_schedule_state(
                     final_game=final_game,
                     pregame=pregame,
                     actual_minutes=actual,
-                    ratings=pregame_ratings,
+                    ratings=game_ratings,
                 )
                 source_rows = data_identity["game_sources"][game_id]
                 summary = _official_final_summary(
@@ -162,15 +226,15 @@ def materialize_official_schedule_state(
                 source_inventory[game_id] = {
                     name: str(row["sha256"]) for name, row in source_rows.items()
                 }
-            prior_ratings = (
-                current_ratings.set_index("player_id")["updated_nail"]
-                .astype(float)
-                .to_dict()
-            )
+                for trajectory_row in game_trajectory.itertuples(index=False):
+                    player_page_ratings[int(trajectory_row.player_id)] = float(
+                        trajectory_row.rating_after
+                    )
 
         identity = {
-            "schema_version": 1,
+            "schema_version": 2,
             "artifact_kind": "official_schedule_serving",
+            "prediction_attribution_contract": "pregame_and_actual_minutes_v1",
             "season": str(data_chain[-1][2]["identity"]["season"]),
             "through_date": through_date.isoformat(),
             "game_ids": sorted(source_inventory),
@@ -182,6 +246,7 @@ def materialize_official_schedule_state(
             ).hexdigest(),
             "upcoming_game_ids": sorted(str(row["game_id"]) for row in upcoming),
             "source_inventory": source_inventory,
+            "projection_controls": controls,
         }
         identity_sha = hashlib.sha256(_canonical_json(identity)).hexdigest()
         release_path = output_root / "releases" / f"release_sha256={identity_sha}"
@@ -501,40 +566,35 @@ def _official_retrospective(
                 "player_id": player_id,
                 "player_name": str(row.player_name),
                 "actual_minutes": float(row.minutes),
-                "rating_matched": True,
             }
         )
     home_team = str(final_game["home_team"])
     away_team = str(final_game["away_team"])
-    projected = pregame.get("projected_minutes")
-    if not isinstance(projected, dict):
-        raise ValueError(f"Frozen projected minutes are missing for {game_id}")
-    projected_strength = {
-        away_team: _projected_team_strength(
-            projected.get("away"), ratings=ratings, game_id=game_id
-        ),
-        home_team: _projected_team_strength(
-            projected.get("home"), ratings=ratings, game_id=game_id
-        ),
-    }
     projection = pregame.get("projection")
     if not isinstance(projection, dict) or projection.get("home_margin") is None:
         raise ValueError(f"Frozen home-margin projection is missing for {game_id}")
+    pregame_ledger = projection.get("ledger")
+    if not isinstance(pregame_ledger, Mapping):
+        raise ValueError(f"Frozen pregame ledger is missing for {game_id}")
     frozen_margin = float(projection["home_margin"])
-    context_offset = frozen_margin - (
-        projected_strength[home_team] - projected_strength[away_team]
-    )
-    official_strength = {
-        away_team: _actual_team_strength(
-            rows.get(away_team, []), ratings=ratings, game_id=game_id
-        ),
-        home_team: _actual_team_strength(
-            rows.get(home_team, []), ratings=ratings, game_id=game_id
-        ),
+    actual_by_side = {
+        "away": rows.get(away_team, []),
+        "home": rows.get(home_team, []),
     }
-    official_margin = (
-        official_strength[home_team] - official_strength[away_team] + context_offset
+    ledger = build_actual_minutes_ledger(
+        game_id=game_id,
+        away_team=away_team,
+        home_team=home_team,
+        actual_minutes=actual_by_side,
+        ratings=ratings,
+        pregame_ledger=pregame_ledger,
+        provenance={
+            "pregame_ledger_sha256": _object_sha256(pregame_ledger),
+            "rating_contract": "the same frozen rating-before state as the pregame ledger",
+            "minutes_source": "verified official NBA actual-minutes artifact",
+        },
     )
+    official_margin = float(ledger["home_margin"])
     frozen_probability = projection.get("home_win_probability")
     probability = _rescale_probability(
         frozen_margin=frozen_margin,
@@ -546,94 +606,98 @@ def _official_retrospective(
         "method": "NAIL rating-before state reweighted by official NBA actual minutes",
         "home_margin": official_margin,
         "home_win_probability": probability,
-        "context_offset": context_offset,
-        "home_team_strength": official_strength[home_team],
-        "away_team_strength": official_strength[away_team],
+        "context_offset": float(ledger["home_court_adjustment"])
+        + float(ledger["back_to_back"]["adjustment"]),
+        "home_team_strength": float(ledger["home"]["team_strength"]),
+        "away_team_strength": float(ledger["away"]["team_strength"]),
+        "ledger": ledger,
         "actual_minutes": {
-            "away": sorted(
-                rows.get(str(final_game["away_team"]), []),
-                key=lambda row: (-row["actual_minutes"], row["player_name"]),
-            ),
-            "home": sorted(
-                rows.get(str(final_game["home_team"]), []),
-                key=lambda row: (-row["actual_minutes"], row["player_name"]),
-            ),
+            "away": copy.deepcopy(ledger["away"]["players"]),
+            "home": copy.deepcopy(ledger["home"]["players"]),
         },
         "source": "NBA official liveData box score",
     }
 
 
-def _pregame_rating_map(
-    *,
-    current_ratings: pd.DataFrame,
-    prior_ratings: Mapping[int, float] | None,
-    game_date: date,
-) -> dict[int, float]:
-    required = {"player_id", "frozen_preseason_nail", "updated_nail"}
-    missing = sorted(required - set(current_ratings.columns))
-    if missing or current_ratings.empty or current_ratings["player_id"].duplicated().any():
-        raise ValueError(
-            f"Player rating state for {game_date} is invalid; missing={missing}"
+def _projection_controls(
+    supplied: Mapping[str, object] | None,
+) -> dict[str, float]:
+    """Load the immutable season controls used by the public projection model."""
+
+    if supplied is None:
+        from nba_lineup_model.web_api.inference import MODEL_ARTIFACT, LineupEvaluator
+        from nba_lineup_model.web_api.win_projections import read_win_projection_cache
+
+        evaluator = LineupEvaluator.from_latest_artifact()
+        payload = read_win_projection_cache(
+            model_artifact=MODEL_ARTIFACT, run_id=evaluator.run_id
         )
-    frozen = (
-        current_ratings.set_index("player_id")["frozen_preseason_nail"]
-        .astype(float)
-        .to_dict()
-    )
-    if prior_ratings is None:
-        return frozen
-    # Roster additions can first appear in today's coupled prior universe. They
-    # have no earlier live state, so their immutable frozen prior is the only
-    # valid pregame value. Existing players use yesterday's promoted state.
-    return {**frozen, **{int(key): float(value) for key, value in prior_ratings.items()}}
+        supplied = payload.get("win_projection")
+    if not isinstance(supplied, Mapping):
+        raise ValueError("Projection controls are unavailable")
+    output: dict[str, float] = {}
+    for key in ("home_court", "back_to_back", "win_probability_scale"):
+        value = float(supplied[key])
+        if not math.isfinite(value):
+            raise ValueError(f"Projection control is not finite: {key}")
+        output[key] = value
+    return output
 
 
-def _projected_team_strength(
-    rows: object,
+def _attach_game_prediction_attribution(
+    source_pregame: Mapping[str, Any],
     *,
     ratings: Mapping[int, float],
-    game_id: str,
-) -> float:
-    if not isinstance(rows, list) or not rows:
-        raise ValueError(f"Frozen projected rotation is missing for {game_id}")
-    strength = 0.0
-    total = 0.0
-    for row in rows:
-        if not isinstance(row, dict) or row.get("player_id") is None:
-            continue
-        player_id = int(row["player_id"])
-        minutes = float(row.get("projected_minutes") or 0.0)
-        if minutes <= 0:
-            continue
-        if player_id not in ratings:
-            raise ValueError(
-                f"Frozen rotation player {player_id} lacks rating-before for {game_id}"
-            )
-        strength += minutes / 48.0 * float(ratings[player_id])
-        total += minutes
-    if abs(total - 240.0) > 0.1:
-        raise ValueError(
-            f"Frozen projected rotation for {game_id} sums to {total:.3f} minutes"
-        )
-    return strength
+    home_court: float,
+    back_to_back: float,
+    win_probability_scale: float,
+    home_back_to_back: bool,
+    away_back_to_back: bool,
+    provenance: Mapping[str, object],
+) -> dict[str, Any]:
+    """Materialize the player-page ratings and frozen minutes as one artifact."""
 
-
-def _actual_team_strength(
-    rows: list[dict[str, Any]],
-    *,
-    ratings: Mapping[int, float],
-    game_id: str,
-) -> float:
-    total = sum(float(row["actual_minutes"]) for row in rows)
-    if total <= 0:
-        raise ValueError(f"Official actual minutes are empty for {game_id}")
-    return sum(
-        5.0
-        * float(row["actual_minutes"])
-        / total
-        * float(ratings[int(row["player_id"])])
-        for row in rows
+    pregame = copy.deepcopy(dict(source_pregame))
+    game_id = str(pregame["game_id"])
+    projected = pregame.get("projected_minutes")
+    if not isinstance(projected, Mapping):
+        raise ValueError(f"Frozen projected minutes are missing for {game_id}")
+    enriched = enrich_projected_minutes(
+        projected,
+        ratings=ratings,
+        game_id=game_id,
     )
+    ledger = build_spread_ledger(
+        game_id=game_id,
+        away_team=str(pregame["away_team"]),
+        home_team=str(pregame["home_team"]),
+        projected_minutes=enriched,
+        home_court_adjustment=home_court,
+        back_to_back_coefficient=back_to_back,
+        home_back_to_back=home_back_to_back,
+        away_back_to_back=away_back_to_back,
+        provenance=provenance,
+    )
+    projection = pregame.get("projection")
+    projection = copy.deepcopy(projection) if isinstance(projection, dict) else {}
+    margin = float(ledger["home_margin"])
+    projection.update(
+        {
+            "model_track": "updated_ratings_updated_minutes",
+            "state_kind": "in_season_strict_forward_replay",
+            "input_provenance": dict(provenance),
+            "home_margin": margin,
+            "fair_home_spread": -margin,
+            "home_win_probability": float(
+                1.0 / (1.0 + math.exp(-win_probability_scale * margin))
+            ),
+            "ledger": ledger,
+        }
+    )
+    require_projection_reconciliation(projection, game_id=game_id)
+    pregame["projection"] = projection
+    pregame["projected_minutes"] = enriched
+    return pregame
 
 
 def _rescale_probability(
@@ -842,6 +906,10 @@ def _read_object(path: Path) -> dict[str, Any]:
 
 def _canonical_json(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _object_sha256(value: object) -> str:
+    return hashlib.sha256(_canonical_json(value)).hexdigest()
 
 
 def _write_json(path: Path, value: object) -> None:

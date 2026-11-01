@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import html
 import json
+import math
 import shutil
 import urllib.parse
 import urllib.request
@@ -110,6 +111,13 @@ def publish_dev_site_release(
             "Schedule final coverage differs from the verified daily chain: "
             f"schedule={len(final_game_ids)} model={len(expected_game_ids)}"
         )
+    attribution_audit = _schedule_attribution_audit(schedule_root)
+    if attribution_audit["completed_games"] != len(expected_game_ids):
+        raise ValueError(
+            "Schedule attribution coverage differs from the verified daily chain: "
+            f"attributed={attribution_audit['completed_games']} "
+            f"model={len(expected_game_ids)}"
+        )
     normalized_api = _normalize_api_validation(
         api_validation,
         evidence_date=str(model_identity["game_date_pacific"]),
@@ -163,6 +171,7 @@ def publish_dev_site_release(
             "tree_sha256": _tree_sha256(schedule_root),
             "root_path": schedule_root.as_posix(),
             "final_game_count": len(final_game_ids),
+            "attribution_audit": attribution_audit,
         },
         "catalog": {
             "sha256": file_sha256(catalog),
@@ -352,6 +361,120 @@ def _schedule_final_game_ids(root: Path) -> list[str]:
     if len(game_ids) != len(set(game_ids)):
         raise ValueError("Schedule finals contain duplicate NBA game IDs")
     return sorted(game_ids)
+
+
+def _schedule_attribution_audit(root: Path) -> dict[str, int]:
+    """Reject a release if any served game lacks its auditable ledgers."""
+
+    completed_ids: set[str] = set()
+    for path in sorted((root / "final").glob("*.summary.json")):
+        payload = _read_json(path)
+        game_id = str(payload.get("game_id", "")).strip()
+        pregame = payload.get("pregame")
+        retrospective = payload.get("retrospective")
+        if not isinstance(pregame, dict) or not isinstance(retrospective, dict):
+            raise ValueError(f"Completed game {game_id or path.name} lacks both views")
+        _require_schedule_ledger(
+            pregame.get("projection"),
+            game_id=game_id,
+            actual=False,
+        )
+        _require_schedule_ledger(
+            retrospective,
+            game_id=game_id,
+            actual=True,
+        )
+        completed_ids.add(game_id)
+
+    served_ids: set[str] = set()
+    served_completed_ids: set[str] = set()
+    for path in sorted((root / "latest").glob("*.json")):
+        payload = _read_json(path)
+        games = payload.get("games")
+        if not isinstance(games, list):
+            raise ValueError(f"Schedule day has no games array: {path}")
+        for game in games:
+            if not isinstance(game, dict):
+                raise ValueError(f"Schedule day has an invalid game: {path}")
+            game_id = str(game.get("game_id", "")).strip()
+            if not game_id:
+                raise ValueError(f"Schedule game has no ID: {path}")
+            if game_id in served_ids:
+                raise ValueError(f"Schedule serves duplicate game {game_id}")
+            _require_schedule_ledger(
+                game.get("projection"),
+                game_id=game_id,
+                actual=False,
+            )
+            served_ids.add(game_id)
+            status = game.get("status")
+            if isinstance(status, dict) and bool(status.get("completed")):
+                _require_schedule_ledger(
+                    game.get("retrospective"),
+                    game_id=game_id,
+                    actual=True,
+                )
+                served_completed_ids.add(game_id)
+    if completed_ids != served_completed_ids:
+        raise ValueError(
+            "Completed schedule ledgers differ between final and daily views: "
+            f"final={len(completed_ids)} daily={len(served_completed_ids)}"
+        )
+    return {
+        "served_games": len(served_ids),
+        "pregame_ledgers": len(served_ids),
+        "completed_games": len(completed_ids),
+        "actual_minutes_ledgers": len(served_completed_ids),
+    }
+
+
+def _require_schedule_ledger(
+    container: object,
+    *,
+    game_id: str,
+    actual: bool,
+) -> None:
+    if not isinstance(container, dict):
+        raise ValueError(f"Schedule projection is missing for {game_id}")
+    ledger = container.get("ledger")
+    if not isinstance(ledger, dict):
+        kind = "actual-minutes" if actual else "pregame"
+        raise ValueError(f"Schedule {kind} ledger is missing for {game_id}")
+    margin = float(container["home_margin"])
+    if not math.isclose(
+        margin,
+        float(ledger["home_margin"]),
+        rel_tol=0.0,
+        abs_tol=1e-10,
+    ):
+        raise ValueError(f"Schedule ledger does not reproduce margin for {game_id}")
+    minutes_key = "actual_minutes" if actual else "projected_minutes"
+    contribution_key = "actual_contribution" if actual else "expected_contribution"
+    expected_kind = (
+        "retrospective_actual_minutes_attribution"
+        if actual
+        else "immutable_game_prediction_attribution"
+    )
+    if ledger.get("artifact_kind") != expected_kind:
+        raise ValueError(f"Schedule ledger has the wrong contract for {game_id}")
+    for side in ("away", "home"):
+        team = ledger.get(side)
+        if not isinstance(team, dict) or not isinstance(team.get("players"), list):
+            raise ValueError(f"Schedule ledger lacks {side} players for {game_id}")
+        players = team["players"]
+        if not players:
+            raise ValueError(f"Schedule ledger has no {side} players for {game_id}")
+        for player in players:
+            if (
+                not isinstance(player, dict)
+                or player.get("player_id") is None
+                or player.get("frozen_nail") is None
+                or player.get(minutes_key) is None
+                or player.get(contribution_key) is None
+            ):
+                raise ValueError(
+                    f"Schedule ledger has incomplete {side} player attribution for {game_id}"
+                )
 
 
 def _tree_sha256(root: Path) -> str:

@@ -9,6 +9,28 @@ import pytest
 from nba_lineup_model.season import dev_site_release as subject
 
 
+def _ledger(*, actual: bool) -> dict[str, object]:
+    minutes_key = "actual_minutes" if actual else "projected_minutes"
+    contribution_key = "actual_contribution" if actual else "expected_contribution"
+    player = {
+        "player_id": 1,
+        "player_name": "Player",
+        "frozen_nail": 1.0,
+        minutes_key: 240.0,
+        contribution_key: 5.0,
+    }
+    return {
+        "artifact_kind": (
+            "retrospective_actual_minutes_attribution"
+            if actual
+            else "immutable_game_prediction_attribution"
+        ),
+        "home_margin": 1.0,
+        "away": {"players": [player]},
+        "home": {"players": [player]},
+    }
+
+
 def _api_validation() -> dict[str, object]:
     return {
         "status": "clean",
@@ -57,7 +79,33 @@ def _inputs(tmp_path: Path, monkeypatch):
     )
     schedule_final = schedule_root / "final"
     schedule_final.mkdir(parents=True)
-    (schedule_final / "game.summary.json").write_text(json.dumps({"game_id": "game-1"}))
+    pregame = {"projection": {"home_margin": 1.0, "ledger": _ledger(actual=False)}}
+    retrospective = {"home_margin": 1.0, "ledger": _ledger(actual=True)}
+    (schedule_final / "game.summary.json").write_text(
+        json.dumps(
+            {
+                "game_id": "game-1",
+                "pregame": pregame,
+                "retrospective": retrospective,
+            }
+        )
+    )
+    schedule_latest = schedule_root / "latest"
+    schedule_latest.mkdir()
+    (schedule_latest / "2026-10-31.json").write_text(
+        json.dumps(
+            {
+                "games": [
+                    {
+                        "game_id": "game-1",
+                        "projection": pregame["projection"],
+                        "retrospective": retrospective,
+                        "status": {"completed": True},
+                    }
+                ]
+            }
+        )
+    )
     catalog.write_bytes(b"catalog")
     pd.DataFrame({"player_id": [1]}).to_parquet(preseason_rankings, index=False)
     pd.DataFrame({"player_id": [1]}).to_parquet(preseason_profiles, index=False)
@@ -157,6 +205,12 @@ def test_dev_site_release_binds_all_selected_components(tmp_path: Path, monkeypa
     assert identity["model"]["bundle_sha256"] == "m" * 64
     assert identity["serving"]["bundle_sha256"] == "s" * 64
     assert identity["lineups"]["bundle_sha256"] == "l" * 64
+    assert identity["schedule"]["attribution_audit"] == {
+        "served_games": 1,
+        "pregame_ledgers": 1,
+        "completed_games": 1,
+        "actual_minutes_ledgers": 1,
+    }
     assert subject.resolve_latest_dev_site_release(tmp_path / "releases") == release
 
 
@@ -177,5 +231,30 @@ def test_dev_site_release_rejects_mixed_api_state(tmp_path: Path, monkeypatch) -
             preseason_profiles_path=inputs[7],
             code_revision="a" * 40,
             api_validation=validation,
+            output_root=tmp_path / "releases",
+        )
+
+
+def test_dev_site_release_rejects_any_game_without_actual_minutes_ledger(
+    tmp_path: Path, monkeypatch
+) -> None:
+    inputs = _inputs(tmp_path, monkeypatch)
+    summary_path = inputs[4] / "final" / "game.summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["retrospective"].pop("ledger")
+    summary_path.write_text(json.dumps(summary))
+
+    with pytest.raises(ValueError, match="actual-minutes ledger is missing"):
+        subject.publish_dev_site_release(
+            daily_data_root=inputs[0],
+            daily_model_root=inputs[1],
+            serving_root=inputs[2],
+            lineups_root=inputs[3],
+            schedule_state_dir=inputs[4],
+            catalog_path=inputs[5],
+            preseason_rankings_path=inputs[6],
+            preseason_profiles_path=inputs[7],
+            code_revision="a" * 40,
+            api_validation=_api_validation(),
             output_root=tmp_path / "releases",
         )
