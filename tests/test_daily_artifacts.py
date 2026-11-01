@@ -372,3 +372,31 @@ def test_daily_model_rejects_a_parent_from_the_wrong_data_chain(tmp_path: Path) 
             parent=first_model.path,
             suffix="-wrong-chain",
         )
+
+
+def test_daily_model_rejects_a_parent_with_different_provenance(tmp_path: Path) -> None:
+    day_one_data = _publish_data(
+        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
+    )
+    day_one_model = _publish_model(tmp_path, data_bundle=day_one_data.path)
+    day_two_data = _publish_data(
+        tmp_path,
+        game_date=date(2026, 10, 21),
+        game_ids=["0022600002"],
+        parent=day_one_data.path,
+        suffix="-two",
+    )
+
+    with pytest.raises(ValueError, match="different model provenance"):
+        publish_daily_model_artifact(
+            root=tmp_path / "model-root",
+            data_bundle=day_two_data.path,
+            parent_bundle=day_one_model.path,
+            components=_components(tmp_path, MODEL_COMPONENTS, "model-two"),
+            model_provenance={
+                "code_revision": "different",
+                "model_version": "nail-in-season-v1",
+                "configuration_sha256": _sha("configuration"),
+                "prior_sha256": _sha("preseason-prior"),
+            },
+        )

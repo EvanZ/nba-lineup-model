@@ -66,6 +66,8 @@ def publish_daily_model_artifact(
     game_date = date.fromisoformat(data_identity["game_date_pacific"])
     parent = _parent_identity(parent_bundle, data_manifest)
     provenance = _normalize_provenance(model_provenance)
+    if parent is not None and parent["identity"]["model_provenance"] != provenance:
+        raise ValueError("Daily model parent uses different model provenance")
     normalized_data_uri = str(
         input_data_uri
         or f"artifact://daily-data/{data_manifest['bundle_sha256']}"
