@@ -39,7 +39,26 @@ snapshot() {
 snapshot "$LEFT_API" "$WORK_ROOT/left.json"
 snapshot "$RIGHT_API" "$WORK_ROOT/right.json"
 
-if [[ "$MODE" == "--allow-left-final-superset" ]]; then
+if [[ "$MODE" == "--allow-left-evidence-superset" ]]; then
+  if ! jq -e -s '
+    .[0] as $left | .[1] as $right |
+    $left.season == $right.season and
+    $left.catalog_game_count == $right.catalog_game_count and
+    $left.performance_as_of == $right.performance_as_of and
+    $left.audited_final_games == $right.audited_final_games and
+    $left.evidence_through_date >= $right.evidence_through_date and
+    $left.evidence_game_count >= $right.evidence_game_count and
+    $left.forecast_as_of == $left.evidence_through_date and
+    $right.forecast_as_of == $right.evidence_through_date and
+    $left.completed_team_games >= $right.completed_team_games and
+    $left.remaining_game_count <= $right.remaining_game_count and
+    (($right.source_game_ids - $left.source_game_ids) | length) == 0
+  ' "$WORK_ROOT/left.json" "$WORK_ROOT/right.json" >/dev/null; then
+    printf 'Dev evidence is not a valid production superset:\n' >&2
+    diff -u "$WORK_ROOT/right.json" "$WORK_ROOT/left.json" >&2 || true
+    exit 1
+  fi
+elif [[ "$MODE" == "--allow-left-final-superset" ]]; then
   jq 'del(.performance_as_of, .audited_final_games)' \
     "$WORK_ROOT/left.json" >"$WORK_ROOT/left-core.json"
   jq 'del(.performance_as_of, .audited_final_games)' \
