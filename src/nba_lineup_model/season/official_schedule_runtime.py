@@ -18,6 +18,7 @@ import pandas as pd
 from nba_lineup_model.ingest.nba_cdn import NbaCdnClient, RawJsonCache
 from nba_lineup_model.season.slate_time import PACIFIC
 from nba_lineup_model.web_api.the_odds_api import (
+    CONSENSUS_BOOKMAKERS,
     normalize_market_consensus,
     read_latest_odds_snapshot,
 )
@@ -48,6 +49,9 @@ NBA_DURATION_RE = re.compile(
     r"(?:(?P<minutes>\d+(?:\.\d+)?)M)?"
     r"(?:(?P<seconds>\d+(?:\.\d+)?)S)?$"
 )
+OFFICIAL_CONSENSUS_BOOKMAKERS = tuple(
+    key for key in CONSENSUS_BOOKMAKERS if key.casefold() != "espnbet"
+)
 
 
 def refresh_official_schedule_window(
@@ -55,6 +59,7 @@ def refresh_official_schedule_window(
     start_date: str,
     days_ahead: int = DEFAULT_SCHEDULE_DAYS_AHEAD,
     state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    odds_state_dir: Path | str | None = None,
     game_catalog_path: Path | str = DEFAULT_GAME_CATALOG_PATH,
     projection_url: str = DEFAULT_SCHEDULE_API_URL,
     s3_uri: str | None = DEFAULT_SCHEDULE_S3_URI,
@@ -88,8 +93,13 @@ def refresh_official_schedule_window(
         else None
     )
     forecast_response = _fetch_json(projection_url)
-    odds_snapshot = read_latest_odds_snapshot(state_dir=state_root)
-    bookmaker_lines = normalize_market_consensus(odds_snapshot)
+    odds_snapshot = read_latest_odds_snapshot(
+        state_dir=odds_state_dir if odds_state_dir is not None else state_root
+    )
+    bookmaker_lines = normalize_market_consensus(
+        odds_snapshot,
+        bookmaker_keys=OFFICIAL_CONSENSUS_BOOKMAKERS,
+    )
     scoreboard = _scoreboard_games(state_root)
     days: list[dict[str, object]] = []
     total_games = 0
@@ -730,6 +740,7 @@ def refresh_schedule_main() -> None:
     parser.add_argument("--date", required=True)
     parser.add_argument("--days-ahead", type=int, default=DEFAULT_SCHEDULE_DAYS_AHEAD)
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_SCHEDULE_STATE_DIR)
+    parser.add_argument("--odds-state-dir", type=Path)
     parser.add_argument(
         "--game-catalog-path", type=Path, default=DEFAULT_GAME_CATALOG_PATH
     )
@@ -741,6 +752,7 @@ def refresh_schedule_main() -> None:
         start_date=args.date,
         days_ahead=args.days_ahead,
         state_dir=args.state_dir,
+        odds_state_dir=args.odds_state_dir,
         game_catalog_path=args.game_catalog_path,
         projection_url=args.projection_url,
         s3_uri=None if args.no_s3 else args.s3_uri,

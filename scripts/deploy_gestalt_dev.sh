@@ -191,6 +191,7 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   -m nba_lineup_model.season.official_schedule_runtime \
   --date "$(TZ=America/Los_Angeles date +%F)" \
   --state-dir "$DEV_SCHEDULE_ROOT" \
+  --odds-state-dir "$PROD_SCHEDULE_ROOT" \
   --game-catalog-path "$DEV_STATE_ROOT/catalog/games.parquet" \
   --projection-url http://127.0.0.1:8011/api/win-projections \
   --days-ahead 7 \
