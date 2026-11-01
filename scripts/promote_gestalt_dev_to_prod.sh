@@ -280,8 +280,9 @@ for sensor in \
   in_season_minutes_production_ready \
   current_season_serving_ready \
   promoted_current_season_lineups_ready; do
-  "$PROD_RELEASE/.venv/bin/dagster" sensor stop \
-    -w "$STATE_ROOT/dagster/workspace.yaml" "$sensor" >/dev/null 2>&1 || true
+  DAGSTER_HOME="$STATE_ROOT/dagster" \
+    "$PROD_RELEASE/.venv/bin/dagster" sensor stop \
+    -w "$STATE_ROOT/dagster/workspace.yaml" "$sensor" >/dev/null
 done
 
 trap - ERR
