@@ -16,6 +16,7 @@ from nba_lineup_model.season.daily_data_artifact import (
 from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
 from nba_lineup_model.season.daily_model_replay import (
     DailyModelReplayBlocked,
+    _early_role_minutes,
     replay_daily_model_chain,
 )
 
@@ -328,3 +329,34 @@ def test_daily_model_replay_fails_closed_on_missing_player_prior(tmp_path: Path)
     )
     assert "Player universe is incomplete" in error["error"]
 
+
+def test_early_role_reconciles_only_a_small_verified_stint_gap() -> None:
+    stints = pd.DataFrame(
+        [
+            {
+                "start_elapsed_game_seconds": 0.0,
+                "end_elapsed_game_seconds": 2426.0,
+                "home_player_ids": np.asarray([1, 2, 3, 4, 5]),
+                "away_player_ids": np.asarray([6, 7, 8, 9, 10]),
+            },
+            {
+                "start_elapsed_game_seconds": 2436.0,
+                "end_elapsed_game_seconds": 2880.0,
+                "home_player_ids": np.asarray([1, 2, 3, 4, 5]),
+                "away_player_ids": np.asarray([6, 7, 8, 9, 10]),
+            },
+        ]
+    )
+
+    roles, warning = _early_role_minutes(stints, boundary_seconds=2640.0)
+
+    assert warning == "reconciled 10.0s verified stint-coverage gap within 15.0s limit"
+    assert sum(roles[player_id] for player_id in range(1, 6)) == pytest.approx(240.0)
+    assert sum(roles[player_id] for player_id in range(6, 11)) == pytest.approx(240.0)
+
+    with pytest.raises(ValueError, match="exceeds the audited reconciliation limit"):
+        _early_role_minutes(
+            stints,
+            boundary_seconds=2640.0,
+            maximum_reconciled_gap_seconds=5.0,
+        )

@@ -515,7 +515,7 @@ def _build_one_date(
             observations["outcome_classification"].eq(UNKNOWN).sum()
         ),
         "context_warnings": context_warnings,
-        "injury_identity_warnings": injury_warnings,
+        "minutes_observation_warnings": injury_warnings,
         "blake_wesley_prior_present": 1631104 in set(player_ids),
         "excluded_game_count": 0,
         "excluded_games": [],
@@ -677,9 +677,11 @@ def _minutes_observations(
             "report_status": report_status,
         }
         game_stints = stints.loc[stints["game_id"].astype(str).eq(game_id)]
-        roles = competitive_role_minutes(
+        roles, role_warning = _early_role_minutes(
             game_stints, boundary_seconds=float(role_cutoff_minutes * 60)
         )
+        if role_warning is not None:
+            warnings.append(f"{game_id}: {role_warning}")
         roster = rosters[game_id]
         seen: set[int] = set()
         for team_row in roster["teams"]:
@@ -763,6 +765,81 @@ def _minutes_observations(
     if output.duplicated(["game_id", "player_id"]).any():
         raise ValueError("Minutes observations duplicate a player-game")
     return output, injury_by_game, warnings
+
+
+def _early_role_minutes(
+    stints: pd.DataFrame,
+    *,
+    boundary_seconds: float,
+    maximum_reconciled_gap_seconds: float = 15.0,
+) -> tuple[dict[int, float], str | None]:
+    """Calculate the fixed-cutoff role and reconcile only a tiny coverage gap.
+
+    NBA lineup reconstruction can omit a short dead-clock interval even though
+    both surrounding lineups are known.  We do not guess which lineup owned
+    that interval.  Instead, for a gap of at most 15 seconds, each team's
+    observed player exposure is normalized to 240 minutes.  This is the same
+    first-44-minute share estimator with a slightly smaller observed
+    denominator; it never falls back to full-game actual minutes.
+    """
+
+    try:
+        return (
+            competitive_role_minutes(stints, boundary_seconds=boundary_seconds),
+            None,
+        )
+    except ValueError as error:
+        if "Competitive lineup coverage is incomplete" not in str(error):
+            raise
+    frame = stints.sort_values(
+        ["start_elapsed_game_seconds", "end_elapsed_game_seconds"], kind="stable"
+    )
+    player_seconds: dict[int, float] = {}
+    home_total = 0.0
+    away_total = 0.0
+    for row in frame.itertuples(index=False):
+        start = max(0.0, float(row.start_elapsed_game_seconds))
+        end = min(float(boundary_seconds), float(row.end_elapsed_game_seconds))
+        duration = max(0.0, end - start)
+        if duration <= 0.0:
+            continue
+        home = tuple(map(int, row.home_player_ids))
+        away = tuple(map(int, row.away_player_ids))
+        if len(home) != 5 or len(away) != 5:
+            raise ValueError("Every early-role lineup must contain five players per team")
+        home_total += duration
+        away_total += duration
+        for player_id in (*home, *away):
+            player_seconds[player_id] = player_seconds.get(player_id, 0.0) + duration
+    home_gap = float(boundary_seconds) - home_total
+    away_gap = float(boundary_seconds) - away_total
+    if (
+        home_gap < 0.0
+        or away_gap < 0.0
+        or home_gap > maximum_reconciled_gap_seconds
+        or away_gap > maximum_reconciled_gap_seconds
+        or abs(home_gap - away_gap) > 1e-9
+    ):
+        raise ValueError(
+            "Early-role coverage gap exceeds the audited reconciliation limit: "
+            f"home={home_gap:.2f}s away={away_gap:.2f}s"
+        )
+    if home_total <= 0.0 or away_total <= 0.0:
+        raise ValueError("Early-role lineup coverage is empty")
+    # Both teams share the same stint intervals, so one scale preserves their
+    # relative player shares and makes each side sum to exactly 240 minutes.
+    scale = 48.0 / home_total
+    output = {
+        player_id: seconds * scale
+        for player_id, seconds in player_seconds.items()
+    }
+    if abs(sum(output.values()) - 480.0) > 1e-8:
+        raise ValueError("Reconciled early-role minutes do not sum to 240 per team")
+    warning = (
+        f"reconciled {home_gap:.1f}s verified stint-coverage gap within "
+        f"{maximum_reconciled_gap_seconds:.1f}s limit"
+    )
+    return output, warning
 
 
 def _classification(
