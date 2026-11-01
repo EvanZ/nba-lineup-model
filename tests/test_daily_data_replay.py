@@ -1,61 +1,168 @@
 from __future__ import annotations
 
+import json
+from datetime import date
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
+from nba_lineup_model.modeling.in_season_nail_monitor import (
+    _rapm_stints_from_nba_boxscore,
+)
 from nba_lineup_model.season.daily_data_replay import (
-    _actual_minutes,
-    _player_identity_lookup,
+    _load_official_game_catalog,
+    _nba_actual_minutes,
+    _official_final_game,
+    _terminal_play_by_play_scores,
 )
 
 
-def test_actual_minutes_blocks_an_unresolved_dnp_player() -> None:
-    summary = {
-        "game_id": "0022600001",
-        "game_date": "2026-10-20",
-        "home_team": "DET",
-        "away_team": "BOS",
-        "pregame": {"start_time": "2026-10-20T23:30:00Z"},
-    }
-    espn = {
-        "boxscore": {
-            "players": [
+def _boxscore(*, include_dnp: bool = True) -> dict[str, object]:
+    def team(team_id: int, tricode: str, score: int, player_id: int):
+        players = [
+            {
+                "personId": player_id,
+                "firstName": "Played",
+                "familyName": tricode,
+                "starter": "1",
+                "status": "ACTIVE",
+                "statistics": {"minutes": "PT30M30.00S"},
+            }
+        ]
+        if include_dnp:
+            players.append(
                 {
-                    "team": {"abbreviation": "BOS"},
-                    "statistics": [
-                        {
-                            "labels": ["MIN", "PTS"],
-                            "athletes": [
-                                {
-                                    "athlete": {
-                                        "id": "999",
-                                        "displayName": "Unmapped Player",
-                                    },
-                                    "stats": [],
-                                }
-                            ],
-                        }
-                    ],
+                    "personId": player_id + 1,
+                    "firstName": "Did Not",
+                    "familyName": "Play",
+                    "starter": "0",
+                    "status": "ACTIVE",
+                    "statistics": {"minutes": "PT00M00.00S"},
                 }
+            )
+        return {
+            "teamId": team_id,
+            "teamTricode": tricode,
+            "score": score,
+            "players": players,
+        }
+
+    return {
+        "game": {
+            "gameId": "0022600001",
+            "gameStatus": 3,
+            "gameStatusText": "Final",
+            "homeTeam": team(1610612765, "DET", 110, 1001),
+            "awayTeam": team(1610612738, "BOS", 105, 2001),
+        }
+    }
+
+
+def _catalog_game() -> dict[str, object]:
+    return {
+        "game_id": "0022600001",
+        "season": "2026-27",
+        "game_time_utc": pd.Timestamp("2026-10-20T23:00:00Z"),
+        "home_team_tricode": "DET",
+        "away_team_tricode": "BOS",
+    }
+
+
+def test_nba_person_ids_resolve_played_and_dnp_players_without_name_matching() -> None:
+    game_record = _official_final_game(
+        catalog_game=_catalog_game(),
+        boxscore=_boxscore(),
+        game_date_pacific=date(2026, 10, 20),
+    )
+
+    actual, identity, roster = _nba_actual_minutes(
+        game_record=game_record,
+        boxscore=_boxscore(),
+    )
+
+    assert set(actual["player_id"]) == {1001, 2001}
+    assert set(identity["player_id"]) == {1001, 1002, 2001, 2002}
+    assert set(identity["resolution"]) == {"nba_person_id"}
+    assert identity.loc[identity["player_id"].eq(1002), "played"].item() is False
+    assert roster["teams"][0]["players"][1]["status"] == "ACTIVE"
+
+
+def test_nba_actual_minutes_rejects_a_missing_canonical_person_id() -> None:
+    boxscore = _boxscore(include_dnp=False)
+    boxscore["game"]["homeTeam"]["players"][0].pop("personId")
+    game_record = {
+        "game_id": "0022600001",
+        "game_date_pacific": "2026-10-20",
+    }
+
+    with pytest.raises(ValueError, match="malformed DET player identity"):
+        _nba_actual_minutes(game_record=game_record, boxscore=boxscore)
+
+
+def test_terminal_play_by_play_score_uses_the_last_scored_action() -> None:
+    payload = {
+        "game": {
+            "actions": [
+                {"actionNumber": 1, "scoreHome": "2", "scoreAway": "0"},
+                {"actionNumber": 2},
+                {"actionNumber": 3, "scoreHome": "110", "scoreAway": "105"},
+                {"actionNumber": 4},
             ]
         }
     }
 
-    with pytest.raises(ValueError, match="Could not map ESPN athlete 'Unmapped Player'"):
-        _actual_minutes(summary=summary, espn=espn, name_lookup={})
+    assert _terminal_play_by_play_scores(payload) == (110, 105)
 
 
-def test_current_player_identity_wins_over_retired_namesake() -> None:
-    current = pd.DataFrame(
-        {"player_id": [1630314], "player_name": ["Brandon Williams"]}
+def test_nba_boxscore_starters_drive_lineup_reconstruction() -> None:
+    fixture_root = Path(__file__).parent / "fixtures"
+    boxscore = json.loads((fixture_root / "boxscore_lineup_scenario.json").read_text())
+    play_by_play = json.loads(
+        (fixture_root / "playbyplay_lineup_scenario.json").read_text()
     )
-    historical = pd.DataFrame(
-        {
-            "player_id": [1585, 1630314],
-            "player_name": ["Brandon Williams", "Brandon Williams"],
-        }
+    boxscore["game"]["homeTeam"]["score"] = 2
+    boxscore["game"]["awayTeam"]["score"] = 2
+
+    stints, team_ids, _issue_count = _rapm_stints_from_nba_boxscore(
+        boxscore=boxscore,
+        play_by_play=play_by_play,
+        play_by_play_sha256="a" * 64,
+        boxscore_sha256="b" * 64,
+        game_date="2026-10-20",
+        game_time_utc="2026-10-20T23:00:00Z",
     )
 
-    lookup = _player_identity_lookup(current, historical)
+    assert team_ids == {"HOM": 100, "AWY": 200}
+    assert not stints.empty
+    assert stints["boxscore_sha256"].eq("b" * 64).all()
 
-    assert lookup["brandon williams"] == 1630314
+
+def test_official_catalog_assigns_games_by_pacific_tip_date(tmp_path: Path) -> None:
+    path = tmp_path / "games.parquet"
+    pd.DataFrame(
+        [
+            {
+                "game_id": "0022600001",
+                "season": "2026-27",
+                "season_type": "regular",
+                "game_time_utc": pd.Timestamp("2026-10-21T05:30:00Z"),
+                "home_team_id": 1,
+                "home_team_tricode": "LAL",
+                "away_team_id": 2,
+                "away_team_tricode": "GSW",
+                "source_url": "https://stats.nba.com/stats/scheduleleaguev2",
+            }
+        ]
+    ).to_parquet(path, index=False)
+
+    grouped = _load_official_game_catalog(
+        path,
+        season="2026-27",
+        start_date=date(2026, 10, 20),
+        end_date=date(2026, 10, 20),
+    )
+
+    assert [row["game_id"] for row in grouped[date(2026, 10, 20)]] == [
+        "0022600001"
+    ]

@@ -12,20 +12,21 @@ import argparse
 import hashlib
 import html
 import json
+import re
 import subprocess
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from nba_lineup_model.ingest.nba_cdn import NbaCdnClient, RawJsonCache
 from nba_lineup_model.modeling.in_season_nail_monitor import (
-    ESPN_TEAM_ALIASES,
-    _name_aliases,
-    _player_name_lookup,
-    _rapm_stints,
+    _rapm_stints_from_nba_boxscore,
 )
 from nba_lineup_model.season.daily_artifact_common import file_sha256
 from nba_lineup_model.season.daily_data_artifact import (
@@ -33,66 +34,65 @@ from nba_lineup_model.season.daily_data_artifact import (
     promote_daily_data_artifact,
     publish_daily_data_artifact,
 )
-from nba_lineup_model.season.slate_time import summary_slate_date
+from nba_lineup_model.season.stats_v3_lake import (
+    AwsCliImmutableObjectStore,
+    ImmutableObjectStore,
+)
 
 DEFAULT_SEASON = "2026-27"
-DEFAULT_STATE_DIR = Path("/var/lib/nba-gestalt/schedule")
 DEFAULT_COVERAGE_PATH = Path("/var/lib/nba-gestalt/cdn/coverage.json")
 DEFAULT_OUTPUT_ROOT = Path("/var/lib/nba-gestalt-dev/daily-data")
-DEFAULT_ROSTER_POINTER = Path("/var/lib/nba-gestalt-dev/in-season-rosters/latest.json")
-DEFAULT_PLAYER_CATALOG_PATH = Path(
-    "/opt/nba-gestalt/current/data/catalog/players.parquet"
+DEFAULT_GAME_CATALOG_PATH = Path("/var/lib/nba-gestalt-dev/catalog/games.parquet")
+DEFAULT_PLAY_BY_PLAY_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/cdn/playbyplay"
+DEFAULT_BOXSCORE_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/cdn/boxscore"
+PACIFIC = ZoneInfo("America/Los_Angeles")
+NBA_DURATION_RE = re.compile(
+    r"^PT(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+(?:\.\d+)?)S)?$"
 )
-DEFAULT_CDN_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/cdn/playbyplay"
 
 
 class DailyDataReplayBlocked(RuntimeError):
     """Raised after a date-level failure report has been written."""
 
 
+@dataclass(frozen=True)
+class OfficialBoxscore:
+    payload: dict[str, Any]
+    sha256: str
+    immutable_uri: str
+    source_url: str
+
+
+BoxscoreLoader = Callable[[str], OfficialBoxscore]
+
+
 def replay_daily_data_chain(
     *,
     start_date: date,
     end_date: date,
-    state_dir: Path | str = DEFAULT_STATE_DIR,
     coverage_path: Path | str = DEFAULT_COVERAGE_PATH,
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
-    roster_pointer: Path | str = DEFAULT_ROSTER_POINTER,
-    player_catalog_path: Path | str = DEFAULT_PLAYER_CATALOG_PATH,
-    cdn_s3_prefix: str = DEFAULT_CDN_S3_PREFIX,
+    game_catalog_path: Path | str = DEFAULT_GAME_CATALOG_PATH,
+    play_by_play_s3_prefix: str = DEFAULT_PLAY_BY_PLAY_S3_PREFIX,
+    boxscore_s3_prefix: str = DEFAULT_BOXSCORE_S3_PREFIX,
     season: str = DEFAULT_SEASON,
+    boxscore_loader: BoxscoreLoader | None = None,
 ) -> list[PublishedDailyDataArtifact]:
     """Replay dates chronologically and stop before the first bad publication."""
 
     if end_date < start_date:
         raise ValueError("Replay end date cannot precede its start date")
-    state_root = Path(state_dir)
     chain_root = Path(output_root)
-    summaries = _load_final_summaries(state_root)
-    summaries_by_date: dict[date, list[tuple[Path, dict[str, Any]]]] = {}
-    for path, summary in summaries:
-        slate_date = summary_slate_date(summary)
-        if start_date <= slate_date <= end_date:
-            summaries_by_date.setdefault(slate_date, []).append((path, summary))
+    catalog_path = Path(game_catalog_path)
+    games_by_date = _load_official_game_catalog(
+        catalog_path,
+        season=season,
+        start_date=start_date,
+        end_date=end_date,
+    )
     coverage = _read_json(Path(coverage_path)).get("games")
     if not isinstance(coverage, dict):
         raise ValueError("CDN coverage manifest has no game map")
-    roster_manifest = _read_json(Path(roster_pointer))
-    reference_path = Path(str(roster_manifest.get("artifacts", {}).get("preseason_rankings", "")))
-    if not reference_path.is_file():
-        raise FileNotFoundError(f"Player identity reference is missing: {reference_path}")
-    reference = pd.read_parquet(reference_path)
-    catalog_path = Path(player_catalog_path)
-    catalog = pd.read_parquet(catalog_path)
-    catalog_reference = catalog[["player_id", "display_name"]].rename(
-        columns={"display_name": "player_name"}
-    )
-    # The historical catalog can contain retired namesakes. Prefer the current
-    # season's reconciled player universe, then use globally unique catalog
-    # aliases only as a fallback for inactive/DNP rows.
-    name_lookup = _player_identity_lookup(
-        reference[["player_id", "player_name"]], catalog_reference
-    )
 
     parent_bundle = _current_chain_tip(chain_root)
     if parent_bundle is not None:
@@ -104,96 +104,97 @@ def replay_daily_data_chain(
             )
 
     published: list[PublishedDailyDataArtifact] = []
-    current_date = start_date
-    while current_date <= end_date:
-        games = sorted(
-            summaries_by_date.get(current_date, []),
-            key=lambda item: (
-                str(item[1].get("pregame", {}).get("start_time", "")),
-                str(item[1].get("game_id", "")),
-            ),
-        )
-        artifact = _build_date(
-            game_date_pacific=current_date,
-            games=games,
-            coverage=coverage,
-            name_lookup=name_lookup,
-            roster_manifest=roster_manifest,
-            reference_path=reference_path,
-            player_catalog_path=catalog_path,
-            output_root=chain_root,
-            parent_bundle=parent_bundle,
-            cdn_s3_prefix=cdn_s3_prefix,
-            season=season,
-        )
-        promote_daily_data_artifact(artifact.path, root=chain_root)
-        published.append(artifact)
-        parent_bundle = artifact.path
-        current_date += timedelta(days=1)
+    with tempfile.TemporaryDirectory(prefix="nba-boxscore-cache-") as cache_root:
+        store = AwsCliImmutableObjectStore()
+        with NbaCdnClient(cache=RawJsonCache(cache_root)) as client:
+            loader = boxscore_loader or _official_boxscore_loader(
+                client=client,
+                store=store,
+                season=season,
+                s3_prefix=boxscore_s3_prefix,
+            )
+            current_date = start_date
+            while current_date <= end_date:
+                games = games_by_date.get(current_date, [])
+                artifact = _build_date(
+                    game_date_pacific=current_date,
+                    games=games,
+                    coverage=coverage,
+                    game_catalog_path=catalog_path,
+                    output_root=chain_root,
+                    parent_bundle=parent_bundle,
+                    play_by_play_s3_prefix=play_by_play_s3_prefix,
+                    boxscore_loader=loader,
+                    season=season,
+                )
+                promote_daily_data_artifact(artifact.path, root=chain_root)
+                published.append(artifact)
+                parent_bundle = artifact.path
+                current_date += timedelta(days=1)
     return published
 
 
 def _build_date(
     *,
     game_date_pacific: date,
-    games: Sequence[tuple[Path, dict[str, Any]]],
+    games: Sequence[Mapping[str, Any]],
     coverage: Mapping[str, object],
-    name_lookup: dict[str, int],
-    roster_manifest: Mapping[str, Any],
-    reference_path: Path,
-    player_catalog_path: Path,
+    game_catalog_path: Path,
     output_root: Path,
     parent_bundle: Path | None,
-    cdn_s3_prefix: str,
+    play_by_play_s3_prefix: str,
+    boxscore_loader: BoxscoreLoader,
     season: str,
 ) -> PublishedDailyDataArtifact:
     errors: list[dict[str, str]] = []
     repairs: list[dict[str, str]] = []
     game_sources: dict[str, dict[str, dict[str, str]]] = {}
     game_quality: dict[str, dict[str, float | int]] = {}
-    summaries: list[dict[str, Any]] = []
+    final_games: list[dict[str, Any]] = []
+    boxscores: list[dict[str, Any]] = []
     actual_minutes: list[pd.DataFrame] = []
     stints: list[pd.DataFrame] = []
     identity_rows: list[pd.DataFrame] = []
     rosters: list[dict[str, Any]] = []
     injuries: list[dict[str, Any]] = []
 
-    for summary_path, summary in games:
-        game_id = str(summary.get("game_id", "")).strip()
+    catalog_sha256 = file_sha256(game_catalog_path)
+    for catalog_game in games:
+        game_id = str(catalog_game.get("game_id", "")).strip()
         if not game_id:
-            errors.append({"game_id": "", "message": f"Missing game ID: {summary_path}"})
+            errors.append({"game_id": "", "message": "Official NBA schedule row has no game ID"})
             continue
         try:
-            espn_path = summary_path.with_name(
-                summary_path.name.removesuffix(".summary.json") + ".espn.json"
-            )
-            summary_bytes = summary_path.read_bytes()
-            espn_bytes = espn_path.read_bytes()
-            espn = json.loads(espn_bytes)
             versions = coverage.get(game_id)
             if not isinstance(versions, list) or not versions:
                 raise ValueError("CDN coverage has no immutable play-by-play version")
             play_by_play_sha = str(versions[-1])
             play_by_play_uri = (
-                f"{cdn_s3_prefix.rstrip('/')}/season={season}/"
+                f"{play_by_play_s3_prefix.rstrip('/')}/season={season}/"
                 f"game_id={game_id}/{play_by_play_sha}.json"
             )
             play_by_play = _fetch_verified_s3_json(play_by_play_uri, play_by_play_sha)
-            game_stints, _team_ids, issue_count = _rapm_stints(
-                summary=summary,
-                espn=espn,
+            official_boxscore = boxscore_loader(game_id)
+            boxscore = official_boxscore.payload
+            game_record = _official_final_game(
+                catalog_game=catalog_game,
+                boxscore=boxscore,
+                game_date_pacific=game_date_pacific,
+            )
+            game_stints, _team_ids, issue_count = _rapm_stints_from_nba_boxscore(
+                boxscore=boxscore,
                 play_by_play=play_by_play,
                 play_by_play_sha256=play_by_play_sha,
-                espn_sha256=hashlib.sha256(espn_bytes).hexdigest(),
-                name_to_player_id=name_lookup,
+                boxscore_sha256=official_boxscore.sha256,
+                game_date=game_date_pacific.isoformat(),
+                game_time_utc=str(catalog_game["game_time_utc"]),
             )
-            game_actual, game_identity = _actual_minutes(
-                summary=summary,
-                espn=espn,
-                name_lookup=name_lookup,
+            game_actual, game_identity, game_roster = _nba_actual_minutes(
+                game_record=game_record,
+                boxscore=boxscore,
             )
-            final_home, final_away = _final_scores(summary)
-            box_home, box_away = _espn_scores(summary, espn)
+            final_home, final_away = _terminal_play_by_play_scores(play_by_play)
+            box_home, box_away = _nba_box_scores(boxscore)
             # The event reconstruction counts each team's possessions. RAPM stints
             # use paired game possessions (half that total), so conservation is
             # checked in the same unit rather than comparing 198 to 99.
@@ -215,29 +216,21 @@ def _build_date(
                             f"accepted {issue_count} audited reconstruction warning(s): "
                             + ", ".join(issue_codes)
                         ),
-                        "source": "CDN play-by-play",
+                        "source": "NBA liveData play-by-play",
                     }
                 )
             game_sources[game_id] = {
-                "final_summary": {
-                    "uri": summary_path.resolve().as_uri(),
-                    "sha256": hashlib.sha256(summary_bytes).hexdigest(),
+                "nba_schedule": {
+                    "uri": game_catalog_path.resolve().as_uri(),
+                    "sha256": catalog_sha256,
                 },
-                "espn_box_score": {
-                    "uri": espn_path.resolve().as_uri(),
-                    "sha256": hashlib.sha256(espn_bytes).hexdigest(),
+                "nba_box_score": {
+                    "uri": official_boxscore.immutable_uri,
+                    "sha256": official_boxscore.sha256,
                 },
-                "play_by_play": {
+                "nba_play_by_play": {
                     "uri": play_by_play_uri,
                     "sha256": play_by_play_sha,
-                },
-                "player_reference": {
-                    "uri": reference_path.resolve().as_uri(),
-                    "sha256": file_sha256(reference_path),
-                },
-                "player_catalog": {
-                    "uri": player_catalog_path.resolve().as_uri(),
-                    "sha256": file_sha256(player_catalog_path),
                 },
             }
             game_quality[game_id] = {
@@ -248,30 +241,31 @@ def _build_date(
                 "play_by_play_possessions": reconstructed_possessions,
                 "observed_stint_possessions": stint_possessions,
             }
-            summaries.append(summary)
+            final_games.append(game_record)
+            boxscores.append(
+                {
+                    "game_id": game_id,
+                    "source_url": official_boxscore.source_url,
+                    "immutable_uri": official_boxscore.immutable_uri,
+                    "sha256": official_boxscore.sha256,
+                    "payload": boxscore,
+                }
+            )
             actual_minutes.append(game_actual)
             identity_rows.append(game_identity)
             stints.append(game_stints)
-            rosters.append(
-                {
-                    "game_id": game_id,
-                    "home_team": summary["home_team"],
-                    "away_team": summary["away_team"],
-                    "projected_minutes": summary.get("pregame", {}).get(
-                        "projected_minutes", {}
-                    ),
-                }
-            )
+            rosters.append(game_roster)
             injuries.append(
                 {
                     "game_id": game_id,
-                    "injury_report": summary.get("pregame", {}).get("injury_report"),
+                    "status": "not_used_for_observed_update",
+                    "source": "official NBA injury reports are separate pregame artifacts",
                 }
             )
         except Exception as error:  # date-level report must inventory every failed game
             errors.append({"game_id": game_id, "message": f"{type(error).__name__}: {error}"})
 
-    expected_game_ids = sorted(str(summary[1]["game_id"]) for summary in games)
+    expected_game_ids = sorted(str(game["game_id"]) for game in games)
     if errors:
         report_path = _write_failure_report(output_root, game_date_pacific, errors)
         raise DailyDataReplayBlocked(
@@ -282,13 +276,13 @@ def _build_date(
         component_root = Path(directory)
         components = _write_components(
             component_root,
-            summaries=summaries,
+            final_games=final_games,
+            boxscores=boxscores,
             actual_minutes=actual_minutes,
             stints=stints,
             identity_rows=identity_rows,
             rosters=rosters,
             injuries=injuries,
-            roster_manifest=roster_manifest,
         )
         try:
             return publish_daily_data_artifact(
@@ -314,123 +308,261 @@ def _build_date(
             ) from error
 
 
-def _actual_minutes(
+def _load_official_game_catalog(
+    path: Path,
     *,
-    summary: Mapping[str, Any],
-    espn: Mapping[str, Any],
-    name_lookup: Mapping[str, int],
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    actual_rows: list[dict[str, object]] = []
-    identity_rows: list[dict[str, object]] = []
-    game_id = str(summary["game_id"])
-    valid_teams = {str(summary["home_team"]), str(summary["away_team"])}
-    for team_row in espn.get("boxscore", {}).get("players", []):
-        raw_team = str(team_row.get("team", {}).get("abbreviation", ""))
-        team = ESPN_TEAM_ALIASES.get(raw_team, raw_team)
-        if team not in valid_teams:
-            continue
-        for statistic in team_row.get("statistics", []):
-            labels = list(statistic.get("labels", []))
-            for athlete_row in statistic.get("athletes", []):
-                athlete = athlete_row.get("athlete", {})
-                player_name = str(athlete.get("displayName", "")).strip()
-                player_id = next(
-                    (
-                        name_lookup[alias]
-                        for alias in _name_aliases(player_name)
-                        if alias in name_lookup
-                    ),
-                    None,
-                )
-                stats = list(athlete_row.get("stats", []))
-                stat_map = dict(zip(labels, stats, strict=False))
-                raw_minutes = stat_map.get("MIN", stats[0] if stats else "0")
-                minutes = _minutes_value(raw_minutes)
-                played = minutes > 0
-                if player_id is None:
-                    raise ValueError(
-                        f"Could not map ESPN athlete {player_name!r} for {team}"
-                    )
-                identity_rows.append(
-                    {
-                        "game_id": game_id,
-                        "team": team,
-                        "espn_athlete_id": str(athlete.get("id", "")),
-                        "player_name": player_name,
-                        "player_id": player_id,
-                        "played": played,
-                        "resolution": "name_alias",
-                    }
-                )
-                if played:
-                    actual_rows.append(
-                        {
-                            "game_id": game_id,
-                            "game_date_pacific": summary_slate_date(summary).isoformat(),
-                            "team": team,
-                            "player_id": int(player_id),
-                            "player_name": player_name,
-                            "minutes": minutes,
-                        }
-                    )
-    actual = pd.DataFrame(actual_rows)
-    if actual.empty:
-        raise ValueError("ESPN box score has no played athletes")
-    return actual, pd.DataFrame(identity_rows)
+    season: str,
+    start_date: date,
+    end_date: date,
+) -> dict[date, list[dict[str, Any]]]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Official NBA game catalog is missing: {path}")
+    frame = pd.read_parquet(path)
+    required = {
+        "game_id",
+        "season",
+        "season_type",
+        "game_time_utc",
+        "home_team_id",
+        "home_team_tricode",
+        "away_team_id",
+        "away_team_tricode",
+        "source_url",
+    }
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError("Official NBA game catalog is missing: " + ", ".join(missing))
+    selected = frame.loc[
+        frame["season"].astype(str).eq(season)
+        & frame["season_type"].astype(str).eq("regular")
+    ].copy()
+    selected["game_time_utc"] = pd.to_datetime(selected["game_time_utc"], utc=True)
+    selected["game_date_pacific"] = (
+        selected["game_time_utc"].dt.tz_convert(PACIFIC).dt.date
+    )
+    selected = selected.loc[
+        selected["game_date_pacific"].between(start_date, end_date)
+    ].sort_values(["game_time_utc", "game_id"])
+    if selected["game_id"].astype(str).duplicated().any():
+        raise ValueError("Official NBA game catalog contains duplicate game IDs")
+    grouped: dict[date, list[dict[str, Any]]] = {}
+    for row in selected.to_dict("records"):
+        grouped.setdefault(row["game_date_pacific"], []).append(row)
+    return grouped
 
 
-def _player_identity_lookup(
-    current_reference: pd.DataFrame,
-    historical_catalog: pd.DataFrame,
-) -> dict[str, int]:
+def _official_boxscore_loader(
+    *,
+    client: NbaCdnClient,
+    store: ImmutableObjectStore,
+    season: str,
+    s3_prefix: str,
+) -> BoxscoreLoader:
+    def load(game_id: str) -> OfficialBoxscore:
+        response = client.fetch_boxscore(game_id, use_cache=False)
+        game = response.payload.get("game")
+        if not isinstance(game, dict) or str(game.get("gameId", "")) != game_id:
+            raise ValueError("NBA box score payload does not match the scheduled game")
+        if int(game.get("gameStatus", 0)) != 3:
+            raise ValueError(f"NBA box score is not final: {game.get('gameStatusText')}")
+        raw_body = response.raw_body
+        if raw_body is None:
+            raw_body = json.dumps(
+                response.payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        digest = hashlib.sha256(raw_body).hexdigest()
+        uri = (
+            f"{s3_prefix.rstrip('/')}/season={season}/"
+            f"game_id={game_id}/{digest}.json"
+        )
+        store.put_bytes(uri, raw_body)
+        return OfficialBoxscore(
+            payload=response.payload,
+            sha256=digest,
+            immutable_uri=uri,
+            source_url=response.url,
+        )
+
+    return load
+
+
+def _official_final_game(
+    *,
+    catalog_game: Mapping[str, Any],
+    boxscore: Mapping[str, Any],
+    game_date_pacific: date,
+) -> dict[str, Any]:
+    game = boxscore.get("game")
+    if not isinstance(game, Mapping):
+        raise ValueError("NBA box score has no game payload")
+    game_id = str(catalog_game["game_id"])
+    if str(game.get("gameId", "")) != game_id:
+        raise ValueError("NBA schedule and box score game IDs differ")
+    home = game.get("homeTeam")
+    away = game.get("awayTeam")
+    if not isinstance(home, Mapping) or not isinstance(away, Mapping):
+        raise ValueError("NBA box score has incomplete team records")
+    expected = (
+        str(catalog_game["home_team_tricode"]),
+        str(catalog_game["away_team_tricode"]),
+    )
+    observed = (str(home.get("teamTricode", "")), str(away.get("teamTricode", "")))
+    if observed != expected:
+        raise ValueError(
+            f"NBA schedule teams {expected} differ from box score teams {observed}"
+        )
+    home_score = int(home["score"])
+    away_score = int(away["score"])
     return {
-        **_player_name_lookup(historical_catalog),
-        **_player_name_lookup(current_reference),
+        "game_id": game_id,
+        "season": str(catalog_game["season"]),
+        "game_date_pacific": game_date_pacific.isoformat(),
+        "start_time": pd.Timestamp(catalog_game["game_time_utc"]).isoformat(),
+        "home_team_id": int(home["teamId"]),
+        "home_team": observed[0],
+        "away_team_id": int(away["teamId"]),
+        "away_team": observed[1],
+        "status": "final",
+        "home_score": home_score,
+        "away_score": away_score,
+        "actual_home_margin": home_score - away_score,
     }
 
 
-def _minutes_value(value: object) -> float:
-    text = str(value).strip()
-    if not text or text in {"--", "-"}:
+def _nba_actual_minutes(
+    *,
+    game_record: Mapping[str, Any],
+    boxscore: Mapping[str, Any],
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    actual_rows: list[dict[str, object]] = []
+    identity_rows: list[dict[str, object]] = []
+    roster_teams: list[dict[str, Any]] = []
+    game_id = str(game_record["game_id"])
+    game = boxscore.get("game")
+    if not isinstance(game, Mapping) or str(game.get("gameId", "")) != game_id:
+        raise ValueError("NBA box score game ID does not match the official schedule")
+    for side in ("homeTeam", "awayTeam"):
+        team_row = game.get(side)
+        if not isinstance(team_row, Mapping):
+            raise ValueError(f"NBA box score has no {side}")
+        team = str(team_row.get("teamTricode", "")).strip()
+        players = team_row.get("players")
+        if not team or not isinstance(players, list):
+            raise ValueError(f"NBA box score has incomplete {side} roster")
+        roster_players: list[dict[str, object]] = []
+        for player in players:
+            if not isinstance(player, Mapping) or player.get("personId") is None:
+                raise ValueError(f"NBA box score has malformed {team} player identity")
+            player_id = int(player["personId"])
+            player_name = _nba_player_name(player)
+            statistics = player.get("statistics")
+            if not isinstance(statistics, Mapping):
+                statistics = {}
+            minutes = _nba_minutes_value(statistics.get("minutes"))
+            played = minutes > 0
+            identity_rows.append(
+                {
+                    "game_id": game_id,
+                    "team": team,
+                    "player_name": player_name,
+                    "player_id": player_id,
+                    "played": played,
+                    "resolution": "nba_person_id",
+                }
+            )
+            roster_players.append(
+                {
+                    "player_id": player_id,
+                    "player_name": player_name,
+                    "played": played,
+                    "starter": str(player.get("starter", "0")) == "1",
+                    "status": str(player.get("status", "")),
+                    "minutes": minutes,
+                }
+            )
+            if played:
+                actual_rows.append(
+                    {
+                        "game_id": game_id,
+                        "game_date_pacific": str(game_record["game_date_pacific"]),
+                        "team": team,
+                        "player_id": player_id,
+                        "player_name": player_name,
+                        "minutes": minutes,
+                    }
+                )
+        roster_teams.append(
+            {
+                "team_id": int(team_row["teamId"]),
+                "team": team,
+                "side": "home" if side == "homeTeam" else "away",
+                "players": roster_players,
+            }
+        )
+    actual = pd.DataFrame(actual_rows)
+    if actual.empty:
+        raise ValueError("NBA box score has no played players")
+    roster = {"game_id": game_id, "teams": roster_teams}
+    return actual, pd.DataFrame(identity_rows), roster
+
+
+def _nba_player_name(player: Mapping[str, Any]) -> str:
+    full_name = " ".join(
+        str(player.get(field) or "").strip() for field in ("firstName", "familyName")
+    ).strip()
+    return full_name or str(player.get("name", "")).strip() or str(player["personId"])
+
+
+def _nba_minutes_value(value: object) -> float:
+    if value in (None, ""):
         return 0.0
-    if ":" in text:
-        minutes, seconds = text.split(":", 1)
-        return float(minutes) + float(seconds) / 60.0
-    return float(text)
+    match = NBA_DURATION_RE.fullmatch(str(value).strip())
+    if match is None:
+        raise ValueError(f"NBA box score has invalid minutes duration: {value!r}")
+    hours = float(match.group("hours") or 0)
+    minutes = float(match.group("minutes") or 0)
+    seconds = float(match.group("seconds") or 0)
+    return hours * 60.0 + minutes + seconds / 60.0
 
 
-def _final_scores(summary: Mapping[str, Any]) -> tuple[int, int]:
-    final = summary.get("final", {})
-    return int(final["home_score"]), int(final["away_score"])
+def _nba_box_scores(boxscore: Mapping[str, Any]) -> tuple[int, int]:
+    game = boxscore.get("game")
+    if not isinstance(game, Mapping):
+        raise ValueError("NBA box score has no game payload")
+    return int(game["homeTeam"]["score"]), int(game["awayTeam"]["score"])
 
 
-def _espn_scores(
-    summary: Mapping[str, Any], espn: Mapping[str, Any]
-) -> tuple[int, int]:
-    competitions = espn.get("header", {}).get("competitions", [])
-    if not competitions:
-        raise ValueError("ESPN box score has no competition header")
-    scores: dict[str, int] = {}
-    for competitor in competitions[0].get("competitors", []):
-        raw_team = str(competitor.get("team", {}).get("abbreviation", ""))
-        team = ESPN_TEAM_ALIASES.get(raw_team, raw_team)
-        scores[team] = int(competitor["score"])
-    return scores[str(summary["home_team"])], scores[str(summary["away_team"])]
+def _terminal_play_by_play_scores(play_by_play: Mapping[str, Any]) -> tuple[int, int]:
+    actions = play_by_play.get("game", {}).get("actions", [])
+    for action in reversed(actions if isinstance(actions, list) else []):
+        home = action.get("scoreHome") if isinstance(action, Mapping) else None
+        away = action.get("scoreAway") if isinstance(action, Mapping) else None
+        if home not in (None, "") and away not in (None, ""):
+            return int(float(home)), int(float(away))
+    raise ValueError("NBA play-by-play has no terminal score")
 
 
 def _write_components(
     root: Path,
     *,
-    summaries: Sequence[Mapping[str, Any]],
+    final_games: Sequence[Mapping[str, Any]],
+    boxscores: Sequence[Mapping[str, Any]],
     actual_minutes: Sequence[pd.DataFrame],
     stints: Sequence[pd.DataFrame],
     identity_rows: Sequence[pd.DataFrame],
     rosters: Sequence[Mapping[str, Any]],
     injuries: Sequence[Mapping[str, Any]],
-    roster_manifest: Mapping[str, Any],
 ) -> dict[str, Path]:
     final_games_path = root / "final_games.json"
-    final_games_path.write_text(json.dumps(list(summaries), indent=2, sort_keys=True) + "\n")
+    final_games_path.write_text(
+        json.dumps(list(final_games), indent=2, sort_keys=True) + "\n"
+    )
+    boxscores_path = root / "nba_boxscores.json"
+    boxscores_path.write_text(
+        json.dumps(list(boxscores), indent=2, sort_keys=True) + "\n"
+    )
     actual_path = root / "actual_minutes.parquet"
     _concat(actual_minutes).to_parquet(actual_path, index=False)
     stints_frame = _concat(stints)
@@ -442,17 +574,14 @@ def _write_components(
     _concat(identity_rows).to_parquet(identity_path, index=False)
     rosters_path = root / "rosters.json"
     rosters_path.write_text(
-        json.dumps(
-            {"games": list(rosters), "reconciliation": dict(roster_manifest)},
-            indent=2,
-            sort_keys=True,
-        )
+        json.dumps({"games": list(rosters)}, indent=2, sort_keys=True)
         + "\n"
     )
     injuries_path = root / "injuries.json"
     injuries_path.write_text(json.dumps(list(injuries), indent=2, sort_keys=True) + "\n")
     return {
         "final_games": final_games_path,
+        "nba_boxscores": boxscores_path,
         "actual_minutes": actual_path,
         "observed_stints": stints_path,
         "observed_lineups": lineups_path,
@@ -509,17 +638,6 @@ def _fetch_verified_s3_json(uri: str, expected_sha256: str) -> dict[str, Any]:
     return payload
 
 
-def _load_final_summaries(root: Path) -> list[tuple[Path, dict[str, Any]]]:
-    output: list[tuple[Path, dict[str, Any]]] = []
-    for path in sorted((root / "final").glob("*.summary.json")):
-        summary = _read_json(path)
-        if summary.get("final", {}).get("status", {}).get("completed") and str(
-            summary.get("game_id", "")
-        ).startswith("002"):
-            output.append((path, summary))
-    return output
-
-
 def _current_chain_tip(root: Path) -> Path | None:
     pointer_path = root / "latest.json"
     if not pointer_path.is_file():
@@ -569,14 +687,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-date", type=date.fromisoformat, required=True)
     parser.add_argument("--end-date", type=date.fromisoformat, required=True)
     parser.add_argument("--season", default=DEFAULT_SEASON)
-    parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
     parser.add_argument("--coverage-path", type=Path, default=DEFAULT_COVERAGE_PATH)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
-    parser.add_argument("--roster-pointer", type=Path, default=DEFAULT_ROSTER_POINTER)
     parser.add_argument(
-        "--player-catalog-path", type=Path, default=DEFAULT_PLAYER_CATALOG_PATH
+        "--game-catalog-path", type=Path, default=DEFAULT_GAME_CATALOG_PATH
     )
-    parser.add_argument("--cdn-s3-prefix", default=DEFAULT_CDN_S3_PREFIX)
+    parser.add_argument(
+        "--play-by-play-s3-prefix", default=DEFAULT_PLAY_BY_PLAY_S3_PREFIX
+    )
+    parser.add_argument("--boxscore-s3-prefix", default=DEFAULT_BOXSCORE_S3_PREFIX)
     return parser
 
 
@@ -585,12 +704,11 @@ def main() -> None:
     artifacts = replay_daily_data_chain(
         start_date=args.start_date,
         end_date=args.end_date,
-        state_dir=args.state_dir,
         coverage_path=args.coverage_path,
         output_root=args.output_root,
-        roster_pointer=args.roster_pointer,
-        player_catalog_path=args.player_catalog_path,
-        cdn_s3_prefix=args.cdn_s3_prefix,
+        game_catalog_path=args.game_catalog_path,
+        play_by_play_s3_prefix=args.play_by_play_s3_prefix,
+        boxscore_s3_prefix=args.boxscore_s3_prefix,
         season=args.season,
     )
     for artifact in artifacts:

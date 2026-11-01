@@ -46,7 +46,7 @@ def _sources(game_ids: list[str]) -> dict[str, dict[str, dict[str, str]]]:
                 "uri": f"s3://test/{game_id}/{source}.json",
                 "sha256": _sha(f"{game_id}/{source}"),
             }
-            for source in ("final_summary", "espn_box_score", "play_by_play")
+            for source in ("nba_schedule", "nba_box_score", "nba_play_by_play")
         }
         for game_id in game_ids
     }

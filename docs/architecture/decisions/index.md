@@ -17,6 +17,7 @@ modeling. They explain why a rule exists and which alternatives were rejected.
 | [ADR-0006](0006-historical-stats-v3-first.md) | Accepted | Use Stats V3 as the primary historical game archive and retain liveData only as a legacy fallback. |
 | [ADR-0007](0007-stats-v3-play-by-play-history-boundary.md) | Accepted | Use 1996-97 as the practical V3 play-by-play history boundary. |
 | [ADR-0008](0008-current-season-cdn-ingestion.md) | Accepted | Collect current-season CDN play-by-play on EC2 and reconcile it with historical sources at the canonical event boundary. |
+| [ADR-0009](0009-official-nba-current-season-data.md) | Accepted | Use official NBA schedule, box score, play-by-play, injury, and transaction sources for all authoritative current-season basketball data. |
 
 New decisions should be added as numbered Markdown files. Existing decisions
 should be superseded by a new record rather than rewritten after their context

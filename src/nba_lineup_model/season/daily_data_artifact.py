@@ -36,6 +36,7 @@ REPORT_FILENAME = "report.html"
 DEFAULT_REQUIRED_COMPONENTS = frozenset(
     {
         "final_games",
+        "nba_boxscores",
         "actual_minutes",
         "observed_stints",
         "observed_lineups",
@@ -45,7 +46,7 @@ DEFAULT_REQUIRED_COMPONENTS = frozenset(
     }
 )
 DEFAULT_REQUIRED_GAME_SOURCES = frozenset(
-    {"final_summary", "espn_box_score", "play_by_play"}
+    {"nba_schedule", "nba_box_score", "nba_play_by_play"}
 )
 
 

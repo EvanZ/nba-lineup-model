@@ -274,6 +274,77 @@ def _rapm_stints(
         play_by_play=play_by_play,
         name_to_player_id=name_to_player_id,
     )
+    return _rapm_stints_from_boxscore_context(
+        starter_boxscore=starter_boxscore,
+        play_by_play=play_by_play,
+        play_by_play_sha256=play_by_play_sha256,
+        boxscore_sha256=espn_sha256,
+        team_ids=team_ids,
+        home=str(summary["home_team"]),
+        away=str(summary["away_team"]),
+        game_date=summary_slate_date(summary).isoformat(),
+        game_time_utc=str(summary["pregame"]["start_time"]),
+        actual_margin=float(summary["final"]["actual_home_margin"]),
+    )
+
+
+def _rapm_stints_from_nba_boxscore(
+    *,
+    boxscore: dict[str, Any],
+    play_by_play: dict[str, Any],
+    play_by_play_sha256: str,
+    boxscore_sha256: str,
+    game_date: str,
+    game_time_utc: str,
+) -> tuple[pd.DataFrame, dict[str, int], int]:
+    """Reconstruct RAPM stints using only canonical NBA liveData inputs."""
+
+    game = boxscore.get("game")
+    if not isinstance(game, dict):
+        raise ValueError("NBA box score has no game payload")
+    teams: dict[str, dict[str, Any]] = {}
+    for side in ("homeTeam", "awayTeam"):
+        team = game.get(side)
+        if not isinstance(team, dict):
+            raise ValueError(f"NBA box score has no {side}")
+        tricode = str(team.get("teamTricode", "")).strip()
+        if not tricode:
+            raise ValueError(f"NBA box score {side} has no team tricode")
+        teams[side] = team
+    home = str(teams["homeTeam"]["teamTricode"])
+    away = str(teams["awayTeam"]["teamTricode"])
+    team_ids = {
+        home: int(teams["homeTeam"]["teamId"]),
+        away: int(teams["awayTeam"]["teamId"]),
+    }
+    return _rapm_stints_from_boxscore_context(
+        starter_boxscore=boxscore,
+        play_by_play=play_by_play,
+        play_by_play_sha256=play_by_play_sha256,
+        boxscore_sha256=boxscore_sha256,
+        team_ids=team_ids,
+        home=home,
+        away=away,
+        game_date=game_date,
+        game_time_utc=game_time_utc,
+        actual_margin=float(teams["homeTeam"]["score"])
+        - float(teams["awayTeam"]["score"]),
+    )
+
+
+def _rapm_stints_from_boxscore_context(
+    *,
+    starter_boxscore: dict[str, Any],
+    play_by_play: dict[str, Any],
+    play_by_play_sha256: str,
+    boxscore_sha256: str,
+    team_ids: dict[str, int],
+    home: str,
+    away: str,
+    game_date: str,
+    game_time_utc: str,
+    actual_margin: float,
+) -> tuple[pd.DataFrame, dict[str, int], int]:
     reconstruction = reconstruct_game_payloads(play_by_play, starter_boxscore)
     issues = (
         *reconstruction.lineups.issues,
@@ -287,16 +358,14 @@ def _rapm_stints(
     issue_count = len(issues)
     lineup_frame = lineup_stints_frame(reconstruction.lineups)
     segment_frame = possession_segments_frame(reconstruction.possession_segments)
-    home = str(summary["home_team"])
-    away = str(summary["away_team"])
     for frame in (lineup_frame, segment_frame):
         frame["catalog_home_team_id"] = team_ids[home]
         frame["catalog_away_team_id"] = team_ids[away]
     lineup_frame = lineup_frame.assign(
         season=SEASON,
         season_type="regular",
-        game_date=summary_slate_date(summary).isoformat(),
-        game_time_utc=str(summary["pregame"]["start_time"]),
+        game_date=game_date,
+        game_time_utc=game_time_utc,
         catalog_home_team_tricode=home,
         catalog_away_team_tricode=away,
         quality_status="accepted",
@@ -304,10 +373,9 @@ def _rapm_stints(
         source_build_run_id="current-season-updater-audit",
         processing_code_version=UPDATER_VERSION,
         play_by_play_sha256=play_by_play_sha256,
-        boxscore_sha256=espn_sha256,
+        boxscore_sha256=boxscore_sha256,
     )
     stints = rapm_stints_frame(lineup_frame, segment_frame)
-    actual_margin = float(summary["final"]["actual_home_margin"])
     if not math.isclose(float(stints["home_margin"].sum()), actual_margin, abs_tol=1e-9):
         raise ValueError("Reconstructed stint margin does not match the immutable final")
     stints.attrs["reconstructed_possessions"] = len(
