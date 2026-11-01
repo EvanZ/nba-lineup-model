@@ -26,7 +26,12 @@ def _sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def _prior_files(tmp_path: Path, *, omit_player: int | None = None) -> tuple[Path, Path]:
+def _prior_files(
+    tmp_path: Path,
+    *,
+    omit_player: int | None = None,
+    omit_minutes_player: int | None = None,
+) -> tuple[Path, Path]:
     player_ids = [1631104, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     rankings = pd.DataFrame(
         [
@@ -53,7 +58,7 @@ def _prior_files(tmp_path: Path, *, omit_player: int | None = None) -> tuple[Pat
             "baseline_minutes_per_game": 48.0,
         }
         for index, player_id in enumerate(player_ids)
-        if player_id != omit_player
+        if player_id != omit_player and player_id != omit_minutes_player
     ]
     minutes_path = tmp_path / "minutes.json"
     minutes_path.write_text(json.dumps({"minutes": {"players": minutes_players}}))
@@ -333,6 +338,28 @@ def test_daily_model_replay_fails_closed_on_missing_player_prior(tmp_path: Path)
         ).read_text()
     )
     assert "Player universe is incomplete" in error["error"]
+
+
+def test_daily_model_replay_rejects_decoupled_preseason_priors(
+    tmp_path: Path,
+) -> None:
+    _publish_data(tmp_path)
+    rankings, minutes = _prior_files(tmp_path, omit_minutes_player=1631104)
+
+    with pytest.raises(
+        ValueError,
+        match="Coupled preseason prior player universe mismatch",
+    ):
+        replay_daily_model_chain(
+            start_date=date(2026, 10, 20),
+            end_date=date(2026, 10, 20),
+            preseason_rankings_path=rankings,
+            preseason_minutes_path=minutes,
+            data_root=tmp_path / "data",
+            output_root=tmp_path / "model",
+            code_revision="test-revision",
+            context_provider=_zero_context,
+        )
 
 
 def test_daily_model_replay_fails_closed_on_unmapped_injury_player(

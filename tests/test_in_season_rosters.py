@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from nba_lineup_model.players.in_season_rosters import (
     _extend_runtime_minutes_catalog,
     _merge_minutes_catalog,
+    _validate_coupled_preseason_prior_catalogs,
     normalize_player_name,
     reconcile_current_roster,
 )
@@ -328,3 +330,35 @@ def test_runtime_minutes_append_uses_last_observed_available_game_role(
     assert rows[2]["conditional_minutes_per_game"] == 12.5
     assert rows[2]["baseline_minutes_per_game"] == 0.0
     assert rows[2]["projected_nail"] == -1.25
+
+
+def test_coupled_preseason_prior_catalogs_require_identical_player_ids(
+    tmp_path: Path,
+) -> None:
+    rankings = tmp_path / "rankings.parquet"
+    pd.DataFrame([{"player_id": 1}, {"player_id": 2}]).to_parquet(
+        rankings, index=False
+    )
+    minutes = tmp_path / "minutes.json"
+    minutes.write_text(
+        json.dumps({"minutes": {"players": [{"player_id": 1}]}})
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"ratings_only=\[2\]; minutes_only=\[\]",
+    ):
+        _validate_coupled_preseason_prior_catalogs(
+            rankings_path=rankings,
+            minutes_path=minutes,
+        )
+
+    minutes.write_text(
+        json.dumps(
+            {"minutes": {"players": [{"player_id": 1}, {"player_id": 2}]}}
+        )
+    )
+    _validate_coupled_preseason_prior_catalogs(
+        rankings_path=rankings,
+        minutes_path=minutes,
+    )

@@ -1162,6 +1162,15 @@ def _load_frozen_priors(
     if missing_minutes or minutes["player_id"].duplicated().any():
         raise ValueError(f"Frozen minutes prior is invalid; missing={missing_minutes}")
     minutes["player_id"] = minutes["player_id"].astype(int)
+    ranking_ids = set(rankings["player_id"].astype(int))
+    minutes_ids = set(minutes["player_id"].astype(int))
+    if ranking_ids != minutes_ids:
+        ratings_only = sorted(ranking_ids - minutes_ids)
+        minutes_only = sorted(minutes_ids - ranking_ids)
+        raise ValueError(
+            "Coupled preseason prior player universe mismatch: "
+            f"ratings_only={ratings_only}; minutes_only={minutes_only}"
+        )
     ranking_metadata = rankings_path.with_suffix(".json")
     prior_inventory = {
         "rankings_sha256": file_sha256(rankings_path),

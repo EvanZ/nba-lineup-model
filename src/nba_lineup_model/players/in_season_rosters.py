@@ -745,6 +745,38 @@ def _extend_runtime_minutes_catalog(
     return additions
 
 
+def _validate_coupled_preseason_prior_catalogs(
+    *,
+    rankings_path: Path,
+    minutes_path: Path,
+) -> None:
+    """Require ratings and minutes priors to share one immutable player universe."""
+
+    ranking_ids = set(
+        pd.to_numeric(
+            pd.read_parquet(rankings_path, columns=["player_id"])["player_id"],
+            errors="raise",
+        ).astype(int)
+    )
+    payload = json.loads(minutes_path.read_text())
+    minutes = payload.get("minutes", payload)
+    players = minutes.get("players") if isinstance(minutes, dict) else None
+    if not isinstance(players, list):
+        raise ValueError("Frozen minutes cache has no player catalog")
+    minutes_frame = pd.DataFrame(players)
+    if "player_id" not in minutes_frame or minutes_frame["player_id"].duplicated().any():
+        raise ValueError("Frozen minutes cache has an invalid player catalog")
+    minutes_ids = set(
+        pd.to_numeric(minutes_frame["player_id"], errors="raise").astype(int)
+    )
+    if ranking_ids != minutes_ids:
+        raise ValueError(
+            "Coupled preseason prior player universe mismatch: "
+            f"ratings_only={sorted(ranking_ids - minutes_ids)}; "
+            f"minutes_only={sorted(minutes_ids - ranking_ids)}"
+        )
+
+
 def run(
     *,
     release_root: Path,
@@ -878,6 +910,10 @@ def run(
         current_roster=current,
         rotation_history_path=rotation_history_path,
         output_path=minutes_path,
+    )
+    _validate_coupled_preseason_prior_catalogs(
+        rankings_path=rankings_path,
+        minutes_path=minutes_path,
     )
     frozen_ids = set(pd.read_parquet(frozen_rankings)["player_id"].astype(int))
     ranking_ids = set(pd.read_parquet(rankings_path)["player_id"].astype(int))
