@@ -259,7 +259,7 @@ def resolve_latest_dev_site_release(root: Path | str) -> Path:
     return target
 
 
-def collect_api_validation(api_root: str, *, evidence_date: str) -> dict[str, object]:
+def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_root: Path | None = None) -> dict[str, object]:
     """Exercise representative site surfaces and return their release identities."""
 
     root = api_root.rstrip("/")
@@ -294,6 +294,30 @@ def collect_api_validation(api_root: str, *, evidence_date: str) -> dict[str, ob
                 if len(matches) != 1 or abs(float(matches[0].get("actual_minutes", -1)) - minutes) > 1e-6:
                     raise ValueError(f"Player game-log coverage mismatch: NBA game {game_id}, player {player_id}")
                 checked_logs += 1
+    # Validate every historical observed opportunity, not merely players who
+    # logged positive minutes in the newest slate. This catches absent players,
+    # whole-season absences and regressions in older dates before publication.
+    checked_opportunities = 0
+    checked_absences = 0
+    if daily_model_root is not None:
+        from nba_lineup_model.season.daily_model_replay import _read_model_chain, _component_path
+        for day, bundle, manifest in _read_model_chain(Path(daily_model_root)):
+            if day.isoformat() > evidence_date:
+                continue
+            observations = pd.read_parquet(_component_path(bundle, manifest, "minutes_observations"))
+            for row in observations.itertuples(index=False):
+                player_id, game_id = int(row.player_id), str(row.game_id)
+                if player_id not in profiles:
+                    profiles[player_id] = _get_json(f"{root}/api/players/{player_id}")
+                matches = [p for p in profiles[player_id].get("current_season_trajectory", []) if str(p.get("game_id")) == game_id]
+                if (len(matches) != 1
+                    or matches[0].get("played") is not bool(row.played)
+                    or str(matches[0].get("team")) != str(row.team)
+                    or abs(float(matches[0].get("actual_minutes", -1)) - float(row.actual_minutes)) > 1e-6
+                    or (not row.played and float(matches[0].get("game_on_court_possessions", -1)) != 0)):
+                    raise ValueError(f"Player opportunity coverage mismatch: NBA game {game_id}, player {player_id}")
+                checked_opportunities += 1
+                checked_absences += int(not row.played)
     season_window = next(
         (
             window
@@ -326,6 +350,8 @@ def collect_api_validation(api_root: str, *, evidence_date: str) -> dict[str, ob
         "season_performance_games": int(season_window.get("games", -1)),
         "schedule_game_count": len(schedule.get("games", [])),
         "verified_player_game_logs": checked_logs,
+        "verified_player_opportunities": checked_opportunities,
+        "verified_missed_game_logs": checked_absences,
     }
 
 
@@ -743,7 +769,7 @@ def main() -> None:
     args = _parser().parse_args()
     model_pointer = _read_json(args.daily_model_root / "latest.json")
     evidence_date = str(model_pointer["game_date_pacific"])
-    validation = collect_api_validation(args.api_root, evidence_date=evidence_date)
+    validation = collect_api_validation(args.api_root, evidence_date=evidence_date, daily_model_root=args.daily_model_root)
     path = publish_dev_site_release(
         daily_data_root=args.daily_data_root,
         daily_model_root=args.daily_model_root,

@@ -331,3 +331,21 @@ def test_api_gate_rejects_any_missing_actual_participant_log(monkeypatch):
         release.collect_api_validation("http://test",evidence_date="2026-11-01")
     responses["/api/players/1627777"]["current_season_trajectory"]=[{"game_id":"0022600156","actual_minutes":21.0}]
     assert release.collect_api_validation("http://test",evidence_date="2026-11-01")["verified_player_game_logs"]==1
+
+
+def test_api_gate_rejects_missed_game_absent_from_box(monkeypatch):
+    import pandas as pd
+    from datetime import date
+    from nba_lineup_model.season import daily_model_replay as replay
+    from nba_lineup_model.season import dev_site_release as release
+    responses={"/api/players/999":{"current_season_trajectory":[]}}
+    monkeypatch.setattr(release,"_get_json",lambda url:responses.get(url.removeprefix("http://test"),{}))
+    monkeypatch.setattr(replay,"_read_model_chain",lambda root:[(date(2026,11,1),Path("/model"),{})])
+    monkeypatch.setattr(replay,"_component_path",lambda *args:Path("/observations"))
+    monkeypatch.setattr(pd,"read_parquet",lambda path:pd.DataFrame([{"game_id":"g1","player_id":999,"team":"BOS","played":False,"actual_minutes":0.0}]))
+    with pytest.raises(ValueError,match="opportunity coverage mismatch.*g1, player 999"):
+        release.collect_api_validation("http://test",evidence_date="2026-11-01",daily_model_root=Path("/model"))
+    responses["/api/players/999"]["current_season_trajectory"]=[{"game_id":"g1","team":"BOS","played":False,"actual_minutes":0.0,"game_on_court_possessions":0.0}]
+    result=release.collect_api_validation("http://test",evidence_date="2026-11-01",daily_model_root=Path("/model"))
+    assert result["verified_player_opportunities"]==1
+    assert result["verified_missed_game_logs"]==1

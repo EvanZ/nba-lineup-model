@@ -549,3 +549,30 @@ def test_official_nba_suffix_formats_share_one_identity_key() -> None:
 
     assert _normalize_name("Ernest Udeh, Jr.") == expected
     assert _normalize_name("Jr., Ernest Udeh") == expected
+
+
+@pytest.mark.parametrize("classification", ["medical_absence", "g_league_assignment", "coach_dnp", "inactive_or_assignment"])
+def test_trajectory_includes_official_observation_absent_from_box(classification):
+    from nba_lineup_model.season.daily_model_replay import _trajectory_rows
+    # Arbitrary IDs: no special handling for any real player or team.
+    observations = pd.DataFrame([
+        {"game_id":"g1", "player_id":id, "player_name":f"Player {id}", "team":"HOM",
+         "played":id == 1, "actual_minutes":30.0 if id == 1 else 0.0,
+         "outcome_classification":"played" if id == 1 else classification,
+         "injury_status":None if id == 1 else "Out", "injury_reason":None if id == 1 else classification}
+        for id in [1, 2]
+    ])
+    before=pd.DataFrame({"player_id":[1,2],"updated_nail":[1.0,2.0]})
+    after=pd.DataFrame({"player_id":[1,2],"updated_nail":[1.1,2.02]})
+    rows=_trajectory_rows(game_date=date(2026,11,1),
+        games={"g1":{"season":"2026-27","start_time":"2026-11-01T22:00:00Z","home_team":"HOM","away_team":"AWY"}},
+        rosters={"g1":{"teams":[{"team":"HOM","players":[{"player_id":1}]}]}},
+        boxscores={},observations=observations,before=before,after=after)
+    assert set(rows.player_id)=={1,2}
+    missed=rows.set_index("player_id").loc[2]
+    assert not missed.played
+    assert missed.actual_minutes==0
+    assert missed.opponent=="AWY"
+    assert missed.outcome_classification==classification
+    assert missed.rating_after==2.02  # exact slate checkpoint, not fabricated flat rating
+    assert missed.injury_status=="Out"

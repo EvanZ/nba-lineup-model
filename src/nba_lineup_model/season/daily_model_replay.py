@@ -1001,50 +1001,51 @@ def _trajectory_rows(
 ) -> pd.DataFrame:
     before_map = before.set_index("player_id")["updated_nail"].astype(float).to_dict()
     after_map = after.set_index("player_id")["updated_nail"].astype(float).to_dict()
-    observation_map = {
-        (str(row.game_id), int(row.player_id)): row
-        for row in observations.itertuples(index=False)
+    # NBA boxes can omit inactive players entirely. The canonical observations
+    # already reconcile box rosters with official injury reports; use that same
+    # universe for the public history, including medical absences and DNPs.
+    if observations.duplicated(["game_id", "player_id"]).any():
+        raise ValueError("Trajectory observations duplicate a player-game")
+    observation_keys = set(zip(observations["game_id"].astype(str), observations["player_id"].astype(int)))
+    roster_keys = {
+        (str(game_id), int(player["player_id"]))
+        for game_id, roster in rosters.items()
+        for team in roster["teams"] for player in team["players"]
     }
+    if roster_keys - observation_keys:
+        raise ValueError("Trajectory observations omit NBA box-score roster players")
     plus_minus = _boxscore_plus_minus(boxscores)
     rows: list[dict[str, object]] = []
-    for game_id, roster in rosters.items():
+    for observation in observations.itertuples(index=False):
+        game_id = str(observation.game_id)
         game = games[game_id]
-        for team_row in roster["teams"]:
-            team = str(team_row["team"])
-            opponent = (
-                str(game["away_team"]) if team == str(game["home_team"])
-                else str(game["home_team"])
-            )
-            for player in team_row["players"]:
-                player_id = int(player["player_id"])
-                if player_id not in before_map or player_id not in after_map:
-                    raise ValueError(f"Trajectory player lacks rating state: {player_id}")
-                observation = observation_map.get((game_id, player_id))
-                rows.append(
-                    {
-                        "season": str(game["season"]),
-                        "game_date_pacific": game_date.isoformat(),
-                        "game_id": game_id,
-                        "game_time_utc": game["start_time"],
-                        "player_id": player_id,
-                        "player_name": str(player["player_name"]),
-                        "team": team,
-                        "opponent": opponent,
-                        "played": bool(player.get("played")),
-                        "actual_minutes": float(player.get("minutes", 0.0)),
-                        "raw_plus_minus": plus_minus.get((game_id, player_id)),
-                        "outcome_classification": (
-                            str(observation.outcome_classification)
-                            if observation is not None else UNKNOWN
-                        ),
-                        "injury_status": getattr(observation, "injury_status", None),
-                        "injury_reason": getattr(observation, "injury_reason", None),
-                        "rating_before": before_map[player_id],
-                        "rating_after": after_map[player_id],
-                        "rating_delta": after_map[player_id] - before_map[player_id],
-                    }
-                )
+        team = str(observation.team)
+        if team not in {str(game["home_team"]), str(game["away_team"])}:
+            raise ValueError(f"Trajectory observation has wrong team: {game_id}/{team}")
+        player_id = int(observation.player_id)
+        if player_id not in before_map or player_id not in after_map:
+            raise ValueError(f"Trajectory player lacks rating state: {player_id}")
+        rows.append({
+            "season": str(game["season"]),
+            "game_date_pacific": game_date.isoformat(),
+            "game_id": game_id,
+            "game_time_utc": game["start_time"],
+            "player_id": player_id,
+            "player_name": str(observation.player_name),
+            "team": team,
+            "opponent": str(game["away_team"] if team == str(game["home_team"]) else game["home_team"]),
+            "played": bool(observation.played),
+            "actual_minutes": float(observation.actual_minutes),
+            "raw_plus_minus": plus_minus.get((game_id, player_id)),
+            "outcome_classification": str(observation.outcome_classification),
+            "injury_status": observation.injury_status,
+            "injury_reason": observation.injury_reason,
+            "rating_before": before_map[player_id],
+            "rating_after": after_map[player_id],
+            "rating_delta": after_map[player_id] - before_map[player_id],
+        })
     return pd.DataFrame(rows)
+
 
 
 def _boxscore_plus_minus(
