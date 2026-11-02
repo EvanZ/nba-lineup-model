@@ -44,21 +44,6 @@ from nba_lineup_model.web_api.preseason_rankings_cache import (
 
 SEASON = "2026-27"
 COMPLETED_SEASON = "2025-26"
-ESPN_TEAMS_URL = (
-    "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams"
-)
-ESPN_ROSTER_URL = (
-    "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{team_id}/roster"
-)
-ESPN_TEAM_ALIASES = {
-    "GS": "GSW",
-    "NO": "NOP",
-    "NY": "NYK",
-    "SA": "SAS",
-    "UT": "UTA",
-    "UTAH": "UTA",
-    "WSH": "WAS",
-}
 ROSTER_COLUMNS = (
     "season",
     "team_id",
@@ -121,79 +106,12 @@ def fetch_json(url: str, *, timeout_seconds: float = 30.0) -> dict[str, Any]:
     return payload
 
 
-def fetch_current_espn_rosters() -> dict[str, dict[str, Any]]:
-    teams_payload = fetch_json(ESPN_TEAMS_URL)
-    teams: list[tuple[str, str]] = []
-    for sport in teams_payload.get("sports", []):
-        for league in sport.get("leagues", []) if isinstance(sport, dict) else []:
-            for wrapper in league.get("teams", []) if isinstance(league, dict) else []:
-                team = wrapper.get("team", {}) if isinstance(wrapper, dict) else {}
-                team_id = str(team.get("id", ""))
-                abbreviation = ESPN_TEAM_ALIASES.get(
-                    str(team.get("abbreviation", "")).upper(),
-                    str(team.get("abbreviation", "")).upper(),
-                )
-                if team_id and abbreviation:
-                    teams.append((team_id, abbreviation))
-    if len(teams) != 30 or len({team for _, team in teams}) != 30:
-        raise ValueError(f"ESPN team index returned {len(teams)} unique NBA teams")
-    return {
-        team: fetch_json(ESPN_ROSTER_URL.format(team_id=team_id))
-        for team_id, team in sorted(teams, key=lambda item: item[1])
-    }
 
 
 def fetch_player_movements() -> dict[str, Any]:
     return fetch_json(PLAYER_MOVEMENT_URL)
 
 
-def espn_roster_frame(payloads: Mapping[str, Mapping[str, Any]]) -> pd.DataFrame:
-    rows: list[dict[str, object]] = []
-    for raw_team, payload in sorted(payloads.items()):
-        team = ESPN_TEAM_ALIASES.get(str(raw_team).upper(), str(raw_team).upper())
-        for athlete in payload.get("athletes", []):
-            if not isinstance(athlete, dict):
-                continue
-            position = athlete.get("position", {})
-            college = athlete.get("college", {})
-            experience = athlete.get("experience", {})
-            status = athlete.get("status", {})
-            rows.append(
-                {
-                    "team": team,
-                    "espn_player_id": str(athlete.get("id", "")),
-                    "player_name": str(
-                        athlete.get("fullName") or athlete.get("displayName") or ""
-                    ).strip(),
-                    "listed_position": str(
-                        position.get("abbreviation", "")
-                        if isinstance(position, dict)
-                        else ""
-                    ),
-                    "height_inches": pd.to_numeric(athlete.get("height"), errors="coerce"),
-                    "height_raw": str(athlete.get("displayHeight", "")),
-                    "weight_pounds": pd.to_numeric(athlete.get("weight"), errors="coerce"),
-                    "birth_date": str(athlete.get("dateOfBirth", "")),
-                    "age": pd.to_numeric(athlete.get("age"), errors="coerce"),
-                    "experience": str(
-                        experience.get("years", "")
-                        if isinstance(experience, dict)
-                        else ""
-                    ),
-                    "school": str(
-                        college.get("name", "") if isinstance(college, dict) else ""
-                    ),
-                    "espn_status": str(
-                        status.get("type", "") if isinstance(status, dict) else ""
-                    ),
-                }
-            )
-    frame = pd.DataFrame(rows)
-    if frame.empty or frame["player_name"].eq("").any():
-        raise ValueError("ESPN roster snapshot has missing player identity")
-    if frame.duplicated(["team", "espn_player_id"]).any():
-        raise ValueError("ESPN roster snapshot duplicates a team/player record")
-    return frame.sort_values(["team", "player_name"], kind="stable").reset_index(drop=True)
 
 
 def _unique_name_map(frame: pd.DataFrame) -> dict[str, int]:
@@ -222,124 +140,66 @@ def _movement_name_map(payload: Mapping[str, Any], path: Path) -> dict[str, int]
     }
 
 
+
+
+def fetch_current_nba_rosters() -> dict[str, dict[str, Any]]:
+    """Read canonical CommonTeamRoster responses; failures have no fallback."""
+    from tempfile import TemporaryDirectory
+    from nba_lineup_model.players.source import PlayerStatsCache, PlayerStatsClient
+
+    with TemporaryDirectory(prefix="gestalt-nba-rosters-") as directory:
+        client = PlayerStatsClient(cache=PlayerStatsCache(directory))
+        try:
+            return {
+                team: client.fetch_team_roster(SEASON, team_id, use_cache=False).payload
+                for team_id, team in sorted(TEAM_ABBREVIATIONS.items())
+            }
+        finally:
+            client.close()
+
+
+def nba_roster_frame(payloads: Mapping[str, Mapping[str, Any]]) -> pd.DataFrame:
+    """Normalize official team rosters without a secondary identity crosswalk."""
+    from nba_lineup_model.players.rosters import team_roster_frame
+
+    expected = set(TEAM_ABBREVIATIONS.values())
+    if set(payloads) != expected:
+        raise ValueError("Official NBA roster snapshot must cover all 30 teams")
+    teams = {team: team_id for team_id, team in TEAM_ABBREVIATIONS.items()}
+    frames = [
+        team_roster_frame(dict(payloads[team]), season=SEASON, team_id=teams[team])
+        for team in sorted(payloads)
+    ]
+    frame = pd.concat(frames, ignore_index=True)
+    if frame.empty or frame['player_id'].duplicated().any():
+        raise ValueError("Official NBA roster is empty or duplicates player IDs")
+    return frame
+
+
 def reconcile_current_roster(
-    espn: pd.DataFrame,
+    nba: pd.DataFrame,
     *,
     frozen_roster: pd.DataFrame,
     historical_panel: pd.DataFrame,
     movement_name_to_id: Mapping[str, int],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Resolve an ESPN current-roster snapshot to stable NBA player IDs."""
-
-    frozen = frozen_roster.copy()
-    frozen["player_id"] = pd.to_numeric(frozen["player_id"], errors="raise").astype(int)
-    history = historical_panel.copy()
-    history["player_id"] = pd.to_numeric(history["player_id"], errors="raise").astype(int)
-    identity_sources = (
-        ("frozen_roster", _unique_name_map(frozen)),
-        ("historical_panel", _unique_name_map(history)),
-        ("player_movement", dict(movement_name_to_id)),
-    )
-    frozen_by_id = frozen.sort_values("player_id", kind="stable").drop_duplicates(
-        "player_id", keep="last"
-    ).set_index("player_id")
-    historical_by_id = history.sort_values(
-        ["player_id", "season_start_year"], kind="stable"
-    ).drop_duplicates("player_id", keep="last").set_index("player_id")
-    team_id_by_abbreviation = {
-        abbreviation: team_id for team_id, abbreviation in TEAM_ABBREVIATIONS.items()
-    }
-    resolved_rows: list[dict[str, object]] = []
-    unresolved_rows: list[dict[str, object]] = []
-    for row in espn.itertuples(index=False):
-        key = normalize_player_name(row.player_name)
-        candidates = {
-            int(mapping[key])
-            for _source, mapping in identity_sources
-            if key in mapping
-        }
-        if len(candidates) != 1:
-            unresolved_rows.append(
-                {
-                    "team": row.team,
-                    "espn_player_id": row.espn_player_id,
-                    "player_name": row.player_name,
-                    "candidate_player_ids_json": json.dumps(sorted(candidates)),
-                    "reason": "no stable NBA identity" if not candidates else "ambiguous identity",
-                }
-            )
-            continue
-        player_id = next(iter(candidates))
-        identity_source = next(
-            source for source, mapping in identity_sources if mapping.get(key) == player_id
-        )
-        if player_id in frozen_by_id.index:
-            base = frozen_by_id.loc[player_id].to_dict()
-        elif player_id in historical_by_id.index:
-            historical = historical_by_id.loc[player_id]
-            base = {
-                "listed_position": historical.get("listed_position", ""),
-                "height_inches": historical.get("height_inches"),
-                "weight_pounds": historical.get("weight_pounds"),
-                "age": historical.get("age"),
-                "experience": historical.get("nba_experience_years", ""),
-                "school": historical.get("college", ""),
-            }
-        else:
-            base = {}
-        team = str(row.team)
-        height_inches = row.height_inches if pd.notna(row.height_inches) else base.get(
-            "height_inches"
-        )
-        resolved_rows.append(
-            {
-                "season": SEASON,
-                "team_id": str(team_id_by_abbreviation[team]),
-                "team_abbreviation": team,
-                "player_id": str(player_id),
-                "player_name": str(row.player_name),
-                "listed_position": str(row.listed_position or base.get("listed_position", "")),
-                "height_raw": str(row.height_raw or base.get("height_raw", "")),
-                "height_inches": int(height_inches) if pd.notna(height_inches) else 0,
-                "weight_pounds": float(
-                    row.weight_pounds
-                    if pd.notna(row.weight_pounds)
-                    else base.get("weight_pounds", 0.0)
-                ),
-                "birth_date": str(row.birth_date or base.get("birth_date", "")),
-                "age": float(row.age if pd.notna(row.age) else base.get("age", 0.0)),
-                "experience": str(row.experience or base.get("experience", "")),
-                "school": str(row.school or base.get("school", "")),
-                "how_acquired": str(
-                    base.get("how_acquired", "In-season roster reconciliation")
-                ),
-                "supplemental_status": str(base.get("supplemental_status", "0")),
-                "espn_player_id": str(row.espn_player_id),
-                "espn_status": str(row.espn_status),
-                "identity_source": identity_source,
-            }
-        )
-    current = pd.DataFrame(resolved_rows)
-    unresolved = pd.DataFrame(unresolved_rows)
-    if current.empty or current["player_id"].duplicated().any():
-        raise ValueError("Resolved current roster is empty or duplicates NBA player IDs")
-    return (
-        current.sort_values(["team_abbreviation", "player_name"], kind="stable")
-        .reset_index(drop=True),
-        unresolved.sort_values(["team", "player_name"], kind="stable").reset_index(
-            drop=True
-        )
-        if not unresolved.empty
-        else pd.DataFrame(
-            columns=(
-                "team",
-                "espn_player_id",
-                "player_name",
-                "candidate_player_ids_json",
-                "reason",
-            )
-        ),
-    )
+    """Use NBA's canonical IDs; history supplies no identity substitutions."""
+    current = nba.copy()
+    current['player_id'] = pd.to_numeric(current['player_id'], errors='raise').astype(int)
+    if current.empty or (current['player_id'] <= 0).any() or current['player_id'].duplicated().any():
+        raise ValueError("Official NBA roster contains invalid player identities")
+    valid_teams = {str(key): value for key, value in TEAM_ABBREVIATIONS.items()}
+    ids = current['team_id'].astype(str)
+    if not ids.isin(valid_teams).all():
+        raise ValueError("Official NBA roster contains an unknown team ID")
+    current['team_abbreviation'] = ids.map(valid_teams)
+    current['identity_source'] = 'nba_commonteamroster'
+    current['supplemental_status'] = current.get('supplemental_status', '0')
+    missing = set(ROSTER_COLUMNS) - set(current.columns)
+    if missing:
+        raise ValueError(f"Official NBA roster missing fields: {sorted(missing)}")
+    unresolved = pd.DataFrame(columns=['team', 'player_id', 'player_name', 'reason'])
+    return current.sort_values(['team_abbreviation', 'player_name']).reset_index(drop=True), unresolved
 
 
 def _single_match(root: Path, pattern: str, label: str) -> Path:
@@ -781,7 +641,7 @@ def run(
     *,
     release_root: Path,
     state_root: Path,
-    espn_payloads: Mapping[str, Mapping[str, Any]] | None = None,
+    nba_roster_payloads: Mapping[str, Mapping[str, Any]] | None = None,
     movement_payload: Mapping[str, Any] | None = None,
     force: bool = False,
 ) -> dict[str, object]:
@@ -790,20 +650,18 @@ def run(
     release_root = release_root.resolve()
     state_root.mkdir(parents=True, exist_ok=True)
     fetched_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    espn_payloads = dict(espn_payloads or fetch_current_espn_rosters())
+    nba_roster_payloads = dict(fetch_current_nba_rosters() if nba_roster_payloads is None else nba_roster_payloads)
     movement_payload = dict(movement_payload or fetch_player_movements())
-    espn_bytes = _canonical_json_bytes(espn_payloads)
+    nba_roster_bytes = _canonical_json_bytes(nba_roster_payloads)
     movement_bytes = _canonical_json_bytes(movement_payload)
-    espn_frame = espn_roster_frame(espn_payloads)
+    current_roster_frame = nba_roster_frame(nba_roster_payloads)
     fingerprint_columns = [
-        column for column in espn_frame.columns if column != "espn_status"
+        column for column in current_roster_frame.columns if column != "nba_roster_status"
     ]
     roster_fingerprint = _canonical_json_bytes(
-        espn_frame.loc[:, fingerprint_columns].fillna("").to_dict(orient="records")
+        current_roster_frame.loc[:, fingerprint_columns].fillna("").to_dict(orient="records")
     )
-    # ESPN embeds injuries and other volatile presentation fields in its
-    # roster response. They are archived but deliberately excluded from the
-    # idempotence key; only membership/identity/biography fields trigger work.
+    # Only canonical roster membership and biography fields trigger work.
     source_digest = _sha256_bytes(roster_fingerprint + movement_bytes)
     latest_path = state_root / "latest.json"
     if latest_path.is_file() and not force:
@@ -813,12 +671,12 @@ def run(
 
     run_root = state_root / "runs" / f"source_sha256={source_digest}"
     run_root.mkdir(parents=True, exist_ok=True)
-    espn_snapshot = state_root / "raw" / "espn_rosters" / f"{_sha256_bytes(espn_bytes)}.json"
+    nba_roster_snapshot = state_root / "raw" / "nba_rosters" / f"{_sha256_bytes(nba_roster_bytes)}.json"
     movement_snapshot = (
         state_root / "raw" / "nba_player_movement" / f"{_sha256_bytes(movement_bytes)}.json"
     )
-    if not espn_snapshot.exists():
-        _atomic_write_bytes(espn_snapshot, espn_bytes)
+    if not nba_roster_snapshot.exists():
+        _atomic_write_bytes(nba_roster_snapshot, nba_roster_bytes)
     if not movement_snapshot.exists():
         _atomic_write_bytes(movement_snapshot, movement_bytes)
 
@@ -830,7 +688,7 @@ def run(
     movement_name_to_id = _movement_name_map(movement_payload, movement_input_path)
     movements = _movement_frame(movement_input_path)
     current, unresolved = reconcile_current_roster(
-        espn_frame,
+        current_roster_frame,
         frozen_roster=frozen_roster,
         historical_panel=historical_panel,
         movement_name_to_id=movement_name_to_id,
@@ -958,7 +816,7 @@ def run(
         "preseason_rankings": str(rankings_path),
         "preseason_profiles": str(profiles_path),
         "preseason_minutes": str(minutes_path),
-        "espn_snapshot": str(espn_snapshot),
+        "nba_roster_snapshot": str(nba_roster_snapshot),
         "player_movement_snapshot": str(movement_snapshot),
     }
     artifact_sha256 = {
@@ -972,7 +830,7 @@ def run(
         "fetched_at": fetched_at,
         "source_digest": source_digest,
         "source_sha256": {
-            "espn_rosters": _sha256_bytes(espn_bytes),
+            "nba_rosters": _sha256_bytes(nba_roster_bytes),
             "nba_player_movement": _sha256_bytes(movement_bytes),
         },
         "coverage": {

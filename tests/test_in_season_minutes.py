@@ -31,8 +31,6 @@ from nba_lineup_model.modeling.in_season_minutes_monitor import (
     _pregame_roster_player_ids,
     _projection_margin,
     _validate_non_replayed_source,
-    apply_early_game_role_observations,
-    build_game_observations,
 )
 from nba_lineup_model.season.slate_time import summary_slate_date
 
@@ -194,7 +192,7 @@ def test_out_g_league_reason_overrides_generic_out_status() -> None:
         _classification(
             minutes=0.0,
             did_not_play=True,
-            espn_reason=None,
+            boxscore_reason=None,
             injury_status="Out",
             injury_reason="G League - Two-Way",
         )
@@ -204,7 +202,7 @@ def test_out_g_league_reason_overrides_generic_out_status() -> None:
         _classification(
             minutes=0.0,
             did_not_play=True,
-            espn_reason=None,
+            boxscore_reason=None,
             injury_status="Out",
             injury_reason="Injury/Illness - Right ankle sprain",
         )
@@ -258,120 +256,6 @@ def test_conditional_state_uses_locked_three_game_window_and_point_two_prior() -
     assert player["current_conditional_minutes_estimate"] == pytest.approx(
         (0.2 * 30.0 + 24.0 + 48.0 + 12.0) / 3.2
     )
-
-
-def test_missing_play_by_play_falls_back_to_realized_minutes() -> None:
-    observations = _observations().assign(
-        team="AAA",
-        player_name=["One", "Two", "Three"],
-    )
-    result = apply_early_game_role_observations(
-        observations,
-        {"game_id": "001", "home_team": "AAA", "away_team": "BBB"},
-        {},
-        None,
-        priors=_priors(),
-    )
-
-    assert result["early_game_role_minutes"].tolist() == pytest.approx(
-        result["regulation_equivalent_minutes"].tolist()
-    )
-    assert result["early_role_status"].eq("fallback").all()
-
-
-def test_post_cutoff_only_player_can_have_zero_early_role(monkeypatch) -> None:
-    observations = pd.DataFrame(
-        {
-            "player_id": [1, 2],
-            "played": [True, True],
-            "actual_minutes": [34.0, 4.0],
-            "regulation_equivalent_minutes": [34.0, 4.0],
-        }
-    )
-    events = [
-        SimpleNamespace(elapsed_game_seconds=0.0),
-        SimpleNamespace(elapsed_game_seconds=2880.0),
-    ]
-    monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor.canonical_events",
-        lambda payload: events,
-    )
-    monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor._lineup_boxscore_from_espn",
-        lambda *args, **kwargs: {},
-    )
-    monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor.reconstruct_lineups",
-        lambda *args, **kwargs: object(),
-    )
-    monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor.lineup_stints_frame",
-        lambda reconstruction: pd.DataFrame(),
-    )
-    monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor.competitive_role_minutes",
-        lambda frame, boundary_seconds: {1: 34.0},
-    )
-
-    result = apply_early_game_role_observations(
-        observations,
-        {"game_id": "001", "home_team": "AAA", "away_team": "BBB"},
-        {},
-        {"game": {}},
-        priors=_priors(),
-    ).set_index("player_id")
-
-    assert result["early_role_status"].eq("reconstructed").all()
-    assert result.loc[2, "early_game_role_minutes"] == 0.0
-    assert result.loc[1, "role_cutoff_seconds"] == 44 * 60
-
-
-def test_missing_early_player_fails_when_minutes_exceed_post_cutoff_window(
-    monkeypatch,
-) -> None:
-    observations = pd.DataFrame(
-        {
-            "player_id": [1, 2],
-            "played": [True, True],
-            "actual_minutes": [34.0, 8.0],
-            "regulation_equivalent_minutes": [34.0, 8.0],
-        }
-    )
-    events = [
-        SimpleNamespace(elapsed_game_seconds=0.0),
-        SimpleNamespace(elapsed_game_seconds=2880.0),
-    ]
-    monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor.canonical_events",
-        lambda payload: events,
-    )
-    monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor._lineup_boxscore_from_espn",
-        lambda *args, **kwargs: {},
-    )
-    monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor.reconstruct_lineups",
-        lambda *args, **kwargs: object(),
-    )
-    monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor.lineup_stints_frame",
-        lambda reconstruction: pd.DataFrame(),
-    )
-    monkeypatch.setattr(
-        "nba_lineup_model.modeling.in_season_minutes_monitor.competitive_role_minutes",
-        lambda frame, boundary_seconds: {1: 34.0},
-    )
-
-    result = apply_early_game_role_observations(
-        observations,
-        {"game_id": "001", "home_team": "AAA", "away_team": "BBB"},
-        {},
-        {"game": {}},
-        priors=_priors(),
-    )
-
-    assert result["early_role_status"].eq("fallback").all()
-    assert result["early_role_reason"].str.contains("omit played players").all()
 
 
 def test_cdn_play_by_play_uses_archive_endpoint_value(monkeypatch) -> None:
@@ -685,135 +569,3 @@ def test_conditional_calibration_accepts_canonical_availability_states() -> None
     assert result["target_available_player_games"] == 4
     assert result["conditional_prior_games"] in {0.1, 4.0}
     assert json.loads(json.dumps(result)) == result
-
-
-def test_final_boxscore_uses_frozen_injury_status_for_available_player_role() -> None:
-    priors = _priors()
-    summary = {
-        "game_id": "001",
-        "game_date": "2026-10-20",
-        "home_team": "AAA",
-        "away_team": "BBB",
-        "pregame": {
-            "projected_minutes": {
-                "home": [
-                    {
-                        "player_id": 1,
-                        "status": "Available",
-                        "reason": None,
-                    },
-                    {
-                        "player_id": 2,
-                        "status": "Out",
-                        "reason": "Injury/Illness - Ankle",
-                    },
-                    {
-                        "player_id": 3,
-                        "status": "Out",
-                        "reason": "G League - Two-Way",
-                    },
-                ],
-                "away": [],
-            }
-        },
-    }
-    espn = {
-        "boxscore": {
-            "players": [
-                {
-                    "team": {"abbreviation": "AAA"},
-                    "statistics": [
-                        {
-                            "labels": ["MIN"],
-                            "athletes": [
-                                {
-                                    "athlete": {"displayName": "One"},
-                                    "stats": ["48"],
-                                    "didNotPlay": False,
-                                    "ejected": False,
-                                },
-                                {
-                                    "athlete": {"displayName": "Two"},
-                                    "stats": ["0"],
-                                    "didNotPlay": True,
-                                    "reason": "DNP-INJURY/ILLNESS",
-                                    "ejected": False,
-                                },
-                                {
-                                    "athlete": {"displayName": "Three"},
-                                    "stats": ["0"],
-                                    "didNotPlay": True,
-                                    "reason": None,
-                                    "ejected": False,
-                                },
-                            ],
-                        }
-                    ],
-                }
-            ]
-        }
-    }
-    observations = build_game_observations(summary, espn, priors=priors).set_index(
-        "player_id"
-    )
-    assert observations.loc[1, "outcome_classification"] == PLAYED
-    assert observations.loc[2, "outcome_classification"] == MEDICAL_ABSENCE
-    assert observations.loc[3, "outcome_classification"] == G_LEAGUE_ASSIGNMENT
-    assert observations.loc[2, "conditional_observation_weight"] == 0.0
-    assert observations.loc[3, "conditional_observation_weight"] == 1.0
-    assert observations.loc[1, "regulation_equivalent_minutes"] == pytest.approx(240.0)
-
-
-def test_final_boxscore_follows_unique_player_identity_across_team_change() -> None:
-    priors = _priors()
-    priors.loc[priors["player_id"].eq(1), "team"] = "NEW"
-    priors.loc[priors["player_id"].eq(2), "team"] = "OLD"
-    summary = {
-        "game_id": "001",
-        "game_date": "2026-10-20",
-        "home_team": "OLD",
-        "away_team": "BBB",
-        "pregame": {
-            "projected_minutes": {
-                "home": [],
-                "away": [],
-            }
-        },
-    }
-    espn = {
-        "boxscore": {
-            "players": [
-                {
-                    "team": {"abbreviation": "OLD"},
-                    "statistics": [
-                        {
-                            "labels": ["MIN"],
-                            "athletes": [
-                                {
-                                    "athlete": {"displayName": "One"},
-                                    "stats": ["0"],
-                                    "didNotPlay": True,
-                                    "reason": "COACH'S DECISION",
-                                    "ejected": False,
-                                },
-                                {
-                                    "athlete": {"displayName": "Two"},
-                                    "stats": ["48"],
-                                    "didNotPlay": False,
-                                    "ejected": False,
-                                },
-                            ],
-                        }
-                    ],
-                }
-            ]
-        }
-    }
-
-    observations = build_game_observations(summary, espn, priors=priors).set_index(
-        "player_id"
-    )
-
-    assert observations.loc[1, "team"] == "OLD"
-    assert observations.loc[1, "outcome_classification"] == COACH_DNP
-    assert observations.loc[1, "identity_match_source"] == "unique_name_transfer"

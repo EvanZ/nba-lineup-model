@@ -17,7 +17,6 @@ from nba_lineup_model.modeling.in_season_nail_monitor import (
     _b2b_flags,
     _cached_game_contribution,
     _context_offsets,
-    _player_game_context,
     build_player_game_trajectory,
 )
 
@@ -129,45 +128,6 @@ def test_shadow_monitor_back_to_back_flags_are_date_batched() -> None:
     assert flags["1"] == (False, False)
     assert flags["2"] == (True, False)
     assert flags["3"] == (True, False)
-
-
-def test_player_game_context_uses_frozen_roster_for_players_missing_box_score() -> None:
-    context = _player_game_context(
-        summary={
-            "home_team": "PHX",
-            "away_team": "GSW",
-            "pregame": {
-                "projected_minutes": {
-                    "away": [
-                        {
-                            "player_id": 1,
-                            "player_name": "Stephen Curry",
-                            "status": "Out",
-                            "reason": "Right knee injury management",
-                        }
-                    ],
-                    "home": [
-                        {
-                            "player_id": 2,
-                            "player_name": "Devin Booker",
-                            "status": "Available",
-                            "reason": "-",
-                        }
-                    ],
-                }
-            },
-        },
-        espn={"boxscore": {"players": []}},
-        name_to_player_id={"stephen curry": 1},
-    )
-
-    assert context[1] == {
-        "team": "GSW",
-        "opponent": "PHX",
-        "pregame_status": "Out",
-        "pregame_reason": "Right knee injury management",
-    }
-    assert context[2]["pregame_reason"] is None
 
 
 def test_player_game_trajectory_includes_missed_team_games() -> None:

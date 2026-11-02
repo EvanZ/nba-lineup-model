@@ -75,6 +75,8 @@ def materialize_official_schedule_state(
     if [row[0] for row in data_chain] != [row[0] for row in model_chain]:
         raise ValueError("Official data and model chains cover different Pacific dates")
 
+    from nba_lineup_model.season.source_policy import require_clean_artifact_sources
+    require_clean_artifact_sources(frozen_root)
     frozen_by_game = _pregame_artifacts_by_nba_game_id(frozen_root)
     completed: list[dict[str, Any]] = []
     official_boxscores: dict[str, dict[str, Any]] = {}

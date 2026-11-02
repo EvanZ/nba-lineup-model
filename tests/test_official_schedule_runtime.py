@@ -542,11 +542,16 @@ def test_game_lifecycle_finalizes_every_serving_artifact_and_repairs_partial_fin
         lambda self, game_id, use_cache=False: SimpleNamespace(payload=boxscore),
     )
 
-    result = refresh_official_live_score_state(
-        game_date=GAME_DATE,
-        state_dir=tmp_path,
-        s3_uri=None,
-    )
+    from nba_lineup_model.orchestration.definitions import update_live_scores_job
+    monkeypatch.setenv("GESTALT_SCHEDULE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("GESTALT_SCHEDULE_S3_URI", "")
+    immutable_frozen = frozen_path.read_bytes()
+    job_result = update_live_scores_job.execute_in_process(run_config={
+        "ops": {"update_live_score_state": {"config": {"game_date": GAME_DATE}}}
+    })
+    assert job_result.success
+    result = job_result.output_for_node("update_live_score_state")
+    assert frozen_path.read_bytes() == immutable_frozen
 
     summary_path = tmp_path / "final" / f"{GAME_ID}.summary.json"
     boxscore_path = tmp_path / "final" / f"{GAME_ID}.nba.json"
@@ -572,3 +577,5 @@ def test_game_lifecycle_finalizes_every_serving_artifact_and_repairs_partial_fin
     assert repaired["newly_finalized_game_count"] == 1
     assert summary_path.read_bytes() == immutable_summary
     assert json.loads(boxscore_path.read_text()) == boxscore
+
+    assert frozen_path.read_bytes() == immutable_frozen

@@ -87,7 +87,6 @@ class CompletedScheduleGame:
     """Minimal final-game identity retained by the serving schedule state."""
 
     game_id: str
-    espn_game_id: str
     season: str
     game_date: date
     start_time: datetime
@@ -168,17 +167,15 @@ def discover_completed_schedule_games(
             start_time = _parse_timestamp(row.get("start_time"))
             if start_time is None:
                 continue
-            espn_game_id = str(row.get("espn_game_id") or "")
             final_observed_at = _parse_timestamp(row.get("final_observed_at"))
-            if final_observed_at is None and espn_game_id:
-                final_observed_at = _final_archive_timestamp(root, espn_game_id)
+            if final_observed_at is None:
+                final_observed_at = _final_archive_timestamp(root, game_id)
             if final_observed_at is None:
                 # Existing snapshots predate explicit final observation. Four hours
                 # after tip is a conservative one-hour postgame approximation.
                 final_observed_at = start_time + timedelta(hours=4)
             game = CompletedScheduleGame(
                 game_id=game_id,
-                espn_game_id=espn_game_id,
                 season=season,
                 game_date=payload_date,
                 start_time=start_time,
@@ -198,8 +195,8 @@ def _date_value(value: object) -> date | None:
         return None
 
 
-def _final_archive_timestamp(root: Path, espn_game_id: str) -> datetime | None:
-    path = root / "final" / f"{espn_game_id}.summary.json"
+def _final_archive_timestamp(root: Path, game_id: str) -> datetime | None:
+    path = root / "final" / f"{game_id}.summary.json"
     if not path.is_file():
         return None
     try:
@@ -236,7 +233,6 @@ def discover_completed_nba_schedule_games(
         games.append(
             CompletedScheduleGame(
                 game_id=game.game_id,
-                espn_game_id="",
                 season=season,
                 game_date=game.game_date,
                 start_time=game.game_time_utc,
@@ -560,7 +556,6 @@ class StatsV3LakeArchive:
             "run_id": run_id,
             "attempt_number": attempt_number,
             "game_id": game.game_id,
-            "espn_game_id": game.espn_game_id,
             "season": game.season,
             "season_type": game.season_type,
             "game_date": game.game_date.isoformat(),

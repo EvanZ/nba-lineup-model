@@ -25,7 +25,7 @@ dependencies = [
 
 [project.scripts]
 nba-refresh-gestalt-schedule = "nba_lineup_model.season.official_schedule_runtime:refresh_schedule_main"
-nba-watch-gestalt-live-scores = "nba_lineup_model.web_api.win_projections:live_score_watcher_main"
+nba-watch-gestalt-live-scores = "nba_lineup_model.season.official_schedule_runtime:live_score_watcher_main"
 nba-collect-odds-api = "nba_lineup_model.web_api.the_odds_api:main"
 nba-s3-lake-migration = "nba_lineup_model.storage.s3_lake:main"
 nba-check-s3-lake = "nba_lineup_model.storage.duckdb_lake:main"
@@ -141,10 +141,9 @@ nba-train-nail-v1213-kalman-player-state = "nba_lineup_model.modeling.forward_na
 nba-calibrate-in-season-nail = "nba_lineup_model.modeling.in_season_nail_calibration:main"
 nba-calibrate-in-season-additive-profile = "nba_lineup_model.modeling.in_season_additive_profile_calibration:main"
 nba-publish-in-season-nail-calibration = "nba_lineup_model.modeling.in_season_nail_calibration:publish_main"
-nba-monitor-in-season-nail = "nba_lineup_model.modeling.in_season_nail_monitor:main"
 nba-materialize-current-season-lineups = "nba_lineup_model.modeling.current_season_lineup_materialization:main"
 nba-materialize-current-season-serving = "nba_lineup_model.modeling.current_season_serving_materialization:main"
-nba-materialize-current-season-schedule = "nba_lineup_model.modeling.current_season_schedule_materialization:main"
+nba-materialize-current-season-schedule = "nba_lineup_model.season.official_schedule_runtime:refresh_schedule_main"
 nba-backtest-nail-v1213-kalman-player-state = "nba_lineup_model.modeling.nail_v1213_kalman_player_state_frozen_backtest:main"
 nba-train-nail-state-precision-parity = "nba_lineup_model.modeling.forward_nail_state_precision_parity:main"
 nba-audit-nail-state-precision-parity = "nba_lineup_model.modeling.state_precision_parity:main"

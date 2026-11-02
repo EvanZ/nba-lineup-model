@@ -16,7 +16,6 @@ from nba_lineup_model.web_api.win_projections import (
     _build_final_game_archive,
     _completed_team_win_totals,
     _default_live_score_date,
-    _espn_team,
     _fetch_polymarket_moneyline_snapshot,
     _game_rotation,
     _parse_official_injury_report,
@@ -30,8 +29,6 @@ from nba_lineup_model.web_api.win_projections import (
     read_current_season_records,
     read_schedule_day,
     read_schedule_performance,
-    reconcile_final_game_artifacts_to_s3,
-    refresh_live_score_state,
     score_season_win_forecasts,
     score_win_probabilities,
     simulate_baseline_win_total_intervals,
@@ -592,29 +589,10 @@ def test_polymarket_moneyline_snapshot_uses_main_market_midpoints(monkeypatch) -
 
     monkeypatch.setattr(win_projections, "_fetch_json", fake_fetch_json)
     monkeypatch.setattr(win_projections, "_post_json", fake_post_json)
-    espn_payload = {
-        "events": [
-            {
-                "competitions": [
-                    {
-                        "competitors": [
-                            {
-                                "homeAway": "away",
-                                "team": {"abbreviation": "GS"},
-                            },
-                            {
-                                "homeAway": "home",
-                                "team": {"abbreviation": "LAL"},
-                            },
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
+    nba_payload = {"games": [{"game_id": "0022600001", "away_team": "GSW", "home_team": "LAL"}]}
 
     snapshot = _fetch_polymarket_moneyline_snapshot(
-        espn_payload,
+        nba_payload,
         game_date="2026-10-21",
         collected_at=datetime(2026, 10, 20, 23, 0, tzinfo=UTC),
     )
@@ -917,110 +895,6 @@ def test_live_score_default_advances_after_previous_date_is_final(tmp_path) -> N
     assert game_date == "2026-10-23"
 
 
-def test_live_score_watcher_once_exits_while_games_are_live(monkeypatch, tmp_path) -> None:
-    state = {
-        "game_count": 3,
-        "any_live": True,
-        "all_final": False,
-        "earliest_start": datetime(2026, 10, 29, 0, 0, tzinfo=UTC),
-        "latest_start": datetime(2026, 10, 29, 3, 0, tzinfo=UTC),
-        "newly_finalized_game_count": 1,
-        "uploaded_final_artifact_count": 0,
-    }
-    calls: list[dict[str, object]] = []
-
-    def fake_refresh_live_score_state(**kwargs):
-        calls.append(kwargs)
-        return state
-
-    monkeypatch.setattr(
-        win_projections,
-        "refresh_live_score_state",
-        fake_refresh_live_score_state,
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "nba-watch-gestalt-live-scores",
-            "--date",
-            "2026-10-28",
-            "--state-dir",
-            str(tmp_path),
-            "--once",
-            "--no-s3",
-        ],
-    )
-    monkeypatch.setattr(
-        win_projections.time,
-        "sleep",
-        lambda _seconds: pytest.fail("one-pass watcher must not sleep"),
-    )
-
-    assert win_projections.live_score_watcher_main() == 0
-    assert calls == [
-        {
-            "game_date": "2026-10-28",
-            "state_dir": tmp_path,
-            "s3_uri": None,
-        }
-    ]
-
-
-def test_live_score_records_first_final_observation(monkeypatch, tmp_path) -> None:
-    latest = tmp_path / "latest" / "2026-10-24.json"
-    latest.parent.mkdir()
-    latest.write_text(
-        json.dumps(
-            {
-                "games": [
-                    {
-                        "espn_game_id": "401909860",
-                        "start_time": "2026-10-25T02:00:00Z",
-                        "retrospective": {},
-                        "status": {"state": "in", "completed": False},
-                    }
-                ]
-            }
-        )
-    )
-    monkeypatch.setattr(
-        win_projections,
-        "_fetch_json",
-        lambda _url: {
-            "events": [
-                {
-                    "id": "401909860",
-                    "competitions": [
-                        {
-                            "competitors": [
-                                {"homeAway": "home", "score": "110"},
-                                {"homeAway": "away", "score": "105"},
-                            ]
-                        }
-                    ],
-                    "status": {
-                        "displayClock": "0.0",
-                        "period": 4,
-                        "type": {
-                            "state": "post",
-                            "completed": True,
-                            "description": "Final",
-                            "detail": "Final",
-                        },
-                    },
-                }
-            ]
-        },
-    )
-
-    refresh_live_score_state(game_date="2026-10-24", state_dir=tmp_path)
-
-    game = json.loads(latest.read_text())["games"][0]
-    assert game["status"]["completed"] is True
-    assert datetime.fromisoformat(game["final_observed_at"].replace("Z", "+00:00"))
-
-
 def _write_unfinalized_live_game(tmp_path) -> None:
     latest = tmp_path / "latest" / "2026-10-24.json"
     latest.parent.mkdir()
@@ -1083,206 +957,6 @@ def _final_scoreboard_payload() -> dict[str, object]:
             }
         ]
     }
-
-
-def test_live_finalizer_immediately_publishes_immutable_artifacts(
-    monkeypatch, tmp_path
-) -> None:
-    _write_unfinalized_live_game(tmp_path)
-    monkeypatch.setattr(
-        win_projections,
-        "_fetch_json",
-        lambda url: (
-            _final_scoreboard_payload()
-            if "scoreboard" in url
-            else ({"boxscore": {}} if "summary" in url else {})
-        ),
-    )
-    monkeypatch.setattr(
-        win_projections,
-        "_build_actual_minutes_retrospective",
-        lambda *_args, **_kwargs: {"home_win_probability": 0.61},
-    )
-    uploads: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        win_projections,
-        "_aws_s3_cp_exclusive",
-        lambda source, destination: uploads.append((source.name, destination)),
-    )
-
-    result = refresh_live_score_state(
-        game_date="2026-10-24",
-        state_dir=tmp_path,
-        s3_uri="s3://archive/schedule",
-    )
-
-    assert result["newly_finalized_game_count"] == 1
-    assert result["uploaded_final_artifact_count"] == 2
-    assert uploads == [
-        (
-            "401909860.summary.json",
-            "s3://archive/schedule/season=2026-27/game_date=2026-10-24/"
-            "final/401909860.summary.json",
-        ),
-        (
-            "401909860.espn.json",
-            "s3://archive/schedule/season=2026-27/game_date=2026-10-24/"
-            "final/401909860.espn.json",
-        ),
-    ]
-    assert (tmp_path / "final" / "401909860.summary.json").is_file()
-    assert (tmp_path / "final" / "401909860.espn.json").is_file()
-
-
-def test_live_finalizer_recovers_audit_after_board_already_marked_final(
-    monkeypatch, tmp_path
-) -> None:
-    _write_unfinalized_live_game(tmp_path)
-    latest = tmp_path / "latest" / "2026-10-24.json"
-    payload = json.loads(latest.read_text())
-    payload["games"][0]["status"] = {"state": "post", "completed": True}
-    latest.write_text(json.dumps(payload))
-    monkeypatch.setattr(
-        win_projections,
-        "_fetch_json",
-        lambda url: (
-            _final_scoreboard_payload()
-            if "scoreboard" in url
-            else ({"boxscore": {}} if "summary" in url else {})
-        ),
-    )
-    monkeypatch.setattr(
-        win_projections,
-        "_build_actual_minutes_retrospective",
-        lambda *_args, **_kwargs: {"home_win_probability": 0.61},
-    )
-
-    result = refresh_live_score_state(
-        game_date="2026-10-24",
-        state_dir=tmp_path,
-    )
-
-    assert result["newly_finalized_game_count"] == 1
-    assert (tmp_path / "final" / "401909860.summary.json").is_file()
-    assert (tmp_path / "final" / "401909860.espn.json").is_file()
-
-
-def test_live_finalizer_s3_failure_leaves_latest_state_retryable(
-    monkeypatch, tmp_path
-) -> None:
-    _write_unfinalized_live_game(tmp_path)
-    original_latest = (tmp_path / "latest" / "2026-10-24.json").read_bytes()
-    monkeypatch.setattr(
-        win_projections,
-        "_fetch_json",
-        lambda url: (
-            _final_scoreboard_payload()
-            if "scoreboard" in url
-            else ({"boxscore": {}} if "summary" in url else {})
-        ),
-    )
-    monkeypatch.setattr(
-        win_projections,
-        "_build_actual_minutes_retrospective",
-        lambda *_args, **_kwargs: {"home_win_probability": 0.61},
-    )
-    monkeypatch.setattr(
-        win_projections,
-        "_aws_s3_cp_exclusive",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("S3 unavailable")),
-    )
-
-    with pytest.raises(RuntimeError, match="S3 unavailable"):
-        refresh_live_score_state(
-            game_date="2026-10-24",
-            state_dir=tmp_path,
-            s3_uri="s3://archive/schedule",
-        )
-
-    assert (tmp_path / "latest" / "2026-10-24.json").read_bytes() == original_latest
-    assert (tmp_path / "final" / "401909860.summary.json").is_file()
-    assert (tmp_path / "final" / "401909860.espn.json").is_file()
-
-
-def test_final_artifact_reconciliation_verifies_completed_games(
-    monkeypatch, tmp_path
-) -> None:
-    latest = tmp_path / "latest" / "2026-10-24.json"
-    latest.parent.mkdir()
-    latest.write_text(
-        json.dumps(
-            {
-                "games": [
-                    {
-                        "espn_game_id": "401909860",
-                        "status": {"state": "post", "completed": True},
-                    },
-                    {
-                        "espn_game_id": "401909861",
-                        "status": {"state": "pre", "completed": False},
-                    },
-                ]
-            }
-        )
-    )
-    final_dir = tmp_path / "final"
-    final_dir.mkdir()
-    for suffix in ("summary.json", "espn.json"):
-        (final_dir / f"401909860.{suffix}").write_text("{}\n")
-    uploads: list[str] = []
-    monkeypatch.setattr(
-        win_projections,
-        "_aws_s3_cp_exclusive",
-        lambda _source, destination: uploads.append(destination),
-    )
-
-    result = reconcile_final_game_artifacts_to_s3(
-        game_date="2026-10-24",
-        state_dir=tmp_path,
-        s3_uri="s3://archive/schedule",
-    )
-
-    assert result == {
-        "game_date": "2026-10-24",
-        "final_game_count": 1,
-        "verified_artifact_count": 2,
-    }
-    assert uploads == [
-        "s3://archive/schedule/season=2026-27/game_date=2026-10-24/"
-        "final/401909860.summary.json",
-        "s3://archive/schedule/season=2026-27/game_date=2026-10-24/"
-        "final/401909860.espn.json",
-    ]
-
-
-def test_final_artifact_reconciliation_fails_on_missing_local_artifact(
-    monkeypatch, tmp_path
-) -> None:
-    latest = tmp_path / "latest" / "2026-10-24.json"
-    latest.parent.mkdir()
-    latest.write_text(
-        json.dumps(
-            {
-                "games": [
-                    {
-                        "espn_game_id": "401909860",
-                        "status": {"state": "post", "completed": True},
-                    }
-                ]
-            }
-        )
-    )
-    final_dir = tmp_path / "final"
-    final_dir.mkdir()
-    (final_dir / "401909860.summary.json").write_text("{}\n")
-    monkeypatch.setattr(win_projections, "_aws_s3_cp_exclusive", lambda *_args: None)
-
-    with pytest.raises(FileNotFoundError, match="401909860.espn.json"):
-        reconcile_final_game_artifacts_to_s3(
-            game_date="2026-10-24",
-            state_dir=tmp_path,
-            s3_uri="s3://archive/schedule",
-        )
 
 
 def test_injury_pdf_preserves_team_reports_that_are_not_submitted(monkeypatch) -> None:
@@ -1775,77 +1449,6 @@ def test_game_rotation_uses_only_the_exact_date_and_matchup_report() -> None:
     assert future_players["Stephen Curry"]["status"] == "Report pending"
 
 
-@pytest.mark.parametrize(
-    ("espn_code", "projection_code"),
-    [("WSH", "WAS"), ("UTAH", "UTA")],
-)
-def test_espn_team_alias_matches_projection_roster_code(
-    espn_code: str, projection_code: str
-) -> None:
-    assert _espn_team({"team": {"abbreviation": espn_code}}) == projection_code
-
-
-def test_schedule_window_ingests_available_future_boards_with_current_report(
-    tmp_path, monkeypatch
-) -> None:
-    now = datetime(2026, 10, 20, 22, 30, tzinfo=UTC)
-    injury_report = {
-        "players": [],
-        "published_at": "2026-10-20T18:15:00-04:00",
-    }
-    injury_pdf = b"injury report"
-    fetched_urls: list[str] = []
-    archived_calls: list[dict[str, object]] = []
-
-    def fake_injury_fetch(*, report_date, now):
-        assert report_date == "2026-10-20"
-        return injury_report, injury_pdf
-
-    def fake_fetch_json(url):
-        fetched_urls.append(url)
-        if url == "http://projections.test":
-            return {"win_projection": {"season": "2026-27"}, "minutes": {}}
-        if "20261021" in url:
-            return {"events": [{"id": "tomorrow"}]}
-        if "20261022" in url:
-            return {"events": [{"id": "following-day"}]}
-        return {"events": []}
-
-    def fake_refresh_schedule_archive(**kwargs):
-        archived_calls.append(kwargs)
-        return {"games": [{"id": kwargs["game_date"]}], "newly_frozen_game_count": 0}
-
-    monkeypatch.setattr(
-        win_projections,
-        "_fetch_latest_official_injury_report",
-        fake_injury_fetch,
-    )
-    monkeypatch.setattr(win_projections, "_fetch_json", fake_fetch_json)
-    monkeypatch.setattr(
-        win_projections,
-        "refresh_schedule_archive",
-        fake_refresh_schedule_archive,
-    )
-
-    result = win_projections.refresh_schedule_window(
-        start_date="2026-10-20",
-        days_ahead=2,
-        state_dir=tmp_path,
-        projection_url="http://projections.test",
-        s3_uri=None,
-        now=now,
-    )
-
-    assert result["archived_day_count"] == 2
-    assert result["game_count"] == 2
-    assert [call["game_date"] for call in archived_calls] == ["2026-10-21", "2026-10-22"]
-    assert all(call["injury_report"] is injury_report for call in archived_calls)
-    assert all(call["injury_pdf"] == injury_pdf for call in archived_calls)
-    assert all("forecast_response" in call for call in archived_calls)
-    assert any("dates=20261020" in url for url in fetched_urls)
-    assert any("dates=20261022" in url for url in fetched_urls)
-
-
 def test_injury_pdf_is_uploaded_once_by_checksum(tmp_path, monkeypatch) -> None:
     injury_pdf = b"same official injury report"
     uploads: list[tuple[bytes, str]] = []
@@ -1922,55 +1525,6 @@ def test_mirror_missing_frozen_pregame_snapshots_is_validated_and_idempotent(
             source_state_dir=source,
             target_state_dir=target,
         )
-
-
-def test_s3_schedule_snapshot_does_not_retain_local_archive(tmp_path, monkeypatch) -> None:
-    immutable_uploads: list[str] = []
-    mutable_uploads: list[str] = []
-    artifact = {
-        "sha256": "abc123",
-        "s3_uri": "s3://archive/schedule/season=2026-27/injury-reports/sha256=abc123.pdf",
-    }
-
-    monkeypatch.setattr(
-        win_projections,
-        "_normalize_espn_schedule",
-        lambda *_args, **_kwargs: {"game_date": "2026-10-24", "games": []},
-    )
-    monkeypatch.setattr(
-        win_projections,
-        "_aws_s3_cp_exclusive",
-        lambda _source, destination: immutable_uploads.append(destination),
-    )
-    monkeypatch.setattr(
-        win_projections,
-        "_aws_s3_cp",
-        lambda _source, destination: mutable_uploads.append(destination),
-    )
-
-    result = win_projections.refresh_schedule_archive(
-        game_date="2026-10-24",
-        state_dir=tmp_path,
-        s3_uri="s3://archive/schedule",
-        source_payload={"events": []},
-        injury_report={"players": []},
-        injury_pdf=b"official report",
-        injury_artifact=artifact,
-        forecast_response={"win_projection": {}, "minutes": {}},
-        prediction_market_snapshot={"games": {}},
-        now=datetime(2026, 10, 24, 20, 30, tzinfo=UTC),
-    )
-
-    assert result["injury_report_artifact"] == artifact
-    assert not (tmp_path / "archive").exists()
-    assert not any((tmp_path / "pending" / "2026-10-24").glob("*"))
-    assert all(not destination.endswith(".injury.pdf") for destination in immutable_uploads)
-    assert len(immutable_uploads) == 3
-    assert mutable_uploads == [
-        "s3://archive/schedule/season=2026-27/game_date=2026-10-24/latest.json"
-    ]
-    latest = json.loads((tmp_path / "latest" / "2026-10-24.json").read_text())
-    assert latest["injury_report_artifact"] == artifact
 
 
 def test_immutable_s3_upload_accepts_only_byte_identical_retry(

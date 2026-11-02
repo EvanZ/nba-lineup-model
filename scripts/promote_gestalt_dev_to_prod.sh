@@ -221,6 +221,22 @@ atomic_symlink() {
   sudo mv -Tf "$temporary" "$link"
 }
 
+# Capture the operator's stopped/running state BEFORE any mutation. Neither
+# a successful web promotion nor rollback grants permission to start a daemon.
+declare -A dagster_was_active
+for service in gestalt-dagster-code-server gestalt-dagster-webserver gestalt-dagster-daemon; do
+  dagster_was_active["$service"]="$(systemctl is-active "$service" || true)"
+done
+restore_dagster_service_states() {
+  for service in gestalt-dagster-code-server gestalt-dagster-webserver gestalt-dagster-daemon; do
+    if [[ "${dagster_was_active[$service]}" == "active" ]]; then
+      sudo systemctl start "$service"
+    else
+      sudo systemctl stop "$service"
+    fi
+  done
+}
+
 rollback() {
   local status=$?
   trap - ERR
@@ -250,10 +266,7 @@ rollback() {
     sudo cp "$backup_root/gestalt-web.service" /etc/systemd/system/gestalt-web.service
     sudo systemctl daemon-reload
     sudo systemctl restart gestalt-web
-    sudo systemctl restart \
-      gestalt-dagster-code-server \
-      gestalt-dagster-webserver \
-      gestalt-dagster-daemon
+    restore_dagster_service_states
     sudo nginx -t && sudo systemctl reload nginx
   fi
   printf 'Production promotion failed; previous release restored\n' >&2
@@ -277,9 +290,11 @@ atomic_symlink "$schedule_overlay" "$SCHEDULE_CURRENT"
 atomic_symlink "$release_root" "$CODE_CURRENT"
 sudo systemctl daemon-reload
 sudo systemctl restart gestalt-web
-sudo systemctl start \
-  gestalt-dagster-code-server \
-  gestalt-dagster-webserver
+for service in gestalt-dagster-code-server gestalt-dagster-webserver; do
+  if [[ "${dagster_was_active[$service]}" == "active" ]]; then
+    sudo systemctl start "$service"
+  fi
+done
 sudo nginx -t
 sudo systemctl reload nginx
 
@@ -301,14 +316,19 @@ if [[ "$(git -C "$(readlink -f "$CODE_CURRENT")" rev-parse HEAD)" != "$prod_comm
   false
 fi
 for service in gestalt-dagster-code-server gestalt-dagster-webserver; do
-  if [[ "$(systemctl is-active "$service")" != "active" ]]; then
-    printf 'Production writer service is not active: %s\n' "$service" >&2
+  current_state="$(systemctl is-active "$service" || true)"
+  if [[ "${dagster_was_active[$service]}" == "active" && "$current_state" != "active" ]]; then
+    printf 'Previously active writer service failed to restart: %s\n' "$service" >&2
+    false
+  fi
+  if [[ "${dagster_was_active[$service]}" != "active" && "$current_state" == "active" ]]; then
+    printf 'Stopped writer service was unexpectedly started: %s\n' "$service" >&2
     false
   fi
 done
-DAGSTER_HOME="$STATE_ROOT/dagster" \
+DAGSTER_HOME="$STATE_ROOT/dagster" PYTHONPATH="$release_root/src" \
   "$PROD_RELEASE/.venv/bin/dagster" job list \
-  -w "$STATE_ROOT/dagster/workspace.yaml" >/dev/null
+  -m nba_lineup_model.orchestration.definitions >/dev/null
 PYTHONPATH="$release_root/src" \
   "$PROD_RELEASE/.venv/bin/python" -P \
   -m nba_lineup_model.season.schedule_artifact_contract "$SCHEDULE_CURRENT"
@@ -320,20 +340,9 @@ PYTHONPATH="$release_root/src" \
 curl --fail --silent --show-error \
   http://127.0.0.1:8010/api/reports/site-release >/dev/null
 
-# Legacy jobs may continue building candidates in their isolated roots, but
-# they may no longer promote or reload the live release.
-for sensor in \
-  in_season_nail_production_ready \
-  in_season_minutes_production_ready \
-  current_season_serving_ready \
-  promoted_current_season_lineups_ready; do
-  DAGSTER_HOME="$STATE_ROOT/dagster" \
-    "$PROD_RELEASE/.venv/bin/dagster" sensor stop \
-    -w "$STATE_ROOT/dagster/workspace.yaml" "$sensor" >/dev/null
-done
-
-sudo systemctl start gestalt-dagster-daemon
-test "$(systemctl is-active gestalt-dagster-daemon)" = "active"
+# Old independently publishing jobs are absent from the new code location.
+# Resume only services that were already active before this promotion.
+restore_dagster_service_states
 
 trap - ERR
 printf 'Promoted approved GESTALT release %s at code %s\n' \

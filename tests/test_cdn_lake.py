@@ -63,7 +63,6 @@ def _write_final_slate(root: Path) -> None:
 def _game() -> CompletedScheduleGame:
     return CompletedScheduleGame(
         game_id="0022600001",
-        espn_game_id="401909088",
         season="2026-27",
         game_date=date(2026, 10, 20),
         start_time=datetime(2026, 10, 21, 0, 0, tzinfo=UTC),

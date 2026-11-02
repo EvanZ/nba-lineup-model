@@ -74,103 +74,26 @@ def test_runtime_target_bios_can_reuse_history_without_packaged_draft_file(
     assert not bool(target["is_rookie"])
 
 
-def test_reconcile_current_roster_resolves_suffixes_and_historical_players() -> None:
-    espn = pd.DataFrame(
-        [
-            {
-                "team": "MIA",
-                "espn_player_id": "3064482",
-                "player_name": "Bobby Portis",
-                "listed_position": "F",
-                "height_inches": 82,
-                "height_raw": "6' 10\"",
-                "weight_pounds": 250,
-                "birth_date": "1995-02-10T08:00Z",
-                "age": 31,
-                "experience": "11",
-                "school": "Arkansas",
-                "espn_status": "active",
-            },
-            {
-                "team": "LAC",
-                "espn_player_id": "4683935",
-                "player_name": "Blake Wesley",
-                "listed_position": "G",
-                "height_inches": 76,
-                "height_raw": "6' 4\"",
-                "weight_pounds": 190,
-                "birth_date": "2003-03-16T08:00Z",
-                "age": 23,
-                "experience": "5",
-                "school": "Notre Dame",
-                "espn_status": "active",
-            },
-            {
-                "team": "LAC",
-                "espn_player_id": "999",
-                "player_name": "Unmapped Player",
-                "listed_position": "G",
-                "height_inches": 75,
-                "height_raw": "6' 3\"",
-                "weight_pounds": 185,
-                "birth_date": "",
-                "age": 22,
-                "experience": "0",
-                "school": "",
-                "espn_status": "active",
-            },
-        ]
-    )
-    frozen = pd.DataFrame(
-        [
-            {
-                "season": "2026-27",
-                "team_id": "1610612749",
-                "team_abbreviation": "MIL",
-                "player_id": "1626171",
-                "player_name": "Bobby Portis Jr.",
-                "listed_position": "F",
-                "height_raw": "6-10",
-                "height_inches": 82,
-                "weight_pounds": 250.0,
-                "birth_date": "FEB 10, 1995",
-                "age": 31.0,
-                "experience": "10",
-                "school": "Arkansas",
-                "how_acquired": "Signed",
-                "supplemental_status": "0",
-            }
-        ]
-    )
-    history = pd.DataFrame(
-        [
-            {
-                "player_id": 1631104,
-                "player_name": "Blake Wesley",
-                "season_start_year": 2025,
-                "listed_position": "G",
-                "height_inches": 76,
-                "weight_pounds": 190.0,
-                "age": 23.0,
-                "nba_experience_years": 3,
-                "college": "Notre Dame",
-            }
-        ]
-    )
-
+def test_reconcile_current_roster_uses_nba_ids_even_when_names_or_teams_change():
+    from nba_lineup_model.players.in_season_rosters import ROSTER_COLUMNS
+    rows = []
+    for player_id, name, team_id in [(1626171, "Bobby Portis Jr.", "1610612748"), (1631104, "Blake Wesley", "1610612746")]:
+        row = dict.fromkeys(ROSTER_COLUMNS, "")
+        row.update(player_id=str(player_id), player_name=name, team_id=team_id, season="2026-27")
+        rows.append(row)
     current, unresolved = reconcile_current_roster(
-        espn,
-        frozen_roster=frozen,
-        historical_panel=history,
-        movement_name_to_id={},
+        pd.DataFrame(rows), frozen_roster=pd.DataFrame(),
+        historical_panel=pd.DataFrame(), movement_name_to_id={},
     )
-
-    assert normalize_player_name("Bobby Portis Jr.") == normalize_player_name(
-        "Bobby Portis"
-    )
-    assert set(current["player_id"]) == {"1626171", "1631104"}
-    assert current.set_index("player_id").loc["1631104", "team_abbreviation"] == "LAC"
-    assert unresolved["player_name"].tolist() == ["Unmapped Player"]
+    assert unresolved.empty
+    assert set(current.player_id) == {1626171, 1631104}
+    assert set(current.identity_source) == {"nba_commonteamroster"}
+    by_id = current.set_index("player_id")
+    assert by_id.loc[1626171, "team_abbreviation"] == "MIA"
+    assert by_id.loc[1631104, "team_abbreviation"] == "LAC"
+    duplicate = pd.concat([pd.DataFrame(rows), pd.DataFrame(rows[:1])])
+    with pytest.raises(ValueError, match="invalid player identities"):
+        reconcile_current_roster(duplicate, frozen_roster=pd.DataFrame(), historical_panel=pd.DataFrame(), movement_name_to_id={})
 
 
 def test_minutes_overlay_appends_new_player_without_rewriting_frozen_prior(

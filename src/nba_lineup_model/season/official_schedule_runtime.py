@@ -62,6 +62,19 @@ OFFICIAL_CONSENSUS_BOOKMAKERS = tuple(
 PREGAME_CANDIDATE_LEAD = timedelta(hours=2)
 
 
+def _serialized_schedule_write(function):
+    from functools import wraps
+
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        from nba_lineup_model.orchestration.daily_pipeline import schedule_lock
+        root = Path(kwargs.get("state_dir", DEFAULT_SCHEDULE_STATE_DIR))
+        with schedule_lock(root):
+            return function(*args, **kwargs)
+    return wrapped
+
+
+@_serialized_schedule_write
 def refresh_official_schedule_window(
     *,
     start_date: str,
@@ -171,6 +184,7 @@ def refresh_official_schedule_window(
     }
 
 
+@_serialized_schedule_write
 def refresh_official_live_score_state(
     *,
     game_date: str,
@@ -1110,6 +1124,22 @@ def refresh_schedule_main() -> None:
         s3_uri=None if args.no_s3 else args.s3_uri,
     )
     print(json.dumps(result, indent=2, sort_keys=True, default=str))
+
+
+def live_score_watcher_main() -> None:
+    """Perform one bounded official-NBA score update; scheduling is external."""
+    parser = argparse.ArgumentParser(description="Update official NBA live scores")
+    parser.add_argument("--date", required=True)
+    parser.add_argument("--state-dir", type=Path, default=DEFAULT_SCHEDULE_STATE_DIR)
+    parser.add_argument("--projection-url", default=DEFAULT_SCHEDULE_API_URL)
+    parser.add_argument("--s3-uri", default=DEFAULT_SCHEDULE_S3_URI)
+    parser.add_argument("--no-s3", action="store_true")
+    args = parser.parse_args()
+    print(json.dumps(refresh_official_live_score_state(
+        game_date=args.date, state_dir=args.state_dir,
+        projection_url=args.projection_url,
+        s3_uri=None if args.no_s3 else args.s3_uri,
+    ), indent=2, default=str))
 
 
 if __name__ == "__main__":

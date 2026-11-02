@@ -37,7 +37,7 @@ def _fixture(tmp_path: Path, monkeypatch):
         json.dumps({"bundle_path": "lineup-bundle"})
     )
     (schedule_root / "final").mkdir()
-    (schedule_root / "final" / "game.json").write_text("schedule")
+    (schedule_root / "final" / "game.json").write_text('{"source":"NBA official CDN"}')
     catalog = tmp_path / "games.parquet"
     rankings = tmp_path / "rankings.parquet"
     profiles = tmp_path / "profiles.parquet"

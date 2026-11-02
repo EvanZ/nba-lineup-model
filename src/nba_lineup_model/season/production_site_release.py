@@ -76,6 +76,8 @@ def stage_production_site_release(
         raise ValueError("Lineup root differs from the approved dev release")
 
     schedule_source = Path(schedule_snapshot_root).resolve()
+    from nba_lineup_model.season.source_policy import require_clean_artifact_sources
+    require_clean_artifact_sources(schedule_source)
     schedule_sha = _tree_sha256(schedule_source)
     if schedule_sha != approved["schedule"]["tree_sha256"]:
         raise ValueError("Schedule snapshot differs from the approved dev release")

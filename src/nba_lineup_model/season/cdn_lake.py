@@ -256,7 +256,6 @@ class CdnLakeArchive:
             "run_id": run_id,
             "attempt_number": attempt_number,
             "game_id": game.game_id,
-            "espn_game_id": game.espn_game_id,
             "season": game.season,
             "season_type": game.season_type,
             "game_date": game.game_date.isoformat(),
