@@ -56,6 +56,38 @@ These instructions apply to every task in this repository.
 - NBA GESTALT basketball data must come from the official NBA sources selected
   by the repository architecture.
 
+## Protected raw-data collection
+
+- Run these as three separate, independently controlled jobs:
+  - official NBA injury-report PDF collection;
+  - The Odds API market-odds polling;
+  - official NBA CDN scoreboard and live-score polling.
+- Keep all three jobs continuously enabled whenever their own source and
+  collector are healthy. A failure in one collector must not stop either of the
+  other two collectors.
+- These collectors are not model training, causal replay, release assembly, or
+  production publication. Stopping any downstream system does not authorize
+  stopping a protected collector.
+- Never stop a protected collector merely because Dagster, another
+  orchestrator, a model job, or a publishing pipeline must be stopped. If a
+  shared orchestrator cannot isolate the three jobs safely, move them to a
+  collection-only service before stopping the shared process.
+- Stop a protected collector only when that collector has an error that
+  prevents safe operation, or when the user explicitly approves stopping that
+  specific feed. A general instruction to stop Dagster or a broken pipeline
+  does not include these feeds.
+- Dev and production consume the same canonical immutable capture streams; do
+  not duplicate paid odds polling merely to populate dev.
+- After any operational or deployment change, verify and report each job's
+  enabled/running state, last successful capture, next expected capture, and
+  data coverage. Do not declare the system healthy while any feed is stale.
+- Monitor the three jobs independently and alert the user immediately when a
+  job or its scheduler stops, a run fails, or a capture misses its expected
+  freshness window. Alerting must not depend on the collector being monitored.
+- If a protected collector is interrupted, restore it immediately, preserve
+  the outage interval in the audit record, and backfill what its official
+  source still makes available. Report any irrecoverable gap to the user.
+
 ## ESPN prohibition
 
 - NBA GESTALT must never request, ingest, copy, reconcile, repair, serve, or
