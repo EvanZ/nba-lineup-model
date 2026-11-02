@@ -1357,6 +1357,15 @@ def _require_historical_replay_approval(
     approved_replay_from: date | None,
 ) -> None:
     modeled_dates = [row for row in model_chain if row[0] <= through]
+    if not modeled_dates:
+        if (
+            approved_replay_from is not None
+            and approved_replay_from != data_chain[0][0]
+        ):
+            raise ValueError(
+                "Historical genesis replay approval must name the first data date"
+            )
+        return
     if len(compatible) < len(modeled_dates):
         replay_from = data_chain[len(compatible)][0]
         if approved_replay_from != replay_from:

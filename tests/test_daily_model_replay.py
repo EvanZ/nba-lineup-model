@@ -681,6 +681,30 @@ def test_repaired_data_requires_exact_historical_model_replay_approval() -> None
     )
 
 
+def test_historical_genesis_replay_accepts_only_the_first_data_date() -> None:
+    first = date(2026, 10, 20)
+    data_chain = [(first, Path("/data/first"), {"bundle_sha256": "1" * 64})]
+
+    _require_historical_replay_approval(
+        data_chain=data_chain,
+        model_chain=[],
+        compatible=[],
+        through=first,
+        approved_replay_from=first,
+    )
+    with pytest.raises(
+        ValueError,
+        match="approval must name the first data date",
+    ):
+        _require_historical_replay_approval(
+            data_chain=data_chain,
+            model_chain=[],
+            compatible=[],
+            through=first,
+            approved_replay_from=date(2026, 10, 21),
+        )
+
+
 def test_official_nba_suffix_formats_share_one_identity_key() -> None:
     expected = _normalize_name("Ernest Udeh")
 
