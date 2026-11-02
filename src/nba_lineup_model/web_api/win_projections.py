@@ -2086,7 +2086,6 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
     game_team_reports: dict[str, dict[str, dict[str, object]]] = {}
     current_game_date: str | None = None
     current_matchup: tuple[str, str] | None = None
-    current_team_position = -1
     current_team: str | None = None
     for page in PdfReader(io.BytesIO(pdf)).pages:
         chunks: list[tuple[float, float, str]] = []
@@ -2218,7 +2217,6 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
                     NBA_TEAM_ALIASES.get(matchup.group(1), matchup.group(1)),
                     NBA_TEAM_ALIASES.get(matchup.group(2), matchup.group(2)),
                 )
-                current_team_position = -1
                 current_team = None
                 if current_game_date is not None:
                     game_key = f"{current_game_date}|{'@'.join(current_matchup)}"
@@ -2240,31 +2238,29 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
                 text for x, text in ordered_parts if 250.0 <= x < 420.0
             ]
             has_player_or_reason = any(x >= 420.0 for x, _text in ordered_parts)
-            next_team_position = current_team_position + 1
-            is_expected_team_row = False
-            if (
-                current_matchup is not None
-                and next_team_position < len(current_matchup)
-                and team_tokens
-            ):
-                expected_team = current_matchup[next_team_position]
-                expected_name = TEAM_DISPLAY_NAMES.get(expected_team, expected_team)
+            matched_team_position: int | None = None
+            if current_matchup is not None and team_tokens:
                 normalized_team_tokens = re.sub(
                     r"[^a-z0-9]", "", " ".join(team_tokens).lower()
-                )
-                normalized_expected_name = re.sub(
-                    r"[^a-z0-9]", "", expected_name.lower()
                 )
                 normalized_team_tokens = normalized_team_tokens.replace(
                     "losangeles", "la", 1
                 )
-                normalized_expected_name = normalized_expected_name.replace(
-                    "losangeles", "la", 1
-                )
-                is_expected_team_row = normalized_team_tokens == normalized_expected_name
-            if is_expected_team_row and has_player_or_reason:
-                current_team_position += 1
-                team = current_matchup[current_team_position]
+                for position, candidate_team in enumerate(current_matchup):
+                    expected_name = TEAM_DISPLAY_NAMES.get(
+                        candidate_team, candidate_team
+                    )
+                    normalized_expected_name = re.sub(
+                        r"[^a-z0-9]", "", expected_name.lower()
+                    ).replace("losangeles", "la", 1)
+                    if normalized_team_tokens == normalized_expected_name:
+                        matched_team_position = position
+                        break
+            if matched_team_position is not None and has_player_or_reason:
+                # A team with no listed players is omitted from the NBA PDF.
+                # Match either team explicitly rather than requiring the away
+                # team to appear before the home team.
+                team = current_matchup[matched_team_position]
                 current_team = team
                 row_text = " ".join(text for _x, text in ordered_parts).upper()
                 team_report = {
@@ -2311,6 +2307,16 @@ def _parse_official_injury_report(pdf: bytes) -> dict[str, object]:
             if current_team is not None:
                 player_status["team"] = current_team
             statuses.append(player_status)
+    unassigned_scoped_players = [
+        str(row["player_name"])
+        for row in statuses
+        if row.get("matchup") is not None and row.get("team") is None
+    ]
+    if unassigned_scoped_players:
+        raise ValueError(
+            "Official NBA injury report has game-scoped players without team "
+            "attribution: " + ", ".join(unassigned_scoped_players)
+        )
     if not statuses:
         raise ValueError("Official NBA injury report contained no player statuses")
     return {

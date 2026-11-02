@@ -1106,6 +1106,90 @@ def test_injury_pdf_treats_omitted_zero_injury_team_as_submitted(monkeypatch) ->
     assert game_reports["MIL"]["status"] == "submitted"
 
 
+def test_injury_pdf_assigns_home_team_when_away_team_row_is_omitted(
+    monkeypatch,
+) -> None:
+    rows = [
+        [
+            (24.1, "11/02/2026"),
+            (201.0, "MIL@MIN"),
+            (265.2, "Minnesota"),
+            (311.2, "Timberwolves"),
+            (426.0, "DiVincenzo,"),
+            (476.1, "Donte"),
+            (586.7, "Out"),
+            (667.1, "Injury/Illness"),
+        ],
+        [
+            (426.0, "Edwards,"),
+            (465.5, "Anthony"),
+            (586.7, "Out"),
+            (667.1, "Injury/Illness"),
+        ],
+    ]
+
+    class FakePage:
+        def extract_text(self, visitor_text):
+            for y, row in enumerate(rows, start=100):
+                for x, value in row:
+                    visitor_text(
+                        value,
+                        None,
+                        [1.0, 0.0, 0.0, 1.0, x, float(y)],
+                        None,
+                        9.0,
+                    )
+
+    monkeypatch.setattr(
+        "pypdf.PdfReader",
+        lambda _source: SimpleNamespace(pages=[FakePage()]),
+    )
+
+    report = _parse_official_injury_report(b"fake pdf")
+
+    scoped = report["game_team_reports"]["2026-11-02|MIL@MIN"]
+    assert scoped["MIL"]["status"] == "submitted"
+    assert scoped["MIN"]["status"] == "submitted"
+    assert [row["team"] for row in report["players"]] == ["MIN", "MIN"]
+    assert [row["player_name"] for row in report["players"]] == [
+        "Donte DiVincenzo",
+        "Anthony Edwards",
+    ]
+
+
+def test_injury_pdf_rejects_game_scoped_players_without_team(monkeypatch) -> None:
+    rows = [
+        [
+            (24.1, "11/02/2026"),
+            (201.0, "MIL@MIN"),
+            (426.0, "Edwards,"),
+            (465.5, "Anthony"),
+            (586.7, "Out"),
+            (667.1, "Injury/Illness"),
+        ]
+    ]
+
+    class FakePage:
+        def extract_text(self, visitor_text):
+            for y, row in enumerate(rows, start=100):
+                for x, value in row:
+                    visitor_text(
+                        value,
+                        None,
+                        [1.0, 0.0, 0.0, 1.0, x, float(y)],
+                        None,
+                        9.0,
+                    )
+
+    monkeypatch.setattr(
+        "pypdf.PdfReader",
+        lambda _source: SimpleNamespace(pages=[FakePage()]),
+    )
+
+    with pytest.raises(ValueError, match="without team attribution"):
+        _parse_official_injury_report(b"fake pdf")
+
+
 def test_injury_pdf_parses_second_team_after_continuation_page_header(monkeypatch) -> None:
     pages = [
         [
