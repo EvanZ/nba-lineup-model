@@ -147,6 +147,46 @@ def test_official_inactives_are_added_to_the_canonical_roster() -> None:
     }
 
 
+def test_zero_minute_box_player_may_also_appear_on_official_inactive_list() -> None:
+    game_record = _official_final_game(
+        catalog_game=_catalog_game(),
+        boxscore=_boxscore(),
+        game_date_pacific=date(2026, 10, 20),
+    )
+    inactive = {
+        "game_id": "0022600001",
+        "teams": [
+            {
+                "team_id": 1610612765,
+                "team": "DET",
+                "side": "home",
+                "players": [{"player_id": 1002, "player_name": "Did Not Play"}],
+            },
+            {
+                "team_id": 1610612738,
+                "team": "BOS",
+                "side": "away",
+                "players": [],
+            },
+        ],
+    }
+
+    _actual, identity, roster = _nba_actual_minutes(
+        game_record=game_record,
+        boxscore=_boxscore(),
+        inactive_list=inactive,
+    )
+
+    assert identity.loc[identity["player_id"].eq(1002), "resolution"].item() == (
+        "nba_person_id_and_inactive_person_id"
+    )
+    player = next(
+        row for row in roster["teams"][0]["players"] if row["player_id"] == 1002
+    )
+    assert player["status"] == "INACTIVE"
+    assert player["source"] == "official_nba_box_and_inactive_list"
+
+
 def test_official_inactive_page_parser_validates_game_and_teams() -> None:
     payload = {
         "props": {

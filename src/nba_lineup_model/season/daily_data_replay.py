@@ -652,6 +652,8 @@ def _nba_actual_minutes(
             raise ValueError(f"NBA box score has incomplete {side} roster")
         roster_players: list[dict[str, object]] = []
         roster_ids: set[int] = set()
+        roster_by_id: dict[int, dict[str, object]] = {}
+        identity_by_id: dict[int, dict[str, object]] = {}
         for player in players:
             if not isinstance(player, Mapping) or player.get("personId") is None:
                 raise ValueError(f"NBA box score has malformed {team} player identity")
@@ -663,26 +665,26 @@ def _nba_actual_minutes(
                 statistics = {}
             minutes = _nba_minutes_value(statistics.get("minutes"))
             played = minutes > 0
-            identity_rows.append(
-                {
-                    "game_id": game_id,
-                    "team": team,
-                    "player_name": player_name,
-                    "player_id": player_id,
-                    "played": played,
-                    "resolution": "nba_person_id",
-                }
-            )
-            roster_players.append(
-                {
-                    "player_id": player_id,
-                    "player_name": player_name,
-                    "played": played,
-                    "starter": str(player.get("starter", "0")) == "1",
-                    "status": str(player.get("status", "")),
-                    "minutes": minutes,
-                }
-            )
+            identity_row = {
+                "game_id": game_id,
+                "team": team,
+                "player_name": player_name,
+                "player_id": player_id,
+                "played": played,
+                "resolution": "nba_person_id",
+            }
+            roster_player = {
+                "player_id": player_id,
+                "player_name": player_name,
+                "played": played,
+                "starter": str(player.get("starter", "0")) == "1",
+                "status": str(player.get("status", "")),
+                "minutes": minutes,
+            }
+            identity_rows.append(identity_row)
+            identity_by_id[player_id] = identity_row
+            roster_players.append(roster_player)
+            roster_by_id[player_id] = roster_player
             if played:
                 actual_rows.append(
                     {
@@ -705,9 +707,23 @@ def _nba_actual_minutes(
         for inactive in inactive_team.get("players", []):
             player_id = int(inactive["player_id"])
             if player_id in roster_ids:
-                raise ValueError(
-                    f"Official NBA player {player_id} is both box-roster and inactive for {game_id}"
+                existing = roster_by_id[player_id]
+                if float(existing["minutes"]) > 0:
+                    raise ValueError(
+                        f"Official NBA played player {player_id} is also inactive for {game_id}"
+                    )
+                if _normalized_player_name(existing["player_name"]) != _normalized_player_name(
+                    inactive["player_name"]
+                ):
+                    raise ValueError(
+                        f"Official NBA sources disagree on inactive identity {player_id}"
+                    )
+                existing["status"] = "INACTIVE"
+                existing["source"] = "official_nba_box_and_inactive_list"
+                identity_by_id[player_id]["resolution"] = (
+                    "nba_person_id_and_inactive_person_id"
                 )
+                continue
             player_name = str(inactive["player_name"])
             identity_rows.append(
                 {
@@ -750,6 +766,10 @@ def _nba_player_name(player: Mapping[str, Any]) -> str:
         str(player.get(field) or "").strip() for field in ("firstName", "familyName")
     ).strip()
     return full_name or str(player.get("name", "")).strip() or str(player["personId"])
+
+
+def _normalized_player_name(value: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value).casefold())
 
 
 def _nba_minutes_value(value: object) -> float:
