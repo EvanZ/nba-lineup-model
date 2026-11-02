@@ -1694,3 +1694,21 @@ def test_unassigned_cup_placeholder_preserves_the_league_win_total() -> None:
     assert totals["scheduled_wins"].sum() == pytest.approx(80.0)
     assert totals["unassigned_wins"].sum() == pytest.approx(2.0)
     assert totals["projected_wins"].sum() == pytest.approx(82.0)
+
+
+@pytest.mark.parametrize("history", [[], [{"season":"2024-25","actual_total_minutes":1000.0}]])
+def test_rotation_summary_includes_current_state_without_preseason_history(history):
+    profile={"player_id":999,"player_name":"Returning Player","rating_state":"in_season_updated",
+        "rating_season":"2026-27","rating_evidence_through_date":"2026-11-01",
+        "participation_observations":3,"minutes_role_observations":1,
+        "current_expected_minutes_if_available":20.0,"current_participation_estimate":0.5,
+        "rotation_history":history}
+    result=enrich_current_rotation_history(profile,[{"game_id":"1","actual_minutes":22.0},{"game_id":"2","actual_minutes":0.0},{"game_id":"3","actual_minutes":0.0}])
+    current=result[-1]
+    assert result[:-1]==history
+    assert current["season"]=="2026-27"
+    assert current["known_roster_games"]==3
+    assert current["actual_available_games"]==1
+    assert current["actual_total_minutes"]==22.0
+    assert current["preseason_predicted_available_share"] is None
+    assert current["predicted_minutes_per_available_game"]==20.0

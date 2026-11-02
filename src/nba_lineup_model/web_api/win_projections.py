@@ -1271,16 +1271,28 @@ def enrich_current_rotation_history(
     """
 
     raw_history = profile.get("rotation_history")
-    if not isinstance(raw_history, list):
-        return []
-    history = [dict(row) for row in raw_history if isinstance(row, dict)]
+    history = [dict(row) for row in raw_history if isinstance(row, dict)] if isinstance(raw_history, list) else []
     if profile.get("rating_state") != "in_season_updated":
         return history
 
     season = str(profile.get("rating_season", ""))
     current = next((row for row in history if str(row.get("season")) == season), None)
     if current is None:
-        return history
+        # Current observations exist independently of a preseason history row
+        # (late signings, returners, and cold starts). Missing historical prior
+        # fields stay unknown; never discard the observed current totals.
+        current = {
+            "season": season,
+            "season_start_year": int(season.split("-")[0]),
+            "player_id": profile.get("player_id"),
+            "player_name": profile.get("player_name"),
+            "age": profile.get("age"),
+            "predicted_available_share": None,
+            "predicted_minutes_per_available_game": profile.get("preseason_expected_minutes_if_available"),
+            "projected_total_minutes": None,
+            "is_preseason_forecast": False,
+        }
+        history.append(current)
 
     current.setdefault(
         "preseason_predicted_available_share",
