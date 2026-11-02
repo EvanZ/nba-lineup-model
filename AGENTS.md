@@ -30,7 +30,28 @@ These instructions apply to every task in this repository.
 - Preserve immutable pregame projections and source provenance. Postgame
   retrospective artifacts must be separately labeled.
 - NBA GESTALT basketball data must come from the official NBA sources selected
-  by the repository architecture. Do not add ESPN data or identifiers.
+  by the repository architecture.
+
+## ESPN prohibition
+
+- NBA GESTALT must never request, ingest, copy, reconcile, repair, serve, or
+  retain ESPN basketball data.
+- Do not use ESPN as a primary source, fallback, crosswalk, score source, box
+  score source, schedule source, player/team identity source, or recovery path.
+- Do not add or preserve ESPN endpoints, source adapters, files, filenames,
+  payload fields, game IDs, player IDs, team IDs, provenance labels, or cached
+  responses anywhere in NBA GESTALT artifacts or serving roots.
+- A bookmaker market delivered by an independent odds provider is market data,
+  not permission to use ESPN basketball data. Normalize or exclude legacy
+  bookmaker keys containing `espn`; never expose them as source provenance.
+- If the official NBA source is unavailable or incomplete, fail the affected
+  artifact explicitly and report it. Never silently substitute ESPN or any
+  other unapproved source.
+- Before materialization, release, promotion, or repair, scan the exact NBA
+  GESTALT artifact scope for ESPN-named files and ESPN-specific fields. Treat
+  any match as a hard failure. Never copy contaminated artifacts forward.
+- Removal or quarantine must be restricted to the NBA GESTALT roots named in
+  the task. Never delete ESPN data belonging to another project or site.
 
 ## Collaboration
 
