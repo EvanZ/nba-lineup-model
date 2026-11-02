@@ -79,6 +79,7 @@ def materialize_official_schedule_state(
     completed: list[dict[str, Any]] = []
     official_boxscores: dict[str, dict[str, Any]] = {}
     source_inventory: dict[str, dict[str, str]] = {}
+    pregame_inventory: dict[str, str] = {}
     player_page_ratings: dict[int, float] = {}
     data_tip_sha = data_chain[-1][2]["bundle_sha256"]
     model_tip_sha = model_chain[-1][2]["bundle_sha256"]
@@ -196,6 +197,7 @@ def materialize_official_schedule_state(
                         ),
                     },
                 )
+                pregame_inventory[game_id] = _object_sha256(pregame)
                 boxscore_record = boxscore_by_game.get(game_id)
                 if not isinstance(boxscore_record, dict):
                     raise ValueError(f"Official NBA box score is missing for {game_id}")
@@ -230,6 +232,12 @@ def materialize_official_schedule_state(
                     player_page_ratings[int(trajectory_row.player_id)] = float(
                         trajectory_row.rating_after
                     )
+        for upcoming_game in upcoming:
+            game_id = str(upcoming_game["game_id"])
+            pregame = upcoming_game.get("_pregame")
+            if not isinstance(pregame, dict):
+                raise ValueError(f"Upcoming game {game_id} has no pregame artifact")
+            pregame_inventory[game_id] = _object_sha256(pregame)
 
         identity = {
             "schema_version": 2,
@@ -247,6 +255,9 @@ def materialize_official_schedule_state(
                 game_catalog_path.read_bytes()
             ).hexdigest(),
             "upcoming_game_ids": sorted(str(row["game_id"]) for row in upcoming),
+            "pregame_sha256_by_game": {
+                game_id: pregame_inventory[game_id] for game_id in sorted(pregame_inventory)
+            },
             "source_inventory": source_inventory,
             "projection_controls": controls,
         }

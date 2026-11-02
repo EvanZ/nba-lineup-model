@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import copy
 import pandas as pd
 import pytest
 
 from nba_lineup_model.season.official_schedule_serving import (
+    _object_sha256,
     _attach_game_prediction_attribution,
     _official_retrospective,
 )
@@ -90,3 +92,29 @@ def test_historical_game_uses_one_frozen_rating_map_for_both_ledgers() -> None:
     assert retrospective["home_margin"] == pytest.approx(
         retrospective["ledger"]["home_margin"]
     )
+
+
+def test_schedule_release_identity_changes_when_upcoming_pregame_changes() -> None:
+    pregame = {
+        "game_id": "0022600156",
+        "projection": {
+            "serving_bundle_sha256": "a" * 64,
+            "home_margin": 2.5,
+            "ledger": {"home_margin": 2.5},
+        },
+        "projected_minutes": {"away": [], "home": []},
+    }
+    changed = copy.deepcopy(pregame)
+    changed["projection"]["home_margin"] = 3.0
+    changed["projection"]["ledger"]["home_margin"] = 3.0
+
+    first_identity = {
+        "upcoming_game_ids": [pregame["game_id"]],
+        "pregame_sha256_by_game": {pregame["game_id"]: _object_sha256(pregame)},
+    }
+    second_identity = {
+        "upcoming_game_ids": [changed["game_id"]],
+        "pregame_sha256_by_game": {changed["game_id"]: _object_sha256(changed)},
+    }
+
+    assert _object_sha256(first_identity) != _object_sha256(second_identity)
