@@ -1,0 +1,20 @@
+{
+  "activate_after_validation": true,
+  "catalog_path": "/var/lib/nba-gestalt/live-release/catalog/games.parquet",
+  "code_root": "/opt/nba-gestalt-daily/current",
+  "coverage_path": "/var/lib/nba-gestalt/daily-pipeline-v2/coverage.json",
+  "data_root": "/var/lib/nba-gestalt/daily-data-collection-v2",
+  "environment_root": "/var/lib/nba-gestalt",
+  "frontend_root": "/var/lib/nba-gestalt/live-release/web",
+  "live_pointer": "/var/lib/nba-gestalt/live-release",
+  "matchup_url": "isolated://frozen-context",
+  "model_root": "/var/lib/nba-gestalt/daily-model-causal-v2",
+  "pipeline_root": "/var/lib/nba-gestalt/daily-pipeline-v2",
+  "preseason_minutes_path": "/var/lib/nba-gestalt/daily-pipeline-v2/prior/preseason_minutes.json",
+  "preseason_profiles_path": "/var/lib/nba-gestalt/live-release/preseason/profiles.parquet",
+  "preseason_rankings_path": "/var/lib/nba-gestalt/live-release/preseason/rankings.parquet",
+  "release_root": "/opt/nba-gestalt-daily/current",
+  "schedule_root": "/var/lib/nba-gestalt/schedule-serving/current",
+  "season": "2026-27",
+  "season_start": "2026-10-20"
+}

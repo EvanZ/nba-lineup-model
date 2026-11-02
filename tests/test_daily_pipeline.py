@@ -11,7 +11,12 @@ import pytest
 from dagster._core.remote_origin import RemoteJobOrigin, RemoteRepositoryOrigin, RegisteredCodeLocationOrigin
 from dagster import DagsterInstance, DagsterRunStatus, Definitions, build_sensor_context
 
-from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig, prepare_daily_release, require_complete_slate
+from nba_lineup_model.orchestration.daily_pipeline import (
+    DailyPipelineConfig,
+    causal_schedule_sha256,
+    prepare_daily_release,
+    require_complete_slate,
+)
 from nba_lineup_model.orchestration.definitions import complete_slate_daily_release_sensor, defs, prepare_daily_site_release_job
 
 
@@ -164,10 +169,19 @@ def test_schedule_lock_remains_same_across_release_switches(tmp_path, monkeypatc
     assert schedule_lock_path(root / "pipeline/candidates/x/schedule") == root / ".schedule-writer.lock"
 
 
-@pytest.mark.parametrize("scenario", ["success", "stale", "reload_failure", "health_failure", "rollback_failure"])
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "success",
+        "mutable_live",
+        "causal_stale",
+        "reload_failure",
+        "health_failure",
+        "rollback_failure",
+    ],
+)
 def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatch, scenario):
     from nba_lineup_model.orchestration import daily_activation as activation
-    from nba_lineup_model.season.dev_site_release import _tree_sha256
     config = config_fixture(tmp_path)
     # Replace the test marker directory with a normal release pointer.
     old = config.pipeline_root / "releases/old"
@@ -178,7 +192,14 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
     config.live_pointer.rmdir()
     config.live_pointer.symlink_to(old)
     (new / "schedule").mkdir()
-    report = {"status":"validated_candidate", "game_date":"2026-10-20", "runtime_release":str(new), "source_schedule_sha256":_tree_sha256(config.schedule_root)}
+    report = {
+        "status": "validated_candidate",
+        "game_date": "2026-10-20",
+        "runtime_release": str(new),
+        "source_causal_schedule_sha256": causal_schedule_sha256(
+            config.schedule_root
+        ),
+    }
     manifest = {"identity":{"live_pointer":str(config.live_pointer), "evidence_through_date":"2026-10-20"}}
     monkeypatch.setattr(activation, "verify_production_site_release", lambda path: manifest)
     monkeypatch.setattr("nba_lineup_model.season.production_site_release.verify_production_site_release", lambda path: manifest)
@@ -192,16 +213,24 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
         if scenario in {"health_failure", "rollback_failure"}:
             if release == new or scenario == "rollback_failure":
                 raise RuntimeError("API mismatch")
-    if scenario == "stale":
-        (config.schedule_root / "changed.json").write_text('{}')
-        with pytest.raises(ValueError, match="Schedule changed"):
-            activation.activate_daily_release(config, report, reload_api=reload_api, verify_api=verify_api)
+    if scenario == "mutable_live":
+        latest = config.schedule_root / "latest/2026-10-20.json"
+        latest.parent.mkdir()
+        latest.write_text('{"market": "new odds"}')
+    if scenario == "causal_stale":
+        (config.schedule_root / "frozen/0022600001.json").write_text('{}')
+        with pytest.raises(ValueError, match="Causal schedule inputs changed"):
+            activation.activate_daily_release(
+                config, report, reload_api=reload_api, verify_api=verify_api
+            )
         assert events == []
-    elif scenario == "success":
-        activation.activate_daily_release(config, report, reload_api=reload_api, verify_api=verify_api)
+    elif scenario in {"success", "mutable_live"}:
+        activation.activate_daily_release(
+            config, report, reload_api=reload_api, verify_api=verify_api
+        )
         assert config.live_pointer.resolve() == new
         assert report["status"] == "activated"
-        assert events == [("reload","new"),("verify","new")]
+        assert events == [("reload", "new"), ("verify", "new")]
         return
     else:
         with pytest.raises(Exception):
@@ -264,3 +293,33 @@ def test_model_uses_pinned_context_api_and_rejects_neutral_fallback(tmp_path, mo
             steps.model(date(2026,10,20))
     else:
         steps.model(date(2026,10,20))
+
+
+def test_isolated_daily_dagster_boundary_exposes_only_atomic_jobs():
+    from nba_lineup_model.orchestration.daily_definitions import defs as daily_defs
+
+    Definitions.validate_loadable(daily_defs)
+    assert {job.name for job in daily_defs.jobs} == {
+        "backfill_official_history",
+        "prepare_daily_site_release",
+    }
+    assert {sensor.name for sensor in daily_defs.sensors} == {
+        "complete_slate_daily_release"
+    }
+    assert not daily_defs.schedules
+
+
+def test_daily_systemd_boundary_is_separate_from_collectors_and_legacy():
+    root = Path(__file__).parents[1]
+    for name in (
+        "gestalt-daily-code-server.service",
+        "gestalt-daily-webserver.service",
+        "gestalt-daily-daemon.service",
+    ):
+        unit = (root / "deploy" / name).read_text()
+        assert "DAGSTER_HOME=/var/lib/nba-gestalt/daily-dagster" in unit
+        assert "GESTALT_DAILY_PIPELINE_CONFIG=" in unit
+        assert "gestalt-dagster-" not in unit
+        assert "collection_definitions" not in unit
+    code_server = (root / "deploy/gestalt-daily-code-server.service").read_text()
+    assert "orchestration.daily_definitions" in code_server

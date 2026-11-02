@@ -115,6 +115,23 @@ def _frozen_hashes(root: Path) -> dict[str, str]:
     return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((root / "frozen").glob("*.json"))}
 
 
+
+
+def causal_schedule_sha256(root: Path) -> str:
+    """Hash only inputs that can change a completed-game model state.
+
+    Live boards, odds, injuries, clocks, and pending captures are deliberately
+    excluded so protected collectors can continue while a nightly candidate builds.
+    """
+
+    digest = hashlib.sha256()
+    for directory in ("frozen", "final"):
+        base = root / directory
+        for path in sorted(item for item in base.rglob("*") if item.is_file()):
+            digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
 def schedule_lock_path(root: Path) -> Path:
     """One stable inode per environment, outside every swappable release."""
     configured = os.environ.get("GESTALT_SCHEDULE_LOCK_PATH")
@@ -283,7 +300,7 @@ class CanonicalPipelineSteps:
             validate_schedule_artifacts(out / "schedule")
             validation = collect_api_validation(api, evidence_date=target.isoformat(), daily_model_root=c.model_root)
             publish_dev_site_release(daily_data_root=c.data_root, daily_model_root=c.model_root, serving_root=out / "serving", lineups_root=out / "lineups", schedule_state_dir=out / "schedule", catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_revision=self.revision, api_validation=validation, output_root=out / "site-releases")
-        return stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=out / "schedule", schedule_overlay_path=out / "schedule", catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer)
+        return stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=out / "schedule", schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer)
 
 
 def prepare_daily_release(
@@ -333,6 +350,9 @@ def prepare_daily_release(
                 require_clean_artifact_sources(config.schedule_root)
                 from nba_lineup_model.season.dev_site_release import _tree_sha256
                 report["source_schedule_sha256"] = _tree_sha256(config.schedule_root)
+                report["source_causal_schedule_sha256"] = causal_schedule_sha256(
+                    config.schedule_root
+                )
                 shutil.copytree(config.schedule_root.resolve(), candidate / "schedule")
             report.update(code_revision=revision, candidate=str(candidate))
             steps = steps_class(config, candidate, revision)

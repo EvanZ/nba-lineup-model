@@ -1,0 +1,19 @@
+telemetry:
+  enabled: false
+
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    max_concurrent_runs: 1
+
+run_monitoring:
+  enabled: true
+  start_timeout_seconds: 180
+  cancel_timeout_seconds: 180
+
+retention:
+  schedule:
+    purge_after_days: 30
+  sensor:
+    purge_after_days: 30

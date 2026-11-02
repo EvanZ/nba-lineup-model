@@ -13,9 +13,9 @@ import urllib.request
 from pathlib import Path
 
 from nba_lineup_model.orchestration.daily_pipeline import (
-    DailyPipelineConfig, _report, schedule_lock,
+    DailyPipelineConfig, _report, causal_schedule_sha256, schedule_lock,
 )
-from nba_lineup_model.season.dev_site_release import _tree_sha256, collect_api_validation
+from nba_lineup_model.season.dev_site_release import collect_api_validation
 from nba_lineup_model.season.production_site_release import (
     switch_production_release, verify_production_site_release,
 )
@@ -76,8 +76,10 @@ def activate_daily_release(config: DailyPipelineConfig, report: dict, *, reload_
     report_root = config.pipeline_root / "reports" / report["game_date"]
     with schedule_lock(config.schedule_root):
         require_clean_artifact_sources(config.schedule_root)
-        if _tree_sha256(config.schedule_root) != report.get("source_schedule_sha256"):
-            raise ValueError("Schedule changed while the candidate was built; rebuild before activation")
+        if causal_schedule_sha256(config.schedule_root) != report.get(
+            "source_causal_schedule_sha256"
+        ):
+            raise ValueError("Causal schedule inputs changed while the candidate was built; rebuild before activation")
         require_clean_artifact_sources(release / "schedule")
         previous = switch_production_release(release, live_pointer=config.live_pointer)
         try:

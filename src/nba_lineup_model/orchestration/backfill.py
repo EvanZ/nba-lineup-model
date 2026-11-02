@@ -16,7 +16,8 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from nba_lineup_model.orchestration.daily_pipeline import (
-    DailyPipelineConfig, _report, prepare_daily_release, require_complete_slate, schedule_lock,
+    DailyPipelineConfig, _report, causal_schedule_sha256, prepare_daily_release,
+    require_complete_slate, schedule_lock,
 )
 from nba_lineup_model.season.backfill_recovery import recover_official_slate
 from nba_lineup_model.season.dev_site_release import _tree_sha256
@@ -62,6 +63,7 @@ def run_backfill(config: DailyPipelineConfig, *, end_date: date, start_date: dat
         with schedule_lock(config.schedule_root):
             require_clean_artifact_sources(config.schedule_root)
             source_sha = _tree_sha256(config.schedule_root)
+            source_causal_sha = causal_schedule_sha256(config.schedule_root)
             identity = hashlib.sha256(f"{source_sha}:{revision}".encode()).hexdigest()
             workspace = config.pipeline_root / "backfills" / identity
             workspace.mkdir(parents=True, exist_ok=True)
@@ -138,6 +140,7 @@ def run_backfill(config: DailyPipelineConfig, *, end_date: date, start_date: dat
                     # Activation compares the ORIGINAL served schedule, not our
                     # private recovered copy. A concurrent live write invalidates it.
                     last["source_schedule_sha256"] = source_sha
+                    last["source_causal_schedule_sha256"] = source_causal_sha
                     last["backfill"] = recovery
                     _report(config.pipeline_root / "reports" / key, last)
                     journal["completed_dates"][key] = last
