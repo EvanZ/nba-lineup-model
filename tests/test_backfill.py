@@ -245,3 +245,15 @@ def test_pbp_failure_is_reported_without_losing_final_box(tmp_path):
     with pytest.raises(recovery.BackfillIncomplete,match='temporary NBA timeout'):
         recovery.recover_official_slate(**args,fetch_box=lambda g:boxes[g])
     assert (args['state_root']/f'final/{GAME_ID}.nba.json').exists()
+
+
+def test_missing_daily_board_is_recovered_from_catalog_and_frozen_inputs(tmp_path):
+    from nba_lineup_model.season.schedule_artifact_contract import validate_schedule_artifacts
+    args, boxes = fixture(tmp_path)
+    (args['state_root']/f'latest/{GAME_DATE}.json').unlink()
+    recovery.recover_official_slate(**args, fetch_box=lambda g:boxes[g])
+    board=json.loads((args['state_root']/f'latest/{GAME_DATE}.json').read_text())
+    assert board['source'].startswith('NBA official')
+    assert board['games'][0]['projection']['ledger']
+    assert board['games'][0]['retrospective']['ledger']
+    validate_schedule_artifacts(args['state_root'])

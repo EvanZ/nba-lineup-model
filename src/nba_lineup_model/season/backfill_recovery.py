@@ -91,7 +91,11 @@ def recover_official_slate(*, game_date: date, state_root: Path, catalog_path: P
     require_clean_artifact_sources(checkpoint_root)
     catalog = _catalog_games(catalog_path, start_date=game_date, end_date=game_date).get(game_date.isoformat(), [])
     latest = state_root / "latest" / f"{game_date}.json"
-    board = _read_object(latest) if latest.exists() else {"season": season, "game_date": game_date.isoformat(), "games": []}
+    board = _read_object(latest) if latest.exists() else {
+        "season": season, "game_date": game_date.isoformat(), "games": [],
+        "source": "NBA official schedule and liveData final box scores",
+        "source_provenance": {"provider_fallbacks": [], "catalog_sha256": hashlib.sha256(catalog_path.read_bytes()).hexdigest()},
+    }
     by_id = {str(game["game_id"]): game for game in board["games"]}
     report = {"game_date": game_date.isoformat(), "expected_game_ids": [g["game_id"] for g in catalog], "completed_game_ids": [], "observed_final_game_ids": [], "failures": []}
     frozen_before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (state_root / "frozen").glob("*.json")}
