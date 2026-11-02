@@ -1219,7 +1219,10 @@ class LineupEvaluator:
             if "player_id" in self.historical_rankings
             else pd.DataFrame()
         )
-        if historical_rows.empty:
+        # Current coupled state takes precedence even for returners missing
+        # from the latest completed-season fit. Career history is not a reason
+        # to discard their already-published current rating and game log.
+        if historical_rows.empty or not forecast_row.empty:
             if forecast_row.empty:
                 raise LineupEvaluationError(
                     f"Player {player_id} is not available in published fits"
@@ -1242,10 +1245,11 @@ class LineupEvaluator:
                 "offensive_rebound_pct": None,
                 "offense_rating": None,
                 "defense_rating": None,
-                "rating_history": [],
+                "rating_history": history,
+                "rookie_season": preview.get("rookie_season") or (history[0]["season"] if history else None),
                 "rotation_history": self.player_rotation_histories.get(player_id, []),
                 "four_factor_history": self.player_four_factor_histories.get(player_id, []),
-                "league_leader_history": [],
+                "league_leader_history": self.player_league_leader_histories.get(player_id, []),
                 "current_season_trajectory": self.current_season_trajectories.get(
                     player_id, []
                 ),

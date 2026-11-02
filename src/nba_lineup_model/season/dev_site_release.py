@@ -273,6 +273,27 @@ def collect_api_validation(api_root: str, *, evidence_date: str) -> dict[str, ob
     schedule = _get_json(
         f"{root}/api/schedule?{urllib.parse.urlencode({'date': evidence_date})}"
     )
+    # Every actual participant on the release date must be visible in their
+    # player-page API, not just the representative Curry profile above.
+    checked_logs = 0
+    profiles = {201939: player}
+    for game in schedule.get("games", []):
+        if not game.get("status", {}).get("completed"):
+            continue
+        game_id = str(game["game_id"])
+        actual = game.get("retrospective", {}).get("actual_minutes", {})
+        for side in ("away", "home"):
+            for row in actual.get(side, []):
+                minutes = float(row.get("actual_minutes", 0))
+                if minutes <= 0:
+                    continue
+                player_id = int(row["player_id"])
+                if player_id not in profiles:
+                    profiles[player_id] = _get_json(f"{root}/api/players/{player_id}")
+                matches = [point for point in profiles[player_id].get("current_season_trajectory", []) if str(point.get("game_id")) == game_id]
+                if len(matches) != 1 or abs(float(matches[0].get("actual_minutes", -1)) - minutes) > 1e-6:
+                    raise ValueError(f"Player game-log coverage mismatch: NBA game {game_id}, player {player_id}")
+                checked_logs += 1
     season_window = next(
         (
             window
@@ -304,6 +325,7 @@ def collect_api_validation(api_root: str, *, evidence_date: str) -> dict[str, ob
         ),
         "season_performance_games": int(season_window.get("games", -1)),
         "schedule_game_count": len(schedule.get("games", [])),
+        "verified_player_game_logs": checked_logs,
     }
 
 

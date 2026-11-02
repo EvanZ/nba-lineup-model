@@ -317,3 +317,17 @@ def test_dev_site_release_rejects_any_game_without_actual_minutes_ledger(
             api_validation=_api_validation(),
             output_root=tmp_path / "releases",
         )
+
+
+def test_api_gate_rejects_any_missing_actual_participant_log(monkeypatch):
+    from nba_lineup_model.season import dev_site_release as release
+    responses = {
+        "/api/players/201939": {"player_id":201939},
+        "/api/players/1627777": {"player_id":1627777,"current_season_trajectory":[]},
+        "/api/schedule?date=2026-11-01": {"games":[{"game_id":"0022600156","status":{"completed":True},"retrospective":{"actual_minutes":{"home":[{"player_id":1627777,"actual_minutes":21.0}],"away":[]}}}]},
+    }
+    monkeypatch.setattr(release,"_get_json",lambda url:responses.get(url.removeprefix("http://test"),{}))
+    with pytest.raises(ValueError,match="0022600156, player 1627777"):
+        release.collect_api_validation("http://test",evidence_date="2026-11-01")
+    responses["/api/players/1627777"]["current_season_trajectory"]=[{"game_id":"0022600156","actual_minutes":21.0}]
+    assert release.collect_api_validation("http://test",evidence_date="2026-11-01")["verified_player_game_logs"]==1

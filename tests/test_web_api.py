@@ -1601,3 +1601,23 @@ def test_bounded_matchup_chart_contributions_match_the_model_cards() -> None:
     assert np.isclose(sum(cards.values()), payload["matchup_adjustment"])
     for feature_id, contribution in cards.items():
         assert np.isclose(curves[feature_id], contribution, atol=0.01)
+
+
+@pytest.mark.parametrize("last_played_season", ["2024-25", "2023-24"])
+def test_returner_missing_latest_completed_fit_keeps_current_state_and_career_history(last_played_season):
+    evaluator = _evaluator(compiled_linear=True)
+    old = evaluator.players.loc[evaluator.players.player_id.eq(1)].assign(season=last_played_season).copy()
+    current = old.assign(season="2026-27", rapm=2.5, team="NEW", rating_state="in_season_updated")
+    history = [{"season":last_played_season, "rapm":1.0}]
+    trajectory = [{"game_id":"0022600156", "actual_minutes":21.0, "rating":2.5}]
+    evaluator = replace(evaluator,
+        players=evaluator.players.loc[~evaluator.players.player_id.eq(1)],
+        historical_rankings=old, current_season_rankings=current,
+        current_season_trajectories={1:trajectory}, player_rating_histories={1:history})
+    player = evaluator.player(1)
+    assert player["team"] == "NEW"
+    assert player["rapm"] == 2.5
+    assert player["rating_season"] == "2026-27"
+    assert player["current_season_trajectory"] == trajectory
+    assert player["rating_history"] == history
+    assert player["rookie_season"] == current.iloc[0]["rookie_season"] or player["rookie_season"] == last_played_season
