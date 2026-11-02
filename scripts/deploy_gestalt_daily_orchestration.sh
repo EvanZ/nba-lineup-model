@@ -33,7 +33,7 @@ for unit in gestalt-daily-code-server.service gestalt-daily-webserver.service ge
   sudo install -m 0644 "$release/deploy/$unit" "/etc/systemd/system/$unit"
 done
 temporary="$APP_ROOT/.current.tmp.$$"
-ln -s "$release" "$temporary"
+sudo ln -s "$release" "$temporary"
 sudo mv -Tf "$temporary" "$APP_ROOT/current"
 sudo systemctl daemon-reload
 sudo systemctl enable gestalt-daily-code-server gestalt-daily-webserver gestalt-daily-daemon
