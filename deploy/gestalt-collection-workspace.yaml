@@ -1,0 +1,5 @@
+load_from:
+  - grpc_server:
+      host: 127.0.0.1
+      port: 4001
+      location_name: nba_gestalt_protected_collectors

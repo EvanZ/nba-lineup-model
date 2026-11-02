@@ -1,0 +1,32 @@
+[Unit]
+Description=NBA GESTALT protected collectors Dagster code server
+After=network-online.target gestalt-web.service
+Wants=network-online.target
+Before=gestalt-collection-daemon.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/nba-gestalt-collectors/current
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/nba-gestalt-collectors/current/src
+Environment=DAGSTER_HOME=/var/lib/nba-gestalt/collection-dagster
+Environment=AWS_REGION=us-west-1
+Environment=GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1
+Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule
+Environment=GESTALT_MODEL_INPUT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule
+Environment=GESTALT_SCHEDULE_S3_URI=s3://nba-gestalt-data/nba-gestalt/schedule/model_track=updated_ratings_updated_minutes
+Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt/catalog/games.parquet
+Environment=GESTALT_SCHEDULE_API_URL=http://127.0.0.1:8010/api/win-projections
+EnvironmentFile=-/etc/nba-gestalt/dagster.env
+ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster api grpc --host 127.0.0.1 --port 4001 --module-name nba_lineup_model.orchestration.collection_definitions --working-directory /opt/nba-gestalt-collectors/current --use-python-environment-entry-point --log-level warning
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+MemoryHigh=500M
+MemoryMax=750M
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
