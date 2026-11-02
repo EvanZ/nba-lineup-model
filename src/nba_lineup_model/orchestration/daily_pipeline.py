@@ -98,7 +98,8 @@ def require_complete_slate(config: DailyPipelineConfig, game_date: date, *, now:
         box = config.schedule_root / "final" / f"{game_id}.nba.json"
         frozen = config.schedule_root / "frozen" / f"{game_id}.json"
         if not all(path.is_file() for path in (summary, box, frozen)):
-            errors.append(f"{game_id}: missing final/official box score/frozen forecast")
+            missing = [label for label, path in (("final summary", summary), ("official box score", box), ("frozen forecast", frozen)) if not path.is_file()]
+            errors.append(f"{game_id}: missing {', '.join(missing)}")
             continue
         record = json.loads(summary.read_text())
         if str(record.get("game_id")) != game_id or not record.get("final"):

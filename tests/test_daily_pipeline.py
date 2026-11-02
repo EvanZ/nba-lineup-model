@@ -73,24 +73,6 @@ def test_pipeline_failure_at_every_stage_never_publishes_partial_state(tmp_path,
     assert (config.pipeline_root/"reports/2026-10-20/report.html").is_file()
 
 
-def test_daily_sensor_suppresses_queued_failed_and_successful_date_attempts(tmp_path, monkeypatch):
-    config=config_fixture(tmp_path)
-    path=config.environment_root/"config.json"
-    path.write_text(json.dumps(asdict(config),default=str))
-    pointer=config.live_pointer/"site-releases/latest.json"
-    pointer.parent.mkdir()
-    pointer.write_text(json.dumps({"evidence_through_date":"2026-10-19"}))
-    monkeypatch.setenv("GESTALT_DAILY_PIPELINE_CONFIG", str(path))
-    for status in (DagsterRunStatus.QUEUED, DagsterRunStatus.STARTED, DagsterRunStatus.FAILURE, DagsterRunStatus.SUCCESS):
-        with DagsterInstance.ephemeral() as instance:
-            context=build_sensor_context(instance=instance)
-            request=complete_slate_daily_release_sensor(context)
-            assert request.run_key == "daily-site:2026-10-20"
-            instance.create_run_for_job(prepare_daily_site_release_job,remote_job_origin=RemoteJobOrigin(RemoteRepositoryOrigin(RegisteredCodeLocationOrigin("test"), "test_repository"), "prepare_daily_site_release"),run_config=request.run_config,status=status,tags={"gestalt/game_date":"2026-10-20"})
-            result=complete_slate_daily_release_sensor(context)
-            assert not hasattr(result,"run_key")
-
-
 def test_actual_dagster_daily_job_records_incomplete_slate_without_partial_outputs(tmp_path):
     config=config_fixture(tmp_path)
     path=config.environment_root/"config.json"

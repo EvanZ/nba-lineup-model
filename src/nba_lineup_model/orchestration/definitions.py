@@ -1110,35 +1110,83 @@ def prepare_daily_site_release_job() -> None:
     prepare_daily_site_release_op()
 
 
-@sensor(name="complete_slate_daily_release", job=prepare_daily_site_release_job, minimum_interval_seconds=300, default_status=DefaultSensorStatus.STOPPED)
-def complete_slate_daily_release_sensor(context: SensorEvaluationContext) -> RunRequest | SkipReason:
+@op(name="recover_official_history", config_schema={"config_path": str, "end_date": str, "start_date": Field(str, is_required=False), "game_ids": Field([str], default_value=[])})
+def backfill_official_history_op(context: OpExecutionContext) -> dict[str, object]:
     from datetime import date
+    from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
+    from nba_lineup_model.orchestration.backfill import run_backfill
+    cfg = context.op_config
+    result = run_backfill(DailyPipelineConfig.read(cfg["config_path"]),
+        end_date=date.fromisoformat(cfg["end_date"]),
+        start_date=date.fromisoformat(cfg["start_date"]) if cfg.get("start_date") else None,
+        game_ids=cfg.get("game_ids"))
+    context.add_output_metadata({"status": result["status"], "game_date": result["game_date"]})
+    return result
+
+
+@job(name="backfill_official_history", executor_def=in_process_executor, tags={WORKLOAD_TAG: "daily_site_release"})
+def backfill_official_history_job() -> None:
+    backfill_official_history_op()
+
+
+@sensor(name="complete_slate_daily_release", job=backfill_official_history_job, minimum_interval_seconds=300, default_status=DefaultSensorStatus.STOPPED)
+def complete_slate_daily_release_sensor(context: SensorEvaluationContext) -> RunRequest | SkipReason:
     from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig, require_complete_slate
+    from nba_lineup_model.orchestration.backfill import evidence_date
     config_path = os.environ.get("GESTALT_DAILY_PIPELINE_CONFIG", "")
     if not config_path:
         return SkipReason("No environment-specific daily pipeline configuration")
     config = DailyPipelineConfig.read(config_path)
-    pointer = config.live_pointer / "site-releases" / "latest.json"
-    if not pointer.is_file():
-        return SkipReason("Bootstrap release must be approved before enabling nightly candidates")
-    target = date.fromisoformat(json.loads(pointer.read_text())["evidence_through_date"]) + timedelta(days=1)
     try:
-        require_complete_slate(config, target)
-    except (OSError, ValueError) as error:
-        return SkipReason(str(error))
-    inflight = context.instance.get_runs(filters=RunsFilter(job_name="prepare_daily_site_release", statuses=(DagsterRunStatus.QUEUED, DagsterRunStatus.STARTING, DagsterRunStatus.STARTED, DagsterRunStatus.CANCELING)), limit=1)
-    if inflight:
-        return SkipReason(f"Daily pipeline already queued/running: {inflight[0].run_id}")
-    tags = {"gestalt/game_date": target.isoformat()}
-    previous = context.instance.get_runs(filters=RunsFilter(job_name="prepare_daily_site_release", tags=tags), limit=1)
-    if previous:
-        return SkipReason(f"Date already attempted; inspect report and explicitly retry or activate: {previous[0].run_id}")
-    return RunRequest(run_key=f"daily-site:{target.isoformat()}", run_config={"ops": {"build_daily_site_candidate": {"config": {"game_date": target.isoformat(), "config_path": config_path}}}}, tags={**tags, WORKLOAD_TAG: "daily_site_release"})
+        tip = evidence_date(config)
+    except FileNotFoundError:
+        return SkipReason("Bootstrap release must be approved before enabling catch-up")
+    now = datetime.now(UTC)
+    today = now.astimezone(PACIFIC).date()
+    target = today - timedelta(days=1)
+    # Preserve same-night updates once the WHOLE official slate is final.
+    # If the live watcher missed a final, next-day catch-up discovers it by ID.
+    from nba_lineup_model.orchestration.daily_pipeline import expected_slate_ids
+    board_path = config.schedule_root / "latest" / f"{today}.json"
+    if board_path.exists():
+        rows = json.loads(board_path.read_text()).get("games", [])
+        final_ids = {str(row.get("game_id")) for row in rows if row.get("status", {}).get("completed")}
+        expected = expected_slate_ids(config, today)
+        if expected and expected <= final_ids:
+            target = today
+    missing = tip < target
+    check_date = config.season_start
+    while not missing and check_date <= target:
+        try:
+            require_complete_slate(config, check_date, now=now)
+        except (OSError, ValueError):
+            missing = True
+        check_date += timedelta(days=1)
+    if not missing:
+        return SkipReason("All closed Pacific slates are complete")
+    for name in ("backfill_official_history", "prepare_daily_site_release"):
+        inflight = context.instance.get_runs(filters=RunsFilter(job_name=name, statuses=(DagsterRunStatus.QUEUED, DagsterRunStatus.STARTING, DagsterRunStatus.STARTED, DagsterRunStatus.CANCELING)), limit=1)
+        if inflight:
+            return SkipReason(f"Daily pipeline already queued/running: {inflight[0].run_id}")
+    tags = {"gestalt/game_date": target.isoformat(), "gestalt/base_evidence_date": tip.isoformat()}
+    attempts = context.instance.get_run_records(filters=RunsFilter(job_name="backfill_official_history", tags=tags), limit=3)
+    if attempts:
+        latest = attempts[0]
+        if latest.dagster_run.status == DagsterRunStatus.SUCCESS:
+            return SkipReason("Validated candidate awaits activation; no duplicate backfill")
+        if len(attempts) >= 3:
+            return SkipReason("Catch-up failed three times; inspect daily report and retry explicitly")
+        if now.timestamp() - latest.update_timestamp.timestamp() < 900:
+            return SkipReason("Catch-up retry cooling down for 15 minutes")
+    return RunRequest(run_key=f"backfill:{tip}:{target}:attempt-{len(attempts) + 1}",
+        run_config={"ops": {"recover_official_history": {"config": {"end_date": target.isoformat(), "config_path": config_path}}}},
+        tags={**tags, WORKLOAD_TAG: "daily_site_release"})
 
 
 defs = Definitions(
     assets=[s3_lake_query_health],
     jobs=[
+        backfill_official_history_job,
         prepare_daily_site_release_job,
         refresh_schedule_job,
         archive_nba_market_odds_job,
