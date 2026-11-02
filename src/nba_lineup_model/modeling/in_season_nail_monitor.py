@@ -273,13 +273,16 @@ def _context_offsets(
     home_back_to_back: bool,
     away_back_to_back: bool,
     cache: dict[tuple[object, ...], tuple[float, str | None]],
+    court: str = "unit_home",
 ) -> tuple[np.ndarray, list[str]]:
+    if court not in {"unit_home", "opponent_home", "neutral"}:
+        raise ValueError(f"Unsupported court setting: {court}")
     offsets: list[float] = []
     fallback_reasons: set[str] = set()
     for row in stints.itertuples(index=False):
         home_ids = tuple(int(value) for value in row.home_player_ids)
         away_ids = tuple(int(value) for value in row.away_player_ids)
-        key = (home_ids, away_ids, home_back_to_back, away_back_to_back)
+        key = (home_ids, away_ids, home_back_to_back, away_back_to_back, court)
         if key not in cache:
             try:
                 response = _post_matchup(
@@ -290,7 +293,7 @@ def _context_offsets(
                         "unit_season": SEASON,
                         "opponent_season": SEASON,
                         "environment": "unit",
-                        "court": "unit_home",
+                        "court": court,
                         "unit_back_to_back": home_back_to_back,
                         "opponent_back_to_back": away_back_to_back,
                         "include_response_curves": False,

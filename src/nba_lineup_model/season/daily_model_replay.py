@@ -27,6 +27,13 @@ import pandas as pd
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
+from nba_lineup_model.modeling.causal_hca import (
+    CANDIDATE_ID as CAUSAL_HCA_CANDIDATE_ID,
+)
+from nba_lineup_model.modeling.causal_hca import (
+    augment_game_contribution_with_home_court,
+    solve_joint_home_court_state,
+)
 from nba_lineup_model.modeling.game_script_minutes import competitive_role_minutes
 from nba_lineup_model.modeling.in_season_minutes import (
     COACH_DNP,
@@ -51,8 +58,10 @@ from nba_lineup_model.modeling.in_season_nail import (
 )
 from nba_lineup_model.modeling.in_season_nail_monitor import _context_offsets
 from nba_lineup_model.season.daily_artifact_common import canonical_json, file_sha256
-from nba_lineup_model.season.daily_data_artifact import resolve_daily_data_pointer
-from nba_lineup_model.season.daily_data_artifact import verify_daily_data_artifact
+from nba_lineup_model.season.daily_data_artifact import (
+    resolve_daily_data_pointer,
+    verify_daily_data_artifact,
+)
 from nba_lineup_model.season.daily_model_artifact import (
     PublishedDailyModelArtifact,
     publish_daily_model_artifact,
@@ -128,6 +137,34 @@ class DailyModelReplayConfig:
     @property
     def sha256(self) -> str:
         return hashlib.sha256(canonical_json(asdict(self))).hexdigest()
+
+
+@dataclass(frozen=True)
+class CausalHcaReplayConfig(DailyModelReplayConfig):
+    """Independent replay settings for ``causal_hca_replacement_candidate_v2``."""
+
+    model_version: str = CAUSAL_HCA_CANDIDATE_ID
+    ratings_updater_version: str = "possession_residual_ridge_joint_hca_v2"
+    context_model_version: str = f"{CORE_MODEL_VERSION}:2025-26:neutral-court"
+    home_court_prior_mean: float = 0.0
+    home_court_prior_equivalent_possessions: float = 1.0
+    home_court_prior_source: str = "unset"
+
+    def validate(self) -> None:
+        super().validate()
+        if not np.isfinite(self.home_court_prior_mean):
+            raise ValueError("HCA prior mean must be finite")
+        if (
+            not np.isfinite(self.home_court_prior_equivalent_possessions)
+            or self.home_court_prior_equivalent_possessions <= 0
+        ):
+            raise ValueError("HCA prior equivalent possessions must be positive")
+        if not self.home_court_prior_source.strip():
+            raise ValueError("HCA prior source must be non-empty")
+
+
+def _uses_joint_home_court(config: DailyModelReplayConfig) -> bool:
+    return isinstance(config, CausalHcaReplayConfig)
 
 
 ContextProvider = Callable[
@@ -209,10 +246,11 @@ def replay_daily_model_chain(
     if parent_bundle is None and next_date != first_data_date:
         raise ValueError("A model replay without a compatible parent must begin at data genesis")
 
+    state_dimension = len(player_ids) + int(_uses_joint_home_court(config))
     if parent_bundle is None:
-        rating_gram = sparse.csr_matrix((len(player_ids), len(player_ids)), dtype=float)
-        rating_score = np.zeros(len(player_ids), dtype=float)
-        rating_exposure = np.zeros(len(player_ids), dtype=float)
+        rating_gram = sparse.csr_matrix((state_dimension, state_dimension), dtype=float)
+        rating_score = np.zeros(state_dimension, dtype=float)
+        rating_exposure = np.zeros(state_dimension, dtype=float)
         minutes_state = initialize_minutes_state(
             minutes_priors, season=config.season, config=config.minutes_config()
         )
@@ -236,9 +274,16 @@ def replay_daily_model_chain(
             last_team_date,
             contribution_lineage,
             included_game_ids,
-        ) = _load_parent_state(parent_bundle, expected_player_ids=player_ids)
+        ) = _load_parent_state(
+            parent_bundle,
+            expected_player_ids=player_ids,
+            expected_rating_dimension=state_dimension,
+        )
 
-    provider = context_provider or _http_context_provider(config.matchup_url)
+    provider = context_provider or _http_context_provider(
+        config.matchup_url,
+        court="neutral" if _uses_joint_home_court(config) else "unit_home",
+    )
     published: list[PublishedDailyModelArtifact] = []
     process_entries = [
         (game_date, bundle, manifest)
@@ -398,7 +443,7 @@ def _build_one_date(
             str(data_manifest["generated_at"]).replace("Z", "+00:00")
         )
         finalized_at = max(start_time.astimezone(UTC), generated_at.astimezone(UTC))
-        contribution = build_game_contribution(
+        base_contribution = build_game_contribution(
             game_stints,
             season=config.season,
             game_id=game_id,
@@ -412,13 +457,30 @@ def _build_one_date(
             preseason_nail=preseason,
             fixed_context_offset=offsets,
         )
+        contribution = (
+            augment_game_contribution_with_home_court(
+                base_contribution,
+                game_stints,
+                preseason_nail=preseason,
+                fixed_neutral_context_offset=offsets,
+            )
+            if _uses_joint_home_court(config)
+            else base_contribution
+        )
         daily_contributions.append(contribution)
     for contribution in daily_contributions:
         rating_gram = rating_gram + contribution.xtwx
         rating_score = rating_score + contribution.xtwy
-        rating_exposure = rating_exposure + contribution.on_court_possessions
-        contribution_lineage.append(contribution.contribution_sha256)
-        included_game_ids.append(contribution.game_id)
+        base_contribution = (
+            contribution.base if _uses_joint_home_court(config) else contribution
+        )
+        rating_exposure = rating_exposure + (
+            contribution.exposure
+            if _uses_joint_home_court(config)
+            else contribution.on_court_possessions
+        )
+        contribution_lineage.append(base_contribution.contribution_sha256)
+        included_game_ids.append(base_contribution.game_id)
 
     for roster in rosters.values():
         for team in roster["teams"]:
@@ -555,6 +617,19 @@ def _build_one_date(
         "excluded_games": [],
         "projection_kind": "post_date_state_descriptive_not_pregame",
     }
+    if _uses_joint_home_court(config):
+        hca = ratings_state.iloc[0]
+        diagnostics.update(
+            {
+                "home_court_candidate_id": hca["home_court_candidate_id"],
+                "home_court_estimate": float(hca["home_court_estimate"]),
+                "home_court_prior_mean": float(hca["home_court_prior_mean"]),
+                "home_court_prior_equivalent_possessions": float(
+                    hca["home_court_prior_equivalent_possessions"]
+                ),
+                "home_court_evidence_weight": float(hca["home_court_evidence_weight"]),
+            }
+        )
     if diagnostics["non_finite_rating_count"]:
         raise ValueError("Daily rating state contains non-finite values")
     if diagnostics["allocation_max_absolute_error"] > 1e-8:
@@ -611,17 +686,52 @@ def _solve_rating_state(
 ) -> pd.DataFrame:
     prior = np.asarray([float(preseason[player_id]) for player_id in player_ids])
     prior_precision = np.full(len(player_ids), config.prior_equivalent_possessions)
-    precision = gram + sparse.diags(prior_precision, format="csr")
-    adjustment = (
-        np.zeros(len(player_ids), dtype=float)
-        if not included_game_ids
-        else np.asarray(spsolve(precision, score), dtype=float)
-    )
+    joint_home_court = _uses_joint_home_court(config)
+    home_court_fields: dict[str, object] = {}
+    if joint_home_court:
+        if not isinstance(config, CausalHcaReplayConfig):
+            raise TypeError("Joint HCA replay requires CausalHcaReplayConfig")
+        solved = solve_joint_home_court_state(
+            gram,
+            score,
+            player_count=len(player_ids),
+            player_prior_equivalent_possessions=config.prior_equivalent_possessions,
+            home_court_prior_mean=config.home_court_prior_mean,
+            home_court_prior_equivalent_possessions=(
+                config.home_court_prior_equivalent_possessions
+            ),
+        )
+        adjustment = solved.player_adjustments
+        posterior_standard_error = solved.player_standard_errors
+        information = np.asarray(gram.diagonal()[: len(player_ids)], dtype=float)
+        player_exposure = np.asarray(exposure[: len(player_ids)], dtype=float)
+        home_court_fields = {
+            "home_court_candidate_id": config.model_version,
+            "home_court_estimate": solved.home_court,
+            "home_court_standard_error": solved.home_court_standard_error,
+            "home_court_prior_mean": config.home_court_prior_mean,
+            "home_court_prior_equivalent_possessions": (
+                config.home_court_prior_equivalent_possessions
+            ),
+            "home_court_prior_source": config.home_court_prior_source,
+            "home_court_information": solved.home_court_information,
+            "home_court_prior_weight": solved.home_court_prior_weight,
+            "home_court_evidence_weight": solved.home_court_evidence_weight,
+        }
+    else:
+        precision = gram + sparse.diags(prior_precision, format="csr")
+        adjustment = (
+            np.zeros(len(player_ids), dtype=float)
+            if not included_game_ids
+            else np.asarray(spsolve(precision, score), dtype=float)
+        )
+        information = np.asarray(gram.diagonal(), dtype=float)
+        player_exposure = np.asarray(exposure, dtype=float)
+        posterior_variance = np.diag(np.linalg.inv(precision.toarray()))
+        posterior_standard_error = np.sqrt(np.maximum(posterior_variance, 0.0))
     if not np.isfinite(adjustment).all():
         raise ValueError("In-season rating solve produced non-finite values")
-    information = np.asarray(gram.diagonal(), dtype=float)
     evidence_weight = information / (information + prior_precision)
-    posterior_variance = np.diag(np.linalg.inv(precision.toarray()))
     name_by_id = rankings.set_index("player_id")["player_name"].astype(str).to_dict()
     state = pd.DataFrame(
         {
@@ -637,16 +747,18 @@ def _solve_rating_state(
             "frozen_preseason_nail": prior,
             "current_season_residual": adjustment,
             "updated_nail": prior + adjustment,
-            "raw_on_court_possessions": exposure,
+            "raw_on_court_possessions": player_exposure,
             "effective_information": information,
             "prior_equivalent_possessions": prior_precision,
             "prior_weight": 1.0 - evidence_weight,
             "evidence_weight": evidence_weight,
-            "posterior_standard_error": np.sqrt(np.maximum(posterior_variance, 0.0)),
+            "posterior_standard_error": posterior_standard_error,
             "included_game_ids_json": json.dumps(tuple(included_game_ids)),
             "contribution_lineage_json": json.dumps(tuple(contribution_lineage)),
         }
     )
+    for column, value in home_court_fields.items():
+        state[column] = value
     validate_player_state(state)
     return state
 
@@ -1177,11 +1289,36 @@ def _write_model_components(
             sort_keys=True,
         ) + "\n"
     )
+    if "home_court_estimate" in ratings_state:
+        hca_columns = [
+            "home_court_candidate_id",
+            "home_court_estimate",
+            "home_court_standard_error",
+            "home_court_prior_mean",
+            "home_court_prior_equivalent_possessions",
+            "home_court_prior_source",
+            "home_court_information",
+            "home_court_prior_weight",
+            "home_court_evidence_weight",
+        ]
+        hca_path = root / "home_court_state.json"
+        hca_path.write_text(
+            json.dumps(
+                {column: ratings_state.iloc[0][column] for column in hca_columns},
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        paths["home_court_state"] = hca_path
     return paths
 
 
 def _load_parent_state(
-    bundle: Path, *, expected_player_ids: tuple[int, ...]
+    bundle: Path,
+    *,
+    expected_player_ids: tuple[int, ...],
+    expected_rating_dimension: int,
 ) -> tuple[
     sparse.csr_matrix,
     np.ndarray,
@@ -1198,7 +1335,7 @@ def _load_parent_state(
     with np.load(_component_path(bundle, manifest, "rating_vectors")) as vectors:
         score = vectors["score"].copy()
         exposure = vectors["exposure"].copy()
-    if gram.shape != (len(expected_player_ids), len(expected_player_ids)):
+    if gram.shape != (expected_rating_dimension, expected_rating_dimension):
         raise ValueError("Parent rating vocabulary differs from the frozen prior")
     minutes = pd.read_parquet(_component_path(bundle, manifest, "minutes_state"))
     trajectory = pd.read_parquet(_component_path(bundle, manifest, "rating_trajectory"))
@@ -1268,7 +1405,7 @@ def _load_frozen_priors(
     )
 
 
-def _http_context_provider(matchup_url: str) -> ContextProvider:
+def _http_context_provider(matchup_url: str, *, court: str = "unit_home") -> ContextProvider:
     cache: dict[tuple[object, ...], tuple[float, str | None]] = {}
 
     def provide(
@@ -1280,6 +1417,7 @@ def _http_context_provider(matchup_url: str) -> ContextProvider:
             home_back_to_back=home_back_to_back,
             away_back_to_back=away_back_to_back,
             cache=cache,
+            court=court,
         )
 
     return provide

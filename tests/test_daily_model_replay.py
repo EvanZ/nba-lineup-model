@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from scipy import sparse
 
 from nba_lineup_model.modeling.current_season_serving_materialization import (
     materialize_daily_model_serving,
@@ -18,13 +19,14 @@ from nba_lineup_model.season.daily_data_artifact import (
 )
 from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
 from nba_lineup_model.season.daily_model_replay import (
+    CausalHcaReplayConfig,
     DailyModelReplayBlocked,
     HistoricalModelReplayApprovalRequired,
     _classification,
     _early_role_minutes,
     _longest_compatible_prefix,
-    _require_historical_replay_approval,
     _normalize_name,
+    _require_historical_replay_approval,
     replay_daily_model_chain,
 )
 
@@ -354,6 +356,51 @@ def test_daily_model_replay_builds_a_clean_official_nba_state(tmp_path: Path) ->
         context_provider=_zero_context,
     )
     assert repeated == []
+
+
+def test_causal_hca_replay_publishes_an_independent_joint_state(tmp_path: Path) -> None:
+    data = _publish_data(tmp_path)
+    rankings, minutes = _prior_files(tmp_path)
+    config = CausalHcaReplayConfig(
+        home_court_prior_mean=1.7,
+        home_court_prior_equivalent_possessions=40000.0,
+        home_court_prior_source="completed-through-2025-26:test",
+    )
+
+    published = replay_daily_model_chain(
+        start_date=date(2026, 10, 20),
+        end_date=date(2026, 10, 20),
+        preseason_rankings_path=rankings,
+        preseason_minutes_path=minutes,
+        data_root=tmp_path / "data",
+        output_root=tmp_path / "causal-hca-candidate",
+        config=config,
+        code_revision="test-causal-hca-revision",
+        context_provider=_zero_context,
+    )
+
+    assert len(published) == 1
+    manifest = verify_daily_model_artifact(published[0].path, data_bundle=data.path)
+    components = manifest["identity"]["components"]
+    assert "home_court_state" in components
+    hca_state = json.loads(
+        (published[0].path / components["home_court_state"]["path"]).read_text()
+    )
+    assert hca_state["home_court_candidate_id"] == (
+        "causal_hca_replacement_candidate_v2"
+    )
+    assert hca_state["home_court_prior_mean"] == 1.7
+    assert hca_state["home_court_prior_source"] == "completed-through-2025-26:test"
+    gram = sparse.load_npz(published[0].path / components["rating_gram"]["path"])
+    assert gram.shape == (11, 11)
+    ratings = pd.read_parquet(
+        published[0].path / components["player_ratings"]["path"]
+    )
+    assert ratings["home_court_estimate"].nunique() == 1
+    diagnostics = json.loads(
+        (published[0].path / components["evaluation_metrics"]["path"]).read_text()
+    )
+    assert diagnostics["home_court_candidate_id"] == config.model_version
 
 
 def test_daily_model_replay_fails_closed_on_missing_player_prior(tmp_path: Path) -> None:

@@ -57,6 +57,37 @@ def test_context_offsets_neutralize_and_report_unknown_player_422(
     assert "Unknown player 1631104" in reasons[0]
 
 
+def test_context_offsets_can_remove_hca_without_removing_b2b(monkeypatch) -> None:
+    requests: list[dict[str, object]] = []
+
+    def respond(_url, request):
+        requests.append(request)
+        return {"predicted_net_rating": 4.5, "additive_margin": 1.5}
+
+    monkeypatch.setattr(
+        "nba_lineup_model.modeling.in_season_nail_monitor._post_matchup", respond
+    )
+    stints = pd.DataFrame(
+        {"home_player_ids": [(1, 2)], "away_player_ids": [(3, 4)]}
+    )
+    cache = {}
+
+    offsets, reasons = _context_offsets(
+        stints,
+        matchup_url="http://matchup",
+        home_back_to_back=True,
+        away_back_to_back=False,
+        cache=cache,
+        court="neutral",
+    )
+
+    assert offsets.tolist() == [3.0]
+    assert reasons == []
+    assert requests[0]["court"] == "neutral"
+    assert requests[0]["unit_back_to_back"] is True
+    assert requests[0]["opponent_back_to_back"] is False
+
+
 def _contribution():
     stints = pd.DataFrame(
         {
