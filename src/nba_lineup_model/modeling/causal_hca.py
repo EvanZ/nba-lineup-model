@@ -231,6 +231,7 @@ def solve_joint_home_court_state(
     player_prior_equivalent_possessions: float,
     home_court_prior_mean: float,
     home_court_prior_equivalent_possessions: float,
+    observation_variance_per_100: float = 1.0,
 ) -> JointHomeCourtSolve:
     """Solve the joint player-residual and absolute-HCA posterior."""
 
@@ -247,13 +248,20 @@ def solve_joint_home_court_state(
     )
     if not np.isfinite(prior_precision).all() or (prior_precision <= 0).any():
         raise ValueError("Joint HCA prior precision must be finite and positive")
+    if (
+        not np.isfinite(observation_variance_per_100)
+        or observation_variance_per_100 <= 0
+    ):
+        raise ValueError("Observation variance must be finite and positive")
     rhs = vector.copy()
     rhs[-1] += prior_precision[-1] * float(home_court_prior_mean)
     precision = matrix + sparse.diags(prior_precision, format="csr")
     posterior = np.asarray(spsolve(precision, rhs), dtype=float)
     if not np.isfinite(posterior).all():
         raise ValueError("Joint HCA solve produced non-finite values")
-    variance = np.diag(np.linalg.inv(precision.toarray()))
+    variance = float(observation_variance_per_100) * np.diag(
+        np.linalg.inv(precision.toarray())
+    )
     hca_information = float(matrix[-1, -1])
     hca_evidence_weight = hca_information / (
         hca_information + float(home_court_prior_equivalent_possessions)

@@ -84,6 +84,7 @@ def test_joint_hca_solve_uses_centered_hca_prior_and_player_zero_prior() -> None
         player_prior_equivalent_possessions=6000.0,
         home_court_prior_mean=1.7,
         home_court_prior_equivalent_possessions=40000.0,
+        observation_variance_per_100=625.0,
     )
 
     precision = gram.toarray() + np.diag([6000.0, 6000.0, 40000.0])
@@ -92,6 +93,11 @@ def test_joint_hca_solve_uses_centered_hca_prior_and_player_zero_prior() -> None
     assert solved.home_court == expected[-1]
     assert solved.home_court_prior_weight == 40000.0 / 40100.0
     assert solved.home_court_evidence_weight == 100.0 / 40100.0
+    expected_covariance = 625.0 * np.linalg.inv(precision)
+    np.testing.assert_allclose(
+        solved.player_standard_errors, np.sqrt(np.diag(expected_covariance)[:2])
+    )
+    assert solved.home_court_standard_error == np.sqrt(expected_covariance[-1, -1])
 
 
 def test_prior_selection_is_forward_only_and_translates_variance_to_possessions() -> None:

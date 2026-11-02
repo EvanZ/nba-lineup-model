@@ -148,6 +148,7 @@ class CausalHcaReplayConfig(DailyModelReplayConfig):
     context_model_version: str = f"{CORE_MODEL_VERSION}:2025-26:neutral-court"
     home_court_prior_mean: float = 0.0
     home_court_prior_equivalent_possessions: float = 1.0
+    home_court_observation_variance_per_100: float = 1.0
     home_court_prior_source: str = "unset"
 
     def validate(self) -> None:
@@ -159,6 +160,11 @@ class CausalHcaReplayConfig(DailyModelReplayConfig):
             or self.home_court_prior_equivalent_possessions <= 0
         ):
             raise ValueError("HCA prior equivalent possessions must be positive")
+        if (
+            not np.isfinite(self.home_court_observation_variance_per_100)
+            or self.home_court_observation_variance_per_100 <= 0
+        ):
+            raise ValueError("HCA observation variance must be positive")
         if not self.home_court_prior_source.strip():
             raise ValueError("HCA prior source must be non-empty")
 
@@ -699,6 +705,9 @@ def _solve_rating_state(
             home_court_prior_mean=config.home_court_prior_mean,
             home_court_prior_equivalent_possessions=(
                 config.home_court_prior_equivalent_possessions
+            ),
+            observation_variance_per_100=(
+                config.home_court_observation_variance_per_100
             ),
         )
         adjustment = solved.player_adjustments

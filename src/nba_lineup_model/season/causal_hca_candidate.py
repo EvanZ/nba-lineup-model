@@ -17,6 +17,9 @@ from nba_lineup_model.modeling.causal_hca import (
     HomeCourtPriorSelection,
     select_home_court_prior,
 )
+from nba_lineup_model.season.causal_hca_evaluation import (
+    evaluate_forward_candidate,
+)
 from nba_lineup_model.season.daily_artifact_common import file_sha256
 from nba_lineup_model.season.daily_model_replay import (
     CausalHcaReplayConfig,
@@ -35,6 +38,7 @@ def build_candidate(
     preseason_minutes_path: Path,
     historical_model_path: Path,
     data_root: Path,
+    schedule_root: Path,
     output_root: Path,
     baseline_model_root: Path,
     matchup_url: str,
@@ -62,6 +66,9 @@ def build_candidate(
     config = CausalHcaReplayConfig(
         home_court_prior_mean=selection.prior_mean,
         home_court_prior_equivalent_possessions=(selection.prior_equivalent_possessions),
+        home_court_observation_variance_per_100=(
+            selection.observation_variance_per_100
+        ),
         home_court_prior_source=(f"artifact://causal-hca-prior/{file_sha256(prior_path)}"),
         matchup_url=matchup_url,
     )
@@ -84,12 +91,24 @@ def build_candidate(
         code_revision=code_revision,
         context_provider=strict_context,
     )
+    forward_evaluation, game_rows = evaluate_forward_candidate(
+        schedule_root=schedule_root,
+        candidate_model_root=output_root,
+        preseason_rankings_path=preseason_rankings_path,
+        hca_prior_mean=selection.prior_mean,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    game_rows_path = output_root / "forward_evaluation.csv"
+    game_rows.to_csv(game_rows_path, index=False)
+    forward_evaluation["game_rows_sha256"] = file_sha256(game_rows_path)
     result = summarize_candidate(
         output_root=output_root,
         baseline_model_root=baseline_model_root,
         selection=selection,
         start_date=start_date,
         end_date=end_date,
+        forward_evaluation=forward_evaluation,
     )
     (output_root / "candidate_summary.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n"
@@ -105,6 +124,7 @@ def summarize_candidate(
     selection: HomeCourtPriorSelection,
     start_date: date,
     end_date: date,
+    forward_evaluation: Mapping[str, Any],
 ) -> dict[str, Any]:
     candidate_chain = _read_model_chain(output_root)
     baseline_chain = _read_model_chain(baseline_model_root)
@@ -148,7 +168,7 @@ def summarize_candidate(
     baseline_identity = baseline_manifest["identity"]
     return {
         "candidate_id": CANDIDATE_ID,
-        "status": "state_chain_complete_forward_evaluation_pending",
+        "status": "complete",
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "date_count": len(candidate_chain),
@@ -164,20 +184,34 @@ def summarize_candidate(
         "published_projection_mutations": 0,
         "production_pointer_changes": 0,
         "runtime_espn_dependencies": 0,
-        "forward_evaluation": {
-            "status": "pending_canonical_pregame_input_component",
-            "reason": (
-                "The official daily data/model chain does not yet contain an immutable "
-                "pregame input component. Legacy schedule snapshots are intentionally "
-                "not used because the repository source policy prohibits ESPN-backed "
-                "identifiers and data."
-            ),
-        },
+        "forward_evaluation": dict(forward_evaluation),
     }
 
 
 def render_candidate_report(summary: Mapping[str, Any], output: Path) -> None:
     prior = summary["hca_prior"]
+    evaluation = summary["forward_evaluation"]
+    baseline = evaluation["baseline"]
+    candidate = evaluation["candidate"]
+    change = evaluation["change_candidate_minus_baseline"]
+    market = evaluation["market"]
+    metric_rows = "".join(
+        "<tr>"
+        f"<td>{label}</td>"
+        f"<td>{int(metrics['games'])}</td>"
+        f"<td>{float(metrics['margin_mae']):.3f}</td>"
+        f"<td>{float(metrics['margin_rmse']):.3f}</td>"
+        f"<td>{100 * float(metrics['winner_accuracy']):.1f}%</td>"
+        f"<td>{float(metrics['brier_score']):.5f}</td>"
+        f"<td>{float(metrics['log_loss']):.5f}</td>"
+        f"<td>{int(metrics['ats_wins'])}-{int(metrics['ats_losses'])}"
+        f"-{int(metrics['ats_pushes'])}</td>"
+        "</tr>"
+        for label, metrics in (
+            ("Original fixed HCA", baseline),
+            ("Causal joint HCA", candidate),
+        )
+    )
     trajectory_rows = "".join(
         "<tr>"
         f"<td>{html.escape(str(row['game_date']))}</td>"
@@ -204,10 +238,27 @@ def render_candidate_report(summary: Mapping[str, Any], output: Path) -> None:
         "padding:20px;margin:18px 0;border-radius:10px}table{border-collapse:collapse;"
         "width:100%}th,td{text-align:left;padding:8px;border-bottom:1px solid #e5e9e5}"
         ".ok{color:#176b3a;font-weight:700}.warn{color:#985d00;font-weight:700}"
-        "code{background:#f2f4f2;padding:2px 5px}</style>"
+        "code{background:#f2f4f2;padding:2px 5px}.table-wrap{overflow-x:auto}"
+        "@media(max-width:700px){body{margin:16px auto;padding:0 10px}section{padding:12px}}</style>"
         f"<h1>{html.escape(str(summary['candidate_id']))}</h1>"
         f"<p class='ok'>Joint state chain complete: {summary['game_count']} games over "
         f"{summary['date_count']} Pacific dates. Production changes: 0.</p>"
+        "<section><h2>92-game forward evaluation</h2><div class='table-wrap'><table>"
+        "<thead><tr><th>Model</th><th>Games</th><th>Margin MAE</th>"
+        "<th>Margin RMSE</th><th>Winner</th><th>Brier</th><th>Log loss</th>"
+        f"<th>ATS W-L-P</th></tr></thead><tbody>{metric_rows}</tbody></table></div>"
+        f"<p><strong>Candidate minus original:</strong> MAE "
+        f"{float(change['margin_mae']):+.3f}, Brier "
+        f"{float(change['brier_score']):+.5f}, log loss "
+        f"{float(change['log_loss']):+.5f}, winner accuracy "
+        f"{100 * float(change['winner_accuracy']):+.1f} percentage points, ATS wins "
+        f"{int(change['ats_wins']):+d}.</p>"
+        f"<p>Market probability ({int(market['games'])} games): Brier "
+        f"{float(market['brier_score']):.5f}, log loss "
+        f"{float(market['log_loss']):.5f}.</p>"
+        f"<p>{html.escape(str(evaluation['frozen_input_contract']))} "
+        "All identities and basketball facts are official NBA; market data is "
+        "The Odds API; runtime ESPN dependencies: 0.</p></section>"
         "<section><h2>Historically selected HCA prior</h2>"
         f"<p><strong>{html.escape(str(prior['transition_method']))}</strong> won the "
         f"expanding-window comparison ({prior['forward_validation_rows']} forecasts): "
@@ -223,10 +274,7 @@ def render_candidate_report(summary: Mapping[str, Any], output: Path) -> None:
         "<table><thead><tr><th>Player</th><th>Team</th><th>Fixed HCA</th>"
         f"<th>Joint HCA</th><th>Delta</th></tr></thead><tbody>{player_rows}</tbody>"
         "</table></section>"
-        "<section><h2>Forward evaluation gate</h2><p class='warn'>Pending.</p>"
-        f"<p>{html.escape(str(summary['forward_evaluation']['reason']))}</p>"
-        "<p>No legacy schedule snapshot was substituted, and no published historical "
-        "projection was modified.</p></section>",
+        "<p>No published historical projection was modified.</p>",
         encoding="utf-8",
     )
 
@@ -243,6 +291,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--preseason-minutes-path", type=Path, required=True)
     parser.add_argument("--historical-model-path", type=Path, required=True)
     parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument("--schedule-root", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--baseline-model-root", type=Path, required=True)
     parser.add_argument("--matchup-url", required=True)
