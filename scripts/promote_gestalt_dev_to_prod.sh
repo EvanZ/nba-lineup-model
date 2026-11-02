@@ -21,30 +21,35 @@ APP_ROOT="${GESTALT_APP_ROOT:-/opt/nba-gestalt}"
 CODE_ROOT="${GESTALT_CODE_ROOT:-/opt/nba-gestalt-code}"
 CODE_CURRENT="$CODE_ROOT/current"
 STATE_ROOT="${GESTALT_STATE_ROOT:-/var/lib/nba-gestalt}"
-DEV_APP_ROOT="${GESTALT_DEV_APP_ROOT:-/opt/nba-gestalt-dev}"
 DEV_STATE_ROOT="${GESTALT_DEV_STATE_ROOT:-/var/lib/nba-gestalt-dev}"
+DEV_RUNTIME="$(readlink -f "${GESTALT_APPROVED_DEV_RUNTIME:-$DEV_STATE_ROOT/live-release}")"
 PROD_RELEASE="$APP_ROOT/current"
-DEV_RELEASE="$DEV_APP_ROOT/current"
-DEV_SERVING_ROOT="$DEV_STATE_ROOT/current-season-serving"
-DEV_LINEUPS_ROOT="$DEV_STATE_ROOT/current-season-lineups"
-DEV_SCHEDULE_ROOT="$DEV_STATE_ROOT/official-schedule/current"
-DEV_SITE_RELEASE_ROOT="$DEV_STATE_ROOT/site-releases"
-DEV_CATALOG_PATH="$DEV_STATE_ROOT/catalog/games.parquet"
-DEV_PRESEASON_ENV="$DEV_STATE_ROOT/site-release.env"
+DEV_RELEASE="$DEV_RUNTIME/code"
+DEV_SERVING_ROOT="$DEV_RUNTIME/current-season-serving"
+DEV_LINEUPS_ROOT="$DEV_RUNTIME/current-season-lineups"
+DEV_SCHEDULE_ROOT="$DEV_RUNTIME/schedule-snapshot"
+DEV_SITE_RELEASE_ROOT="$DEV_RUNTIME/site-releases"
+DEV_CATALOG_PATH="$DEV_RUNTIME/catalog/games.parquet"
+DEV_PRESEASON_ENV="$DEV_RUNTIME/site-release.env"
 PRODUCTION_RELEASE_ROOT="$STATE_ROOT/site-releases"
 LIVE_POINTER="$STATE_ROOT/live-release"
 SCHEDULE_RELEASE_ROOT="$STATE_ROOT/schedule-serving/releases"
 SCHEDULE_CURRENT="$STATE_ROOT/schedule-serving/current"
 PUBLIC_WEB=/var/www/nba-gestalt
-FRONTEND_DIST="${GESTALT_PROD_FRONTEND_DIST:-}"
+FRONTEND_DIST="${GESTALT_PROD_FRONTEND_DIST:-$DEV_RUNTIME/web}"
 
 test -d "$SOURCE_REPO/.git"
 test -x "$PROD_RELEASE/.venv/bin/python"
 test -d "$PROD_RELEASE/artifacts"
 test -d "$PROD_RELEASE/data"
+test -f "$DEV_RUNTIME/runtime-manifest.json"
 test -d "$DEV_RELEASE"
 test -f "$DEV_SITE_RELEASE_ROOT/latest.json"
 test -f "$DEV_PRESEASON_ENV"
+if [[ "$(jq -er '.identity.artifact_kind' "$DEV_RUNTIME/runtime-manifest.json")" != "production_site_release" ]]; then
+  printf 'Production promotion blocked: active dev pointer is not an approved runtime\n' >&2
+  exit 1
+fi
 
 if [[ "$PROD_REF" == origin/* ]]; then
   prod_branch="${PROD_REF#origin/}"
@@ -52,7 +57,8 @@ if [[ "$PROD_REF" == origin/* ]]; then
     "refs/heads/$prod_branch:refs/remotes/origin/$prod_branch"
 fi
 prod_commit="$(git -C "$SOURCE_REPO" rev-parse "$PROD_REF^{commit}")"
-dev_commit="$(git -C "$DEV_RELEASE" rev-parse HEAD)"
+dev_commit="$(jq -er '.identity.code_revision' "$DEV_RUNTIME/runtime-manifest.json")"
+git -C "$SOURCE_REPO" cat-file -e "$dev_commit^{commit}"
 if [[ "$dev_commit" != "$prod_commit" ]]; then
   printf 'Production promotion blocked: dev is %s but requested ref is %s\n' \
     "$dev_commit" "$prod_commit" >&2
@@ -70,6 +76,10 @@ approved_release_path="$(jq -er '.release_path' "$DEV_SITE_RELEASE_ROOT/latest.j
 approved_release_sha="$(jq -er '.release_sha256' "$DEV_SITE_RELEASE_ROOT/latest.json")"
 approved_release="$DEV_SITE_RELEASE_ROOT/$approved_release_path"
 test -d "$approved_release"
+if [[ "$(jq -er '.identity.approved_release_sha256' "$DEV_RUNTIME/runtime-manifest.json")" != "$approved_release_sha" ]]; then
+  printf 'Production promotion blocked: active dev runtime and approval record differ\n' >&2
+  exit 1
+fi
 if [[ "$(jq -er '.identity.code_revision' "$approved_release/manifest.json")" != "$prod_commit" ]]; then
   printf 'Production promotion blocked: approved manifest has different code\n' >&2
   exit 1
@@ -204,6 +214,9 @@ trap - EXIT
 backup_root="$STATE_ROOT/promotion-backups/$(date -u +%Y%m%dT%H%M%SZ)-$approved_release_sha"
 sudo install -d -o "$USER" -g "$(id -gn)" "$backup_root"
 sudo cp /etc/systemd/system/gestalt-web.service "$backup_root/gestalt-web.service"
+for unit in gestalt-collection-code-server.service gestalt-collection-webserver.service gestalt-collection-daemon.service; do
+  sudo cp "/etc/systemd/system/$unit" "$backup_root/$unit"
+done
 old_live_target=""
 if [[ -L "$LIVE_POINTER" ]]; then
   old_live_target="$(readlink -f "$LIVE_POINTER")"
@@ -231,6 +244,17 @@ legacy_dagster_services=(
 for service in "${legacy_dagster_services[@]}"; do
   if [[ "$(systemctl is-active "$service" || true)" == "active" ]]; then
     printf 'Production promotion blocked: deprecated service is active: %s\n' "$service" >&2
+    exit 1
+  fi
+done
+collector_services=(
+  gestalt-collection-code-server
+  gestalt-collection-webserver
+  gestalt-collection-daemon
+)
+for service in "${collector_services[@]}"; do
+  if [[ "$(systemctl is-active "$service" || true)" != "active" ]]; then
+    printf 'Production promotion blocked: protected collector is not active: %s\n' "$service" >&2
     exit 1
   fi
 done
@@ -262,8 +286,12 @@ rollback() {
       atomic_symlink "$old_code_target" "$CODE_CURRENT"
     fi
     sudo cp "$backup_root/gestalt-web.service" /etc/systemd/system/gestalt-web.service
+    for unit in gestalt-collection-code-server.service gestalt-collection-webserver.service gestalt-collection-daemon.service; do
+      sudo cp "$backup_root/$unit" "/etc/systemd/system/$unit"
+    done
     sudo systemctl daemon-reload
     sudo systemctl restart gestalt-web
+    sudo systemctl restart "${collector_services[@]}"
     sudo nginx -t && sudo systemctl reload nginx
   fi
   printf 'Production promotion failed; previous release restored\n' >&2
@@ -272,12 +300,16 @@ rollback() {
 trap rollback ERR
 
 mutation_started=1
+sudo systemctl stop "${collector_services[@]}"
 sudo systemctl stop \
   gestalt-dagster-daemon \
   gestalt-dagster-webserver \
   gestalt-dagster-code-server
 sudo install -m 0644 "$release_root/deploy/gestalt-web.service" \
   /etc/systemd/system/gestalt-web.service
+for unit in gestalt-collection-code-server.service gestalt-collection-webserver.service gestalt-collection-daemon.service; do
+  sudo install -m 0644 "$SOURCE_REPO/deploy/$unit" "/etc/systemd/system/$unit"
+done
 sudo env PYTHONPATH="$release_root/src" \
   "$PROD_RELEASE/.venv/bin/python" \
   -m nba_lineup_model.season.production_site_release switch \
@@ -287,6 +319,7 @@ atomic_symlink "$schedule_overlay" "$SCHEDULE_CURRENT"
 atomic_symlink "$release_root" "$CODE_CURRENT"
 sudo systemctl daemon-reload
 sudo systemctl restart gestalt-web
+sudo systemctl restart "${collector_services[@]}"
 sudo nginx -t
 sudo systemctl reload nginx
 
@@ -310,6 +343,17 @@ fi
 for service in "${legacy_dagster_services[@]}"; do
   if [[ "$(systemctl is-active "$service" || true)" == "active" ]]; then
     printf 'Deprecated writer service was unexpectedly started: %s\n' "$service" >&2
+    false
+  fi
+done
+for service in "${collector_services[@]}"; do
+  if [[ "$(systemctl is-active "$service" || true)" != "active" ]]; then
+    printf 'Protected collector failed after production cutover: %s\n' "$service" >&2
+    false
+  fi
+  if ! systemctl show -p Environment --value "$service" | grep -q \
+    'GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current'; then
+    printf 'Protected collector has the wrong schedule state root: %s\n' "$service" >&2
     false
   fi
 done

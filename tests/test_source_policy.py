@@ -63,3 +63,27 @@ def test_legacy_shared_dagster_installer_is_a_fail_closed_tombstone():
         unit = (root / "deploy" / name).read_text()
         assert "DEPRECATED" in unit
         assert "RefuseManualStart=true" in unit
+
+
+def test_promotion_uses_exact_reviewed_dev_runtime_and_clean_schedule_overlay():
+    script = (Path(__file__).parents[1] / "scripts/promote_gestalt_dev_to_prod.sh").read_text()
+    assert 'DEV_RUNTIME="$(readlink -f "${GESTALT_APPROVED_DEV_RUNTIME:-$DEV_STATE_ROOT/live-release}")"' in script
+    assert 'DEV_RELEASE="$DEV_RUNTIME/code"' in script
+    assert "dev_commit=\"$(jq -er '.identity.code_revision' \"$DEV_RUNTIME/runtime-manifest.json\")\"" in script
+    assert 'DEV_SCHEDULE_ROOT="$DEV_RUNTIME/schedule-snapshot"' in script
+    assert 'FRONTEND_DIST="${GESTALT_PROD_FRONTEND_DIST:-$DEV_RUNTIME/web}"' in script
+    assert '"$SOURCE_REPO/deploy/$unit"' in script
+    assert 'sudo systemctl restart "${collector_services[@]}"' in script
+
+
+def test_protected_collectors_write_only_to_clean_schedule_overlay():
+    root = Path(__file__).parents[1]
+    for name in (
+        "gestalt-collection-code-server.service",
+        "gestalt-collection-webserver.service",
+        "gestalt-collection-daemon.service",
+    ):
+        unit = (root / "deploy" / name).read_text()
+        assert "GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current" in unit
+        assert "GESTALT_MODEL_INPUT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current" in unit
+        assert "GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule\n" not in unit
