@@ -514,6 +514,21 @@ def _build_one_date(
         "unknown_minutes_observations": int(
             observations["outcome_classification"].eq(UNKNOWN).sum()
         ),
+        "official_inactive_observations": int(
+            observations["roster_status"].fillna("").str.upper().eq("INACTIVE").sum()
+        ),
+        "derived_available_inactive_observations": int(
+            observations["availability_resolution"]
+            .fillna("")
+            .eq("unlisted_on_submitted_official_report")
+            .sum()
+        ),
+        "unresolved_inactive_observations": int(
+            (
+                observations["roster_status"].fillna("").str.upper().eq("INACTIVE")
+                & observations["outcome_classification"].eq(UNKNOWN)
+            ).sum()
+        ),
         "context_warnings": context_warnings,
         "minutes_observation_warnings": injury_warnings,
         "blake_wesley_prior_present": 1631104 in set(player_ids),
@@ -731,11 +746,19 @@ def _minutes_observations(
                 seen.add(player_id)
                 report = mapped_report.get((team, _normalize_name(player["player_name"])), {})
                 minutes = float(player.get("minutes", 0.0))
+                team_report_status = report_status.get(team, "not_yet_submitted")
                 classification = _classification(
                     minutes=minutes,
                     roster_status=player.get("status"),
                     injury_status=report.get("status"),
                     injury_reason=report.get("reason"),
+                    team_report_status=team_report_status,
+                )
+                derived_available = (
+                    minutes <= 0
+                    and str(player.get("status") or "").upper() == "INACTIVE"
+                    and not report
+                    and team_report_status == "submitted"
                 )
                 role = float(roles.get(player_id, 0.0))
                 if minutes > 0 and player_id not in roles:
@@ -757,9 +780,16 @@ def _minutes_observations(
                         "regulation_equivalent_minutes": float(regulated),
                         "early_game_role_minutes": role,
                         "conditional_observation_weight": 1.0,
-                        "injury_status": report.get("status"),
+                        "injury_status": report.get("status") or (
+                            "Available" if derived_available else None
+                        ),
                         "injury_reason": report.get("reason"),
                         "roster_status": player.get("status"),
+                        "availability_resolution": (
+                            "unlisted_on_submitted_official_report"
+                            if derived_available
+                            else "explicit_official_report" if report else None
+                        ),
                     }
                 )
         for team, injury_rows in game_injuries.items():
@@ -772,6 +802,7 @@ def _minutes_observations(
                     roster_status="",
                     injury_status=report.get("status"),
                     injury_reason=report.get("reason"),
+                    team_report_status=report_status.get(team, "not_yet_submitted"),
                 )
                 rows.append(
                     {
@@ -789,6 +820,7 @@ def _minutes_observations(
                         "injury_status": report.get("status"),
                         "injury_reason": report.get("reason"),
                         "roster_status": None,
+                        "availability_resolution": "explicit_official_report",
                     }
                 )
     output = pd.DataFrame(rows).sort_values(
@@ -880,6 +912,7 @@ def _classification(
     roster_status: object,
     injury_status: object,
     injury_reason: object,
+    team_report_status: object = None,
 ) -> str:
     if minutes > 0:
         return PLAYED
@@ -894,7 +927,9 @@ def _classification(
     if status == "AVAILABLE" or str(roster_status or "").upper() == "ACTIVE":
         return COACH_DNP
     if str(roster_status or "").upper() == "INACTIVE":
-        return INACTIVE
+        if str(team_report_status or "").strip().lower() == "submitted":
+            return COACH_DNP
+        return UNKNOWN
     return UNKNOWN
 
 
@@ -1397,6 +1432,9 @@ def write_daily_model_chain_report(root: Path | str) -> Path:
             f"<td>{diagnostics['cumulative_game_count']}</td>"
             f"<td>{diagnostics['player_count']}</td>"
             f"<td>{diagnostics['unknown_minutes_observations']}</td>"
+            f"<td>{diagnostics.get('official_inactive_observations', 0)}</td>"
+            f"<td>{diagnostics.get('derived_available_inactive_observations', 0)}</td>"
+            f"<td>{diagnostics.get('unresolved_inactive_observations', 0)}</td>"
             f"<td><code>{manifest['bundle_sha256'][:12]}</code></td>"
             "<td class='ok'>CLEAN</td></tr>"
         )
@@ -1414,7 +1452,9 @@ def write_daily_model_chain_report(root: Path | str) -> Path:
         "<p>Pregame evaluation is intentionally absent from this state-chain report; "
         "the projection component is explicitly post-date descriptive.</p>"
         "<table><thead><tr><th>Date</th><th>Daily games</th><th>Cumulative</th>"
-        "<th>Players</th><th>Unknown minute rows</th><th>Model SHA</th><th>Status</th>"
+        "<th>Players</th><th>Unknown minute rows</th><th>Official inactives</th>"
+        "<th>Derived available</th><th>Unresolved inactives</th>"
+        "<th>Model SHA</th><th>Status</th>"
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>",
         encoding="utf-8",
     )

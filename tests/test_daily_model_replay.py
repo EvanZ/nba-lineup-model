@@ -19,6 +19,7 @@ from nba_lineup_model.season.daily_data_artifact import (
 from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
 from nba_lineup_model.season.daily_model_replay import (
     DailyModelReplayBlocked,
+    _classification,
     _early_role_minutes,
     _normalize_name,
     replay_daily_model_chain,
@@ -226,6 +227,9 @@ def _publish_data(
             ]
         )
     )
+    (component_root / "nba_inactive_lists.json").write_text(
+        json.dumps([{"game_id": game_id, "payload": {"game_id": game_id, "teams": []}}])
+    )
     components = {
         name: component_root / filename
         for name, filename in {
@@ -237,6 +241,7 @@ def _publish_data(
             "player_identity": "player_identity.parquet",
             "rosters": "rosters.json",
             "injuries": "injuries.json",
+            "nba_inactive_lists": "nba_inactive_lists.json",
         }.items()
     }
     sources = {
@@ -247,6 +252,7 @@ def _publish_data(
                 "nba_box_score",
                 "nba_play_by_play",
                 "nba_injury_report",
+                "nba_inactive_list",
             )
         }
     }
@@ -510,6 +516,28 @@ def test_daily_model_replay_uses_official_roster_name_alias(
     )
     player = observations.loc[observations["player_id"].eq(1631104)].iloc[0]
     assert player["injury_status"] == "Available"
+
+
+@pytest.mark.parametrize(
+    ("team_report_status", "injury_status", "injury_reason", "expected"),
+    [
+        ("submitted", None, None, "coach_dnp"),
+        ("not_yet_submitted", None, None, "unknown"),
+        ("submitted", "Available", None, "coach_dnp"),
+        ("submitted", "Out", "Injury/Illness - Left Knee", "medical_absence"),
+        ("submitted", "Out", "G League - On Assignment", "g_league_assignment"),
+    ],
+)
+def test_inactive_classification_uses_the_submitted_official_report_rule(
+    team_report_status, injury_status, injury_reason, expected
+) -> None:
+    assert _classification(
+        minutes=0.0,
+        roster_status="INACTIVE",
+        injury_status=injury_status,
+        injury_reason=injury_reason,
+        team_report_status=team_report_status,
+    ) == expected
 
 
 def test_early_role_reconciles_only_a_small_verified_stint_gap() -> None:

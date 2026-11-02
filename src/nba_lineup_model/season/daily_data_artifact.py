@@ -43,10 +43,17 @@ DEFAULT_REQUIRED_COMPONENTS = frozenset(
         "player_identity",
         "rosters",
         "injuries",
+        "nba_inactive_lists",
     }
 )
 DEFAULT_REQUIRED_GAME_SOURCES = frozenset(
-    {"nba_schedule", "nba_box_score", "nba_play_by_play", "nba_injury_report"}
+    {
+        "nba_schedule",
+        "nba_box_score",
+        "nba_play_by_play",
+        "nba_injury_report",
+        "nba_inactive_list",
+    }
 )
 
 

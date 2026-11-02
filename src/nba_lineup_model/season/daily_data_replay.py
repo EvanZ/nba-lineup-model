@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 import tempfile
+import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -50,6 +51,7 @@ DEFAULT_GAME_CATALOG_PATH = Path("/var/lib/nba-gestalt-dev/catalog/games.parquet
 DEFAULT_PLAY_BY_PLAY_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/cdn/playbyplay"
 DEFAULT_BOXSCORE_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/cdn/boxscore"
 DEFAULT_INJURY_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/nba/injury-reports"
+DEFAULT_INACTIVE_S3_PREFIX = "s3://nba-gestalt-data/lake/raw/nba/game-pages"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 NBA_DURATION_RE = re.compile(
     r"^PT(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+(?:\.\d+)?)S)?$"
@@ -82,6 +84,17 @@ class OfficialInjuryReport:
 InjuryReportLoader = Callable[[date], OfficialInjuryReport]
 
 
+@dataclass(frozen=True)
+class OfficialInactiveList:
+    payload: dict[str, Any]
+    sha256: str
+    immutable_uri: str
+    source_url: str
+
+
+InactiveListLoader = Callable[[Mapping[str, Any]], OfficialInactiveList]
+
+
 def replay_daily_data_chain(
     *,
     start_date: date,
@@ -92,9 +105,11 @@ def replay_daily_data_chain(
     play_by_play_s3_prefix: str = DEFAULT_PLAY_BY_PLAY_S3_PREFIX,
     boxscore_s3_prefix: str = DEFAULT_BOXSCORE_S3_PREFIX,
     injury_s3_prefix: str = DEFAULT_INJURY_S3_PREFIX,
+    inactive_s3_prefix: str = DEFAULT_INACTIVE_S3_PREFIX,
     season: str = DEFAULT_SEASON,
     boxscore_loader: BoxscoreLoader | None = None,
     injury_report_loader: InjuryReportLoader | None = None,
+    inactive_list_loader: InactiveListLoader | None = None,
 ) -> list[PublishedDailyDataArtifact]:
     """Replay dates chronologically and stop before the first bad publication."""
 
@@ -136,6 +151,11 @@ def replay_daily_data_chain(
                 season=season,
                 s3_prefix=injury_s3_prefix,
             )
+            inactive_loader = inactive_list_loader or _official_inactive_list_loader(
+                store=store,
+                season=season,
+                s3_prefix=inactive_s3_prefix,
+            )
             current_date = start_date
             while current_date <= end_date:
                 games = games_by_date.get(current_date, [])
@@ -149,6 +169,7 @@ def replay_daily_data_chain(
                     play_by_play_s3_prefix=play_by_play_s3_prefix,
                     boxscore_loader=loader,
                     injury_report_loader=injury_loader,
+                    inactive_list_loader=inactive_loader,
                     season=season,
                 )
                 promote_daily_data_artifact(artifact.path, root=chain_root)
@@ -170,6 +191,7 @@ def _build_date(
     play_by_play_s3_prefix: str,
     boxscore_loader: BoxscoreLoader,
     injury_report_loader: InjuryReportLoader,
+    inactive_list_loader: InactiveListLoader,
     season: str,
 ) -> PublishedDailyDataArtifact:
     errors: list[dict[str, str]] = []
@@ -183,6 +205,7 @@ def _build_date(
     identity_rows: list[pd.DataFrame] = []
     rosters: list[dict[str, Any]] = []
     injuries: list[dict[str, Any]] = []
+    inactive_lists: list[dict[str, Any]] = []
 
     catalog_sha256 = file_sha256(game_catalog_path)
     official_injury = injury_report_loader(game_date_pacific) if games else None
@@ -202,6 +225,7 @@ def _build_date(
             )
             play_by_play = _fetch_verified_s3_json(play_by_play_uri, play_by_play_sha)
             official_boxscore = boxscore_loader(game_id)
+            official_inactives = inactive_list_loader(catalog_game)
             boxscore = official_boxscore.payload
             game_record = _official_final_game(
                 catalog_game=catalog_game,
@@ -219,6 +243,7 @@ def _build_date(
             game_actual, game_identity, game_roster = _nba_actual_minutes(
                 game_record=game_record,
                 boxscore=boxscore,
+                inactive_list=official_inactives.payload,
             )
             final_home, final_away = _terminal_play_by_play_scores(play_by_play)
             box_home, box_away = _nba_box_scores(boxscore)
@@ -263,6 +288,10 @@ def _build_date(
                     "uri": str(official_injury.immutable_uri),
                     "sha256": str(official_injury.sha256),
                 },
+                "nba_inactive_list": {
+                    "uri": official_inactives.immutable_uri,
+                    "sha256": official_inactives.sha256,
+                },
             }
             game_quality[game_id] = {
                 "final_home_score": final_home,
@@ -280,6 +309,15 @@ def _build_date(
                     "immutable_uri": official_boxscore.immutable_uri,
                     "sha256": official_boxscore.sha256,
                     "payload": boxscore,
+                }
+            )
+            inactive_lists.append(
+                {
+                    "game_id": game_id,
+                    "source_url": official_inactives.source_url,
+                    "immutable_uri": official_inactives.immutable_uri,
+                    "sha256": official_inactives.sha256,
+                    "payload": official_inactives.payload,
                 }
             )
             actual_minutes.append(game_actual)
@@ -317,6 +355,7 @@ def _build_date(
             identity_rows=identity_rows,
             rosters=rosters,
             injuries=injuries,
+            inactive_lists=inactive_lists,
         )
         try:
             return publish_daily_data_artifact(
@@ -449,6 +488,104 @@ def _official_injury_report_loader(
     return load
 
 
+def _official_inactive_list_loader(
+    *,
+    store: ImmutableObjectStore,
+    season: str,
+    s3_prefix: str,
+) -> InactiveListLoader:
+    def load(catalog_game: Mapping[str, Any]) -> OfficialInactiveList:
+        game_id = str(catalog_game["game_id"])
+        away = str(catalog_game["away_team_tricode"]).lower()
+        home = str(catalog_game["home_team_tricode"]).lower()
+        source_url = f"https://www.nba.com/game/{away}-vs-{home}-{game_id}/box-score"
+        request = urllib.request.Request(
+            source_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; NBA-Gestalt/1.0)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw_body = response.read()
+            resolved_url = str(response.url)
+        payload = _parse_official_inactive_list(
+            raw_body,
+            expected_game_id=game_id,
+            expected_home=str(catalog_game["home_team_tricode"]),
+            expected_away=str(catalog_game["away_team_tricode"]),
+        )
+        digest = hashlib.sha256(raw_body).hexdigest()
+        uri = (
+            f"{s3_prefix.rstrip('/')}/season={season}/"
+            f"game_id={game_id}/{digest}.html"
+        )
+        store.put_bytes(uri, raw_body)
+        return OfficialInactiveList(
+            payload=payload,
+            sha256=digest,
+            immutable_uri=uri,
+            source_url=resolved_url,
+        )
+
+    return load
+
+
+def _parse_official_inactive_list(
+    raw_html: bytes,
+    *,
+    expected_game_id: str,
+    expected_home: str,
+    expected_away: str,
+) -> dict[str, Any]:
+    text = raw_html.decode("utf-8")
+    match = re.search(
+        r"<script[^>]+id=[\"']__NEXT_DATA__[\"'][^>]*>(.*?)</script>",
+        text,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        raise ValueError("Official NBA game page has no __NEXT_DATA__ payload")
+    document = json.loads(html.unescape(match.group(1)))
+    game = document.get("props", {}).get("pageProps", {}).get("game")
+    if not isinstance(game, Mapping):
+        raise ValueError("Official NBA game page has no game payload")
+    if str(game.get("gameId", "")) != expected_game_id:
+        raise ValueError("Official NBA inactive list does not match the scheduled game")
+    output: dict[str, Any] = {"game_id": expected_game_id, "teams": []}
+    for side, expected_team in (("homeTeam", expected_home), ("awayTeam", expected_away)):
+        team = game.get(side)
+        if not isinstance(team, Mapping) or str(team.get("teamTricode", "")) != expected_team:
+            raise ValueError("Official NBA inactive-list teams differ from the schedule")
+        players = team.get("inactives")
+        if not isinstance(players, list):
+            raise ValueError(f"Official NBA game page has no {side} inactive list")
+        normalized = []
+        seen: set[int] = set()
+        for player in players:
+            if not isinstance(player, Mapping) or player.get("personId") is None:
+                raise ValueError(f"Official NBA game page has malformed {expected_team} inactive")
+            player_id = int(player["personId"])
+            if player_id in seen:
+                raise ValueError(f"Official NBA game page duplicates inactive {player_id}")
+            seen.add(player_id)
+            normalized.append(
+                {
+                    "player_id": player_id,
+                    "player_name": _nba_player_name(player),
+                }
+            )
+        output["teams"].append(
+            {
+                "team_id": int(team["teamId"]),
+                "team": expected_team,
+                "side": "home" if side == "homeTeam" else "away",
+                "players": normalized,
+            }
+        )
+    return output
+
+
 def _official_final_game(
     *,
     catalog_game: Mapping[str, Any],
@@ -496,6 +633,7 @@ def _nba_actual_minutes(
     *,
     game_record: Mapping[str, Any],
     boxscore: Mapping[str, Any],
+    inactive_list: Mapping[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     actual_rows: list[dict[str, object]] = []
     identity_rows: list[dict[str, object]] = []
@@ -513,10 +651,12 @@ def _nba_actual_minutes(
         if not team or not isinstance(players, list):
             raise ValueError(f"NBA box score has incomplete {side} roster")
         roster_players: list[dict[str, object]] = []
+        roster_ids: set[int] = set()
         for player in players:
             if not isinstance(player, Mapping) or player.get("personId") is None:
                 raise ValueError(f"NBA box score has malformed {team} player identity")
             player_id = int(player["personId"])
+            roster_ids.add(player_id)
             player_name = _nba_player_name(player)
             statistics = player.get("statistics")
             if not isinstance(statistics, Mapping):
@@ -554,6 +694,42 @@ def _nba_actual_minutes(
                         "minutes": minutes,
                     }
                 )
+        inactive_teams = {
+            str(row.get("team")): row
+            for row in (inactive_list or {}).get("teams", [])
+            if isinstance(row, Mapping)
+        }
+        inactive_team = inactive_teams.get(team, {})
+        if inactive_team and int(inactive_team.get("team_id", -1)) != int(team_row["teamId"]):
+            raise ValueError(f"Official NBA inactive-list team ID differs for {team}")
+        for inactive in inactive_team.get("players", []):
+            player_id = int(inactive["player_id"])
+            if player_id in roster_ids:
+                raise ValueError(
+                    f"Official NBA player {player_id} is both box-roster and inactive for {game_id}"
+                )
+            player_name = str(inactive["player_name"])
+            identity_rows.append(
+                {
+                    "game_id": game_id,
+                    "team": team,
+                    "player_name": player_name,
+                    "player_id": player_id,
+                    "played": False,
+                    "resolution": "nba_inactive_person_id",
+                }
+            )
+            roster_players.append(
+                {
+                    "player_id": player_id,
+                    "player_name": player_name,
+                    "played": False,
+                    "starter": False,
+                    "status": "INACTIVE",
+                    "minutes": 0.0,
+                    "source": "official_nba_inactive_list",
+                }
+            )
         roster_teams.append(
             {
                 "team_id": int(team_row["teamId"]),
@@ -631,6 +807,7 @@ def _write_components(
     identity_rows: Sequence[pd.DataFrame],
     rosters: Sequence[Mapping[str, Any]],
     injuries: Sequence[Mapping[str, Any]],
+    inactive_lists: Sequence[Mapping[str, Any]],
 ) -> dict[str, Path]:
     final_games_path = root / "final_games.json"
     final_games_path.write_text(
@@ -656,6 +833,10 @@ def _write_components(
     )
     injuries_path = root / "injuries.json"
     injuries_path.write_text(json.dumps(list(injuries), indent=2, sort_keys=True) + "\n")
+    inactive_lists_path = root / "nba_inactive_lists.json"
+    inactive_lists_path.write_text(
+        json.dumps(list(inactive_lists), indent=2, sort_keys=True) + "\n"
+    )
     return {
         "final_games": final_games_path,
         "nba_boxscores": boxscores_path,
@@ -665,6 +846,7 @@ def _write_components(
         "player_identity": identity_path,
         "rosters": rosters_path,
         "injuries": injuries_path,
+        "nba_inactive_lists": inactive_lists_path,
     }
 
 
@@ -859,6 +1041,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--boxscore-s3-prefix", default=DEFAULT_BOXSCORE_S3_PREFIX)
     parser.add_argument("--injury-s3-prefix", default=DEFAULT_INJURY_S3_PREFIX)
+    parser.add_argument("--inactive-s3-prefix", default=DEFAULT_INACTIVE_S3_PREFIX)
     return parser
 
 
@@ -873,6 +1056,7 @@ def main() -> None:
         play_by_play_s3_prefix=args.play_by_play_s3_prefix,
         boxscore_s3_prefix=args.boxscore_s3_prefix,
         injury_s3_prefix=args.injury_s3_prefix,
+        inactive_s3_prefix=args.inactive_s3_prefix,
         season=args.season,
     )
     for artifact in artifacts:

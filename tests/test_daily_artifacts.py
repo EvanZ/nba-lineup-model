@@ -52,6 +52,7 @@ def _sources(game_ids: list[str]) -> dict[str, dict[str, dict[str, str]]]:
                 "nba_box_score",
                 "nba_play_by_play",
                 "nba_injury_report",
+                "nba_inactive_list",
             )
         }
         for game_id in game_ids

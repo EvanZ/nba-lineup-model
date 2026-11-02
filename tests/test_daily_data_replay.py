@@ -14,6 +14,7 @@ from nba_lineup_model.modeling.in_season_nail_monitor import (
 from nba_lineup_model.season.daily_data_replay import (
     _load_official_game_catalog,
     _nba_actual_minutes,
+    _parse_official_inactive_list,
     _official_final_game,
     _terminal_play_by_play_scores,
 )
@@ -99,6 +100,102 @@ def test_nba_actual_minutes_rejects_a_missing_canonical_person_id() -> None:
 
     with pytest.raises(ValueError, match="malformed DET player identity"):
         _nba_actual_minutes(game_record=game_record, boxscore=boxscore)
+
+
+def test_official_inactives_are_added_to_the_canonical_roster() -> None:
+    game_record = _official_final_game(
+        catalog_game=_catalog_game(),
+        boxscore=_boxscore(),
+        game_date_pacific=date(2026, 10, 20),
+    )
+    inactive = {
+        "game_id": "0022600001",
+        "teams": [
+            {
+                "team_id": 1610612765,
+                "team": "DET",
+                "side": "home",
+                "players": [{"player_id": 3001, "player_name": "Inactive Player"}],
+            },
+            {
+                "team_id": 1610612738,
+                "team": "BOS",
+                "side": "away",
+                "players": [],
+            },
+        ],
+    }
+
+    actual, identity, roster = _nba_actual_minutes(
+        game_record=game_record,
+        boxscore=_boxscore(),
+        inactive_list=inactive,
+    )
+
+    assert 3001 not in set(actual["player_id"])
+    row = identity.loc[identity["player_id"].eq(3001)].iloc[0]
+    assert row["resolution"] == "nba_inactive_person_id"
+    player = roster["teams"][0]["players"][-1]
+    assert player == {
+        "player_id": 3001,
+        "player_name": "Inactive Player",
+        "played": False,
+        "starter": False,
+        "status": "INACTIVE",
+        "minutes": 0.0,
+        "source": "official_nba_inactive_list",
+    }
+
+
+def test_official_inactive_page_parser_validates_game_and_teams() -> None:
+    payload = {
+        "props": {
+            "pageProps": {
+                "game": {
+                    "gameId": "0022600001",
+                    "homeTeam": {
+                        "teamId": 1610612765,
+                        "teamTricode": "DET",
+                        "inactives": [
+                            {
+                                "personId": 3001,
+                                "firstName": "Inactive",
+                                "familyName": "Player",
+                            }
+                        ],
+                    },
+                    "awayTeam": {
+                        "teamId": 1610612738,
+                        "teamTricode": "BOS",
+                        "inactives": [],
+                    },
+                }
+            }
+        }
+    }
+    raw = (
+        '<html><script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps(payload)
+        + "</script></html>"
+    ).encode()
+
+    parsed = _parse_official_inactive_list(
+        raw,
+        expected_game_id="0022600001",
+        expected_home="DET",
+        expected_away="BOS",
+    )
+
+    assert parsed["teams"][0]["players"] == [
+        {"player_id": 3001, "player_name": "Inactive Player"}
+    ]
+    with pytest.raises(ValueError, match="does not match"):
+        _parse_official_inactive_list(
+            raw,
+            expected_game_id="0022609999",
+            expected_home="DET",
+            expected_away="BOS",
+        )
 
 
 def test_terminal_play_by_play_score_uses_the_last_scored_action() -> None:
