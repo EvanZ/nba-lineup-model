@@ -184,3 +184,38 @@ def test_pipeline_report_is_accessible_without_publishing_a_failed_candidate(tmp
 
 def test_automatic_activation_is_opt_in(tmp_path):
     assert config_fixture(tmp_path).activate_after_validation is False
+
+
+@pytest.mark.parametrize("missing_context", [False, True])
+def test_model_uses_pinned_context_api_and_rejects_neutral_fallback(tmp_path, monkeypatch, missing_context):
+    from contextlib import contextmanager
+    from nba_lineup_model.orchestration.daily_pipeline import CanonicalPipelineSteps
+    from nba_lineup_model.season import daily_model_replay as replay
+    config = config_fixture(tmp_path)
+    config.preseason_profiles_path.write_bytes(b"fixed profile artifact")
+    candidate = config.pipeline_root / "candidate"
+    candidate.mkdir(parents=True)
+    steps = CanonicalPipelineSteps(config, candidate, "revision")
+    @contextmanager
+    def api(**kwargs):
+        assert kwargs["log_name"] == "context-api.log"
+        yield "http://127.0.0.1:12345"
+    monkeypatch.setattr(steps, "api", api)
+    def provider(url):
+        assert url == "http://127.0.0.1:12345/api/matchups"
+        assert url != config.matchup_url
+        return lambda *args: ([1.0], ["missing player"] if missing_context else [])
+    monkeypatch.setattr(replay, "_http_context_provider", provider)
+    def run(**kwargs):
+        cfg = kwargs["config"]
+        assert cfg.matchup_url == "isolated://frozen-context"
+        identity = json.loads(cfg.context_model_version)
+        assert identity["model_release"] == str(config.release_root.resolve())
+        assert len(identity["profiles_sha256"]) == 64
+        assert kwargs["context_provider"](None, False, False) == ([1.0], [])
+    monkeypatch.setattr(replay, "replay_daily_model_chain", run)
+    if missing_context:
+        with pytest.raises(ValueError, match="Pinned context inputs incomplete"):
+            steps.model(date(2026,10,20))
+    else:
+        steps.model(date(2026,10,20))

@@ -173,9 +173,30 @@ class CanonicalPipelineSteps:
             raise ValueError("Daily data tip is ahead of the requested release")
 
     def model(self, target: date) -> None:
-        from nba_lineup_model.season.daily_model_replay import DailyModelReplayConfig, replay_daily_model_chain
+        from nba_lineup_model.season.daily_model_replay import DailyModelReplayConfig, _http_context_provider, replay_daily_model_chain
+        from nba_lineup_model.season.daily_artifact_common import file_sha256
         config = self.config
-        replay_daily_model_chain(start_date=config.season_start, end_date=target, preseason_rankings_path=config.preseason_rankings_path, preseason_minutes_path=config.preseason_minutes_path, data_root=config.data_root, output_root=config.model_root, config=DailyModelReplayConfig(season=config.season, matchup_url=config.matchup_url), code_revision=self.revision)
+        base = DailyModelReplayConfig(season=config.season, matchup_url=config.matchup_url)
+        # Context is evaluated against fixed profiles and the installed immutable
+        # model bundle, never whichever player universe the public API serves.
+        context_identity = {
+            "model_version": base.context_model_version,
+            "model_release": str(config.release_root.resolve(strict=True)),
+            "profiles_sha256": file_sha256(config.preseason_profiles_path),
+        }
+        replay_config = DailyModelReplayConfig(
+            season=config.season,
+            matchup_url="isolated://frozen-context",
+            context_model_version=json.dumps(context_identity, sort_keys=True),
+        )
+        with self.api(log_name="context-api.log") as api:
+            provider = _http_context_provider(api + "/api/matchups")
+            def strict_context(stints, home_b2b, away_b2b):
+                offsets, warnings = provider(stints, home_b2b, away_b2b)
+                if warnings:
+                    raise ValueError("Pinned context inputs incomplete: " + "; ".join(warnings))
+                return offsets, warnings
+            replay_daily_model_chain(start_date=config.season_start, end_date=target, preseason_rankings_path=config.preseason_rankings_path, preseason_minutes_path=config.preseason_minutes_path, data_root=config.data_root, output_root=config.model_root, config=replay_config, code_revision=self.revision, context_provider=strict_context)
 
     def serving(self) -> None:
         c = self.config
@@ -185,13 +206,13 @@ class CanonicalPipelineSteps:
         self.command("nba_lineup_model.modeling.current_season_lineup_materialization", "--daily-data-root", self.config.data_root, "--output-root", self.candidate / "lineups")
 
     @contextmanager
-    def api(self):
+    def api(self, *, log_name="api.log"):
         with socket.socket() as bound:
             bound.bind(("127.0.0.1", 0))
             port = bound.getsockname()[1]
         root = f"http://127.0.0.1:{port}"
         import urllib.request
-        with (self.candidate / "api.log").open("w") as log:
+        with (self.candidate / log_name).open("w") as log:
             process = subprocess.Popen([sys.executable, "-m", "uvicorn", "nba_lineup_model.web_api.app:app", "--host", "127.0.0.1", "--port", str(port)], cwd=self.config.release_root, env=self.env, stdout=log, stderr=subprocess.STDOUT)
             try:
                 deadline = time.monotonic() + 120
