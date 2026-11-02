@@ -122,6 +122,7 @@ def load_current_season_serving_catalog(
             "data_quality",
             {"status": "unknown", "issue_count": None},
         ),
+        "schedule_controls": identity.get("schedule_controls"),
         "additive_profiles": "frozen_preseason",
         "offense_defense_split": "unavailable",
     }

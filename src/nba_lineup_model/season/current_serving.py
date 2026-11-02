@@ -299,6 +299,7 @@ def publish_serving_bundle(
     rating_trajectory_source_uri: str | None = None,
     source_exclusions: dict[str, list[dict[str, str]]] | None = None,
     source_coverage: dict[str, dict[str, int]] | None = None,
+    schedule_controls: dict[str, object] | None = None,
     generated_at: datetime | None = None,
 ) -> PublishedServingBundle:
     """Write one immutable serving bundle and return its validated identity."""
@@ -407,6 +408,10 @@ def publish_serving_bundle(
                 REPORT_FILENAME: report_sha,
             },
         }
+        if schedule_controls is not None:
+            identity["schedule_controls"] = _normalize_schedule_controls(
+                schedule_controls
+            )
         if trajectory_path is not None and rating_trajectory_source_uri is not None:
             identity["sources"]["rating_trajectory"] = {
                 "uri": rating_trajectory_source_uri,
@@ -459,6 +464,8 @@ def verify_serving_bundle(path: Path | str) -> dict[str, Any]:
         raise ValueError("Serving bundle checksum does not match its identity")
     if root.name != f"bundle_sha256={expected_bundle_sha}":
         raise ValueError("Serving bundle directory does not match its checksum")
+    if identity.get("schedule_controls") is not None:
+        _normalize_schedule_controls(identity["schedule_controls"])
     files = identity.get("files")
     if not isinstance(files, dict):
         raise ValueError("Serving manifest file inventory is missing")
@@ -479,6 +486,56 @@ def verify_serving_bundle(path: Path | str) -> dict[str, Any]:
             allow_legacy=True,
         )
     return manifest
+
+
+def _normalize_schedule_controls(payload: object) -> dict[str, object]:
+    """Validate the causal schedule controls bound to one serving state."""
+
+    if not isinstance(payload, dict):
+        raise ValueError("Serving schedule controls must be an object")
+    required = {
+        "home_court",
+        "home_court_standard_error",
+        "home_court_evidence_weight",
+        "candidate_id",
+        "state_as_of",
+        "source_uri",
+        "source_sha256",
+    }
+    missing = sorted(required - set(payload))
+    if missing:
+        raise ValueError(
+            "Serving schedule controls are missing: " + ", ".join(missing)
+        )
+    numeric: dict[str, float] = {}
+    for key in (
+        "home_court",
+        "home_court_standard_error",
+        "home_court_evidence_weight",
+    ):
+        value = float(payload[key])
+        if not np.isfinite(value):
+            raise ValueError(f"Serving schedule control is not finite: {key}")
+        numeric[key] = value
+    if numeric["home_court_standard_error"] < 0.0:
+        raise ValueError("Serving HCA standard error cannot be negative")
+    if not 0.0 <= numeric["home_court_evidence_weight"] <= 1.0:
+        raise ValueError("Serving HCA evidence weight must be between zero and one")
+    normalized = {
+        **numeric,
+        "candidate_id": str(payload["candidate_id"]).strip(),
+        "state_as_of": date.fromisoformat(str(payload["state_as_of"])).isoformat(),
+        "source_uri": str(payload["source_uri"]).strip(),
+        "source_sha256": str(payload["source_sha256"]).strip(),
+    }
+    if not normalized["candidate_id"] or not normalized["source_uri"]:
+        raise ValueError("Serving schedule-control provenance cannot be empty")
+    if len(normalized["source_sha256"]) != 64 or any(
+        character not in "0123456789abcdef"
+        for character in normalized["source_sha256"]
+    ):
+        raise ValueError("Serving schedule-control checksum is invalid")
+    return normalized
 
 
 def promote_serving_bundle(

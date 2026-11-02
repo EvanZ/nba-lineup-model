@@ -171,6 +171,10 @@ def test_current_win_projection_fixes_actual_wins_and_scores_remaining_schedule(
         current_season_metadata={
             "evidence_through_date": "2026-10-22",
             "bundle_sha256": "b" * 64,
+            "schedule_controls": {
+                "home_court": 1.75,
+                "candidate_id": "causal_hca_replacement_candidate_v2",
+            },
         }
     )
     minutes = {
@@ -208,6 +212,10 @@ def test_current_win_projection_fixes_actual_wins_and_scores_remaining_schedule(
     assert payload["state_kind"] == "in_season_updated"
     assert payload["model_track"] == "updated_ratings_updated_minutes"
     assert payload["serving_bundle_sha256"] == "b" * 64
+    assert payload["home_court"] == pytest.approx(1.75)
+    assert payload["schedule_controls"]["candidate_id"] == (
+        "causal_hca_replacement_candidate_v2"
+    )
     assert [game["game_id"] for game in payload["scheduled_games"]] == [
         "0022600001",
         "0022600002",

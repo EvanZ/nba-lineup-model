@@ -37,6 +37,14 @@ def test_daily_model_materialization_binds_all_serving_inputs_to_one_tip(
         "rating_trajectory.parquet",
     ):
         (files / filename).write_bytes(filename.encode())
+    home_court_payload = {
+        "home_court_estimate": 1.75,
+        "home_court_standard_error": 0.4,
+        "home_court_evidence_weight": 0.2,
+        "home_court_candidate_id": "causal_hca_replacement_candidate_v2",
+    }
+    home_court_bytes = json.dumps(home_court_payload).encode()
+    (files / "home_court_state.json").write_bytes(home_court_bytes)
     pointer = {
         "bundle_path": bundle.relative_to(model_root).as_posix(),
         "bundle_sha256": "a" * 64,
@@ -56,6 +64,10 @@ def test_daily_model_materialization_binds_all_serving_inputs_to_one_tip(
                 "player_ratings": {"path": "files/player_ratings.parquet"},
                 "minutes_state": {"path": "files/minutes_state.parquet"},
                 "rating_trajectory": {"path": "files/rating_trajectory.parquet"},
+                "home_court_state": {
+                    "path": "files/home_court_state.json",
+                    "sha256": hashlib.sha256(home_court_bytes).hexdigest(),
+                },
             },
         },
     }
@@ -117,6 +129,15 @@ def test_daily_model_materialization_binds_all_serving_inputs_to_one_tip(
     assert captured["source_coverage"] == {
         "ratings": {"games": 88, "excluded": 0},
         "minutes": {"games": 88, "excluded": 0},
+    }
+    assert captured["schedule_controls"] == {
+        "home_court": 1.75,
+        "home_court_standard_error": 0.4,
+        "home_court_evidence_weight": 0.2,
+        "candidate_id": "causal_hca_replacement_candidate_v2",
+        "state_as_of": "2026-10-31",
+        "source_uri": f"artifact://daily-model/{'a' * 64}/home_court_state",
+        "source_sha256": hashlib.sha256(home_court_bytes).hexdigest(),
     }
 
 

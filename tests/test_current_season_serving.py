@@ -233,6 +233,35 @@ def test_publish_serving_bundle_is_content_addressed_and_idempotent(
     assert verify_serving_bundle(first.path) == first.manifest
 
 
+def test_publish_serving_bundle_binds_causal_schedule_controls(tmp_path: Path) -> None:
+    rating, minutes = _write_sources(tmp_path)
+    controls = {
+        "home_court": 1.75,
+        "home_court_standard_error": 0.4,
+        "home_court_evidence_weight": 0.2,
+        "candidate_id": "causal_hca_replacement_candidate_v2",
+        "state_as_of": "2026-10-26",
+        "source_uri": f"artifact://daily-model/{'a' * 64}/home_court_state",
+        "source_sha256": "b" * 64,
+    }
+
+    bundle = publish_serving_bundle(
+        rating,
+        minutes,
+        root=tmp_path / "serving",
+        season=SEASON,
+        evidence_through_date=date(2026, 10, 26),
+        as_of_cutoff_time=CUTOFF,
+        config=CONFIG,
+        rating_source_uri="rating",
+        minutes_source_uri="minutes",
+        schedule_controls=controls,
+    )
+
+    assert bundle.manifest["identity"]["schedule_controls"] == controls
+    assert verify_serving_bundle(bundle.path)["identity"]["schedule_controls"] == controls
+
+
 def test_manifest_records_team_audit_difference(tmp_path: Path) -> None:
     minutes = _minutes_state()
     minutes.loc[minutes["player_id"].eq(2), "team"] = "PHX"

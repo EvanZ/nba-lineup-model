@@ -72,6 +72,28 @@ def materialize_daily_model_serving(
     trajectory_path = _daily_component_path(
         model_bundle, components, "rating_trajectory"
     )
+    schedule_controls = None
+    if "home_court_state" in components:
+        home_court_path = _daily_component_path(
+            model_bundle, components, "home_court_state"
+        )
+        home_court_state = _load_json(home_court_path)
+        schedule_controls = {
+            "home_court": float(home_court_state["home_court_estimate"]),
+            "home_court_standard_error": float(
+                home_court_state["home_court_standard_error"]
+            ),
+            "home_court_evidence_weight": float(
+                home_court_state["home_court_evidence_weight"]
+            ),
+            "candidate_id": str(home_court_state["home_court_candidate_id"]),
+            "state_as_of": str(identity["game_date_pacific"]),
+            "source_uri": (
+                f"artifact://daily-model/{manifest['bundle_sha256']}"
+                "/home_court_state"
+            ),
+            "source_sha256": str(components["home_court_state"]["sha256"]),
+        }
     through_date = str(identity["game_date_pacific"])
     evidence_date = datetime.fromisoformat(through_date).date()
     next_midnight_pacific = datetime.fromisoformat(
@@ -128,6 +150,7 @@ def materialize_daily_model_serving(
             ),
             source_exclusions={"ratings": [], "minutes": []},
             source_coverage={"ratings": coverage, "minutes": coverage},
+            schedule_controls=schedule_controls,
         )
     promoted_pointer, _ = promote_serving_bundle(bundle.path, root=output_root)
     if str(promoted_pointer["evidence_through_date"]) != through_date:

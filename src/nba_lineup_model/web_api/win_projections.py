@@ -349,7 +349,13 @@ def build_current_season_win_projection_payload(
     ].copy()
     strength = _current_team_strength(minutes_payload)
     beta = float(preseason_forecast["win_probability_scale"])
-    home_court = float(preseason_forecast["home_court"])
+    schedule_controls = metadata.get("schedule_controls")
+    home_court = float(
+        schedule_controls["home_court"]
+        if isinstance(schedule_controls, dict)
+        and schedule_controls.get("home_court") is not None
+        else preseason_forecast["home_court"]
+    )
     back_to_back = float(preseason_forecast["back_to_back"])
     game_rows = _score_games(
         remaining_games,
@@ -415,6 +421,8 @@ def build_current_season_win_projection_payload(
         "state_kind": "in_season_updated",
         "as_of": through_date,
         "serving_bundle_sha256": metadata.get("bundle_sha256"),
+        "home_court": home_court,
+        "schedule_controls": schedule_controls,
         "actual_results_source": records_payload.get("source"),
         "scheduled_game_count": int(len(all_games)),
         "scheduled_games_per_team": int(len(all_games) * 2 / len(strength)),
@@ -427,8 +435,8 @@ def build_current_season_win_projection_payload(
         "remaining_scheduled_games": _public_scheduled_games(game_rows),
         "contract": (
             f"Actual wins through {through_date} are fixed. Remaining games use the "
-            "latest promoted player ratings and role estimates, plus the frozen "
-            "home-court, back-to-back, and win-calibration layers."
+            "latest promoted player ratings and role estimates, plus the selected "
+            "causal home-court state, frozen back-to-back, and win-calibration layers."
         ),
     }
 
