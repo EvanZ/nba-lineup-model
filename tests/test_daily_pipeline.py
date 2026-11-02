@@ -108,3 +108,79 @@ def test_only_coupled_daily_model_job_is_registered():
     names={job.name for job in defs.jobs}
     assert "prepare_daily_site_release" in names
     assert not names & {"update_in_season_nail_production", "update_in_season_minutes_production", "promote_current_season_serving", "materialize_current_season_lineups"}
+
+
+def test_schedule_lock_remains_same_across_release_switches(tmp_path, monkeypatch):
+    from nba_lineup_model.orchestration.daily_pipeline import schedule_lock_path
+    monkeypatch.delenv("GESTALT_SCHEDULE_LOCK_PATH", raising=False)
+    root = tmp_path / "nba-gestalt-dev"
+    assert schedule_lock_path(root / "live-release/schedule") == root / ".schedule-writer.lock"
+    assert schedule_lock_path(root / "official-schedule/current") == root / ".schedule-writer.lock"
+    assert schedule_lock_path(root / "pipeline/candidates/x/schedule") == root / ".schedule-writer.lock"
+
+
+@pytest.mark.parametrize("scenario", ["success", "stale", "reload_failure", "health_failure", "rollback_failure"])
+def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatch, scenario):
+    from nba_lineup_model.orchestration import daily_activation as activation
+    from nba_lineup_model.season.dev_site_release import _tree_sha256
+    config = config_fixture(tmp_path)
+    # Replace the test marker directory with a normal release pointer.
+    old = config.pipeline_root / "releases/old"
+    new = config.pipeline_root / "releases/new"
+    old.mkdir(parents=True)
+    new.mkdir()
+    (config.live_pointer / "unchanged").unlink()
+    config.live_pointer.rmdir()
+    config.live_pointer.symlink_to(old)
+    (new / "schedule").mkdir()
+    report = {"status":"validated_candidate", "game_date":"2026-10-20", "runtime_release":str(new), "source_schedule_sha256":_tree_sha256(config.schedule_root)}
+    manifest = {"identity":{"live_pointer":str(config.live_pointer), "evidence_through_date":"2026-10-20"}}
+    monkeypatch.setattr(activation, "verify_production_site_release", lambda path: manifest)
+    monkeypatch.setattr("nba_lineup_model.season.production_site_release.verify_production_site_release", lambda path: manifest)
+    events = []
+    def reload_api(c):
+        events.append(("reload", c.live_pointer.resolve().name))
+        if scenario == "reload_failure" and c.live_pointer.resolve() == new:
+            raise RuntimeError("restart failed")
+    def verify_api(c, release):
+        events.append(("verify", release.name))
+        if scenario in {"health_failure", "rollback_failure"}:
+            if release == new or scenario == "rollback_failure":
+                raise RuntimeError("API mismatch")
+    if scenario == "stale":
+        (config.schedule_root / "changed.json").write_text('{}')
+        with pytest.raises(ValueError, match="Schedule changed"):
+            activation.activate_daily_release(config, report, reload_api=reload_api, verify_api=verify_api)
+        assert events == []
+    elif scenario == "success":
+        activation.activate_daily_release(config, report, reload_api=reload_api, verify_api=verify_api)
+        assert config.live_pointer.resolve() == new
+        assert report["status"] == "activated"
+        assert events == [("reload","new"),("verify","new")]
+        return
+    else:
+        with pytest.raises(Exception):
+            activation.activate_daily_release(config, report, reload_api=reload_api, verify_api=verify_api)
+        assert ("reload","old") in events
+        assert ("verify","old") in events
+        assert report["status"] == ("rollback_failed" if scenario == "rollback_failure" else "activation_failed")
+    assert config.live_pointer.resolve() == old
+
+
+def test_pipeline_report_is_accessible_without_publishing_a_failed_candidate(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from nba_lineup_model.web_api.app import create_app
+    from nba_lineup_model.orchestration.daily_pipeline import _report
+    monkeypatch.setenv("GESTALT_DAILY_PIPELINE_ROOT", str(tmp_path))
+    client = TestClient(create_app(evaluator=object()))
+    assert client.get("/api/reports/daily-pipeline").status_code == 404
+    _report(tmp_path / "reports/2026-10-31", {"game_date":"2026-10-31", "status":"failed", "error":"Missing official box score"})
+    response = client.get("/api/reports/daily-pipeline")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "Missing official box score" in response.text
+    assert "failed" in response.text
+
+
+def test_automatic_activation_is_opt_in(tmp_path):
+    assert config_fixture(tmp_path).activate_after_validation is False

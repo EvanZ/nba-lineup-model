@@ -217,6 +217,17 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             "site_release": site_release,
         }
 
+    @app.get("/api/reports/daily-pipeline")
+    def daily_pipeline_report() -> FileResponse:
+        configured = os.environ.get("GESTALT_DAILY_PIPELINE_ROOT")
+        if not configured:
+            raise HTTPException(status_code=404, detail="Daily pipeline is not configured")
+        reports = list((Path(configured) / "reports").glob("*/report.html"))
+        if not reports:
+            raise HTTPException(status_code=404, detail="No daily pipeline report yet")
+        latest = max(reports, key=lambda path: path.stat().st_mtime_ns)
+        return FileResponse(latest, media_type="text/html")
+
     @app.get("/api/reports/current-season")
     def current_season_report() -> FileResponse:
         """Serve the latest immutable daily updater audit as a browser report."""

@@ -47,6 +47,7 @@ class DailyPipelineConfig:
     matchup_url: str
     season_start: date = date(2026, 10, 20)
     season: str = "2026-27"
+    activate_after_validation: bool = False
 
     @classmethod
     def read(cls, path: Path | str) -> "DailyPipelineConfig":
@@ -113,10 +114,20 @@ def _frozen_hashes(root: Path) -> dict[str, str]:
     return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((root / "frozen").glob("*.json"))}
 
 
+def schedule_lock_path(root: Path) -> Path:
+    """One stable inode per environment, outside every swappable release."""
+    configured = os.environ.get("GESTALT_SCHEDULE_LOCK_PATH")
+    if configured:
+        return Path(configured)
+    for parent in (root.absolute(), *root.absolute().parents):
+        if parent.name in {"nba-gestalt", "nba-gestalt-dev"}:
+            return parent / ".schedule-writer.lock"
+    return root.absolute().parent / ".schedule-writer.lock"
+
+
 @contextmanager
 def schedule_lock(root: Path):
-    # Configured path is stable even when its current symlink changes.
-    lock = Path(os.environ.get("GESTALT_SCHEDULE_LOCK_PATH", str(root.absolute().parent / ".schedule-writer.lock")))
+    lock = schedule_lock_path(root)
     lock.parent.mkdir(parents=True, exist_ok=True)
     with lock.open("a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
@@ -244,6 +255,8 @@ def prepare_daily_release(config: DailyPipelineConfig, target: date, *, steps_cl
             candidate.mkdir(parents=True)
             with schedule_lock(config.schedule_root):
                 require_clean_artifact_sources(config.schedule_root)
+                from nba_lineup_model.season.dev_site_release import _tree_sha256
+                report["source_schedule_sha256"] = _tree_sha256(config.schedule_root)
                 shutil.copytree(config.schedule_root.resolve(), candidate / "schedule")
             report.update(code_revision=revision, candidate=str(candidate))
             steps = steps_class(config, candidate, revision)
@@ -254,8 +267,12 @@ def prepare_daily_release(config: DailyPipelineConfig, target: date, *, steps_cl
                 report["completed_stages"].append(name)
             report.update(status="validated_candidate", runtime_release=str(result), stage="awaiting_activation")
             _report(report_root, report)
+            if config.activate_after_validation:
+                from nba_lineup_model.orchestration.daily_activation import activate_daily_release
+                activate_daily_release(config, report)
             return report
         except Exception as error:
-            report.update(status="failed", error=f"{type(error).__name__}: {error}")
+            if report.get("status") not in {"activation_failed", "rollback_failed"}:
+                report.update(status="failed", error=f"{type(error).__name__}: {error}")
             _report(report_root, report)
             raise
