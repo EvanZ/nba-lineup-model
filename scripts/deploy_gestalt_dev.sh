@@ -198,6 +198,19 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   --no-s3
 
 PYTHONPATH="$RELEASE_ROOT/src" \
+  "$PROD_RELEASE/.venv/bin/python" -P -c '
+import json
+import sys
+from nba_lineup_model.season.official_schedule_runtime import refresh_official_live_score_state
+print(json.dumps(refresh_official_live_score_state(
+    game_date=sys.argv[1],
+    state_dir=sys.argv[2],
+    s3_uri=None,
+    projection_url="http://127.0.0.1:8011/api/win-projections",
+), indent=2, default=str))
+' "$(TZ=America/Los_Angeles date +%F)" "$DEV_SCHEDULE_ROOT"
+
+PYTHONPATH="$RELEASE_ROOT/src" \
   "$PROD_RELEASE/.venv/bin/python" -P \
   -m nba_lineup_model.season.schedule_artifact_contract "$DEV_SCHEDULE_ROOT"
 

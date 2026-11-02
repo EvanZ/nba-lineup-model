@@ -176,6 +176,7 @@ def refresh_official_live_score_state(
     game_date: str,
     state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
     s3_uri: str | None = None,
+    projection_url: str = DEFAULT_SCHEDULE_API_URL,
 ) -> dict[str, object]:
     """Overlay the NBA CDN scoreboard and archive official final box scores."""
 
@@ -248,7 +249,7 @@ def refresh_official_live_score_state(
             newly_completed.append(game)
     uploaded = 0
     if newly_completed:
-        projection_payload = _fetch_json(DEFAULT_SCHEDULE_API_URL)
+        projection_payload = _fetch_json(projection_url)
         cache = RawJsonCache(state_root / "pending" / "nba-live-data")
         with NbaCdnClient(cache=cache) as client:
             for game in newly_completed:
