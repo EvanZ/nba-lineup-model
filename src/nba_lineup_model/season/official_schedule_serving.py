@@ -28,6 +28,7 @@ from typing import Any
 
 import pandas as pd
 
+from nba_lineup_model.season.daily_data_artifact import resolve_daily_data_pointer
 from nba_lineup_model.season.daily_data_artifact import verify_daily_data_artifact
 from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
 from nba_lineup_model.season.game_prediction_artifact import (
@@ -871,11 +872,25 @@ def _artifact_chain(
     root: Path, *, kind: str
 ) -> list[tuple[date, Path, dict[str, Any]]]:
     pointer = _read_object(root / "latest.json")
+    if kind == "data":
+        collection = resolve_daily_data_pointer(root, pointer)
+        rows: list[tuple[date, Path, dict[str, Any]]] = []
+        for selected_date, selected in collection["identity"]["dates"].items():
+            bundle = (root / str(selected["bundle_path"])).resolve()
+            manifest = verify_daily_data_artifact(bundle)
+            identity = manifest["identity"]
+            game_date = date.fromisoformat(str(identity["game_date_pacific"]))
+            if game_date.isoformat() != selected_date:
+                raise ValueError("Selected daily data date does not match its artifact")
+            rows.append((game_date, bundle, manifest))
+        return rows
+    if kind != "model":
+        raise ValueError(f"Unsupported artifact chain kind: {kind}")
     bundle = (root / str(pointer["bundle_path"])).resolve()
     rows: list[tuple[date, Path, dict[str, Any]]] = []
-    verify = verify_daily_data_artifact if kind == "data" else verify_daily_model_artifact
-    parent_key = "parent_data_sha256" if kind == "data" else "parent_model_sha256"
-    directory_key = "data_sha256" if kind == "data" else "model_sha256"
+    verify = verify_daily_model_artifact
+    parent_key = "parent_model_sha256"
+    directory_key = "model_sha256"
     while True:
         manifest = verify(bundle)
         identity = manifest["identity"]

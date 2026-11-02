@@ -73,6 +73,69 @@ def test_pipeline_failure_at_every_stage_never_publishes_partial_state(tmp_path,
     assert (config.pipeline_root/"reports/2026-10-20/report.html").is_file()
 
 
+def test_historical_data_replay_dates_are_explicit_and_reported(tmp_path):
+    config = config_fixture(tmp_path)
+    seen = []
+
+    class Steps:
+        def __init__(self, _config, candidate, _revision):
+            self.candidate = candidate
+
+        def __getattr__(self, name):
+            def run(*_args):
+                if name == "data":
+                    seen.extend(self.data_replay_dates)
+                return self.candidate / "runtime"
+
+            return run
+
+    result = prepare_daily_release(
+        config,
+        date(2026, 10, 20),
+        steps_class=Steps,
+        data_replay_dates=(date(2026, 10, 20),),
+    )
+
+    assert seen == [date(2026, 10, 20)]
+    assert result["data_replay_dates"] == ["2026-10-20"]
+    report = json.loads(
+        (config.pipeline_root / "reports/2026-10-20/report.json").read_text()
+    )
+    assert report["data_replay_dates"] == ["2026-10-20"]
+
+
+def test_historical_model_replay_approval_is_exact_and_reported(tmp_path):
+    config = config_fixture(tmp_path)
+    approved = date(2026, 10, 20)
+    seen = []
+
+    class Steps:
+        def __init__(self, _config, candidate, _revision):
+            self.candidate = candidate
+
+        def __getattr__(self, name):
+            def run(*_args):
+                if name == "model":
+                    seen.append(self.approved_historical_model_replay_from)
+                return self.candidate / "runtime"
+
+            return run
+
+    result = prepare_daily_release(
+        config,
+        approved,
+        steps_class=Steps,
+        approved_historical_model_replay_from=approved,
+    )
+
+    assert seen == [approved]
+    assert result["approved_historical_model_replay_from"] == "2026-10-20"
+    report = json.loads(
+        (config.pipeline_root / "reports/2026-10-20/report.json").read_text()
+    )
+    assert report["approved_historical_model_replay_from"] == "2026-10-20"
+
+
 def test_actual_dagster_daily_job_records_incomplete_slate_without_partial_outputs(tmp_path):
     config=config_fixture(tmp_path)
     path=config.environment_root/"config.json"

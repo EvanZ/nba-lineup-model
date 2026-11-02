@@ -18,6 +18,7 @@ from nba_lineup_model.season.current_serving import (
     promote_serving_bundle,
     publish_serving_bundle,
 )
+from nba_lineup_model.season.daily_data_artifact import resolve_daily_data_pointer
 from nba_lineup_model.season.daily_data_artifact import verify_daily_data_artifact
 from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
 from nba_lineup_model.season.slate_time import PACIFIC
@@ -285,30 +286,20 @@ def _adapt_daily_rating_trajectory(
 
 def _daily_data_chain(root: Path) -> list[tuple[date, Path, dict[str, Any]]]:
     pointer = _load_json(root / "latest.json")
-    bundle = (root / str(pointer["bundle_path"])).resolve()
+    collection = resolve_daily_data_pointer(root, pointer)
     rows: list[tuple[date, Path, dict[str, Any]]] = []
-    while True:
+    for selected_date, selected in collection["identity"]["dates"].items():
+        bundle = (root / str(selected["bundle_path"])).resolve()
         try:
             bundle.relative_to(root)
         except ValueError as error:
-            raise ValueError("Daily-data chain escapes its root") from error
+            raise ValueError("Daily-data collection escapes its root") from error
         manifest = verify_daily_data_artifact(bundle)
         identity = manifest["identity"]
         game_date = date.fromisoformat(str(identity["game_date_pacific"]))
+        if game_date.isoformat() != selected_date:
+            raise ValueError("Selected daily data date does not match its artifact")
         rows.append((game_date, bundle, manifest))
-        parent_sha = identity.get("parent_data_sha256")
-        if parent_sha is None:
-            break
-        prior_date = game_date - timedelta(days=1)
-        bundle = (
-            root
-            / f"season={identity['season']}"
-            / f"game_date_pacific={prior_date.isoformat()}"
-            / f"data_sha256={parent_sha}"
-        ).resolve()
-    rows.reverse()
-    if str(pointer.get("bundle_sha256", "")) != str(rows[-1][2]["bundle_sha256"]):
-        raise ValueError("Daily-data pointer checksum does not match its chain tip")
     return rows
 
 

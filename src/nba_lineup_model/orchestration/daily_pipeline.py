@@ -151,6 +151,8 @@ class CanonicalPipelineSteps:
     """The only production backend; tests replace I/O at this boundary."""
     def __init__(self, config: DailyPipelineConfig, candidate: Path, revision: str):
         self.config, self.candidate, self.revision = config, candidate, revision
+        self.data_replay_dates: tuple[date, ...] = ()
+        self.approved_historical_model_replay_from: date | None = None
         self.env = {**os.environ, "PYTHONPATH": str(config.code_root / "src"),
             "GESTALT_CURRENT_SEASON_SERVING_ROOT": str(candidate / "serving"),
             "GESTALT_CURRENT_SEASON_LINEUPS_ROOT": str(candidate / "lineups"),
@@ -167,7 +169,24 @@ class CanonicalPipelineSteps:
         from nba_lineup_model.season.daily_data_replay import replay_daily_data_chain
         config = self.config
         pointer = config.data_root / "latest.json"
-        start = date.fromisoformat(json.loads(pointer.read_text())["game_date_pacific"]) + timedelta(days=1) if pointer.exists() else config.season_start
+        repair_dates = tuple(sorted(set(self.data_replay_dates)))
+        if any(day < config.season_start or day > target for day in repair_dates):
+            raise ValueError("Explicit data replay dates must fall within the release range")
+        for repaired_date in repair_dates:
+            replay_daily_data_chain(
+                start_date=repaired_date,
+                end_date=repaired_date,
+                coverage_path=config.coverage_path,
+                output_root=config.data_root,
+                game_catalog_path=config.catalog_path,
+                season=config.season,
+            )
+        start = (
+            date.fromisoformat(json.loads(pointer.read_text())["through_date"])
+            + timedelta(days=1)
+            if pointer.exists()
+            else config.season_start
+        )
         if start <= target:
             replay_daily_data_chain(start_date=start, end_date=target, coverage_path=config.coverage_path, output_root=config.data_root, game_catalog_path=config.catalog_path, season=config.season)
         elif start != target + timedelta(days=1):
@@ -197,7 +216,18 @@ class CanonicalPipelineSteps:
                 if warnings:
                     raise ValueError("Pinned context inputs incomplete: " + "; ".join(warnings))
                 return offsets, warnings
-            replay_daily_model_chain(start_date=config.season_start, end_date=target, preseason_rankings_path=config.preseason_rankings_path, preseason_minutes_path=config.preseason_minutes_path, data_root=config.data_root, output_root=config.model_root, config=replay_config, code_revision=self.revision, context_provider=strict_context)
+            replay_daily_model_chain(
+                start_date=config.season_start,
+                end_date=target,
+                preseason_rankings_path=config.preseason_rankings_path,
+                preseason_minutes_path=config.preseason_minutes_path,
+                data_root=config.data_root,
+                output_root=config.model_root,
+                config=replay_config,
+                code_revision=self.revision,
+                context_provider=strict_context,
+                approved_historical_replay_from=self.approved_historical_model_replay_from,
+            )
 
     def serving(self) -> None:
         c = self.config
@@ -256,12 +286,36 @@ class CanonicalPipelineSteps:
         return stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=out / "schedule", schedule_overlay_path=out / "schedule", catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer)
 
 
-def prepare_daily_release(config: DailyPipelineConfig, target: date, *, steps_class=CanonicalPipelineSteps) -> dict:
+def prepare_daily_release(
+    config: DailyPipelineConfig,
+    target: date,
+    *,
+    steps_class=CanonicalPipelineSteps,
+    data_replay_dates: tuple[date, ...] = (),
+    approved_historical_model_replay_from: date | None = None,
+) -> dict:
     """No live pointer changes on success or failure; failed stages are visible."""
     config.validate()
+    replay_dates = tuple(sorted(set(data_replay_dates)))
+    if any(day < config.season_start or day > target for day in replay_dates):
+        raise ValueError("Explicit data replay dates must fall within the release range")
+    if approved_historical_model_replay_from is not None and not (
+        config.season_start <= approved_historical_model_replay_from <= target
+    ):
+        raise ValueError("Approved model replay date must fall within the release range")
     config.pipeline_root.mkdir(parents=True, exist_ok=True)
     report_root = config.pipeline_root / "reports" / target.isoformat()
-    report = {"game_date": target.isoformat(), "status": "running", "stage": "preflight", "completed_stages": []}
+    report = {
+        "game_date": target.isoformat(),
+        "data_replay_dates": [day.isoformat() for day in replay_dates],
+        "approved_historical_model_replay_from": (
+            approved_historical_model_replay_from.isoformat()
+            if approved_historical_model_replay_from else None
+        ),
+        "status": "running",
+        "stage": "preflight",
+        "completed_stages": [],
+    }
     with (config.pipeline_root / ".pipeline.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -282,6 +336,8 @@ def prepare_daily_release(config: DailyPipelineConfig, target: date, *, steps_cl
                 shutil.copytree(config.schedule_root.resolve(), candidate / "schedule")
             report.update(code_revision=revision, candidate=str(candidate))
             steps = steps_class(config, candidate, revision)
+            steps.data_replay_dates = replay_dates
+            steps.approved_historical_model_replay_from = approved_historical_model_replay_from
             for name in ("data", "model", "serving", "lineups", "validate_and_stage"):
                 report["stage"] = name
                 _report(report_root, report)

@@ -29,6 +29,7 @@ from nba_lineup_model.season.current_serving import (
     verify_serving_bundle,
 )
 from nba_lineup_model.season.daily_artifact_common import canonical_json, file_sha256
+from nba_lineup_model.season.daily_data_artifact import resolve_daily_data_pointer
 from nba_lineup_model.season.daily_data_artifact import verify_daily_data_artifact
 from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
 from nba_lineup_model.web_api.current_season_lineups import (
@@ -69,9 +70,7 @@ def publish_dev_site_release(
     preseason_profiles = Path(preseason_profiles_path).resolve()
     output = Path(output_root).resolve()
 
-    data_bundle, data_manifest = _resolved_pointer_bundle(
-        data_root, verify_daily_data_artifact
-    )
+    data_bundle, data_manifest = _resolved_daily_data_tip(data_root)
     model_bundle, model_manifest = _resolved_pointer_bundle(
         model_root, verify_daily_model_artifact
     )
@@ -389,6 +388,19 @@ def _normalize_api_validation(
     if int(output.get("scheduled_game_count", 0)) < expected_game_count:
         raise ValueError("Dev win projection calendar is shorter than completed coverage")
     return output
+
+
+def _resolved_daily_data_tip(root: Path) -> tuple[Path, dict[str, Any]]:
+    pointer = _read_json(root / "latest.json")
+    collection = resolve_daily_data_pointer(root, pointer)
+    identity = collection["identity"]
+    selected = identity["dates"][identity["through_date"]]
+    bundle = (root / str(selected["bundle_path"])).resolve()
+    _require_beneath(bundle, root, "Daily data artifact")
+    manifest = verify_daily_data_artifact(bundle)
+    if selected["bundle_sha256"] != manifest["bundle_sha256"]:
+        raise ValueError("Data collection tip checksum does not match its artifact")
+    return bundle, manifest
 
 
 def _resolved_pointer_bundle(root: Path, verifier) -> tuple[Path, dict[str, Any]]:

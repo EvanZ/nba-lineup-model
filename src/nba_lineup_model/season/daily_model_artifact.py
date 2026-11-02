@@ -208,8 +208,6 @@ def _parent_identity(
     data_identity = data_manifest["identity"]
     data_date = date.fromisoformat(data_identity["game_date_pacific"])
     if parent_bundle is None:
-        if data_identity.get("parent_data_sha256") is not None:
-            raise ValueError("A chained data artifact requires a parent model artifact")
         return None
     parent = verify_daily_model_artifact(parent_bundle)
     parent_identity = parent["identity"]
@@ -218,8 +216,6 @@ def _parent_identity(
     parent_date = date.fromisoformat(parent_identity["game_date_pacific"])
     if parent_date + timedelta(days=1) != data_date:
         raise ValueError("Daily model parent must be the immediately preceding Pacific date")
-    if parent_identity["input_data_sha256"] != data_identity.get("parent_data_sha256"):
-        raise ValueError("Daily model parent does not match the data artifact chain")
     return parent
 
 

@@ -30,7 +30,8 @@ def evidence_date(config):
 
 
 def run_backfill(config: DailyPipelineConfig, *, end_date: date, start_date: date | None = None,
-                 game_ids=None, recover=None, prepare=None, activate=None):
+                 game_ids=None, recover=None, prepare=None, activate=None,
+                 approved_historical_model_replay_from: date | None = None):
     config.validate()
     if end_date > datetime.now(UTC).astimezone(PACIFIC).date():
         raise ValueError("Catch-up cannot target future Pacific dates")
@@ -79,10 +80,11 @@ def run_backfill(config: DailyPipelineConfig, *, end_date: date, start_date: dat
         recover = recover or recover_official_slate
         prepare = prepare or prepare_daily_release
         last = None
-        changed_history = False
+        changed_history = approved_historical_model_replay_from is not None
+        repaired_dates: set[date] = set()
         try:
-            # Published dates are cheap local coverage checks. Any older hole is
-            # recovered too, without replacing its existing model/data history.
+            # Published dates are cheap local coverage checks. An older hole may
+            # replace only that date's observed-data selection; model replay is gated.
             day = config.season_start
             while day <= max(tip, end_date):
                 work = replace(config, schedule_root=schedule, activate_after_validation=False)
@@ -96,6 +98,7 @@ def run_backfill(config: DailyPipelineConfig, *, end_date: date, start_date: dat
                             coverage_path=config.coverage_path, checkpoint_root=workspace / "inputs", season=config.season)
                         require_complete_slate(work, day)
                         changed_history = True
+                        repaired_dates.add(day)
                     if day != tip or not changed_history:
                         day += timedelta(days=1)
                         continue
@@ -122,7 +125,16 @@ def run_backfill(config: DailyPipelineConfig, *, end_date: date, start_date: dat
                     require_complete_slate(work, day)
                     status.update(stage="daily_artifacts")
                     _report(report_root, status)
-                    last = prepare(work, day)
+                    replay_dates = tuple(sorted(repaired_dates))
+                    prepare_kwargs = {}
+                    if replay_dates:
+                        prepare_kwargs["data_replay_dates"] = replay_dates
+                    if approved_historical_model_replay_from is not None:
+                        prepare_kwargs["approved_historical_model_replay_from"] = (
+                            approved_historical_model_replay_from
+                        )
+                    last = prepare(work, day, **prepare_kwargs)
+                    repaired_dates.clear()
                     # Activation compares the ORIGINAL served schedule, not our
                     # private recovered copy. A concurrent live write invalidates it.
                     last["source_schedule_sha256"] = source_sha
@@ -159,8 +171,19 @@ def main():
     parser.add_argument("--start-date", type=date.fromisoformat)
     parser.add_argument("--end-date", type=date.fromisoformat, default=datetime.now(UTC).astimezone(PACIFIC).date() - timedelta(days=1))
     parser.add_argument("--game-id", action="append")
+    parser.add_argument(
+        "--approve-historical-model-replay-from",
+        type=date.fromisoformat,
+        help="Exact earliest Pacific date approved for causal model replacement",
+    )
     args = parser.parse_args()
-    print(json.dumps(run_backfill(DailyPipelineConfig.read(args.config), end_date=args.end_date, start_date=args.start_date, game_ids=args.game_id), indent=2))
+    print(json.dumps(run_backfill(
+        DailyPipelineConfig.read(args.config),
+        end_date=args.end_date,
+        start_date=args.start_date,
+        game_ids=args.game_id,
+        approved_historical_model_replay_from=args.approve_historical_model_replay_from,
+    ), indent=2))
 
 
 if __name__ == "__main__":

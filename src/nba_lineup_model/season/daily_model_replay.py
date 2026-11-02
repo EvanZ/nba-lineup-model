@@ -51,6 +51,7 @@ from nba_lineup_model.modeling.in_season_nail import (
 )
 from nba_lineup_model.modeling.in_season_nail_monitor import _context_offsets
 from nba_lineup_model.season.daily_artifact_common import canonical_json, file_sha256
+from nba_lineup_model.season.daily_data_artifact import resolve_daily_data_pointer
 from nba_lineup_model.season.daily_data_artifact import verify_daily_data_artifact
 from nba_lineup_model.season.daily_model_artifact import (
     PublishedDailyModelArtifact,
@@ -73,6 +74,16 @@ INJURY_STATUSES = frozenset({"OUT", "DOUBTFUL", "QUESTIONABLE", "PROBABLE"})
 
 class DailyModelReplayBlocked(RuntimeError):
     """Raised after a date-level failure report is retained for inspection."""
+
+
+class HistoricalModelReplayApprovalRequired(RuntimeError):
+    """Raised before replacing a previously published causal model suffix."""
+
+    def __init__(self, replay_from: date):
+        self.replay_from = replay_from
+        super().__init__(
+            f"Historical model replay from {replay_from.isoformat()} requires explicit approval"
+        )
 
 
 @dataclass(frozen=True)
@@ -135,6 +146,7 @@ def replay_daily_model_chain(
     config: DailyModelReplayConfig | None = None,
     code_revision: str | None = None,
     context_provider: ContextProvider | None = None,
+    approved_historical_replay_from: date | None = None,
 ) -> list[PublishedDailyModelArtifact]:
     """Replay verified dates in order and atomically advance only a clean tip.
 
@@ -181,6 +193,13 @@ def replay_daily_model_chain(
         model_chain=model_chain,
         provenance=provenance,
         through=end_date,
+    )
+    _require_historical_replay_approval(
+        data_chain=data_chain,
+        model_chain=model_chain,
+        compatible=compatible,
+        through=end_date,
+        approved_replay_from=approved_historical_replay_from,
     )
     parent_bundle = compatible[-1][1] if compatible else None
     first_data_date = data_chain[0][0]
@@ -1268,22 +1287,16 @@ def _http_context_provider(matchup_url: str) -> ContextProvider:
 
 def _read_data_chain(root: Path) -> list[tuple[date, Path, dict[str, Any]]]:
     pointer = _read_json(root / "latest.json")
-    bundle = (root / str(pointer["bundle_path"])).resolve()
+    collection = resolve_daily_data_pointer(root, pointer)
     rows: list[tuple[date, Path, dict[str, Any]]] = []
-    while True:
+    for selected_date, selected in collection["identity"]["dates"].items():
+        bundle = (root / str(selected["bundle_path"])).resolve()
         manifest = verify_daily_data_artifact(bundle)
         identity = manifest["identity"]
         game_date = date.fromisoformat(identity["game_date_pacific"])
+        if game_date.isoformat() != selected_date:
+            raise ValueError("Selected daily data date does not match its artifact")
         rows.append((game_date, bundle, manifest))
-        parent_sha = identity["parent_data_sha256"]
-        if parent_sha is None:
-            break
-        prior_date = game_date - timedelta(days=1)
-        bundle = (
-            root / f"season={identity['season']}" / f"game_date_pacific={prior_date.isoformat()}"
-            / f"data_sha256={parent_sha}"
-        )
-    rows.reverse()
     return rows
 
 
@@ -1333,6 +1346,26 @@ def _longest_compatible_prefix(
             break
         output.append((model_date, model_path, model_manifest))
     return output
+
+
+def _require_historical_replay_approval(
+    *,
+    data_chain: Sequence[tuple[date, Path, Mapping[str, Any]]],
+    model_chain: Sequence[tuple[date, Path, Mapping[str, Any]]],
+    compatible: Sequence[tuple[date, Path, Mapping[str, Any]]],
+    through: date,
+    approved_replay_from: date | None,
+) -> None:
+    modeled_dates = [row for row in model_chain if row[0] <= through]
+    if len(compatible) < len(modeled_dates):
+        replay_from = data_chain[len(compatible)][0]
+        if approved_replay_from != replay_from:
+            raise HistoricalModelReplayApprovalRequired(replay_from)
+    elif approved_replay_from is not None:
+        raise ValueError(
+            "Historical model replay approval was supplied, but no published "
+            "model suffix needs replacement"
+        )
 
 
 def _component_path(
@@ -1478,6 +1511,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_MODEL_ROOT)
     parser.add_argument("--matchup-url", default=DEFAULT_MATCHUP_URL)
     parser.add_argument("--code-revision")
+    parser.add_argument(
+        "--approve-historical-replay-from",
+        type=date.fromisoformat,
+        help="Exact earliest Pacific date approved for causal model replacement",
+    )
     return parser
 
 
@@ -1493,6 +1531,7 @@ def main() -> None:
         output_root=args.output_root,
         config=config,
         code_revision=args.code_revision,
+        approved_historical_replay_from=args.approve_historical_replay_from,
     )
     for artifact in artifacts:
         print(artifact.path)

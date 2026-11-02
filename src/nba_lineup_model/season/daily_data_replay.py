@@ -34,6 +34,7 @@ from nba_lineup_model.season.daily_data_artifact import (
     PublishedDailyDataArtifact,
     promote_daily_data_artifact,
     publish_daily_data_artifact,
+    resolve_daily_data_pointer,
     verify_daily_data_artifact,
 )
 from nba_lineup_model.season.stats_v3_lake import (
@@ -111,7 +112,7 @@ def replay_daily_data_chain(
     injury_report_loader: InjuryReportLoader | None = None,
     inactive_list_loader: InactiveListLoader | None = None,
 ) -> list[PublishedDailyDataArtifact]:
-    """Replay dates chronologically and stop before the first bad publication."""
+    """Rebuild requested dates independently and stop before the first failure."""
 
     if end_date < start_date:
         raise ValueError("Replay end date cannot precede its start date")
@@ -126,15 +127,6 @@ def replay_daily_data_chain(
     coverage = _read_json(Path(coverage_path)).get("games")
     if not isinstance(coverage, dict):
         raise ValueError("CDN coverage manifest has no game map")
-
-    parent_bundle = _current_chain_tip(chain_root)
-    if parent_bundle is not None:
-        pointer = _read_json(chain_root / "latest.json")
-        next_date = date.fromisoformat(str(pointer["game_date_pacific"])) + timedelta(days=1)
-        if next_date != start_date:
-            raise ValueError(
-                f"Replay must resume at {next_date.isoformat()}, not {start_date.isoformat()}"
-            )
 
     published: list[PublishedDailyDataArtifact] = []
     with tempfile.TemporaryDirectory(prefix="nba-boxscore-cache-") as cache_root:
@@ -165,7 +157,6 @@ def replay_daily_data_chain(
                     coverage=coverage,
                     game_catalog_path=catalog_path,
                     output_root=chain_root,
-                    parent_bundle=parent_bundle,
                     play_by_play_s3_prefix=play_by_play_s3_prefix,
                     boxscore_loader=loader,
                     injury_report_loader=injury_loader,
@@ -175,7 +166,6 @@ def replay_daily_data_chain(
                 promote_daily_data_artifact(artifact.path, root=chain_root)
                 write_daily_data_chain_report(chain_root)
                 published.append(artifact)
-                parent_bundle = artifact.path
                 current_date += timedelta(days=1)
     return published
 
@@ -187,7 +177,6 @@ def _build_date(
     coverage: Mapping[str, object],
     game_catalog_path: Path,
     output_root: Path,
-    parent_bundle: Path | None,
     play_by_play_s3_prefix: str,
     boxscore_loader: BoxscoreLoader,
     injury_report_loader: InjuryReportLoader,
@@ -366,7 +355,6 @@ def _build_date(
                 game_sources=game_sources,
                 game_quality=game_quality,
                 components=components,
-                parent_bundle=parent_bundle,
                 repairs=repairs,
             )
         except Exception as error:
@@ -917,14 +905,6 @@ def _fetch_verified_s3_json(uri: str, expected_sha256: str) -> dict[str, Any]:
     return payload
 
 
-def _current_chain_tip(root: Path) -> Path | None:
-    pointer_path = root / "latest.json"
-    if not pointer_path.is_file():
-        return None
-    pointer = _read_json(pointer_path)
-    return (root / str(pointer["bundle_path"])).resolve()
-
-
 def _write_failure_report(
     root: Path,
     game_date_pacific: date,
@@ -955,27 +935,18 @@ def _write_failure_report(
 
 
 def write_daily_data_chain_report(root: Path | str) -> Path:
-    """Write one browser-readable index for the currently promoted data chain."""
+    """Write one browser-readable index for the selected season collection."""
 
     chain_root = Path(root).resolve()
     pointer = _read_json(chain_root / "latest.json")
-    bundle = (chain_root / str(pointer["bundle_path"])).resolve()
+    collection = resolve_daily_data_pointer(chain_root, pointer)
     manifests: list[tuple[Path, dict[str, Any]]] = []
-    while True:
+    for selected_date, selected in collection["identity"]["dates"].items():
+        bundle = (chain_root / str(selected["bundle_path"])).resolve()
         manifest = verify_daily_data_artifact(bundle)
+        if manifest["identity"]["game_date_pacific"] != selected_date:
+            raise ValueError("Selected daily data date does not match its artifact")
         manifests.append((bundle, manifest))
-        identity = manifest["identity"]
-        parent_sha = identity["parent_data_sha256"]
-        if parent_sha is None:
-            break
-        prior_date = date.fromisoformat(identity["game_date_pacific"]) - timedelta(days=1)
-        bundle = (
-            chain_root
-            / f"season={identity['season']}"
-            / f"game_date_pacific={prior_date.isoformat()}"
-            / f"data_sha256={parent_sha}"
-        )
-    manifests.reverse()
     game_ids = [
         game_id
         for _bundle, manifest in manifests
@@ -1022,8 +993,8 @@ def write_daily_data_chain_report(root: Path | str) -> Path:
         "table{border-collapse:collapse;width:100%;margin-bottom:2rem}"
         "td,th{padding:.55rem;border-bottom:1px solid #ddd;text-align:left}"
         ".ok{color:#176b3a;font-weight:700}code{font-size:.9em}</style>"
-        "<h1>Official NBA daily data chain</h1>"
-        f"<p class='ok'>CLEAN THROUGH {html.escape(pointer['game_date_pacific'])}</p>"
+        "<h1>Official NBA daily data collection</h1>"
+        f"<p class='ok'>CLEAN THROUGH {html.escape(pointer['through_date'])}</p>"
         f"<p>{len(manifests)} Pacific dates · {len(game_ids)} games · "
         f"{len(set(game_ids))} unique games · ESPN dependencies: 0</p>"
         f"<p>Required sources: {html.escape(', '.join(source_names))}</p>"

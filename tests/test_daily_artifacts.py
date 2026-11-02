@@ -12,7 +12,9 @@ from nba_lineup_model.season.daily_data_artifact import (
 from nba_lineup_model.season.daily_data_artifact import (
     promote_daily_data_artifact,
     publish_daily_data_artifact,
+    resolve_daily_data_pointer,
     verify_daily_data_artifact,
+    verify_daily_data_collection,
 )
 from nba_lineup_model.season.daily_data_replay import write_daily_data_chain_report
 from nba_lineup_model.season.daily_model_artifact import (
@@ -78,7 +80,6 @@ def _publish_data(
     *,
     game_date: date,
     game_ids: list[str],
-    parent: Path | None = None,
     suffix: str = "",
 ):
     return publish_daily_data_artifact(
@@ -89,7 +90,6 @@ def _publish_data(
         game_sources=_sources(game_ids),
         game_quality=_quality(game_ids),
         components=_components(tmp_path, DATA_COMPONENTS, f"data{suffix}"),
-        parent_bundle=parent,
         repairs=[
             {"game_id": game_ids[0], "action": "identity alias reconciled", "source": "NBA"}
         ]
@@ -119,7 +119,7 @@ def _publish_model(
     )
 
 
-def test_data_and_model_artifacts_form_separate_daily_hash_chains(tmp_path: Path) -> None:
+def test_data_artifacts_are_independent_while_model_artifacts_are_causal(tmp_path: Path) -> None:
     day_one_data = _publish_data(
         tmp_path,
         game_date=date(2026, 10, 20),
@@ -133,7 +133,6 @@ def test_data_and_model_artifacts_form_separate_daily_hash_chains(tmp_path: Path
         tmp_path,
         game_date=date(2026, 10, 21),
         game_ids=["0022600003"],
-        parent=day_one_data.path,
         suffix="-two",
     )
     day_two_model = _publish_model(
@@ -148,9 +147,7 @@ def test_data_and_model_artifacts_form_separate_daily_hash_chains(tmp_path: Path
         day_two_model.path, data_bundle=day_two_data.path
     )
 
-    assert data_manifest["identity"]["parent_data_sha256"] == (
-        day_one_data.manifest["bundle_sha256"]
-    )
+    assert "parent_data_sha256" not in data_manifest["identity"]
     assert "player_ratings" not in data_manifest["identity"]["components"]
     assert model_manifest["identity"]["input_data_sha256"] == (
         day_two_data.manifest["bundle_sha256"]
@@ -208,18 +205,19 @@ def test_daily_data_rejects_unresolved_errors(tmp_path: Path) -> None:
         )
 
 
-def test_daily_data_requires_the_immediately_preceding_date(tmp_path: Path) -> None:
+def test_daily_data_collection_rejects_a_new_date_gap(tmp_path: Path) -> None:
     day_one = _publish_data(
         tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
     )
-    with pytest.raises(ValueError, match="immediately preceding Pacific date"):
-        _publish_data(
-            tmp_path,
-            game_date=date(2026, 10, 22),
-            game_ids=["0022600002"],
-            parent=day_one.path,
-            suffix="-gap",
-        )
+    day_three = _publish_data(
+        tmp_path,
+        game_date=date(2026, 10, 22),
+        game_ids=["0022600002"],
+        suffix="-gap",
+    )
+    promote_daily_data_artifact(day_one.path, root=tmp_path / "data-root")
+    with pytest.raises(ValueError, match="immediately follow the collection tip"):
+        promote_daily_data_artifact(day_three.path, root=tmp_path / "data-root")
 
 
 def test_daily_data_verification_detects_component_mutation(tmp_path: Path) -> None:
@@ -263,7 +261,7 @@ def test_daily_data_rejects_score_or_possession_nonconservation(tmp_path: Path) 
         )
 
 
-def test_daily_data_pointer_only_advances_along_the_verified_chain(tmp_path: Path) -> None:
+def test_repair_reselects_one_date_without_rewriting_later_data(tmp_path: Path) -> None:
     first = _publish_data(
         tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
     )
@@ -271,33 +269,48 @@ def test_daily_data_pointer_only_advances_along_the_verified_chain(tmp_path: Pat
         tmp_path,
         game_date=date(2026, 10, 21),
         game_ids=["0022600002"],
-        parent=first.path,
         suffix="-second",
     )
-    alternate_first = _publish_data(
-        tmp_path / "alternate",
-        game_date=date(2026, 10, 20),
-        game_ids=["0099999999"],
+    _, first_advanced = promote_daily_data_artifact(
+        first.path, root=tmp_path / "data-root"
     )
-    alternate_second = _publish_data(
-        tmp_path,
-        game_date=date(2026, 10, 21),
-        game_ids=["0022600099"],
-        parent=alternate_first.path,
-        suffix="-alternate-second",
+    original_pointer, second_advanced = promote_daily_data_artifact(
+        second.path, root=tmp_path / "data-root"
+    )
+    original_collection = resolve_daily_data_pointer(
+        tmp_path / "data-root", original_pointer
+    )
+    original_second = dict(
+        original_collection["identity"]["dates"]["2026-10-21"]
     )
 
-    _, first_advanced = promote_daily_data_artifact(first.path, root=tmp_path / "data-root")
-    with pytest.raises(ValueError, match="does not extend the current chain tip"):
-        promote_daily_data_artifact(alternate_second.path, root=tmp_path / "data-root")
-    pointer, second_advanced = promote_daily_data_artifact(
-        second.path, root=tmp_path / "data-root"
+    repaired_first = _publish_data(
+        tmp_path,
+        game_date=date(2026, 10, 20),
+        game_ids=["0022600001"],
+        suffix="-repaired",
+    )
+    repaired_pointer, repaired_advanced = promote_daily_data_artifact(
+        repaired_first.path, root=tmp_path / "data-root"
+    )
+    repaired_collection = resolve_daily_data_pointer(
+        tmp_path / "data-root", repaired_pointer
     )
 
     assert first_advanced is True
     assert second_advanced is True
-    assert pointer["bundle_sha256"] == second.manifest["bundle_sha256"]
-    assert (tmp_path / "data-root" / "latest.json").is_file()
+    assert repaired_advanced is True
+    assert original_pointer["collection_sha256"] != repaired_pointer["collection_sha256"]
+    assert repaired_pointer["through_date"] == "2026-10-21"
+    assert repaired_collection["identity"]["dates"]["2026-10-20"][
+        "bundle_sha256"
+    ] == repaired_first.manifest["bundle_sha256"]
+    assert repaired_collection["identity"]["dates"]["2026-10-21"] == original_second
+    assert second.path.is_dir()
+    verify_daily_data_collection(
+        tmp_path / "data-root" / repaired_pointer["collection_path"],
+        root=tmp_path / "data-root",
+    )
 
 
 def test_daily_data_chain_report_summarizes_the_promoted_chain(tmp_path: Path) -> None:
@@ -333,45 +346,24 @@ def test_daily_model_rejects_excluded_games(tmp_path: Path) -> None:
         )
 
 
-def test_daily_model_requires_a_parent_when_data_is_chained(tmp_path: Path) -> None:
+def test_daily_model_parent_remains_causally_consecutive(tmp_path: Path) -> None:
     day_one_data = _publish_data(
         tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
     )
-    day_two_data = _publish_data(
+    day_one_model = _publish_model(tmp_path, data_bundle=day_one_data.path)
+    day_three_data = _publish_data(
         tmp_path,
-        game_date=date(2026, 10, 21),
+        game_date=date(2026, 10, 22),
         game_ids=["0022600002"],
-        parent=day_one_data.path,
-        suffix="-two",
-    )
-    with pytest.raises(ValueError, match="requires a parent model"):
-        _publish_model(tmp_path, data_bundle=day_two_data.path, suffix="-missing-parent")
-
-
-def test_daily_model_rejects_a_parent_from_the_wrong_data_chain(tmp_path: Path) -> None:
-    first_data = _publish_data(
-        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
-    )
-    first_model = _publish_model(tmp_path, data_bundle=first_data.path)
-    unrelated_data = _publish_data(
-        tmp_path / "unrelated",
-        game_date=date(2026, 10, 20),
-        game_ids=["0099999999"],
-    )
-    second_data = _publish_data(
-        tmp_path / "unrelated",
-        game_date=date(2026, 10, 21),
-        game_ids=["0022600002"],
-        parent=unrelated_data.path,
-        suffix="-two",
+        suffix="-three",
     )
 
-    with pytest.raises(ValueError, match="does not match the data artifact chain"):
+    with pytest.raises(ValueError, match="immediately preceding Pacific date"):
         _publish_model(
             tmp_path,
-            data_bundle=second_data.path,
-            parent=first_model.path,
-            suffix="-wrong-chain",
+            data_bundle=day_three_data.path,
+            parent=day_one_model.path,
+            suffix="-gap",
         )
 
 
@@ -384,7 +376,6 @@ def test_daily_model_rejects_a_parent_with_different_provenance(tmp_path: Path) 
         tmp_path,
         game_date=date(2026, 10, 21),
         game_ids=["0022600002"],
-        parent=day_one_data.path,
         suffix="-two",
     )
 

@@ -19,8 +19,11 @@ from nba_lineup_model.season.daily_data_artifact import (
 from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
 from nba_lineup_model.season.daily_model_replay import (
     DailyModelReplayBlocked,
+    HistoricalModelReplayApprovalRequired,
     _classification,
     _early_role_minutes,
+    _longest_compatible_prefix,
+    _require_historical_replay_approval,
     _normalize_name,
     replay_daily_model_chain,
 )
@@ -570,6 +573,112 @@ def test_early_role_reconciles_only_a_small_verified_stint_gap() -> None:
             boundary_seconds=2640.0,
             maximum_reconciled_gap_seconds=5.0,
         )
+
+
+def test_model_prefix_stops_immediately_before_a_repaired_data_date() -> None:
+    provenance = {
+        "code_revision": "revision",
+        "model_version": "model",
+        "configuration_sha256": "a" * 64,
+        "prior_sha256": "b" * 64,
+    }
+    dates = [date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22)]
+    original_data = [
+        (
+            game_date,
+            Path(f"/data/{game_date}"),
+            {"bundle_sha256": checksum},
+        )
+        for game_date, checksum in zip(dates, ("1" * 64, "2" * 64, "3" * 64))
+    ]
+    model_chain = [
+        (
+            game_date,
+            Path(f"/model/{game_date}"),
+            {
+                "identity": {
+                    "input_data_sha256": data_manifest["bundle_sha256"],
+                    "model_provenance": provenance,
+                }
+            },
+        )
+        for (game_date, _path, data_manifest) in original_data
+    ]
+    repaired_data = list(original_data)
+    repaired_data[1] = (
+        dates[1],
+        Path(f"/data/{dates[1]}-repaired"),
+        {"bundle_sha256": "9" * 64},
+    )
+
+    compatible = _longest_compatible_prefix(
+        data_chain=repaired_data,
+        model_chain=model_chain,
+        provenance=provenance,
+        through=dates[-1],
+    )
+
+    assert [row[0] for row in compatible] == [dates[0]]
+
+
+def test_repaired_data_requires_exact_historical_model_replay_approval() -> None:
+    provenance = {
+        "code_revision": "revision",
+        "model_version": "model",
+        "configuration_sha256": "a" * 64,
+        "prior_sha256": "b" * 64,
+    }
+    dates = [date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22)]
+    data_chain = [
+        (game_date, Path(f"/data/{game_date}"), {"bundle_sha256": checksum})
+        for game_date, checksum in zip(dates, ("1" * 64, "9" * 64, "3" * 64))
+    ]
+    model_chain = [
+        (
+            game_date,
+            Path(f"/model/{game_date}"),
+            {
+                "identity": {
+                    "input_data_sha256": checksum,
+                    "model_provenance": provenance,
+                }
+            },
+        )
+        for game_date, checksum in zip(dates, ("1" * 64, "2" * 64, "3" * 64))
+    ]
+    compatible = _longest_compatible_prefix(
+        data_chain=data_chain,
+        model_chain=model_chain,
+        provenance=provenance,
+        through=dates[-1],
+    )
+
+    with pytest.raises(
+        HistoricalModelReplayApprovalRequired,
+        match="2026-10-21 requires explicit approval",
+    ):
+        _require_historical_replay_approval(
+            data_chain=data_chain,
+            model_chain=model_chain,
+            compatible=compatible,
+            through=dates[-1],
+            approved_replay_from=None,
+        )
+    with pytest.raises(HistoricalModelReplayApprovalRequired):
+        _require_historical_replay_approval(
+            data_chain=data_chain,
+            model_chain=model_chain,
+            compatible=compatible,
+            through=dates[-1],
+            approved_replay_from=dates[-1],
+        )
+    _require_historical_replay_approval(
+        data_chain=data_chain,
+        model_chain=model_chain,
+        compatible=compatible,
+        through=dates[-1],
+        approved_replay_from=dates[1],
+    )
 
 
 def test_official_nba_suffix_formats_share_one_identity_key() -> None:

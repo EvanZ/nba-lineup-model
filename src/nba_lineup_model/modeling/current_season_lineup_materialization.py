@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from nba_lineup_model.modeling.in_season_nail_monitor import (
     _player_name_lookup,
     _sha256_bytes,
 )
+from nba_lineup_model.season.daily_data_artifact import resolve_daily_data_pointer
 from nba_lineup_model.season.daily_data_artifact import verify_daily_data_artifact
 from nba_lineup_model.web_api.current_season_lineups import (
     DEFAULT_CURRENT_SEASON_LINEUPS_ROOT,
@@ -119,33 +120,20 @@ def _daily_data_chain(
     root: Path,
 ) -> list[tuple[date, Path, dict[str, Any]]]:
     pointer = _load_json(root / "latest.json")
-    raw_path = str(pointer.get("bundle_path", "")).strip()
-    if not raw_path:
-        raise ValueError("Daily-data pointer has no bundle path")
-    bundle = (root / raw_path).resolve()
+    collection = resolve_daily_data_pointer(root, pointer)
     rows: list[tuple[date, Path, dict[str, Any]]] = []
-    while True:
+    for selected_date, selected in collection["identity"]["dates"].items():
+        bundle = (root / str(selected["bundle_path"])).resolve()
         try:
             bundle.relative_to(root)
         except ValueError as error:
-            raise ValueError("Daily-data chain escapes its root") from error
+            raise ValueError("Daily-data collection escapes its root") from error
         manifest = verify_daily_data_artifact(bundle)
         identity = manifest["identity"]
         game_date = date.fromisoformat(str(identity["game_date_pacific"]))
+        if game_date.isoformat() != selected_date:
+            raise ValueError("Selected daily data date does not match its artifact")
         rows.append((game_date, bundle, manifest))
-        parent_sha = identity.get("parent_data_sha256")
-        if parent_sha is None:
-            break
-        prior_date = game_date - timedelta(days=1)
-        bundle = (
-            root
-            / f"season={identity['season']}"
-            / f"game_date_pacific={prior_date.isoformat()}"
-            / f"data_sha256={parent_sha}"
-        ).resolve()
-    rows.reverse()
-    if str(pointer.get("bundle_sha256", "")) != str(rows[-1][2]["bundle_sha256"]):
-        raise ValueError("Daily-data pointer checksum does not match its chain tip")
     return rows
 
 

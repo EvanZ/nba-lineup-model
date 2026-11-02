@@ -1,8 +1,9 @@
-"""Immutable daily data checkpoints for the active NBA season.
+"""Immutable, independently replaceable daily observed-data artifacts.
 
-A data checkpoint contains only observed/source data.  It deliberately contains
+A daily artifact contains only observed/source data.  It deliberately contains
 no ratings, minutes estimates, lineup values, projections, or other model output.
-Every checkpoint names the exact Pacific slate and the preceding data checkpoint.
+An immutable season collection selects exactly one artifact for every Pacific
+date; replacing one date creates a new collection without rewriting later dates.
 """
 
 from __future__ import annotations
@@ -29,9 +30,11 @@ from nba_lineup_model.season.daily_artifact_common import (
 )
 from nba_lineup_model.season.schema import validate_season
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ARTIFACT_KIND = "daily_data"
-POINTER_SCHEMA_VERSION = 1
+COLLECTION_SCHEMA_VERSION = 1
+COLLECTION_KIND = "daily_data_collection"
+POINTER_SCHEMA_VERSION = 2
 REPORT_FILENAME = "report.html"
 DEFAULT_REQUIRED_COMPONENTS = frozenset(
     {
@@ -73,7 +76,6 @@ def publish_daily_data_artifact(
     game_sources: Mapping[str, Mapping[str, Mapping[str, object]]],
     game_quality: Mapping[str, Mapping[str, object]],
     components: Mapping[str, Path | str],
-    parent_bundle: Path | str | None = None,
     validation_errors: Sequence[Mapping[str, object] | str] = (),
     repairs: Sequence[Mapping[str, object]] = (),
     required_components: Iterable[str] = DEFAULT_REQUIRED_COMPONENTS,
@@ -90,7 +92,6 @@ def publish_daily_data_artifact(
             "Daily data artifact has unresolved validation errors: "
             + "; ".join(issue["message"] for issue in errors)
         )
-    parent = _parent_identity(parent_bundle, season, game_date_pacific)
     sources = _normalize_game_sources(
         game_sources,
         game_ids=normalized_game_ids,
@@ -117,10 +118,6 @@ def publish_daily_data_artifact(
             "artifact_kind": ARTIFACT_KIND,
             "season": season,
             "game_date_pacific": game_date_pacific.isoformat(),
-            "parent_data_sha256": parent["bundle_sha256"] if parent else None,
-            "parent_game_date_pacific": (
-                parent["identity"]["game_date_pacific"] if parent else None
-            ),
             "game_ids": normalized_game_ids,
             "game_count": len(normalized_game_ids),
             "game_sources": sources,
@@ -208,7 +205,7 @@ def promote_daily_data_artifact(
     root: Path | str,
     promoted_at: datetime | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Advance the data-chain pointer only when its parent is the current tip."""
+    """Select one date artifact in a new immutable season collection."""
 
     root_path = Path(root).resolve()
     bundle = Path(bundle_path).resolve()
@@ -219,26 +216,57 @@ def promote_daily_data_artifact(
     manifest = verify_daily_data_artifact(bundle)
     identity = manifest["identity"]
     latest_path = root_path / "latest.json"
-    current: dict[str, Any] | None = None
+    selections: dict[str, dict[str, object]] = {}
     if latest_path.is_file():
         current = resolve_daily_data_pointer(root_path, _read_json(latest_path))
-        if current["bundle_sha256"] == manifest["bundle_sha256"]:
+        current_identity = current["identity"]
+        if current_identity["season"] != identity["season"]:
+            raise ValueError("Daily data collection season does not match")
+        selections = {
+            key: dict(value)
+            for key, value in current_identity["dates"].items()
+        }
+        selected = selections.get(identity["game_date_pacific"])
+        if selected and selected["bundle_sha256"] == manifest["bundle_sha256"]:
             return _read_json(latest_path), False
-        if identity["parent_data_sha256"] != current["bundle_sha256"]:
-            raise ValueError("Daily data artifact does not extend the current chain tip")
-    elif identity["parent_data_sha256"] is not None:
-        raise ValueError("Cannot initialize a daily data pointer from a chained artifact")
-    pointer = {
-        "schema_version": POINTER_SCHEMA_VERSION,
-        "artifact_kind": ARTIFACT_KIND,
-        "season": identity["season"],
-        "game_date_pacific": identity["game_date_pacific"],
+        if not selected:
+            through = date.fromisoformat(current_identity["through_date"])
+            incoming = date.fromisoformat(identity["game_date_pacific"])
+            if incoming != through + timedelta(days=1):
+                raise ValueError(
+                    "A new daily data date must immediately follow the collection tip"
+                )
+    selections[identity["game_date_pacific"]] = {
         "bundle_sha256": manifest["bundle_sha256"],
         "bundle_path": relative.as_posix(),
+        "game_count": identity["game_count"],
+    }
+    collection = _publish_daily_data_collection(
+        root_path,
+        season=identity["season"],
+        selections=selections,
+        generated_at=promoted_at or datetime.now(UTC),
+    )
+    collection_relative = collection["path"].relative_to(root_path)
+    collection_manifest = collection["manifest"]
+    collection_identity = collection_manifest["identity"]
+    pointer = {
+        "schema_version": POINTER_SCHEMA_VERSION,
+        "artifact_kind": COLLECTION_KIND,
+        "season": identity["season"],
+        "through_date": collection_identity["through_date"],
+        "date_count": collection_identity["date_count"],
+        "game_count": collection_identity["game_count"],
+        "collection_sha256": collection_manifest["collection_sha256"],
+        "collection_path": collection_relative.as_posix(),
         "promoted_at": _utc_timestamp(promoted_at or datetime.now(UTC)),
     }
     _atomic_write_json(latest_path, pointer)
-    history = root_path / "pointer_history" / f"{manifest['bundle_sha256']}.json"
+    history = (
+        root_path
+        / "pointer_history"
+        / f"{collection_manifest['collection_sha256']}.json"
+    )
     if not history.exists():
         _atomic_write_json(history, pointer)
     return pointer, True
@@ -248,37 +276,128 @@ def resolve_daily_data_pointer(root: Path | str, pointer: Mapping[str, object]) 
     root_path = Path(root).resolve()
     if pointer.get("schema_version") != POINTER_SCHEMA_VERSION:
         raise ValueError("Unsupported daily data pointer schema")
-    if pointer.get("artifact_kind") != ARTIFACT_KIND:
-        raise ValueError("Pointer does not reference a daily data artifact")
-    raw_path = pointer.get("bundle_path")
+    if pointer.get("artifact_kind") != COLLECTION_KIND:
+        raise ValueError("Pointer does not reference a daily data collection")
+    raw_path = pointer.get("collection_path")
     if not isinstance(raw_path, str) or not raw_path:
-        raise ValueError("Daily data pointer path is missing")
-    bundle = (root_path / raw_path).resolve()
+        raise ValueError("Daily data collection pointer path is missing")
+    collection = (root_path / raw_path).resolve()
     try:
-        bundle.relative_to(root_path)
+        collection.relative_to(root_path)
     except ValueError as error:
         raise ValueError("Daily data pointer escapes its root") from error
-    manifest = verify_daily_data_artifact(bundle)
-    if manifest["bundle_sha256"] != pointer.get("bundle_sha256"):
-        raise ValueError("Daily data pointer checksum does not match its artifact")
+    manifest = verify_daily_data_collection(collection, root=root_path)
+    if manifest["collection_sha256"] != pointer.get("collection_sha256"):
+        raise ValueError("Daily data pointer checksum does not match its collection")
+    if manifest["identity"]["through_date"] != pointer.get("through_date"):
+        raise ValueError("Daily data pointer tip does not match its collection")
     return manifest
 
 
-def _parent_identity(
-    parent_bundle: Path | str | None,
+def verify_daily_data_collection(
+    path: Path | str,
+    *,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    collection = Path(path).resolve()
+    root_path = Path(root).resolve() if root is not None else collection.parents[2]
+    manifest = read_manifest(collection)
+    identity = manifest.get("identity")
+    if not isinstance(identity, dict):
+        raise ValueError("Daily data collection identity is missing")
+    if identity.get("schema_version") != COLLECTION_SCHEMA_VERSION:
+        raise ValueError("Unsupported daily data collection schema")
+    if identity.get("artifact_kind") != COLLECTION_KIND:
+        raise ValueError("Artifact is not a daily data collection")
+    season = validate_season(str(identity.get("season", "")))
+    selections = identity.get("dates")
+    if not isinstance(selections, dict) or not selections:
+        raise ValueError("Daily data collection has no date selections")
+    ordered_dates = sorted(date.fromisoformat(str(value)) for value in selections)
+    if any(
+        current != previous + timedelta(days=1)
+        for previous, current in zip(ordered_dates, ordered_dates[1:])
+    ):
+        raise ValueError("Daily data collection dates are not contiguous")
+    if identity.get("through_date") != ordered_dates[-1].isoformat():
+        raise ValueError("Daily data collection tip is inconsistent")
+    if int(identity.get("date_count", -1)) != len(selections):
+        raise ValueError("Daily data collection date count is inconsistent")
+    total_games = 0
+    for game_date in ordered_dates:
+        selected = selections[game_date.isoformat()]
+        if not isinstance(selected, dict):
+            raise ValueError("Daily data collection selection is invalid")
+        raw_path = selected.get("bundle_path")
+        if not isinstance(raw_path, str) or not raw_path:
+            raise ValueError("Daily data collection bundle path is missing")
+        bundle = (root_path / raw_path).resolve()
+        try:
+            bundle.relative_to(root_path)
+        except ValueError as error:
+            raise ValueError("Daily data collection bundle escapes its root") from error
+        daily = verify_daily_data_artifact(bundle)
+        daily_identity = daily["identity"]
+        if daily_identity["season"] != season:
+            raise ValueError("Daily data collection mixes seasons")
+        if daily_identity["game_date_pacific"] != game_date.isoformat():
+            raise ValueError("Daily data collection date does not match its artifact")
+        if daily["bundle_sha256"] != selected.get("bundle_sha256"):
+            raise ValueError("Daily data collection checksum does not match its artifact")
+        if int(selected.get("game_count", -1)) != daily_identity["game_count"]:
+            raise ValueError("Daily data collection game count is inconsistent")
+        total_games += daily_identity["game_count"]
+    if int(identity.get("game_count", -1)) != total_games:
+        raise ValueError("Daily data collection total game count is inconsistent")
+    collection_sha = hashlib.sha256(canonical_json(identity)).hexdigest()
+    if manifest.get("collection_sha256") != collection_sha:
+        raise ValueError("Daily data collection checksum does not match its identity")
+    if collection.name != f"collection_sha256={collection_sha}":
+        raise ValueError("Daily data collection directory is not content-addressed")
+    return manifest
+
+
+def _publish_daily_data_collection(
+    root: Path,
+    *,
     season: str,
-    game_date_pacific: date,
-) -> dict[str, Any] | None:
-    if parent_bundle is None:
-        return None
-    parent = verify_daily_data_artifact(parent_bundle)
-    parent_identity = parent["identity"]
-    if parent_identity["season"] != season:
-        raise ValueError("Daily data parent season does not match")
-    parent_date = date.fromisoformat(parent_identity["game_date_pacific"])
-    if parent_date + timedelta(days=1) != game_date_pacific:
-        raise ValueError("Daily data parent must be the immediately preceding Pacific date")
-    return parent
+    selections: Mapping[str, Mapping[str, object]],
+    generated_at: datetime,
+) -> dict[str, Any]:
+    ordered = {key: dict(selections[key]) for key in sorted(selections)}
+    identity = {
+        "schema_version": COLLECTION_SCHEMA_VERSION,
+        "artifact_kind": COLLECTION_KIND,
+        "season": season,
+        "through_date": next(reversed(ordered)),
+        "date_count": len(ordered),
+        "game_count": sum(int(value["game_count"]) for value in ordered.values()),
+        "dates": ordered,
+    }
+    collection_sha = hashlib.sha256(canonical_json(identity)).hexdigest()
+    manifest = {
+        "collection_sha256": collection_sha,
+        "generated_at": _utc_timestamp(generated_at),
+        "identity": identity,
+    }
+    target = (
+        root
+        / f"season={season}"
+        / "collections"
+        / f"collection_sha256={collection_sha}"
+    )
+    if not target.exists():
+        staging = root / f".daily-data-collection.tmp-{uuid4().hex}"
+        staging.mkdir(parents=True)
+        try:
+            write_manifest(staging, manifest)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            staging.replace(target)
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+    verified = verify_daily_data_collection(target, root=root)
+    return {"path": target, "manifest": verified}
 
 
 def _normalize_game_ids(game_ids: Iterable[object]) -> list[str]:
@@ -455,7 +574,6 @@ def _render_report(identity: Mapping[str, Any]) -> str:
         + "</li>"
         for repair in repairs
     ) or "<li>None</li>"
-    parent_sha = html.escape(str(identity["parent_data_sha256"] or "GENESIS"))
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Daily data reconciliation — {html.escape(identity['game_date_pacific'])}</title>
@@ -472,7 +590,8 @@ and required observed-data components passed publication checks.</p>
 <table><thead><tr><th>Game ID</th><th>Away–home score</th>
 <th>Possessions</th><th>Checks</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table><h2>Repairs</h2><ul>{repair_rows}</ul>
-<h2>Lineage</h2><p>Parent data checksum: <code>{parent_sha}</code></p>
+<h2>Artifact contract</h2><p>This Pacific date is independently replaceable.
+Its immutable checksum is selected by the season data collection.</p>
 </body></html>"""
 
 

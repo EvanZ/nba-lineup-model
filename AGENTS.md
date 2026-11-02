@@ -19,6 +19,30 @@ These instructions apply to every task in this repository.
 - Dev and production must use the same canonical artifact schemas and coverage
   checks; environment-specific pointers may differ.
 
+## Change classification and historical immutability
+
+- Classify every change before implementation as UI-only, observed-data,
+  model/pipeline, or a combination. State the classification to the user.
+- A UI-only change must not rebuild causal artifacts, alter pipeline behavior,
+  rematerialize observed data, or change model inputs. If a requested UI change
+  depends on any of those actions, it is not UI-only: announce the underlying
+  data/model/pipeline dependency and its consequences before proceeding.
+- Frozen pregame projections for games in the past are immutable. Never
+  recompute, replace, relabel, or silently change them without the user's
+  explicit approval for that exact historical scope.
+- Never allow a repair, release, backfill, UI deployment, or pointer update to
+  rewrite historical frozen projections as an incidental side effect.
+- A correction to historical observed data or historical model inputs normally
+  requires a causal model rebuild from the earliest affected Pacific date
+  through the current evidence date. Do not start that rebuild automatically.
+- Before any causal rebuild or backfill, report the affected dates, artifacts,
+  downstream model state, and whether frozen forecasts would change. Obtain the
+  user's explicit approval for the stated scope.
+- Data-artifact repair and causal model replay are separate operations. Publish
+  and validate the repaired data selection first; run the approved model suffix
+  replay second. Historical frozen forecasts remain unchanged unless separately
+  and explicitly approved.
+
 ## Correctness gates
 
 - Prefer the existing canonical artifacts over reconstructing, approximating,

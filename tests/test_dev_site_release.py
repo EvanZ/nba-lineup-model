@@ -161,6 +161,21 @@ def _inputs(tmp_path: Path, monkeypatch):
     }
     monkeypatch.setattr(
         subject,
+        "resolve_daily_data_pointer",
+        lambda _root, _pointer: {
+            "identity": {
+                "through_date": "2026-10-31",
+                "dates": {
+                    "2026-10-31": {
+                        "bundle_path": "data-bundle",
+                        "bundle_sha256": "d" * 64,
+                    }
+                },
+            }
+        },
+    )
+    monkeypatch.setattr(
+        subject,
         "verify_daily_data_artifact",
         lambda path: data_manifest,
     )

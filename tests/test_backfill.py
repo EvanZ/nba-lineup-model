@@ -150,6 +150,86 @@ def test_multiday_recovery_stops_then_resumes_without_repeating_validated_day(tm
     assert events==previous
 
 
+def test_historical_repair_names_the_exact_data_replay_date(tmp_path, monkeypatch):
+    c = setup_pipeline(tmp_path)
+    (c.live_pointer / "site-releases/latest.json").write_text(
+        json.dumps({"evidence_through_date": "2026-10-20"})
+    )
+    missing = c.schedule_root / "final/0022600001.nba.json"
+    payload = missing.read_bytes()
+    missing.unlink()
+    monkeypatch.setattr(
+        "nba_lineup_model.season.production_site_release.verify_production_site_release",
+        lambda path: {},
+    )
+    seen = []
+
+    def recover(**kwargs):
+        target = kwargs["state_root"] / "final/0022600001.nba.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        return {"status": "complete"}
+
+    def prepare(work, day, *, data_replay_dates=()):
+        seen.append((day, data_replay_dates))
+        runtime = c.pipeline_root / f"test-releases/{day}"
+        runtime.mkdir(parents=True)
+        shutil.copytree(work.schedule_root, runtime / "schedule")
+        return dict(
+            game_date=str(day),
+            status="validated_candidate",
+            runtime_release=str(runtime),
+        )
+
+    backfill.run_backfill(
+        c, start_date=date(2026, 10, 20), end_date=date(2026, 10, 20),
+        recover=recover, prepare=prepare,
+    )
+    assert seen == [(date(2026, 10, 20), (date(2026, 10, 20),))]
+
+
+def test_approved_historical_model_replay_resumes_at_the_exact_date(
+    tmp_path, monkeypatch
+):
+    c = setup_pipeline(tmp_path)
+    approved = date(2026, 10, 20)
+    (c.live_pointer / "site-releases/latest.json").write_text(
+        json.dumps({"evidence_through_date": approved.isoformat()})
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.season.production_site_release.verify_production_site_release",
+        lambda path: {},
+    )
+    seen = []
+
+    def prepare(
+        work,
+        day,
+        *,
+        approved_historical_model_replay_from=None,
+    ):
+        seen.append((day, approved_historical_model_replay_from))
+        runtime = c.pipeline_root / f"test-releases/{day}"
+        runtime.mkdir(parents=True)
+        shutil.copytree(work.schedule_root, runtime / "schedule")
+        return dict(
+            game_date=str(day),
+            status="validated_candidate",
+            runtime_release=str(runtime),
+        )
+
+    backfill.run_backfill(
+        c,
+        start_date=approved,
+        end_date=approved,
+        recover=lambda **_kwargs: {"status": "complete"},
+        prepare=prepare,
+        approved_historical_model_replay_from=approved,
+    )
+
+    assert seen == [(approved, approved)]
+
+
 def test_already_complete_backfill_is_noop(tmp_path):
     c=setup_pipeline(tmp_path)
     (c.live_pointer/'site-releases/latest.json').write_text(json.dumps({'evidence_through_date':'2026-10-20'}))

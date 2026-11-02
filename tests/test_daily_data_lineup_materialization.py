@@ -39,20 +39,25 @@ def test_daily_data_lineups_use_one_verified_chain(tmp_path: Path, monkeypatch) 
         "identity": {
             "season": "2026-27",
             "game_date_pacific": "2026-10-31",
-            "parent_data_sha256": None,
             "components": {"observed_stints": {"path": "files/observed_stints.parquet"}},
             "game_sources": {
                 "game-1": {"nba_play_by_play": {"sha256": "b" * 64}}
             },
         },
     }
-    (root / "latest.json").write_text(
-        json.dumps(
-            {
-                "bundle_path": bundle.relative_to(root).as_posix(),
-                "bundle_sha256": "a" * 64,
+    (root / "latest.json").write_text("{}")
+    monkeypatch.setattr(
+        subject,
+        "resolve_daily_data_pointer",
+        lambda _root, _pointer: {
+            "identity": {
+                "dates": {
+                    "2026-10-31": {
+                        "bundle_path": bundle.relative_to(root).as_posix()
+                    }
+                }
             }
-        )
+        },
     )
     monkeypatch.setattr(subject, "verify_daily_data_artifact", lambda path: manifest)
     lineups = pd.DataFrame(
