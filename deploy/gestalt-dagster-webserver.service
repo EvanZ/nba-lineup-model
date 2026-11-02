@@ -1,8 +1,9 @@
 [Unit]
-Description=NBA GESTALT Dagster UI
+Description=DEPRECATED - NBA GESTALT shared Dagster UI - DO NOT START
 After=network-online.target gestalt-web.service gestalt-dagster-code-server.service
 Wants=network-online.target
 Requires=gestalt-dagster-code-server.service
+RefuseManualStart=true
 
 [Service]
 Type=simple

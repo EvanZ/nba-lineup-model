@@ -88,6 +88,24 @@ These instructions apply to every task in this repository.
   the outage interval in the audit record, and backfill what its official
   source still makes available. Report any irrecoverable gap to the user.
 
+## Deprecated shared Dagster pipeline
+
+- The shared legacy services `gestalt-dagster-code-server`,
+  `gestalt-dagster-webserver`, and `gestalt-dagster-daemon` are deprecated
+  and must remain disabled. Never start, enable, unmask, install, or restore
+  them.
+- `scripts/deploy_gestalt_orchestration.sh` is a fail-closed tombstone. Do
+  not bypass it or use an older revision of that installer.
+- Protected collection runs only in the isolated `gestalt-collection-*`
+  services. Stopping or changing the deprecated shared services must not
+  interrupt those collectors.
+- A replacement nightly data/model publisher must use a separately named,
+  least-privilege service and expose only the atomic daily pipeline jobs. It
+  must not load the legacy all-in-one Dagster definitions.
+- Production promotion must fail if any deprecated shared Dagster service is
+  active. Promotion must never restart a deprecated service, even if an old
+  operator state or unit file says it was previously active.
+
 ## ESPN prohibition
 
 - NBA GESTALT must never request, ingest, copy, reconcile, repair, serve, or

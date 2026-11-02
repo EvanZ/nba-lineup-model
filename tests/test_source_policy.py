@@ -39,13 +39,27 @@ def test_source_policy_rejects_parquet_provenance_values(tmp_path):
         require_clean_artifact_sources(tmp_path)
 
 
-@pytest.mark.parametrize("active", [False, True])
-def test_promotion_restores_operator_service_state_without_starting_stopped_services(active):
-    import subprocess
+def test_promotion_never_restarts_deprecated_shared_dagster():
     script=(Path(__file__).parents[1]/"scripts/promote_gestalt_dev_to_prod.sh").read_text()
-    fragment=script[script.index("declare -A dagster_was_active"):script.index("rollback() {")]
-    initial="active" if active else "inactive"
-    shell='systemctl() { echo '+initial+'; }; sudo() { echo "$*"; };\n'+fragment+'\nrestore_dagster_service_states\n'
-    result=subprocess.run(["bash","-c",shell],check=True,capture_output=True,text=True)
-    expected="start" if active else "stop"
-    assert result.stdout.splitlines()==[f"systemctl {expected} {name}" for name in ("gestalt-dagster-code-server","gestalt-dagster-webserver","gestalt-dagster-daemon")]
+    assert "Production promotion blocked: deprecated service is active" in script
+    assert "legacy_dagster_services" in script
+    assert "restore_dagster_service_states" not in script
+    assert 'systemctl start "$service"' not in script
+
+
+def test_legacy_shared_dagster_installer_is_a_fail_closed_tombstone():
+    root = Path(__file__).parents[1]
+    script = (root / "scripts/deploy_gestalt_orchestration.sh").read_text()
+    assert "shared NBA GESTALT Dagster pipeline is deprecated" in script
+    assert "exit 64" in script
+    assert "systemctl enable" not in script
+    assert "dagster-daemon run" not in script
+
+    for name in (
+        "gestalt-dagster-code-server.service",
+        "gestalt-dagster-webserver.service",
+        "gestalt-dagster-daemon.service",
+    ):
+        unit = (root / "deploy" / name).read_text()
+        assert "DEPRECATED" in unit
+        assert "RefuseManualStart=true" in unit

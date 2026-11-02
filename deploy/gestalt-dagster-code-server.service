@@ -1,8 +1,9 @@
 [Unit]
-Description=NBA GESTALT Dagster code server
+Description=DEPRECATED - NBA GESTALT shared Dagster code server - DO NOT START
 After=network-online.target gestalt-web.service
 Wants=network-online.target
 Before=gestalt-dagster-webserver.service gestalt-dagster-daemon.service
+RefuseManualStart=true
 
 [Service]
 Type=simple

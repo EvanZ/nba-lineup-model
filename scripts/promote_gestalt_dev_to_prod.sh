@@ -221,21 +221,19 @@ atomic_symlink() {
   sudo mv -Tf "$temporary" "$link"
 }
 
-# Capture the operator's stopped/running state BEFORE any mutation. Neither
-# a successful web promotion nor rollback grants permission to start a daemon.
-declare -A dagster_was_active
-for service in gestalt-dagster-code-server gestalt-dagster-webserver gestalt-dagster-daemon; do
-  dagster_was_active["$service"]="$(systemctl is-active "$service" || true)"
+# The old shared writer is permanently deprecated. Promotion fails closed
+# rather than preserving or restoring any historical operator state.
+legacy_dagster_services=(
+  gestalt-dagster-code-server
+  gestalt-dagster-webserver
+  gestalt-dagster-daemon
+)
+for service in "${legacy_dagster_services[@]}"; do
+  if [[ "$(systemctl is-active "$service" || true)" == "active" ]]; then
+    printf 'Production promotion blocked: deprecated service is active: %s\n' "$service" >&2
+    exit 1
+  fi
 done
-restore_dagster_service_states() {
-  for service in gestalt-dagster-code-server gestalt-dagster-webserver gestalt-dagster-daemon; do
-    if [[ "${dagster_was_active[$service]}" == "active" ]]; then
-      sudo systemctl start "$service"
-    else
-      sudo systemctl stop "$service"
-    fi
-  done
-}
 
 rollback() {
   local status=$?
@@ -266,7 +264,6 @@ rollback() {
     sudo cp "$backup_root/gestalt-web.service" /etc/systemd/system/gestalt-web.service
     sudo systemctl daemon-reload
     sudo systemctl restart gestalt-web
-    restore_dagster_service_states
     sudo nginx -t && sudo systemctl reload nginx
   fi
   printf 'Production promotion failed; previous release restored\n' >&2
@@ -290,11 +287,6 @@ atomic_symlink "$schedule_overlay" "$SCHEDULE_CURRENT"
 atomic_symlink "$release_root" "$CODE_CURRENT"
 sudo systemctl daemon-reload
 sudo systemctl restart gestalt-web
-for service in gestalt-dagster-code-server gestalt-dagster-webserver; do
-  if [[ "${dagster_was_active[$service]}" == "active" ]]; then
-    sudo systemctl start "$service"
-  fi
-done
 sudo nginx -t
 sudo systemctl reload nginx
 
@@ -315,20 +307,12 @@ if [[ "$(git -C "$(readlink -f "$CODE_CURRENT")" rev-parse HEAD)" != "$prod_comm
   printf 'Production writer code pointer does not match reader revision\n' >&2
   false
 fi
-for service in gestalt-dagster-code-server gestalt-dagster-webserver; do
-  current_state="$(systemctl is-active "$service" || true)"
-  if [[ "${dagster_was_active[$service]}" == "active" && "$current_state" != "active" ]]; then
-    printf 'Previously active writer service failed to restart: %s\n' "$service" >&2
-    false
-  fi
-  if [[ "${dagster_was_active[$service]}" != "active" && "$current_state" == "active" ]]; then
-    printf 'Stopped writer service was unexpectedly started: %s\n' "$service" >&2
+for service in "${legacy_dagster_services[@]}"; do
+  if [[ "$(systemctl is-active "$service" || true)" == "active" ]]; then
+    printf 'Deprecated writer service was unexpectedly started: %s\n' "$service" >&2
     false
   fi
 done
-DAGSTER_HOME="$STATE_ROOT/dagster" PYTHONPATH="$release_root/src" \
-  "$PROD_RELEASE/.venv/bin/dagster" job list \
-  -m nba_lineup_model.orchestration.definitions >/dev/null
 PYTHONPATH="$release_root/src" \
   "$PROD_RELEASE/.venv/bin/python" -P \
   -m nba_lineup_model.season.schedule_artifact_contract "$SCHEDULE_CURRENT"
@@ -339,10 +323,6 @@ PYTHONPATH="$release_root/src" \
   http://127.0.0.1:8010
 curl --fail --silent --show-error \
   http://127.0.0.1:8010/api/reports/site-release >/dev/null
-
-# Old independently publishing jobs are absent from the new code location.
-# Resume only services that were already active before this promotion.
-restore_dagster_service_states
 
 trap - ERR
 printf 'Promoted approved GESTALT release %s at code %s\n' \
