@@ -44,8 +44,8 @@ if [[ "$MODE" == "--allow-left-evidence-superset" ]]; then
     .[0] as $left | .[1] as $right |
     $left.season == $right.season and
     $left.catalog_game_count == $right.catalog_game_count and
-    $left.performance_as_of == $right.performance_as_of and
-    $left.audited_final_games == $right.audited_final_games and
+    $left.performance_as_of >= $right.performance_as_of and
+    $left.audited_final_games > 0 and
     $left.evidence_through_date >= $right.evidence_through_date and
     $left.evidence_game_count >= $right.evidence_game_count and
     $left.forecast_as_of == $left.evidence_through_date and
@@ -58,6 +58,11 @@ if [[ "$MODE" == "--allow-left-evidence-superset" ]]; then
     diff -u "$WORK_ROOT/right.json" "$WORK_ROOT/left.json" >&2 || true
     exit 1
   fi
+  # Do not compare aggregate final-audit counts across environments here.
+  # The production payload can contain stale or legacy summaries, so a larger
+  # number is not proof of better coverage. The dev deploy separately runs
+  # schedule_artifact_contract against every official NBA artifact and that
+  # fail-closed inventory is the authority for schedule completeness.
 elif [[ "$MODE" == "--allow-left-final-superset" ]]; then
   jq 'del(.performance_as_of, .audited_final_games)' \
     "$WORK_ROOT/left.json" >"$WORK_ROOT/left-core.json"
