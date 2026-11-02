@@ -1267,6 +1267,7 @@ def test_injury_pdf_parses_second_team_after_continuation_page_header(monkeypatc
 
 def test_injury_pdf_parses_suffixes_before_name_delimiter(monkeypatch) -> None:
     names = [
+        ("Udeh,", "Jr.,", "Ernest", "Ernest Udeh Jr."),
         ("Hardaway", "Jr.,", "Tim", "Tim Hardaway Jr."),
         ("Nance", "Sr.,", "Larry", "Larry Nance Sr."),
         ("Lively", "II,", "Dereck", "Dereck Lively II"),
