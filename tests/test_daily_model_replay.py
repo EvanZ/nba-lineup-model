@@ -9,6 +9,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from nba_lineup_model.modeling.current_season_serving_materialization import (
+    materialize_daily_model_serving,
+)
 from nba_lineup_model.season.daily_data_artifact import (
     promote_daily_data_artifact,
     publish_daily_data_artifact,
@@ -304,6 +307,32 @@ def test_daily_model_replay_builds_a_clean_official_nba_state(tmp_path: Path) ->
     assert "runtime ESPN dependencies: 0" in (
         tmp_path / "model" / "report.html"
     ).read_text()
+
+    release_root = tmp_path / "release"
+    release_root.mkdir()
+    (release_root / "release.json").write_text(
+        json.dumps({"run_id": "frozen-preseason-run"})
+    )
+    serving_path = materialize_daily_model_serving(
+        daily_model_root=tmp_path / "model",
+        daily_data_root=tmp_path / "data",
+        release_root=release_root,
+        output_root=tmp_path / "serving",
+    )
+    serving_manifest = json.loads((serving_path / "manifest.json").read_text())
+    model_manifest = verify_daily_model_artifact(published[0].path, data_bundle=data.path)
+    model_sha = model_manifest["bundle_sha256"]
+    identity = serving_manifest["identity"]
+    assert identity["evidence_through_date"] == "2026-10-20"
+    assert identity["coverage"]["game_count"] == 1
+    assert identity["data_quality"]["source_coverage"] == {
+        "ratings": {"games": 1, "excluded": 0},
+        "minutes": {"games": 1, "excluded": 0},
+    }
+    assert all(
+        model_sha in source["uri"] for source in identity["sources"].values()
+    )
+    assert (tmp_path / "serving" / "latest.json").is_file()
 
     repeated = replay_daily_model_chain(
         start_date=date(2026, 10, 20),

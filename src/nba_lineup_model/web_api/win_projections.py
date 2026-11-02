@@ -1102,6 +1102,9 @@ def read_schedule_day(
             final_audit = json.loads(final_path.read_text())
             if isinstance(final_audit, dict):
                 game["final_audit"] = final_audit
+                retrospective = final_audit.get("retrospective")
+                if isinstance(retrospective, dict):
+                    game["retrospective"] = retrospective
     payload["available"] = True
     manifest_path = Path(state_dir) / "manifest.json"
     if manifest_path.is_file():

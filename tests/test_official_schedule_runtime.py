@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,7 @@ from nba_lineup_model.season.official_schedule_runtime import (
     _require_or_attach_frozen_attribution,
     refresh_official_live_score_state,
 )
+from nba_lineup_model.web_api.win_projections import read_schedule_day
 
 GAME_DATE = "2026-11-01"
 GAME_ID = "0022600100"
@@ -342,6 +344,28 @@ def test_latest_valid_pre_tip_candidate_freezes_and_post_tip_update_cannot_mutat
     assert latest["games"][0]["injury_report"] == frozen["injury_report"]
 
 
+def test_candidate_is_archived_two_hours_before_tip_for_operational_resilience(
+    tmp_path,
+) -> None:
+    payload = _board(
+        collected_at=datetime(2026, 11, 1, 0, 40, tzinfo=UTC)
+    )
+
+    result = _publish_board(
+        payload,
+        state_root=tmp_path,
+        s3_uri=None,
+        collected_at=datetime(2026, 11, 1, 0, 40, tzinfo=UTC),
+    )
+
+    assert result["newly_published_candidate_count"] == 1
+    candidates = list((tmp_path / "pregame-candidates" / GAME_ID).glob("*.json"))
+    assert len(candidates) == 1
+    candidate = json.loads(candidates[0].read_text())
+    assert candidate["captured_at"] == "2026-11-01T00:40:00Z"
+    assert candidate["game"]["projection"]["ledger"]
+
+
 def _legacy_frozen(game: dict[str, object]) -> dict[str, object]:
     frozen = copy.deepcopy(game)
     projection = frozen["projection"]
@@ -444,3 +468,107 @@ def test_live_score_watcher_cannot_strip_prediction_attribution(
         generated["projection"]["ledger"]["home_margin"]
     )
     assert game["projected_minutes"] == generated["projected_minutes"]
+
+
+def test_game_lifecycle_finalizes_every_serving_artifact_and_repairs_partial_final(
+    tmp_path, monkeypatch
+) -> None:
+    payload = _board(
+        collected_at=datetime(2026, 11, 1, 1, 55, tzinfo=UTC)
+    )
+    game = payload["games"][0]
+    latest_path = tmp_path / "latest" / f"{GAME_DATE}.json"
+    latest_path.parent.mkdir(parents=True)
+    latest_path.write_text(json.dumps(payload))
+    frozen_path = tmp_path / "frozen" / f"{GAME_ID}.json"
+    frozen_path.parent.mkdir(parents=True)
+    frozen_path.write_text(json.dumps(game))
+    final_event = {
+        "gameId": GAME_ID,
+        "gameStatus": 3,
+        "gameStatusText": "Final",
+        "gameClock": "",
+        "period": 4,
+        "homeTeam": {"teamTricode": "BBB", "score": 105},
+        "awayTeam": {"teamTricode": "AAA", "score": 100},
+    }
+    boxscore = {
+        "game": {
+            "gameId": GAME_ID,
+            "awayTeam": {
+                "teamTricode": "AAA",
+                "players": [
+                    {
+                        "personId": player_id,
+                        "firstName": "Away",
+                        "familyName": str(player_id),
+                        "statistics": {"minutes": minutes},
+                    }
+                    for player_id, minutes in (
+                        (1, "PT100M"),
+                        (2, "PT80M"),
+                        (3, "PT60M"),
+                    )
+                ],
+            },
+            "homeTeam": {
+                "teamTricode": "BBB",
+                "players": [
+                    {
+                        "personId": player_id,
+                        "firstName": "Home",
+                        "familyName": str(player_id),
+                        "statistics": {"minutes": minutes},
+                    }
+                    for player_id, minutes in (
+                        (4, "PT120M"),
+                        (5, "PT80M"),
+                        (6, "PT40M"),
+                    )
+                ],
+            },
+        }
+    }
+    monkeypatch.setattr(
+        "nba_lineup_model.season.official_schedule_runtime._scoreboard_games",
+        lambda _root: {GAME_ID: final_event},
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.season.official_schedule_runtime._fetch_json",
+        lambda _url: _forecast(),
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.season.official_schedule_runtime.NbaCdnClient.fetch_boxscore",
+        lambda self, game_id, use_cache=False: SimpleNamespace(payload=boxscore),
+    )
+
+    result = refresh_official_live_score_state(
+        game_date=GAME_DATE,
+        state_dir=tmp_path,
+        s3_uri=None,
+    )
+
+    summary_path = tmp_path / "final" / f"{GAME_ID}.summary.json"
+    boxscore_path = tmp_path / "final" / f"{GAME_ID}.nba.json"
+    assert result["all_final"] is True
+    assert summary_path.is_file()
+    assert boxscore_path.is_file()
+    summary = json.loads(summary_path.read_text())
+    assert summary["grading"]["model_favorite_won"] is not None
+    assert summary["retrospective"]["actual_minutes"]
+    assert summary["retrospective"]["ledger"]
+    served = read_schedule_day(GAME_DATE, state_dir=tmp_path)["games"][0]
+    assert served["pregame"]["projection"]["ledger"]
+    assert served["final_audit"]["retrospective"]["ledger"]
+    assert served["retrospective"]["actual_minutes"]
+
+    immutable_summary = summary_path.read_bytes()
+    boxscore_path.unlink()
+    repaired = refresh_official_live_score_state(
+        game_date=GAME_DATE,
+        state_dir=tmp_path,
+        s3_uri=None,
+    )
+    assert repaired["newly_finalized_game_count"] == 1
+    assert summary_path.read_bytes() == immutable_summary
+    assert json.loads(boxscore_path.read_text()) == boxscore

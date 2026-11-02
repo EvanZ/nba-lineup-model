@@ -197,6 +197,10 @@ PYTHONPATH="$RELEASE_ROOT/src" \
   --days-ahead 7 \
   --no-s3
 
+PYTHONPATH="$RELEASE_ROOT/src" \
+  "$PROD_RELEASE/.venv/bin/python" -P \
+  -m nba_lineup_model.season.schedule_artifact_contract "$DEV_SCHEDULE_ROOT"
+
 "$RELEASE_ROOT/scripts/validate_gestalt_serving_contract.sh" \
   http://127.0.0.1:8011
 "$RELEASE_ROOT/scripts/compare_gestalt_data_coverage.sh" \

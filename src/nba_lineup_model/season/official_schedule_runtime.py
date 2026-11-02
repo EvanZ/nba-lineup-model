@@ -59,7 +59,7 @@ NBA_DURATION_RE = re.compile(
 OFFICIAL_CONSENSUS_BOOKMAKERS = tuple(
     key for key in CONSENSUS_BOOKMAKERS if key.casefold() != "espnbet"
 )
-PREGAME_CANDIDATE_LEAD = timedelta(minutes=45)
+PREGAME_CANDIDATE_LEAD = timedelta(hours=2)
 
 
 def refresh_official_schedule_window(
@@ -230,8 +230,19 @@ def refresh_official_live_score_state(
                 generated=generated,
             )
         summary_path = state_root / "final" / f"{game_id}.summary.json"
-        if game["status"]["completed"] and not summary_path.is_file():
+        boxscore_path = state_root / "final" / f"{game_id}.nba.json"
+        if game["status"]["completed"]:
             if not frozen_path.is_file():
+                continue
+            if summary_path.is_file():
+                final_record = _read_object(summary_path)
+                retrospective = final_record.get("retrospective")
+                if not isinstance(retrospective, dict):
+                    raise ValueError(
+                        f"Official final summary has no retrospective for {game_id}"
+                    )
+                game["retrospective"] = copy.deepcopy(retrospective)
+            if summary_path.is_file() and boxscore_path.is_file():
                 continue
             game["final_observed_at"] = observed_at
             newly_completed.append(game)
@@ -242,8 +253,13 @@ def refresh_official_live_score_state(
         with NbaCdnClient(cache=cache) as client:
             for game in newly_completed:
                 game_id = str(game["game_id"])
-                response = client.fetch_boxscore(game_id, use_cache=False)
-                boxscore = response.payload
+                summary_path = state_root / "final" / f"{game_id}.summary.json"
+                boxscore_path = state_root / "final" / f"{game_id}.nba.json"
+                if boxscore_path.is_file():
+                    boxscore = _read_object(boxscore_path)
+                else:
+                    response = client.fetch_boxscore(game_id, use_cache=False)
+                    boxscore = response.payload
                 frozen_path = state_root / "frozen" / f"{game_id}.json"
                 if not frozen_path.is_file():
                     raise FileNotFoundError(
@@ -254,22 +270,29 @@ def refresh_official_live_score_state(
                 for key in ("projection", "projected_minutes"):
                     if key in game:
                         pregame[key] = copy.deepcopy(game[key])
-                retrospective = _build_official_actual_minutes_retrospective(
-                    game,
-                    pregame=pregame,
-                    boxscore=boxscore,
-                    projection_payload=projection_payload,
-                )
-                game["retrospective"] = retrospective
-                final_record = _build_final_game_archive(
-                    game,
-                    pregame=pregame,
-                    retrospective=retrospective,
-                )
-                summary_path = state_root / "final" / f"{game_id}.summary.json"
-                boxscore_path = state_root / "final" / f"{game_id}.nba.json"
-                _write_json_exclusive(summary_path, final_record)
-                _write_json_exclusive(boxscore_path, boxscore)
+                if summary_path.is_file():
+                    final_record = _read_object(summary_path)
+                    retrospective = final_record.get("retrospective")
+                    if not isinstance(retrospective, dict):
+                        raise ValueError(
+                            f"Official final summary has no retrospective for {game_id}"
+                        )
+                else:
+                    retrospective = _build_official_actual_minutes_retrospective(
+                        game,
+                        pregame=pregame,
+                        boxscore=boxscore,
+                        projection_payload=projection_payload,
+                    )
+                    final_record = _build_final_game_archive(
+                        game,
+                        pregame=pregame,
+                        retrospective=retrospective,
+                    )
+                    _write_json_exclusive(summary_path, final_record)
+                game["retrospective"] = copy.deepcopy(retrospective)
+                if not boxscore_path.is_file():
+                    _write_json_exclusive(boxscore_path, boxscore)
                 if s3_uri:
                     prefix = (
                         f"{s3_uri.rstrip('/')}/season={PROJECTION_SEASON}"
@@ -278,6 +301,26 @@ def refresh_official_live_score_state(
                     for path in (summary_path, boxscore_path):
                         _aws_s3_cp_exclusive(path, f"{prefix}/{path.name}")
                         uploaded += 1
+    incomplete: list[str] = []
+    for game in games:
+        if not isinstance(game, dict) or not game.get("status", {}).get("completed"):
+            continue
+        game_id = str(game["game_id"])
+        frozen_path = state_root / "frozen" / f"{game_id}.json"
+        summary_path = state_root / "final" / f"{game_id}.summary.json"
+        boxscore_path = state_root / "final" / f"{game_id}.nba.json"
+        if not frozen_path.is_file():
+            incomplete.append(f"{game_id}:frozen")
+        if not summary_path.is_file():
+            incomplete.append(f"{game_id}:summary")
+        if not boxscore_path.is_file():
+            incomplete.append(f"{game_id}:nba-boxscore")
+        if not isinstance(game.get("retrospective"), dict):
+            incomplete.append(f"{game_id}:retrospective")
+    if incomplete:
+        raise RuntimeError(
+            "Official live-score finalization incomplete: " + ", ".join(incomplete)
+        )
     payload["live_score_collected_at"] = datetime.now(UTC).isoformat().replace(
         "+00:00", "Z"
     )

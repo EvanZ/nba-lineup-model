@@ -19,6 +19,7 @@ PROD_REF="${GESTALT_PROD_REF:?GESTALT_PROD_REF is required}"
 SOURCE_REPO="${GESTALT_SOURCE_REPO:-$HOME/nba-lineup-model}"
 APP_ROOT="${GESTALT_APP_ROOT:-/opt/nba-gestalt}"
 CODE_ROOT="${GESTALT_CODE_ROOT:-/opt/nba-gestalt-code}"
+CODE_CURRENT="$CODE_ROOT/current"
 STATE_ROOT="${GESTALT_STATE_ROOT:-/var/lib/nba-gestalt}"
 DEV_APP_ROOT="${GESTALT_DEV_APP_ROOT:-/opt/nba-gestalt-dev}"
 DEV_STATE_ROOT="${GESTALT_DEV_STATE_ROOT:-/var/lib/nba-gestalt-dev}"
@@ -73,12 +74,14 @@ if [[ "$(jq -er '.identity.code_revision' "$approved_release/manifest.json")" !=
   printf 'Production promotion blocked: approved manifest has different code\n' >&2
   exit 1
 fi
-if [[ "$(jq -er '.identity.game_count' "$approved_release/manifest.json")" != "88" ]]; then
-  printf 'Production promotion blocked: approved release does not have 88 games\n' >&2
+approved_game_count="$(jq -er '.identity.game_count' "$approved_release/manifest.json")"
+if ! [[ "$approved_game_count" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'Production promotion blocked: approved release has invalid game coverage\n' >&2
   exit 1
 fi
-if [[ "$(jq -er '.identity.evidence_through_date' "$approved_release/manifest.json")" != "2026-10-31" ]]; then
-  printf 'Production promotion blocked: approved release is not through 2026-10-31\n' >&2
+approved_evidence_date="$(jq -er '.identity.evidence_through_date' "$approved_release/manifest.json")"
+if ! [[ "$approved_evidence_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  printf 'Production promotion blocked: approved release has invalid evidence date\n' >&2
   exit 1
 fi
 
@@ -112,13 +115,21 @@ else
   exit 1
 fi
 
-schedule_overlay="$SCHEDULE_RELEASE_ROOT/$approved_release_sha"
+schedule_contract="$(${PROD_RELEASE}/.venv/bin/python -P -c 'import json, sys; sys.path.insert(0, sys.argv[1]); from nba_lineup_model.season.schedule_artifact_contract import validate_schedule_artifacts; print(json.dumps(validate_schedule_artifacts(sys.argv[2])))' "$release_root/src" "$DEV_SCHEDULE_ROOT")"
+schedule_sha="$(jq -er '.tree_sha256' <<<"$schedule_contract")"
+schedule_overlay="$SCHEDULE_RELEASE_ROOT/$approved_release_sha-$schedule_sha"
 if [[ ! -d "$schedule_overlay" ]]; then
   schedule_staging="$SCHEDULE_RELEASE_ROOT/.schedule.tmp-$approved_release_sha-$$"
   install -d "$schedule_staging"
   rsync -a --delete "$DEV_SCHEDULE_ROOT/" "$schedule_staging/"
+  PYTHONPATH="$release_root/src" \
+    "$PROD_RELEASE/.venv/bin/python" -P \
+    -m nba_lineup_model.season.schedule_artifact_contract "$schedule_staging"
   mv "$schedule_staging" "$schedule_overlay"
 fi
+PYTHONPATH="$release_root/src" \
+  "$PROD_RELEASE/.venv/bin/python" -P \
+  -m nba_lineup_model.season.schedule_artifact_contract "$schedule_overlay"
 
 preseason_rankings_path="$(sed -n 's/^GESTALT_PRESEASON_RANKINGS_PATH=//p' "$DEV_PRESEASON_ENV")"
 preseason_profiles_path="$(sed -n 's/^GESTALT_PRESEASON_PROFILES_PATH=//p' "$DEV_PRESEASON_ENV")"
@@ -199,6 +210,7 @@ if [[ -L "$LIVE_POINTER" ]]; then
 fi
 old_web_target="$(readlink "$PUBLIC_WEB" 2>/dev/null || true)"
 old_schedule_target="$(readlink -f "$SCHEDULE_CURRENT" 2>/dev/null || true)"
+old_code_target="$(readlink -f "$CODE_CURRENT" 2>/dev/null || true)"
 mutation_started=0
 
 atomic_symlink() {
@@ -214,6 +226,10 @@ rollback() {
   trap - ERR
   set +e
   if [[ "$mutation_started" == "1" ]]; then
+    sudo systemctl stop \
+      gestalt-dagster-daemon \
+      gestalt-dagster-webserver \
+      gestalt-dagster-code-server
     if [[ -n "$old_live_target" ]]; then
       sudo env PYTHONPATH="$release_root/src" \
         "$PROD_RELEASE/.venv/bin/python" \
@@ -228,9 +244,16 @@ rollback() {
     if [[ -n "$old_schedule_target" ]]; then
       atomic_symlink "$old_schedule_target" "$SCHEDULE_CURRENT"
     fi
+    if [[ -n "$old_code_target" ]]; then
+      atomic_symlink "$old_code_target" "$CODE_CURRENT"
+    fi
     sudo cp "$backup_root/gestalt-web.service" /etc/systemd/system/gestalt-web.service
     sudo systemctl daemon-reload
     sudo systemctl restart gestalt-web
+    sudo systemctl restart \
+      gestalt-dagster-code-server \
+      gestalt-dagster-webserver \
+      gestalt-dagster-daemon
     sudo nginx -t && sudo systemctl reload nginx
   fi
   printf 'Production promotion failed; previous release restored\n' >&2
@@ -239,6 +262,10 @@ rollback() {
 trap rollback ERR
 
 mutation_started=1
+sudo systemctl stop \
+  gestalt-dagster-daemon \
+  gestalt-dagster-webserver \
+  gestalt-dagster-code-server
 sudo install -m 0644 "$release_root/deploy/gestalt-web.service" \
   /etc/systemd/system/gestalt-web.service
 sudo env PYTHONPATH="$release_root/src" \
@@ -247,8 +274,12 @@ sudo env PYTHONPATH="$release_root/src" \
   "$candidate" --live-pointer "$LIVE_POINTER" >/dev/null
 atomic_symlink "$LIVE_POINTER/web" "$PUBLIC_WEB"
 atomic_symlink "$schedule_overlay" "$SCHEDULE_CURRENT"
+atomic_symlink "$release_root" "$CODE_CURRENT"
 sudo systemctl daemon-reload
 sudo systemctl restart gestalt-web
+sudo systemctl start \
+  gestalt-dagster-code-server \
+  gestalt-dagster-webserver
 sudo nginx -t
 sudo systemctl reload nginx
 
@@ -265,6 +296,22 @@ if [[ "$production_release_sha" != "$approved_release_sha" ]]; then
     "$production_release_sha" "$approved_release_sha" >&2
   false
 fi
+if [[ "$(git -C "$(readlink -f "$CODE_CURRENT")" rev-parse HEAD)" != "$prod_commit" ]]; then
+  printf 'Production writer code pointer does not match reader revision\n' >&2
+  false
+fi
+for service in gestalt-dagster-code-server gestalt-dagster-webserver; do
+  if [[ "$(systemctl is-active "$service")" != "active" ]]; then
+    printf 'Production writer service is not active: %s\n' "$service" >&2
+    false
+  fi
+done
+DAGSTER_HOME="$STATE_ROOT/dagster" \
+  "$PROD_RELEASE/.venv/bin/dagster" job list \
+  -w "$STATE_ROOT/dagster/workspace.yaml" >/dev/null
+PYTHONPATH="$release_root/src" \
+  "$PROD_RELEASE/.venv/bin/python" -P \
+  -m nba_lineup_model.season.schedule_artifact_contract "$SCHEDULE_CURRENT"
 "$release_root/scripts/validate_gestalt_serving_contract.sh" \
   http://127.0.0.1:8010
 "$release_root/scripts/compare_gestalt_data_coverage.sh" \
@@ -284,6 +331,9 @@ for sensor in \
     "$PROD_RELEASE/.venv/bin/dagster" sensor stop \
     -w "$STATE_ROOT/dagster/workspace.yaml" "$sensor" >/dev/null
 done
+
+sudo systemctl start gestalt-dagster-daemon
+test "$(systemctl is-active gestalt-dagster-daemon)" = "active"
 
 trap - ERR
 printf 'Promoted approved GESTALT release %s at code %s\n' \
