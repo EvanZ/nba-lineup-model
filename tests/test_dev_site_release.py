@@ -47,6 +47,7 @@ def _api_validation() -> dict[str, object]:
         "lineup_count": 2,
         "scheduled_game_count": 1230,
         "season_performance_games": 1,
+        "canonical_final_game_count": 1,
         "schedule_game_count": 5,
     }
 
@@ -268,6 +269,7 @@ def test_dev_site_release_allows_schedule_finals_ahead_of_nightly_model(
 
     validation = _api_validation()
     validation["season_performance_games"] = 2
+    validation["canonical_final_game_count"] = 2
     release = subject.publish_dev_site_release(
         daily_data_root=inputs[0],
         daily_model_root=inputs[1],
@@ -286,6 +288,57 @@ def test_dev_site_release_allows_schedule_finals_ahead_of_nightly_model(
     assert identity["game_count"] == 1
     assert identity["schedule"]["final_game_count"] == 2
     assert identity["schedule"]["attribution_audit"]["completed_games"] == 2
+
+
+def test_dev_site_release_allows_canonical_finals_ahead_of_frozen_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    inputs = _inputs(tmp_path, monkeypatch)
+    validation = _api_validation()
+    validation["season_performance_games"] = 2
+    validation["canonical_final_game_count"] = 2
+
+    release = subject.publish_dev_site_release(
+        daily_data_root=inputs[0],
+        daily_model_root=inputs[1],
+        serving_root=inputs[2],
+        lineups_root=inputs[3],
+        schedule_state_dir=inputs[4],
+        catalog_path=inputs[5],
+        preseason_rankings_path=inputs[6],
+        preseason_profiles_path=inputs[7],
+        code_revision="a" * 40,
+        api_validation=validation,
+        output_root=tmp_path / "releases",
+    )
+
+    identity = subject.verify_dev_site_release(release)["identity"]
+    assert identity["schedule"]["final_game_count"] == 1
+    assert identity["api_validation"]["canonical_final_game_count"] == 2
+    assert identity["api_validation"]["season_performance_games"] == 2
+
+
+def test_dev_site_release_rejects_unjoined_canonical_final(
+    tmp_path: Path, monkeypatch
+) -> None:
+    inputs = _inputs(tmp_path, monkeypatch)
+    validation = _api_validation()
+    validation["canonical_final_game_count"] = 2
+
+    with pytest.raises(ValueError, match="performance differs from canonical"):
+        subject.publish_dev_site_release(
+            daily_data_root=inputs[0],
+            daily_model_root=inputs[1],
+            serving_root=inputs[2],
+            lineups_root=inputs[3],
+            schedule_state_dir=inputs[4],
+            catalog_path=inputs[5],
+            preseason_rankings_path=inputs[6],
+            preseason_profiles_path=inputs[7],
+            code_revision="a" * 40,
+            api_validation=validation,
+            output_root=tmp_path / "releases",
+        )
 
 
 def test_dev_site_release_rejects_mixed_api_state(tmp_path: Path, monkeypatch) -> None:

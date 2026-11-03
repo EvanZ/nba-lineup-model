@@ -269,6 +269,7 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
     lineups = _get_json(f"{root}/api/lineups?season=2026-27&minimum_possessions=0")
     wins = _get_json(f"{root}/api/win-projections")
     performance = _get_json(f"{root}/api/schedule-performance")
+    records = _get_json(f"{root}/api/current-season-records")
     schedule = _get_json(
         f"{root}/api/schedule?{urllib.parse.urlencode({'date': evidence_date})}"
     )
@@ -347,6 +348,7 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
             wins.get("win_projection", {}).get("scheduled_game_count", -1)
         ),
         "season_performance_games": int(season_window.get("games", -1)),
+        "canonical_final_game_count": len(records.get("completed_game_ids", [])),
         "schedule_game_count": len(schedule.get("games", [])),
         "verified_player_game_logs": checked_logs,
         "verified_player_opportunities": checked_opportunities,
@@ -373,7 +375,6 @@ def _normalize_api_validation(
         "rankings_bundle_sha256": serving_sha,
         "lineup_serving_bundle_sha256": serving_sha,
         "lineup_bundle_sha256": lineup_sha,
-        "season_performance_games": expected_final_game_count,
         "player_id": 201939,
     }
     for key, expected in required_equal.items():
@@ -382,6 +383,18 @@ def _normalize_api_validation(
                 f"Dev API validation mismatch for {key}: "
                 f"expected {expected!r}, found {output.get(key)!r}"
             )
+    canonical_final_count = int(output.get("canonical_final_game_count", -1))
+    performance_count = int(output.get("season_performance_games", -1))
+    if canonical_final_count < expected_final_game_count:
+        raise ValueError(
+            "Canonical NBA final coverage is behind the frozen schedule snapshot: "
+            f"expected at least {expected_final_game_count}, found {canonical_final_count}"
+        )
+    if performance_count != canonical_final_count:
+        raise ValueError(
+            "Joined schedule performance differs from canonical NBA final coverage: "
+            f"performance={performance_count} canonical={canonical_final_count}"
+        )
     for key in ("ranking_player_count", "team_player_count", "lineup_count", "schedule_game_count"):
         if int(output.get(key, 0)) <= 0:
             raise ValueError(f"Dev API validation has no {key.replace('_', ' ')}")
