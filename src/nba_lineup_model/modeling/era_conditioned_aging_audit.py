@@ -12,7 +12,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import joblib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -334,6 +333,8 @@ def _veteran_cohort_metrics(
 
 
 def _render_curve_delta(comparison: pd.DataFrame, output: Path) -> None:
+    import matplotlib.pyplot as plt
+
     figure, axis = plt.subplots(figsize=(9, 5.2), layout="constrained")
     labels = {
         "prior_p25": "Prior RAPM p25",

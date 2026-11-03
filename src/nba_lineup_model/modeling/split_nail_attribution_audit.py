@@ -24,7 +24,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import joblib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -573,6 +572,8 @@ def _coefficient_history(coefficients: pd.DataFrame) -> pd.DataFrame:
 
 def _render_nonadditive_coefficients(history: pd.DataFrame, path: Path) -> None:
     """Render offense/defense coefficient histories with a shared readable contract."""
+
+    import matplotlib.pyplot as plt
 
     features = ("usage_concentration", "top_two_assists")
     labels = {

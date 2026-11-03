@@ -10,7 +10,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import joblib
-import matplotlib.pyplot as plt
 import pandas as pd
 
 from nba_lineup_model.modeling.contextual_features import (
@@ -160,6 +159,8 @@ def build_nail_v1212_back_to_back_weight_audit(
 
 
 def _render(weights: pd.DataFrame, path: Path) -> None:
+    import matplotlib.pyplot as plt
+
     figure, axis = plt.subplots(figsize=(11, 4.8), layout="constrained")
     x = range(len(weights))
     axis.axhline(0.0, color="#7c837c", linewidth=1.0, linestyle="--")

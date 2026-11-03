@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -26,13 +25,13 @@ from nba_lineup_model.modeling.forward_nail_v1212_residualized_lambda import MOD
 from nba_lineup_model.modeling.forward_portable_matchup_contextual_rapm import (
     _load_recursive_model_mapping,
 )
-from nba_lineup_model.modeling.nail_v121_pruned_nonadditive_weight_audit import (
-    RETAINED_FEATURES,
-)
 from nba_lineup_model.modeling.nail_v13_additive_weight_audit import (
     render_additive_weight_trajectories,
     standardized_additive_weights,
     summarize_additive_weights,
+)
+from nba_lineup_model.modeling.nail_v121_pruned_nonadditive_weight_audit import (
+    RETAINED_FEATURES,
 )
 from nba_lineup_model.web_api.inference import (
     _compiled_linear_x3_coefficients,
@@ -40,7 +39,6 @@ from nba_lineup_model.web_api.inference import (
     _player_rating_center,
     _published_profile_padding_contract,
 )
-
 
 DEFAULT_ARTIFACT_SEASON = "2025-26"
 DEFAULT_PANEL_PATH = Path("data/analytical/player_season_panel/player_seasons.parquet")
@@ -163,6 +161,8 @@ def _control_history(source: Path) -> pd.DataFrame:
 
 
 def _render_control_history(history: pd.DataFrame, path: Path, *, title_prefix: str) -> None:
+    import matplotlib.pyplot as plt
+
     figure, axes = plt.subplots(2, 1, figsize=(12, 6.8), sharex=True, layout="constrained")
     series = (
         ("context_home_intercept", "Home-court advantage", "#2f6ea8"),

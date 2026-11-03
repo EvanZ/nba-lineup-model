@@ -9,7 +9,6 @@ from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -227,6 +226,8 @@ def _archetype_contrasts(lineups: pd.DataFrame) -> pd.DataFrame:
 
 
 def _render_contrasts(contrasts: pd.DataFrame, path: Path) -> None:
+    import matplotlib.pyplot as plt
+
     path.parent.mkdir(parents=True, exist_ok=True)
     pooled = contrasts.loc[contrasts["season"].eq("pooled")].sort_values("standardized_difference")
     figure, axis = plt.subplots(figsize=(9, 4.8), layout="constrained")

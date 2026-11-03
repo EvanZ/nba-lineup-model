@@ -11,7 +11,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -550,6 +549,8 @@ def _render_study_chart(
     season_estimates: pd.DataFrame,
     path: Path,
 ) -> None:
+    import matplotlib.pyplot as plt
+
     figure, (band_axis, season_axis) = plt.subplots(
         1,
         2,

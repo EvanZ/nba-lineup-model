@@ -1,4 +1,9 @@
-# Lightweight orchestration runtime installed into the active GESTALT release.
+# Shared orchestration runtime. This is installed once per requirements hash,
+# independently of web releases.
+-r web-requirements.txt
+
+boto3==1.43.118
 dagster==1.13.26
 dagster-webserver==1.13.26
 duckdb==1.5.6
+pypdf==6.18.0

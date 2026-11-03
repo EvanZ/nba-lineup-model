@@ -15,7 +15,7 @@ Environment=DAGSTER_HOME=/var/lib/nba-gestalt/dagster
 Environment=AWS_REGION=us-west-1
 Environment=GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1
 EnvironmentFile=-/etc/nba-gestalt/dagster.env
-ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster-webserver --host 127.0.0.1 --port 3000 --workspace /var/lib/nba-gestalt/dagster/workspace.yaml
+ExecStart=/opt/nba-gestalt-orchestration/current/bin/dagster-webserver --host 127.0.0.1 --port 3000 --workspace /var/lib/nba-gestalt/dagster/workspace.yaml
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

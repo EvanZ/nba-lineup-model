@@ -18,7 +18,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import joblib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -829,6 +828,8 @@ def _render_residual_screen(
     seasons: Sequence[str],
     chart_path: Path,
 ) -> None:
+    import matplotlib.pyplot as plt
+
     figure, axes = plt.subplots(1, len(seasons), figsize=(5.2 * len(seasons), 4.4), sharey=True)
     if len(seasons) == 1:
         axes = [axes]

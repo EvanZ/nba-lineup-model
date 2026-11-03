@@ -20,7 +20,7 @@ Environment=GESTALT_SCHEDULE_S3_URI=s3://nba-gestalt-data/nba-gestalt/schedule/m
 Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt/catalog/games.parquet
 Environment=GESTALT_SCHEDULE_API_URL=http://127.0.0.1:8010/api/win-projections
 EnvironmentFile=-/etc/nba-gestalt/dagster.env
-ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster-webserver --host 127.0.0.1 --port 3000 --workspace /var/lib/nba-gestalt/collection-dagster/workspace.yaml
+ExecStart=/opt/nba-gestalt-orchestration/current/bin/dagster-webserver --host 127.0.0.1 --port 3000 --workspace /var/lib/nba-gestalt/collection-dagster/workspace.yaml
 Restart=always
 RestartSec=5
 TimeoutStopSec=30

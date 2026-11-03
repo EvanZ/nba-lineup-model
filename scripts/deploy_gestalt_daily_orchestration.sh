@@ -6,6 +6,7 @@ APP_ROOT="${GESTALT_DAILY_APP_ROOT:-/opt/nba-gestalt-daily}"
 STATE_ROOT="${GESTALT_DAILY_STATE_ROOT:-/var/lib/nba-gestalt/daily-dagster}"
 CONFIG="${GESTALT_DAILY_PIPELINE_CONFIG:-/var/lib/nba-gestalt/daily-pipeline-v2/config.json}"
 REF="${GESTALT_DAILY_CODE_REF:-HEAD}"
+ORCHESTRATION_ROOT="${GESTALT_ORCHESTRATION_ROOT:-/opt/nba-gestalt-orchestration}"
 
 test -d "$SOURCE_REPO/.git"
 test -f "$CONFIG"
@@ -70,7 +71,12 @@ if [[ -f "$model_configuration_target" ]] &&
 fi
 sudo install -m 0644 "$model_configuration_source" "$model_configuration_target"
 
-PYTHONPATH="$release/src" /opt/nba-gestalt/current/.venv/bin/python -c \
+sudo install -d -o "$USER" -g "$(id -gn)" "$ORCHESTRATION_ROOT/environments"
+GESTALT_ORCHESTRATION_ROOT="$ORCHESTRATION_ROOT" \
+GESTALT_REQUIREMENTS_ROOT="$release/deploy" \
+  "$release/scripts/ensure_gestalt_orchestration_environment.sh"
+
+PYTHONPATH="$release/src" "$ORCHESTRATION_ROOT/current/bin/python" -c \
   'from dagster import Definitions; from nba_lineup_model.orchestration.daily_definitions import defs; Definitions.validate_loadable(defs)'
 
 sudo install -d -o ubuntu -g ubuntu "$STATE_ROOT"

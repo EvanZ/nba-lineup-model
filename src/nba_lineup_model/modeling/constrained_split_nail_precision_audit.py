@@ -6,7 +6,6 @@ import argparse
 import json
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -30,6 +29,8 @@ def _latest_run_dir(*, artifacts_dir: Path, season: str) -> Path:
 
 def render_precision_surface(*, run_dir: Path | str, chart_path: Path | str) -> Path:
     """Render the observed joint precision grid without interpolating new candidates."""
+
+    import matplotlib.pyplot as plt
 
     source = Path(run_dir)
     output = Path(chart_path)

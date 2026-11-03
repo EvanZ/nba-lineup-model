@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -270,6 +269,8 @@ def _observed_decile_lift(deciles: pd.DataFrame) -> pd.DataFrame:
 
 def plot_risk_decile_lift(deciles: pd.DataFrame, output_path: Path | str) -> None:
     """Write pooled observed episode-rate lift panels by literal age decile."""
+
+    import matplotlib.pyplot as plt
 
     offset_names = list(deciles["frequency_offset"].drop_duplicates())
     figure, axes = plt.subplots(1, len(offset_names), figsize=(14, 5), squeeze=False)

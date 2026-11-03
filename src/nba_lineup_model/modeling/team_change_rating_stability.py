@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -217,6 +216,8 @@ def _season_summary(transitions: pd.DataFrame) -> pd.DataFrame:
 
 
 def _render_chart(summary: pd.DataFrame, path: Path) -> None:
+    import matplotlib.pyplot as plt
+
     path.parent.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots(1, 2, figsize=(13, 4.8), layout="constrained")
     colors = {"same": "#2f6ea8", "changed": "#e8793e"}

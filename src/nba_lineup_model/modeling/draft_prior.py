@@ -12,7 +12,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import joblib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
@@ -659,6 +658,8 @@ def validate_draft_prior_study(run_dir: Path | str) -> dict[str, object]:
 
 
 def _render_curve(raw_curve: pd.DataFrame, adjusted_curve: pd.DataFrame, path: Path) -> None:
+    import matplotlib.pyplot as plt
+
     figure, (raw_axis, adjusted_axis) = plt.subplots(
         1,
         2,

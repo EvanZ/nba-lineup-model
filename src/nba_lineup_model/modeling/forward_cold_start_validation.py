@@ -11,7 +11,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import rankdata
@@ -401,6 +400,8 @@ def _write_validation(
 
 
 def _render_scatter(validation: pd.DataFrame, path: Path) -> None:
+    import matplotlib.pyplot as plt
+
     figure, axis = plt.subplots(figsize=(7.5, 6.2), constrained_layout=True)
     for low_exposure, color, label in (
         (False, "#176b87", "At least 5% exposure"),

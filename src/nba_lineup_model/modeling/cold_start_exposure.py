@@ -12,7 +12,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import joblib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -637,6 +636,8 @@ def _render_study_chart(
     calibration: pd.DataFrame,
     path: Path,
 ) -> None:
+    import matplotlib.pyplot as plt
+
     figure, (curve_axis, calibration_axis) = plt.subplots(
         1, 2, figsize=(12, 4.8), constrained_layout=True
     )

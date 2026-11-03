@@ -5,10 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
 
 FACTOR_LABELS = {
     "efg_pct": "eFG%",
@@ -40,6 +38,8 @@ def build_forward_four_factor_od_diagnostics(
 
 
 def _render_penalties(effects: pd.DataFrame, output: Path) -> Path:
+    import matplotlib.pyplot as plt
+
     figure, axes = plt.subplots(2, 2, figsize=(12, 7), layout="constrained")
     for axis, factor in zip(axes.flat, FACTOR_LABELS, strict=True):
         frame = effects.loc[effects["factor"].eq(factor)].drop_duplicates("season")
@@ -58,6 +58,8 @@ def _render_penalties(effects: pd.DataFrame, output: Path) -> Path:
 
 
 def _render_dispersion(effects: pd.DataFrame, output: Path) -> Path:
+    import matplotlib.pyplot as plt
+
     rows: list[dict[str, object]] = []
     for (season, factor), frame in effects.groupby(["season", "factor"], sort=True):
         for side in ("offense", "defense"):
@@ -91,6 +93,8 @@ def _render_dispersion(effects: pd.DataFrame, output: Path) -> Path:
 
 
 def _render_controls(controls: pd.DataFrame, output: Path) -> Path:
+    import matplotlib.pyplot as plt
+
     columns = (
         ("home_court_percentage_points", "Home court"),
         ("own_back_to_back_percentage_points", "Own back-to-back"),

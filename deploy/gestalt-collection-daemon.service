@@ -21,7 +21,7 @@ Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt/catalog/games.parquet
 Environment=GESTALT_SCHEDULE_API_URL=http://127.0.0.1:8010/api/win-projections
 EnvironmentFile=-/etc/nba-gestalt/dagster.env
 ExecStartPre=/bin/bash -c 'for i in {1..30}; do timeout 1 bash -c "</dev/tcp/127.0.0.1/4001" && exit 0; sleep 1; done; exit 1'
-ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster-daemon run --workspace /var/lib/nba-gestalt/collection-dagster/workspace.yaml
+ExecStart=/opt/nba-gestalt-orchestration/current/bin/dagster-daemon run --workspace /var/lib/nba-gestalt/collection-dagster/workspace.yaml
 Restart=always
 RestartSec=5
 TimeoutStopSec=60

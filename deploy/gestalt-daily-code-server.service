@@ -15,7 +15,7 @@ Environment=DAGSTER_HOME=/var/lib/nba-gestalt/daily-dagster
 Environment=AWS_REGION=us-west-1
 Environment=GESTALT_DAILY_PIPELINE_CONFIG=/var/lib/nba-gestalt/daily-pipeline-v2/config.json
 Environment=GESTALT_SCHEDULE_LOCK_PATH=/var/lib/nba-gestalt/.schedule-writer.lock
-ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster api grpc --host 127.0.0.1 --port 4002 --module-name nba_lineup_model.orchestration.daily_definitions --working-directory /opt/nba-gestalt-daily/current --use-python-environment-entry-point --log-level warning
+ExecStart=/opt/nba-gestalt-orchestration/current/bin/dagster api grpc --host 127.0.0.1 --port 4002 --module-name nba_lineup_model.orchestration.daily_definitions --working-directory /opt/nba-gestalt-daily/current --use-python-environment-entry-point --log-level warning
 Restart=always
 RestartSec=5
 TimeoutStopSec=60

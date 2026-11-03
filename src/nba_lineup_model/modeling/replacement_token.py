@@ -11,7 +11,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -388,6 +387,8 @@ def _render_token_chart(
     aggregate: dict[str, float | int],
     path: Path,
 ) -> None:
+    import matplotlib.pyplot as plt
+
     figure, axis = plt.subplots(figsize=(9, 4.8), constrained_layout=True)
     axis.plot(
         summary["season_start_year"],

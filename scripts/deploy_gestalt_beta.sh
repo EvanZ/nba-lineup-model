@@ -10,6 +10,7 @@ APP_ROOT="${GESTALT_APP_ROOT:-/opt/nba-gestalt}"
 WEB_ROOT="${GESTALT_WEB_ROOT:-/var/www/nba-gestalt}"
 REPO_DIR="${GESTALT_REPO_DIR:-$HOME/nba-lineup-model}"
 RELEASE_ROOT="$APP_ROOT/releases/$RELEASE_ID"
+ORCHESTRATION_ROOT="${GESTALT_ORCHESTRATION_ROOT:-/opt/nba-gestalt-orchestration}"
 
 sudo install -d -o "$USER" -g "$(id -gn)" "$APP_ROOT/releases"
 sudo install -d -o "$USER" -g "$(id -gn)" /var/lib/nba-gestalt/cdn
@@ -25,10 +26,15 @@ if [[ ! -d .venv ]]; then
   uv venv .venv
 fi
 uv pip install --python .venv/bin/python -r deploy/web-requirements.txt
-if [[ -f deploy/orchestration-requirements.txt ]]; then
-  uv pip install --python .venv/bin/python -r deploy/orchestration-requirements.txt
-fi
 uv pip install --python .venv/bin/python --no-deps -e .
+"$RELEASE_ROOT/scripts/validate_gestalt_runtime_environment.py" \
+  --profile web \
+  --requirements deploy/web-requirements.txt
+sudo install -d -o "$USER" -g "$(id -gn)" "$ORCHESTRATION_ROOT/environments"
+GESTALT_ORCHESTRATION_ROOT="$ORCHESTRATION_ROOT" \
+GESTALT_REQUIREMENTS_ROOT="$RELEASE_ROOT/deploy" \
+  "$RELEASE_ROOT/scripts/ensure_gestalt_orchestration_environment.sh"
+ORCHESTRATION_DAGSTER="$ORCHESTRATION_ROOT/current/bin/dagster"
 
 if ! command -v npm >/dev/null 2>&1; then
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -57,13 +63,13 @@ if systemctl cat gestalt-dagster-webserver >/dev/null 2>&1; then
   sudo systemctl enable gestalt-dagster-code-server
   sudo systemctl restart gestalt-dagster-code-server
   for _ in {1..60}; do
-    if "$RELEASE_ROOT/.venv/bin/dagster" api grpc-health-check \
+    if "$ORCHESTRATION_DAGSTER" api grpc-health-check \
       --host 127.0.0.1 --port 4000 >/dev/null 2>&1; then
       break
     fi
     sleep 1
   done
-  "$RELEASE_ROOT/.venv/bin/dagster" api grpc-health-check \
+  "$ORCHESTRATION_DAGSTER" api grpc-health-check \
     --host 127.0.0.1 --port 4000
   sudo systemctl restart gestalt-dagster-webserver gestalt-dagster-daemon
 fi
