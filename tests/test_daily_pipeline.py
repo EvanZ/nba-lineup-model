@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date
 from pathlib import Path
 
@@ -326,6 +326,10 @@ def test_daily_systemd_boundary_is_separate_from_collectors_and_legacy():
     assert "MemoryHigh=750M" in code_server
     assert "MemoryMax=1G" in code_server
 
+    production_config = json.loads(
+        (root / "deploy/gestalt-daily-production-config.json").read_text()
+    )
+    assert production_config["release_root"] == "/opt/nba-gestalt/current"
 
 def test_git_preflight_timeout_is_visible_and_bounded(tmp_path, monkeypatch):
     from nba_lineup_model.orchestration import daily_pipeline
@@ -442,3 +446,18 @@ def test_interrupted_daily_stage_writes_terminal_report(tmp_path):
     assert report["status"] == "failed"
     assert report["stage"] == "data"
     assert report["error"].startswith("KeyboardInterrupt:")
+
+
+def test_canonical_steps_pin_the_resolved_model_runtime(tmp_path):
+    from nba_lineup_model.orchestration.daily_pipeline import CanonicalPipelineSteps
+
+    config = config_fixture(tmp_path)
+    runtime_link = config.environment_root / "runtime-link"
+    runtime_link.symlink_to(config.release_root)
+    config = replace(config, release_root=runtime_link)
+    candidate = config.pipeline_root / "candidate"
+    candidate.mkdir(parents=True)
+
+    steps = CanonicalPipelineSteps(config, candidate, "revision")
+    assert steps.runtime_root == config.release_root.resolve(strict=True)
+    assert steps.runtime_root != runtime_link

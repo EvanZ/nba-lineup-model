@@ -13,7 +13,7 @@
   "preseason_minutes_path": "/var/lib/nba-gestalt/daily-pipeline-v2/prior/preseason_minutes.json",
   "preseason_profiles_path": "/var/lib/nba-gestalt/live-release/preseason/profiles.parquet",
   "preseason_rankings_path": "/var/lib/nba-gestalt/live-release/preseason/rankings.parquet",
-  "release_root": "/opt/nba-gestalt-daily/current",
+  "release_root": "/opt/nba-gestalt/current",
   "schedule_root": "/var/lib/nba-gestalt/schedule-serving/current",
   "season": "2026-27",
   "season_start": "2026-10-20"

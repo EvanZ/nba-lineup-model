@@ -194,6 +194,7 @@ class CanonicalPipelineSteps:
     """The only production backend; tests replace I/O at this boundary."""
     def __init__(self, config: DailyPipelineConfig, candidate: Path, revision: str):
         self.config, self.candidate, self.revision = config, candidate, revision
+        self.runtime_root = config.release_root.resolve(strict=True)
         self.data_replay_dates: tuple[date, ...] = ()
         self.approved_historical_model_replay_from: date | None = None
         self.env = {**os.environ, "PYTHONPATH": str(config.code_root / "src"),
@@ -206,7 +207,7 @@ class CanonicalPipelineSteps:
             "GESTALT_PRESEASON_PROFILES_PATH": str(config.preseason_profiles_path)}
 
     def command(self, module: str, *arguments: object) -> None:
-        subprocess.run([sys.executable, "-m", module, *map(str, arguments)], cwd=self.config.release_root, env=self.env, check=True, timeout=1800)
+        subprocess.run([sys.executable, "-m", module, *map(str, arguments)], cwd=self.runtime_root, env=self.env, check=True, timeout=1800)
 
     def data(self, target: date) -> None:
         from nba_lineup_model.season.daily_data_replay import replay_daily_data_chain
@@ -244,7 +245,7 @@ class CanonicalPipelineSteps:
         # model bundle, never whichever player universe the public API serves.
         context_identity = {
             "model_version": base.context_model_version,
-            "model_release": str(config.release_root.resolve(strict=True)),
+            "model_release": str(self.runtime_root),
             "profiles_sha256": file_sha256(config.preseason_profiles_path),
         }
         replay_config = DailyModelReplayConfig(
@@ -287,7 +288,7 @@ class CanonicalPipelineSteps:
         root = f"http://127.0.0.1:{port}"
         import urllib.request
         with (self.candidate / log_name).open("w") as log:
-            process = subprocess.Popen([sys.executable, "-m", "uvicorn", "nba_lineup_model.web_api.app:app", "--host", "127.0.0.1", "--port", str(port)], cwd=self.config.release_root, env=self.env, stdout=log, stderr=subprocess.STDOUT)
+            process = subprocess.Popen([sys.executable, "-m", "uvicorn", "nba_lineup_model.web_api.app:app", "--host", "127.0.0.1", "--port", str(port)], cwd=self.runtime_root, env=self.env, stdout=log, stderr=subprocess.STDOUT)
             try:
                 deadline = time.monotonic() + 120
                 while time.monotonic() < deadline:
