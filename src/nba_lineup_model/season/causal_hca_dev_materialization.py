@@ -122,10 +122,16 @@ def materialize_causal_hca_dev_schedule(
             served["projected_minutes"] = copy.deepcopy(
                 candidate_pregame["projected_minutes"]
             )
+            # A frozen pregame is immutable evidence of the inputs that were in
+            # play, but the candidate tree must contain the candidate model's
+            # projection over those same inputs even before the game is final.
+            # Never leave a copied baseline-HCA frozen artifact beside a
+            # candidate-HCA latest payload.
+            if frozen_path.is_file():
+                _write_json(frozen_path, candidate_pregame)
             if is_completed:
                 if not frozen_path.is_file():
                     raise FileNotFoundError(f"Completed game has no frozen input: {game_id}")
-                _write_json(frozen_path, candidate_pregame)
                 boxscore_path = output / "final" / f"{game_id}.nba.json"
                 summary_path = output / "final" / f"{game_id}.summary.json"
                 if not boxscore_path.is_file() or not summary_path.is_file():
