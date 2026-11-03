@@ -419,6 +419,10 @@ def test_daily_deploy_stops_daemon_and_rejects_active_runs():
     assert stop < switch
     assert '"QUEUED", "STARTING", "STARTED", "CANCELING"' in script
     assert "Refusing daily deployment while" in script
+    assert script.index('git -C "$SOURCE_REPO" worktree add') < script.index(
+        'model_configuration_source="$release/deploy/'
+    )
+    assert "Refusing to overwrite a different accepted HCA configuration" in script
 
 
 def test_interrupted_daily_stage_writes_terminal_report(tmp_path):
@@ -461,3 +465,165 @@ def test_canonical_steps_pin_the_resolved_model_runtime(tmp_path):
     steps = CanonicalPipelineSteps(config, candidate, "revision")
     assert steps.runtime_root == config.release_root.resolve(strict=True)
     assert steps.runtime_root != runtime_link
+
+def test_accepted_hca_model_is_extended_with_exact_provenance(
+    tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    from nba_lineup_model.orchestration import daily_pipeline
+    from nba_lineup_model.orchestration.daily_pipeline import CanonicalPipelineSteps
+    from nba_lineup_model.season import daily_model_replay as replay
+    from nba_lineup_model.season.daily_artifact_common import file_sha256
+
+    config = config_fixture(tmp_path)
+    selection = config.environment_root / "accepted-hca.json"
+    selection.write_text(
+        json.dumps(
+            {
+                "candidate_id": daily_pipeline.CAUSAL_HCA_MODEL_TRACK,
+                "target_season": "2026-27",
+                "prior_mean": 1.7,
+                "prior_equivalent_possessions": 42000.0,
+                "observation_variance_per_100": 14000.0,
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    provenance_url = "http://127.0.0.1:18013/api/matchups"
+    accepted = replay.CausalHcaReplayConfig(
+        season="2026-27",
+        home_court_prior_mean=1.7,
+        home_court_prior_equivalent_possessions=42000.0,
+        home_court_observation_variance_per_100=14000.0,
+        home_court_prior_source=(
+            "artifact://causal-hca-prior/" + file_sha256(selection)
+        ),
+        matchup_url=provenance_url,
+    )
+    config = replace(
+        config,
+        model_track=daily_pipeline.CAUSAL_HCA_MODEL_TRACK,
+        model_code_revision="accepted-revision",
+        model_configuration_path=selection,
+        model_configuration_sha256=accepted.sha256,
+        model_provenance_matchup_url=provenance_url,
+    )
+    config.preseason_profiles_path.write_bytes(b"fixed profile artifact")
+    candidate = config.pipeline_root / "candidate"
+    candidate.mkdir(parents=True)
+    steps = CanonicalPipelineSteps(config, candidate, "orchestration-revision")
+    checked = []
+    monkeypatch.setattr(
+        daily_pipeline,
+        "require_model_implementation_compatible",
+        lambda root, revision: checked.append((root, revision)),
+    )
+
+    @contextmanager
+    def api(**kwargs):
+        assert kwargs["log_name"] == "context-api.log"
+        yield "http://127.0.0.1:12345"
+
+    monkeypatch.setattr(steps, "api", api)
+
+    def provider(url, *, court):
+        assert url == "http://127.0.0.1:12345/api/matchups"
+        assert court == "neutral"
+        return lambda *_args: ([1.0], [])
+
+    monkeypatch.setattr(replay, "_http_context_provider", provider)
+
+    def run(**kwargs):
+        assert kwargs["config"].sha256 == accepted.sha256
+        assert kwargs["code_revision"] == "accepted-revision"
+        assert kwargs["context_provider"](None, False, False) == ([1.0], [])
+
+    monkeypatch.setattr(replay, "replay_daily_model_chain", run)
+    steps.model(date(2026, 11, 2))
+    assert checked == [(config.code_root, "accepted-revision")]
+
+
+def test_model_implementation_compatibility_rejects_model_code_change(tmp_path):
+    from nba_lineup_model.orchestration.daily_pipeline import (
+        require_model_implementation_compatible,
+    )
+
+    repo = tmp_path / "repo"
+    model_file = repo / "src/nba_lineup_model/modeling/example.py"
+    model_file.parent.mkdir(parents=True)
+    model_file.write_text("VALUE = 1\n")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "accepted",
+        ],
+        check=True,
+    )
+    accepted = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    (repo / "README").write_text("orchestration-only\n")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "unrelated",
+        ],
+        check=True,
+    )
+    require_model_implementation_compatible(repo, accepted)
+    model_file.write_text("VALUE = 2\n")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "model change",
+        ],
+        check=True,
+    )
+    with pytest.raises(ValueError, match="explicitly approved causal replay"):
+        require_model_implementation_compatible(repo, accepted)
+
+
+def test_production_config_names_accepted_hca_lineage():
+    root = Path(__file__).parents[1]
+    config = json.loads(
+        (root / "deploy/gestalt-daily-production-config.json").read_text()
+    )
+    assert config["activate_after_validation"] is False
+    assert config["model_track"] == "causal_hca_replacement_candidate_v2"
+    assert config["model_code_revision"] == (
+        "1459c83f82b1fa50d901048e65bb39c9fd678204"
+    )
+    assert config["model_configuration_sha256"] == (
+        "558385560bbb2b2d518bceb847468e2f87900a33964191f54a4ecc2bd07534c3"
+    )
+    assert config["model_root"].endswith("/daily-model-causal-hca-v2")

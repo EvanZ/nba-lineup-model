@@ -25,6 +25,15 @@ from uuid import uuid4
 import pandas as pd
 
 from nba_lineup_model.season.slate_time import PACIFIC
+CAUSAL_HCA_MODEL_TRACK = "causal_hca_replacement_candidate_v2"
+MODEL_IMPLEMENTATION_PATHS = (
+    "src/nba_lineup_model/modeling",
+    "src/nba_lineup_model/season/daily_artifact_common.py",
+    "src/nba_lineup_model/season/daily_data_artifact.py",
+    "src/nba_lineup_model/season/daily_model_artifact.py",
+    "src/nba_lineup_model/season/daily_model_replay.py",
+    "src/nba_lineup_model/web_api/inference.py",
+)
 from nba_lineup_model.season.source_policy import require_clean_artifact_sources
 
 GIT_PREFLIGHT_TIMEOUT_SECONDS = 30
@@ -48,6 +57,11 @@ class DailyPipelineConfig:
     live_pointer: Path
     matchup_url: str
     season_start: date = date(2026, 10, 20)
+    model_track: str = "official_nba_daily_model_v1"
+    model_code_revision: str | None = None
+    model_configuration_path: Path | None = None
+    model_configuration_sha256: str | None = None
+    model_provenance_matchup_url: str | None = None
     season: str = "2026-27"
     activate_after_validation: bool = False
 
@@ -55,7 +69,7 @@ class DailyPipelineConfig:
     def read(cls, path: Path | str) -> "DailyPipelineConfig":
         raw = json.loads(Path(path).read_text())
         for key in cls.__dataclass_fields__:
-            if key.endswith(("_root", "_path", "_pointer")) and key in raw:
+            if key.endswith(("_root", "_path", "_pointer")) and raw.get(key) is not None:
                 raw[key] = Path(raw[key])
         if "season_start" in raw:
             raw["season_start"] = date.fromisoformat(raw["season_start"])
@@ -74,6 +88,21 @@ class DailyPipelineConfig:
                 raise ValueError(f"Pipeline output symlink escapes its environment: {path}")
         if not self.schedule_root.resolve().is_relative_to(boundary):
             raise ValueError("Dev and production cannot share a mutable schedule")
+        if self.model_track == CAUSAL_HCA_MODEL_TRACK:
+            if not all(
+                (
+                    self.model_code_revision,
+                    self.model_configuration_path,
+                    self.model_configuration_sha256,
+                    self.model_provenance_matchup_url,
+                )
+            ):
+                raise ValueError("Accepted HCA model provenance is incomplete")
+            assert self.model_configuration_path is not None
+            if not self.model_configuration_path.resolve(strict=True).is_relative_to(boundary):
+                raise ValueError("HCA configuration escapes its environment")
+        elif self.model_track != "official_nba_daily_model_v1":
+            raise ValueError(f"Unsupported daily model track: {self.model_track}")
 
 
 def expected_slate_ids(config: DailyPipelineConfig, game_date: date) -> set[str]:
@@ -190,6 +219,88 @@ def require_clean_code_revision(code_root: Path) -> str:
     return revision
 
 
+
+def require_model_implementation_compatible(
+    code_root: Path, accepted_revision: str
+) -> None:
+    """Refuse to extend a causal chain with changed model implementation code."""
+
+    try:
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(code_root),
+                "merge-base",
+                "--is-ancestor",
+                accepted_revision,
+                "HEAD",
+            ],
+            check=True,
+            timeout=GIT_PREFLIGHT_TIMEOUT_SECONDS,
+        )
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(code_root),
+                "diff",
+                "--quiet",
+                f"{accepted_revision}..HEAD",
+                "--",
+                *MODEL_IMPLEMENTATION_PATHS,
+            ],
+            timeout=GIT_PREFLIGHT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Model implementation compatibility check timed out") from error
+    except subprocess.CalledProcessError as error:
+        raise ValueError(
+            "Accepted model revision is not an ancestor of the tested code"
+        ) from error
+    if result.returncode != 0:
+        raise ValueError(
+            "Model implementation changed after the accepted revision; "
+            "an explicitly approved causal replay is required"
+        )
+
+
+def causal_hca_replay_config(config: DailyPipelineConfig):
+    """Reconstruct and verify the immutable accepted HCA replay settings."""
+
+    from nba_lineup_model.season.daily_artifact_common import file_sha256
+    from nba_lineup_model.season.daily_model_replay import CausalHcaReplayConfig
+
+    if config.model_track != CAUSAL_HCA_MODEL_TRACK:
+        raise ValueError("Daily model track is not the accepted causal HCA model")
+    assert config.model_configuration_path is not None
+    assert config.model_provenance_matchup_url is not None
+    payload = json.loads(config.model_configuration_path.read_text())
+    if payload.get("candidate_id") != CAUSAL_HCA_MODEL_TRACK:
+        raise ValueError("HCA configuration candidate identity mismatch")
+    if payload.get("target_season") != config.season:
+        raise ValueError("HCA configuration season mismatch")
+    replay_config = CausalHcaReplayConfig(
+        season=config.season,
+        home_court_prior_mean=float(payload["prior_mean"]),
+        home_court_prior_equivalent_possessions=float(
+            payload["prior_equivalent_possessions"]
+        ),
+        home_court_observation_variance_per_100=float(
+            payload["observation_variance_per_100"]
+        ),
+        home_court_prior_source=(
+            "artifact://causal-hca-prior/"
+            + file_sha256(config.model_configuration_path)
+        ),
+        matchup_url=config.model_provenance_matchup_url,
+    )
+    if replay_config.sha256 != config.model_configuration_sha256:
+        raise ValueError(
+            "HCA replay configuration does not match the accepted provenance"
+        )
+    return replay_config
+
 class CanonicalPipelineSteps:
     """The only production backend; tests replace I/O at this boundary."""
     def __init__(self, config: DailyPipelineConfig, candidate: Path, revision: str):
@@ -240,7 +351,20 @@ class CanonicalPipelineSteps:
         from nba_lineup_model.season.daily_model_replay import DailyModelReplayConfig, _http_context_provider, replay_daily_model_chain
         from nba_lineup_model.season.daily_artifact_common import file_sha256
         config = self.config
-        base = DailyModelReplayConfig(season=config.season, matchup_url=config.matchup_url)
+        if config.model_track == CAUSAL_HCA_MODEL_TRACK:
+            assert config.model_code_revision is not None
+            require_model_implementation_compatible(
+                config.code_root, config.model_code_revision
+            )
+            base = causal_hca_replay_config(config)
+            context_court = "neutral"
+            provenance_revision = config.model_code_revision
+        else:
+            base = DailyModelReplayConfig(
+                season=config.season, matchup_url=config.matchup_url
+            )
+            context_court = "unit_home"
+            provenance_revision = self.revision
         # Context is evaluated against fixed profiles and the installed immutable
         # model bundle, never whichever player universe the public API serves.
         context_identity = {
@@ -248,13 +372,21 @@ class CanonicalPipelineSteps:
             "model_release": str(self.runtime_root),
             "profiles_sha256": file_sha256(config.preseason_profiles_path),
         }
-        replay_config = DailyModelReplayConfig(
-            season=config.season,
-            matchup_url="isolated://frozen-context",
-            context_model_version=json.dumps(context_identity, sort_keys=True),
+        replay_config = (
+            base
+            if config.model_track == CAUSAL_HCA_MODEL_TRACK
+            else DailyModelReplayConfig(
+                season=config.season,
+                matchup_url="isolated://frozen-context",
+                context_model_version=json.dumps(context_identity, sort_keys=True),
+            )
         )
         with self.api(log_name="context-api.log") as api:
-            provider = _http_context_provider(api + "/api/matchups")
+            provider = (
+                _http_context_provider(api + "/api/matchups", court=context_court)
+                if config.model_track == CAUSAL_HCA_MODEL_TRACK
+                else _http_context_provider(api + "/api/matchups")
+            )
             def strict_context(stints, home_b2b, away_b2b):
                 offsets, warnings = provider(stints, home_b2b, away_b2b)
                 if warnings:
@@ -268,7 +400,7 @@ class CanonicalPipelineSteps:
                 data_root=config.data_root,
                 output_root=config.model_root,
                 config=replay_config,
-                code_revision=self.revision,
+                code_revision=provenance_revision,
                 context_provider=strict_context,
                 approved_historical_replay_from=self.approved_historical_model_replay_from,
             )

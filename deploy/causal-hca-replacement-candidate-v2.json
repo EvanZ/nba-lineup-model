@@ -1,0 +1,18 @@
+{
+  "back_to_back_policy": "unchanged_fixed_existing_schedule_control",
+  "candidate_id": "causal_hca_replacement_candidate_v2",
+  "context_metadata_sha256": "d287b289d9139ddaa3e3a85024394843197f01a1c08bacdbcaa30e4d544cd2b7",
+  "forward_mae": 0.4992185390273032,
+  "forward_rmse": 0.5786312894063937,
+  "forward_validation_rows": 21,
+  "lookahead_target_season_rows_used": 0,
+  "method_metrics_json": "{\"ar1\": {\"bias\": 0.34991881970038563, \"mae\": 0.5156718743864078, \"rmse\": 0.6523704869069176}, \"expanding_mean\": {\"bias\": 0.7765807316301082, \"mae\": 0.7864043953180969, \"rmse\": 0.9846999581900853}, \"last_season\": {\"bias\": 0.0686018933100005, \"mae\": 0.4992185390273032, \"rmse\": 0.5786312894063937}, \"rolling_3\": {\"bias\": 0.16540101010632421, \"mae\": 0.4864423214551098, \"rmse\": 0.5923348825319525}}",
+  "observation_variance_per_100": 14358.128916355508,
+  "possession_predictions_sha256": "cfc98ef4345e14079106baf44574823f68edbe578fd5cfd051bfec6f6105e158",
+  "prior_equivalent_possessions": 42883.87482466509,
+  "prior_mean": 1.6915705750166747,
+  "prior_variance": 0.3348141690801058,
+  "source_through_season": "2025-26",
+  "target_season": "2026-27",
+  "transition_method": "last_season"
+}

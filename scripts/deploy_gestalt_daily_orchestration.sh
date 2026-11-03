@@ -58,6 +58,17 @@ if [[ ! -d "$release" ]]; then
 fi
 test "$(git -C "$release" rev-parse HEAD)" = "$commit"
 test -z "$(git -C "$release" status --porcelain)"
+model_configuration_source="$release/deploy/causal-hca-replacement-candidate-v2.json"
+model_configuration_target="$(dirname "$CONFIG")/prior/causal_hca_selection.json"
+sudo install -d -o ubuntu -g ubuntu "$(dirname "$model_configuration_target")"
+if [[ -f "$model_configuration_target" ]] &&
+   ! cmp -s "$model_configuration_source" "$model_configuration_target"; then
+  restore_daily_daemon
+  trap - ERR
+  printf 'Refusing to overwrite a different accepted HCA configuration\n' >&2
+  exit 1
+fi
+sudo install -m 0644 "$model_configuration_source" "$model_configuration_target"
 
 PYTHONPATH="$release/src" /opt/nba-gestalt/current/.venv/bin/python -c \
   'from dagster import Definitions; from nba_lineup_model.orchestration.daily_definitions import defs; Definitions.validate_loadable(defs)'
