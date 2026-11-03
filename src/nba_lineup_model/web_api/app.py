@@ -480,8 +480,15 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         state_dir = Path(
             os.environ.get("GESTALT_SCHEDULE_STATE_DIR", "/var/lib/nba-gestalt/schedule")
         )
+        live_score_state_dir = os.environ.get("GESTALT_LIVE_SCORE_STATE_DIR")
         try:
-            return read_schedule_day(date, state_dir=state_dir)
+            return read_schedule_day(
+                date,
+                state_dir=state_dir,
+                live_score_state_dir=(
+                    Path(live_score_state_dir) if live_score_state_dir else None
+                ),
+            )
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 

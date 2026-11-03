@@ -1068,10 +1068,12 @@ def read_schedule_day(
     game_date: str,
     *,
     state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    live_score_state_dir: Path | str | None = None,
 ) -> dict[str, object]:
     """Read the latest board with immutable pregame and final audit records."""
 
-    path = Path(state_dir) / "latest" / f"{game_date}.json"
+    state_root = Path(state_dir)
+    path = state_root / "latest" / f"{game_date}.json"
     if not path.is_file():
         return {
             "available": False,
@@ -1085,13 +1087,51 @@ def read_schedule_day(
     games = payload.get("games", [])
     if not isinstance(games, list):
         raise ValueError(f"Invalid schedule games payload: {path}")
+    observation_root = (
+        Path(live_score_state_dir)
+        if live_score_state_dir is not None
+        else state_root
+    )
+    observation_path = observation_root / "latest" / f"{game_date}.json"
+    if observation_root != state_root and observation_path.is_file():
+        observations = json.loads(observation_path.read_text())
+        observed_games = (
+            observations.get("games")
+            if isinstance(observations, dict)
+            else None
+        )
+        if not isinstance(observed_games, list):
+            raise ValueError(f"Invalid live-score games payload: {observation_path}")
+        by_id = {
+            str(game.get("game_id")): game
+            for game in observed_games
+            if isinstance(game, dict) and game.get("game_id")
+        }
+        for game in games:
+            if not isinstance(game, dict) or not game.get("game_id"):
+                continue
+            observed = by_id.get(str(game["game_id"]))
+            if observed is None:
+                continue
+            for team_key in ("away_team", "home_team"):
+                if observed.get(team_key) != game.get(team_key):
+                    raise ValueError(
+                        f"Live-score {team_key} mismatch for {game['game_id']}"
+                    )
+            for key in ("away_score", "home_score", "status"):
+                if key in observed:
+                    game[key] = copy.deepcopy(observed[key])
+        if observations.get("live_score_collected_at"):
+            payload["live_score_collected_at"] = observations[
+                "live_score_collected_at"
+            ]
     for game in games:
         if not isinstance(game, dict):
             continue
         game_id = str(game.get("game_id", "")).strip()
         if not game_id:
             continue
-        frozen_path = Path(state_dir) / "frozen" / f"{game_id}.json"
+        frozen_path = state_root / "frozen" / f"{game_id}.json"
         if frozen_path.is_file():
             frozen = json.loads(frozen_path.read_text())
             if isinstance(frozen, dict):
@@ -1101,7 +1141,7 @@ def read_schedule_day(
                     game_id=game_id,
                 )
         final_path = (
-            Path(state_dir) / "final" / f"{game_id}.summary.json"
+            state_root / "final" / f"{game_id}.summary.json"
         )
         if final_path.is_file():
             final_audit = json.loads(final_path.read_text())
@@ -1111,7 +1151,7 @@ def read_schedule_day(
                 if isinstance(retrospective, dict):
                     game["retrospective"] = retrospective
     payload["available"] = True
-    manifest_path = Path(state_dir) / "manifest.json"
+    manifest_path = state_root / "manifest.json"
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text())
         if isinstance(manifest, dict):

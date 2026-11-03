@@ -14,6 +14,7 @@ Environment=PYTHONPATH=/var/lib/nba-gestalt-dev/live-release/code/src
 Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt-dev/live-release/current-season-serving
 Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt-dev/live-release/current-season-lineups
 Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt-dev/live-release/schedule
+Environment=GESTALT_LIVE_SCORE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
 Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt-dev/live-release/catalog/games.parquet
 Environment=GESTALT_SITE_RELEASE_ROOT=/var/lib/nba-gestalt-dev/live-release/site-releases
 EnvironmentFile=/var/lib/nba-gestalt-dev/live-release/site-release.env

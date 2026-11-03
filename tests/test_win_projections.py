@@ -644,6 +644,75 @@ def test_schedule_day_attaches_immutable_final_audit(tmp_path) -> None:
     )
 
 
+def test_schedule_day_overlays_live_scores_without_changing_frozen_projection(
+    tmp_path,
+) -> None:
+    release_root = tmp_path / "release"
+    observation_root = tmp_path / "observations"
+    release_latest = release_root / "latest" / "2026-11-02.json"
+    observation_latest = observation_root / "latest" / "2026-11-02.json"
+    frozen = release_root / "frozen" / "0022600160.json"
+    for path in (release_latest, observation_latest, frozen):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    release_board = {
+        "games": [
+            {
+                "game_id": "0022600160",
+                "away_team": "ATL",
+                "home_team": "IND",
+                "away_score": 0,
+                "home_score": 0,
+                "status": {"state": "pre", "period": 0},
+                "projection": {"home_margin": -8.25},
+            }
+        ]
+    }
+    release_latest.write_text(json.dumps(release_board))
+    frozen_payload = {
+        "game_id": "0022600160",
+        "projection": {"home_margin": -8.25},
+    }
+    frozen.write_text(json.dumps(frozen_payload))
+    observation_latest.write_text(
+        json.dumps(
+            {
+                "live_score_collected_at": "2026-11-03T01:02:00Z",
+                "games": [
+                    {
+                        "game_id": "0022600160",
+                        "away_team": "ATL",
+                        "home_team": "IND",
+                        "away_score": 32,
+                        "home_score": 23,
+                        "status": {
+                            "state": "in",
+                            "period": 2,
+                            "display_clock": "PT08M12.00S",
+                        },
+                    }
+                ],
+            }
+        )
+    )
+
+    payload = read_schedule_day(
+        "2026-11-02",
+        state_dir=release_root,
+        live_score_state_dir=observation_root,
+    )
+
+    game = payload["games"][0]
+    assert (game["away_score"], game["home_score"]) == (32, 23)
+    assert game["status"] == {
+        "state": "in",
+        "period": 2,
+        "display_clock": "PT08M12.00S",
+    }
+    assert game["pregame"]["projection"]["home_margin"] == -8.25
+    assert json.loads(release_latest.read_text()) == release_board
+    assert json.loads(frozen.read_text()) == frozen_payload
+
+
 def test_schedule_day_renders_verified_attribution_for_legacy_freeze(tmp_path) -> None:
     latest = tmp_path / "latest" / "2026-11-01.json"
     frozen_path = tmp_path / "frozen" / "0022600154.json"
