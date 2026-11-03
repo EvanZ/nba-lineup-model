@@ -16,7 +16,7 @@ Environment=AWS_REGION=us-west-1
 Environment=GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1
 Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
 Environment=GESTALT_MODEL_INPUT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
-Environment=GESTALT_SCHEDULE_S3_URI=s3://nba-gestalt-data/nba-gestalt/schedule/model_track=updated_ratings_updated_minutes
+Environment=GESTALT_SCHEDULE_S3_URI=s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2
 Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt/catalog/games.parquet
 Environment=GESTALT_SCHEDULE_API_URL=http://127.0.0.1:8010/api/win-projections
 EnvironmentFile=-/etc/nba-gestalt/dagster.env
