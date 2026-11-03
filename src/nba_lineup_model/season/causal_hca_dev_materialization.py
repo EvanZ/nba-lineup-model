@@ -247,9 +247,9 @@ def materialize_causal_hca_dev_schedule(
         "output_schedule_sha256": _tree_sha256(output),
         "probability_scale": probability_scale,
         "source_data_mutations": 0,
-        "runtime_espn_dependencies": 0,
+        "runtime_forbidden_provider_dependencies": 0,
     }
-    _write_json(output / "causal_hca_materialization.json", report)
+    _write_json(output.parent / f"{output.name}.materialization.json", report)
     return report
 
 
