@@ -436,3 +436,36 @@ def test_api_gate_rejects_stale_wins_page_state():
             serving_sha="s" * 64,
             lineup_sha="l" * 64,
         )
+
+def test_schedule_audit_grandfathers_only_immutable_available_zero_rows():
+    displayed = {
+        "player_id": 1,
+        "player_name": "Player",
+        "projected_nail": 1.0,
+        "projected_minutes": 240.0,
+        "expected_contribution": 5.0,
+    }
+    game = {
+        "projection": {"home_margin": 1.0, "ledger": _ledger(actual=False)},
+        "projected_minutes": {
+            "away": [displayed],
+            "home": [displayed],
+        },
+        "injury_report": {
+            "assumptions": [
+                {
+                    "player_id": 2,
+                    "player_name": "Reported Available",
+                    "status": "Available",
+                    "projected_minutes": 0.0,
+                }
+            ]
+        },
+    }
+
+    subject._require_schedule_projected_minutes(game, game_id="immutable-game")
+    game["injury_report"]["assumptions"][0]["status"] = "Out"
+    with pytest.raises(ValueError, match="lack displayed attribution"):
+        subject._require_schedule_projected_minutes(
+            game, game_id="immutable-game"
+        )

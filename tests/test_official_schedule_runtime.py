@@ -697,7 +697,16 @@ def test_candidate_reprojection_consumes_captured_sources_only(
                 "reason": "Right ankle",
                 "play_probability": 0.5,
                 "projected_minutes": 0.0,
-            }
+            },
+            {
+                "player_id": 3,
+                "player_name": "Away Three",
+                "team": "AAA",
+                "status": "Available",
+                "reason": "G League - Two-Way",
+                "play_probability": 1.0,
+                "projected_minutes": 0.0,
+            },
         ],
     }
     payload = {
@@ -720,7 +729,9 @@ def test_candidate_reprojection_consumes_captured_sources_only(
         ],
     }
     latest.write_text(json.dumps(payload))
-    monkeypatch.setattr(runtime, "_fetch_json", lambda _url: _forecast())
+    forecast = _forecast()
+    forecast["minutes"]["initial_rotation_size"] = 2
+    monkeypatch.setattr(runtime, "_fetch_json", lambda _url: forecast)
     monkeypatch.setattr(
         runtime,
         "_fetch_latest_official_injury_report",
@@ -758,6 +769,13 @@ def test_candidate_reprojection_consumes_captured_sources_only(
         if row["player_id"] == 4
     )
     assert home_star["status"] == "Questionable"
+    away_three = next(
+        row
+        for row in updated["projected_minutes"]["away"]
+        if row["player_id"] == 3
+    )
+    assert away_three["projected_minutes"] == 0.0
+    assert away_three["reason"] == "G League - Two-Way"
     assert home_star["reason"] == "Right ankle"
 
 

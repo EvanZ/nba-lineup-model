@@ -642,6 +642,13 @@ def _require_schedule_projected_minutes(
             if isinstance(row, dict)
             and row.get("player_id") is not None
             and int(row["player_id"]) not in projected_ids
+            and not (
+                str(row.get("status")) == "Available"
+                and row.get("projected_minutes") is not None
+                and math.isclose(
+                    float(row["projected_minutes"]), 0.0, abs_tol=1e-10
+                )
+            )
         )
         if missing:
             raise ValueError(

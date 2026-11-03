@@ -2691,6 +2691,7 @@ def _game_rotation(
         )
         if float(row["projected_minutes"]) > 0.0
         or row["status"] not in {"Available", "Report pending"}
+        or _normalized_player_name(row["player_name"]) in official
     ]
     return {
         "team_strength": team_strength,
