@@ -6,7 +6,7 @@ After=network.target gestalt-web.service
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/opt/nba-gestalt-web-dev/current
+WorkingDirectory=/opt/nba-gestalt/current
 Environment=PYTHONUNBUFFERED=1
 Environment=GESTALT_DAILY_PIPELINE_ROOT=/var/lib/nba-gestalt-dev/daily-pipeline
 Environment=GESTALT_SCHEDULE_LOCK_PATH=/var/lib/nba-gestalt-dev/.schedule-writer.lock

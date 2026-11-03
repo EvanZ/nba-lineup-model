@@ -77,6 +77,7 @@ def test_dev_web_uses_an_isolated_content_addressed_runtime() -> None:
     unit = (ROOT / "deploy" / "gestalt-web-dev.service").read_text()
     assert "/opt/nba-gestalt-web-dev/current/bin/uvicorn" in unit
     assert "/opt/nba-gestalt/current/.venv/bin/uvicorn" not in unit
+    assert "WorkingDirectory=/opt/nba-gestalt/current" in unit
     assert "PYTHONPATH=/home/ubuntu/nba-lineup-model/src" in unit
 
     installer = (ROOT / "scripts" / "ensure_gestalt_web_environment.sh").read_text()
