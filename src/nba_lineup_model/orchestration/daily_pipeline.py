@@ -393,7 +393,7 @@ def prepare_daily_release(
                 from nba_lineup_model.orchestration.daily_activation import activate_daily_release
                 activate_daily_release(config, report)
             return report
-        except Exception as error:
+        except BaseException as error:
             if report.get("status") not in {"activation_failed", "rollback_failed"}:
                 report.update(status="failed", error=f"{type(error).__name__}: {error}")
             _report(report_root, report)

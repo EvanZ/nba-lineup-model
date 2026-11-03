@@ -14,6 +14,42 @@ if [[ -n "$(git -C "$SOURCE_REPO" status --porcelain)" ]]; then
   exit 1
 fi
 
+daemon_was_active=false
+if systemctl is-active --quiet gestalt-daily-daemon; then
+  daemon_was_active=true
+  sudo systemctl stop gestalt-daily-daemon
+fi
+restore_daily_daemon() {
+  if [[ "$daemon_was_active" == true ]]; then
+    sudo systemctl start gestalt-daily-daemon || true
+  fi
+}
+trap restore_daily_daemon ERR
+
+active_runs="$(
+  /usr/bin/python3 - "$STATE_ROOT/history/runs.db" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.is_file():
+    print(0)
+else:
+    connection = sqlite3.connect(path)
+    statuses = ("QUEUED", "STARTING", "STARTED", "CANCELING")
+    placeholders = ",".join("?" for _ in statuses)
+    query = f"select count(*) from runs where status in ({placeholders})"
+    print(connection.execute(query, statuses).fetchone()[0])
+PY
+)"
+if [[ "$active_runs" != 0 ]]; then
+  restore_daily_daemon
+  trap - ERR
+  printf 'Refusing daily deployment while %s run(s) are active\n' "$active_runs" >&2
+  exit 1
+fi
+
 commit="$(git -C "$SOURCE_REPO" rev-parse "$REF^{commit}")"
 release="$APP_ROOT/releases/$(git -C "$SOURCE_REPO" rev-parse --short=12 "$commit")"
 sudo install -d -o "$USER" -g "$(id -gn)" "$APP_ROOT/releases"
@@ -44,4 +80,5 @@ for service in gestalt-daily-code-server gestalt-daily-webserver gestalt-daily-d
   test "$(systemctl is-active "$service")" = active
 done
 
+trap - ERR
 printf 'Deployed isolated daily Dagster services at %s\n' "$commit"

@@ -402,3 +402,43 @@ def test_post_activation_production_gate_checks_full_player_history(
             "daily_model_root": config.model_root,
         }
     ]
+
+
+def test_daily_deploy_stops_daemon_and_rejects_active_runs():
+    script = (
+        Path(__file__).parents[1]
+        / "scripts/deploy_gestalt_daily_orchestration.sh"
+    ).read_text()
+
+    stop = script.index("systemctl stop gestalt-daily-daemon")
+    switch = script.index('sudo mv -Tf "$temporary" "$APP_ROOT/current"')
+    assert stop < switch
+    assert '"QUEUED", "STARTING", "STARTED", "CANCELING"' in script
+    assert "Refusing daily deployment while" in script
+
+
+def test_interrupted_daily_stage_writes_terminal_report(tmp_path):
+    config = config_fixture(tmp_path)
+
+    class Steps:
+        def __init__(self, _config, candidate, _revision):
+            self.candidate = candidate
+
+        def data(self, _target):
+            raise KeyboardInterrupt("injected deployment interrupt")
+
+    with pytest.raises(KeyboardInterrupt, match="deployment interrupt"):
+        prepare_daily_release(
+            config,
+            date(2026, 10, 20),
+            steps_class=Steps,
+        )
+    report = json.loads(
+        (
+            config.pipeline_root
+            / "reports/2026-10-20/report.json"
+        ).read_text()
+    )
+    assert report["status"] == "failed"
+    assert report["stage"] == "data"
+    assert report["error"].startswith("KeyboardInterrupt:")

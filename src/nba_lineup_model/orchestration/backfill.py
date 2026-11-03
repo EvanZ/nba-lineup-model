@@ -172,7 +172,7 @@ def run_backfill(config: DailyPipelineConfig, *, end_date: date, start_date: dat
                 status.update(status="activated", stage="complete")
                 _report(report_root, status)
             return status
-        except Exception as error:
+        except BaseException as error:
             status.update(status="failed", error=f"{type(error).__name__}: {error}")
             if hasattr(error, "report"):
                 status["recovery"] = error.report

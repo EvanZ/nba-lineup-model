@@ -382,3 +382,23 @@ def test_stalled_daily_run_is_terminated_for_sensor_retry(tmp_path):
     result = orchestration._guard_inflight_daily_run(context, c, record, now)
     assert terminated == ["stalled-run"]
     assert "next sensor tick will retry" in result.skip_message
+
+
+def test_interrupted_backfill_writes_terminal_report(tmp_path):
+    c = setup_pipeline(tmp_path)
+
+    def interrupt(**_kwargs):
+        raise KeyboardInterrupt("injected deployment interrupt")
+
+    with pytest.raises(KeyboardInterrupt, match="deployment interrupt"):
+        backfill.run_backfill(
+            c,
+            end_date=date(2026, 10, 20),
+            recover=interrupt,
+        )
+    report = json.loads(
+        (c.pipeline_root / "reports/backfill/report.json").read_text()
+    )
+    assert report["status"] == "failed"
+    assert report["stage"] == "recover_inputs"
+    assert report["error"].startswith("KeyboardInterrupt:")
