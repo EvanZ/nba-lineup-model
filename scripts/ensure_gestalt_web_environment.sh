@@ -39,7 +39,15 @@ mkdir -p "$environments"
 exec 9>"$WEB_RUNTIME_ROOT/.environment-build.lock"
 flock 9
 
-if [[ ! -x "$target/bin/python" ]]; then
+runtime_is_valid() {
+  [[ -x "$target/bin/python" && -x "$target/bin/uvicorn" ]] && \
+    "$target/bin/uvicorn" --version >/dev/null 2>&1
+}
+
+if ! runtime_is_valid; then
+  if [[ -e "$target" ]]; then
+    mv "$target" "$environments/.invalid-requirements_sha256=$requirements_sha.$(date +%s).$$"
+  fi
   staging="$environments/.requirements_sha256=$requirements_sha.tmp.$$"
   cleanup() {
     if [[ -d "$staging" ]]; then
@@ -47,7 +55,7 @@ if [[ ! -x "$target/bin/python" ]]; then
     fi
   }
   trap cleanup EXIT
-  "$UV_BIN" venv --python 3.12 "$staging"
+  "$UV_BIN" venv --relocatable --python 3.12 "$staging"
   "$UV_BIN" pip install --python "$staging/bin/python" -r "$WEB_REQUIREMENTS"
   "$staging/bin/python" "$VALIDATOR" \
     --profile web \
@@ -56,6 +64,7 @@ if [[ ! -x "$target/bin/python" ]]; then
   mv "$staging" "$target"
   trap - EXIT
 fi
+runtime_is_valid || { printf 'Uvicorn entry point failed after runtime publication\n' >&2; exit 1; }
 
 "$target/bin/python" "$VALIDATOR" \
   --profile web \
