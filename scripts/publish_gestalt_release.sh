@@ -104,6 +104,7 @@ rsync -a \
   "$STAGING_DIR/deploy/"
 rsync -a \
   scripts/ensure_gestalt_orchestration_environment.sh \
+  scripts/ensure_gestalt_web_environment.sh \
   scripts/validate_gestalt_runtime_environment.py \
   "$STAGING_DIR/scripts/"
 printf '{\n  "run_id": "%s"\n}\n' "$RUN_ID" > "$STAGING_DIR/$MODEL_SEASON_ROOT/latest.json"

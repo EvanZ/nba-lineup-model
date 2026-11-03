@@ -73,6 +73,17 @@ def test_web_deploy_does_not_install_orchestration_into_web_environment() -> Non
     assert "--profile web" in script
 
 
+def test_dev_web_uses_an_isolated_content_addressed_runtime() -> None:
+    unit = (ROOT / "deploy" / "gestalt-web-dev.service").read_text()
+    assert "/opt/nba-gestalt-web-dev/current/bin/uvicorn" in unit
+    assert "/opt/nba-gestalt/current/.venv/bin/uvicorn" not in unit
+
+    installer = (ROOT / "scripts" / "ensure_gestalt_web_environment.sh").read_text()
+    assert "requirements_sha256=" in installer
+    assert "--profile web" in installer
+    assert "mv -Tf" in installer
+
+
 def test_validator_rejects_training_and_cuda_packages() -> None:
     validator = _validator_module()
     packages = {name: "1" for name in validator.REQUIRED["web"]}
