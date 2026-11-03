@@ -13,6 +13,7 @@ from nba_lineup_model.season.official_schedule_runtime import (
     _normalize_official_board,
     _publish_board,
     _reconcile_stale_scoreboard_games,
+    reproject_captured_schedule_window,
     _require_or_attach_frozen_attribution,
     refresh_official_live_score_state,
 )
@@ -671,3 +672,113 @@ def test_game_lifecycle_finalizes_every_serving_artifact_and_repairs_partial_fin
     assert json.loads(boxscore_path.read_text()) == boxscore
 
     assert frozen_path.read_bytes() == immutable_frozen
+
+def test_candidate_reprojection_consumes_captured_sources_only(
+    tmp_path, monkeypatch
+):
+    from nba_lineup_model.season import official_schedule_runtime as runtime
+
+    latest = tmp_path / "latest" / f"{GAME_DATE}.json"
+    latest.parent.mkdir(parents=True)
+    captured_injury = {
+        "artifact_sha256": "c" * 64,
+        "source_url": "https://official.example/injury.pdf",
+        "published_at": "2026-11-01T20:00:00-04:00",
+        "team_reports": {
+            "AAA": {"status": "submitted"},
+            "BBB": {"status": "submitted"},
+        },
+        "assumptions": [
+            {
+                "player_id": 4,
+                "player_name": "Home Star",
+                "team": "BBB",
+                "status": "Questionable",
+                "reason": "Right ankle",
+                "play_probability": 0.5,
+                "projected_minutes": 0.0,
+            }
+        ],
+    }
+    payload = {
+        "game_date": GAME_DATE,
+        "source_provenance": {"nba_schedule_sha256": "d" * 64},
+        "injury_report_artifact": {"sha256": "c" * 64},
+        "games": [
+            {
+                "game_id": GAME_ID,
+                "start_time": START,
+                "away_team": "AAA",
+                "home_team": "BBB",
+                "status": {"state": "pre", "completed": False},
+                "projection": {"home_margin": 99.0},
+                "projected_minutes": {"old": True},
+                "injury_report": captured_injury,
+                "market": {"source": "captured-market"},
+                "prediction_market": {"source": "captured-polymarket"},
+            }
+        ],
+    }
+    latest.write_text(json.dumps(payload))
+    monkeypatch.setattr(runtime, "_fetch_json", lambda _url: _forecast())
+    monkeypatch.setattr(
+        runtime,
+        "_fetch_latest_official_injury_report",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("nightly re-projection must not fetch injuries")
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_scoreboard_games",
+        lambda _root: (_ for _ in ()).throw(
+            AssertionError("nightly re-projection must not fetch scores")
+        ),
+    )
+
+    result = reproject_captured_schedule_window(
+        start_date=GAME_DATE,
+        days_ahead=0,
+        state_dir=tmp_path,
+        projection_url="http://candidate/api/win-projections",
+        now=datetime(2026, 11, 1, 12, tzinfo=UTC),
+    )
+
+    assert result["source_collection_requests"] == 0
+    assert result["reprojected_game_count"] == 1
+    updated = json.loads(latest.read_text())["games"][0]
+    assert updated["projection"]["home_margin"] != 99.0
+    assert updated["projected_minutes"] != {"old": True}
+    assert updated["injury_report"] == captured_injury
+    assert updated["market"] == {"source": "captured-market"}
+    assert updated["prediction_market"] == {"source": "captured-polymarket"}
+    home_star = next(
+        row
+        for row in updated["projected_minutes"]["home"]
+        if row["player_id"] == 4
+    )
+    assert home_star["status"] == "Questionable"
+    assert home_star["reason"] == "Right ankle"
+
+
+def test_candidate_reprojection_treats_uncaptured_zero_game_date_as_noop(
+    tmp_path, monkeypatch
+):
+    from nba_lineup_model.season import official_schedule_runtime as runtime
+
+    monkeypatch.setattr(runtime, "_fetch_json", lambda _url: _forecast())
+    result = reproject_captured_schedule_window(
+        start_date=GAME_DATE,
+        days_ahead=0,
+        state_dir=tmp_path,
+        projection_url="http://candidate/api/win-projections",
+        now=datetime(2026, 11, 1, 12, tzinfo=UTC),
+    )
+    assert result == {
+        "start_date": GAME_DATE,
+        "days_ahead": 0,
+        "reprojected_day_count": 0,
+        "reprojected_game_count": 0,
+        "missing_captured_dates": [GAME_DATE],
+        "source_collection_requests": 0,
+    }

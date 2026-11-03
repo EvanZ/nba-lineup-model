@@ -190,6 +190,132 @@ def refresh_official_schedule_window(
     }
 
 
+def reproject_captured_schedule_window(
+    *,
+    start_date: str,
+    days_ahead: int,
+    state_dir: Path | str,
+    projection_url: str,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Recompute only forward projections from already captured source state.
+
+    This path performs no NBA, odds, injury, score, or prediction-market
+    collection. The protected collectors own those mutable observations.
+    """
+
+    if days_ahead < 0:
+        raise ValueError("Schedule days ahead must be non-negative")
+    state_root = Path(state_dir)
+    first_date = date.fromisoformat(start_date)
+    forecast_response = _fetch_json(projection_url)
+    collected_at = (now or datetime.now(UTC)).astimezone(UTC)
+    reprojected_games = 0
+    reprojected_days = 0
+    missing_days: list[str] = []
+    for offset in range(days_ahead + 1):
+        game_date = first_date + timedelta(days=offset)
+        latest_path = state_root / "latest" / f"{game_date.isoformat()}.json"
+        if not latest_path.is_file():
+            missing_days.append(game_date.isoformat())
+            continue
+        payload = _read_object(latest_path)
+        games = payload.get("games")
+        if not isinstance(games, list):
+            raise ValueError(f"Captured schedule day has no games: {latest_path}")
+        changed = False
+        projection_state: dict[str, object] | None = None
+        for game in games:
+            if not isinstance(game, dict):
+                raise ValueError(f"Captured schedule day has an invalid game: {latest_path}")
+            if str(game.get("status", {}).get("state", "pre")) != "pre":
+                continue
+            game_id = str(game.get("game_id", ""))
+            away_team = str(game.get("away_team", ""))
+            home_team = str(game.get("home_team", ""))
+            injury = game.get("injury_report")
+            if not isinstance(injury, dict):
+                raise ValueError(f"Captured injury assumptions are missing: {game_id}")
+            assumptions = injury.get("assumptions")
+            team_reports = injury.get("team_reports")
+            if not isinstance(assumptions, list) or not isinstance(team_reports, dict):
+                raise ValueError(f"Captured injury assumptions are invalid: {game_id}")
+            artifact_sha = str(
+                injury.get("artifact_sha256")
+                or (payload.get("injury_report_artifact") or {}).get("sha256")
+                or ""
+            )
+            if not artifact_sha:
+                raise ValueError(f"Captured injury artifact identity is missing: {game_id}")
+            matchup = f"{away_team}@{home_team}"
+            scoped_reports = {
+                team: dict(report)
+                for team, report in team_reports.items()
+                if isinstance(report, dict)
+            }
+            captured_report = {
+                "source_url": injury.get("source_url"),
+                "published_at": injury.get("published_at"),
+                "players": [
+                    {
+                        **dict(row),
+                        "game_date": game_date.isoformat(),
+                        "matchup": matchup,
+                    }
+                    for row in assumptions
+                    if isinstance(row, dict)
+                ],
+                "team_reports": scoped_reports,
+                "game_team_reports": {
+                    f"{game_date.isoformat()}|{matchup}": scoped_reports
+                },
+            }
+            normalized = _normalize_official_board(
+                games=[
+                    {
+                        "game_id": game_id,
+                        "start_time": game["start_time"],
+                        "home_team": home_team,
+                        "away_team": away_team,
+                    }
+                ],
+                scoreboard={},
+                forecast_response=forecast_response,
+                injury_report=captured_report,
+                bookmaker_lines={},
+                prediction_markets={},
+                game_date=game_date.isoformat(),
+                collected_at=collected_at,
+                catalog_sha256=str(
+                    (payload.get("source_provenance") or {}).get(
+                        "nba_schedule_sha256", ""
+                    )
+                ),
+                injury_artifact={"sha256": artifact_sha},
+            )
+            replacement = normalized["games"][0]
+            game["projection"] = replacement["projection"]
+            game["projected_minutes"] = replacement["projected_minutes"]
+            projection_state = dict(normalized["projection_state"])
+            reprojected_games += 1
+            changed = True
+        if changed:
+            payload["projection_state"] = projection_state
+            payload["model_reprojected_at"] = collected_at.isoformat().replace(
+                "+00:00", "Z"
+            )
+            _write_json(latest_path, payload)
+            reprojected_days += 1
+    return {
+        "start_date": start_date,
+        "days_ahead": days_ahead,
+        "reprojected_day_count": reprojected_days,
+        "reprojected_game_count": reprojected_games,
+        "missing_captured_dates": missing_days,
+        "source_collection_requests": 0,
+    }
+
+
 @_serialized_schedule_write
 def refresh_official_live_score_state(
     *,

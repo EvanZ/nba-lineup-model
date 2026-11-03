@@ -447,13 +447,13 @@ class CanonicalPipelineSteps:
         from nba_lineup_model.season.dev_site_release import collect_api_validation, publish_dev_site_release
         from nba_lineup_model.season.production_site_release import stage_production_site_release
         from nba_lineup_model.season.schedule_artifact_contract import validate_schedule_artifacts
-        from nba_lineup_model.season.official_schedule_runtime import refresh_official_schedule_window
+        from nba_lineup_model.season.official_schedule_runtime import reproject_captured_schedule_window
         c, out = self.config, self.candidate
         before = _frozen_hashes(out / "schedule")
         with self.api() as api:
             # Only forward boards use the updated ratings/minutes. No historical
             # replay, changed frozen pregame, or postgame rating substitution.
-            refresh_official_schedule_window(start_date=(target + timedelta(days=1)).isoformat(), days_ahead=7, state_dir=out / "schedule", game_catalog_path=c.catalog_path, projection_url=api + "/api/win-projections", s3_uri=None)
+            reproject_captured_schedule_window(start_date=(target + timedelta(days=1)).isoformat(), days_ahead=7, state_dir=out / "schedule", projection_url=api + "/api/win-projections")
             if any(_frozen_hashes(out / "schedule").get(key) != value for key, value in before.items()):
                 raise ValueError("Nightly refresh changed a frozen forecast")
             validate_schedule_artifacts(out / "schedule")
