@@ -17,6 +17,15 @@ if [[ "$#" -ne 0 ]]; then
   exit 2
 fi
 
+UV_BIN="${GESTALT_UV_BIN:-}"
+if [[ -z "$UV_BIN" ]]; then
+  UV_BIN="$(command -v uv || true)"
+fi
+if [[ -z "$UV_BIN" && -x "$HOME/.local/bin/uv" ]]; then
+  UV_BIN="$HOME/.local/bin/uv"
+fi
+test -x "$UV_BIN" || { printf 'uv executable not found\n' >&2; exit 1; }
+
 WEB_REQUIREMENTS="$REQUIREMENTS_ROOT/web-requirements.txt"
 ORCHESTRATION_REQUIREMENTS="$REQUIREMENTS_ROOT/orchestration-requirements.txt"
 test -f "$WEB_REQUIREMENTS"
@@ -41,8 +50,8 @@ if [[ ! -x "$target/bin/python" ]]; then
     fi
   }
   trap cleanup EXIT
-  uv venv --python 3.12 "$staging"
-  uv pip install --python "$staging/bin/python" -r "$ORCHESTRATION_REQUIREMENTS"
+  "$UV_BIN" venv --python 3.12 "$staging"
+  "$UV_BIN" pip install --python "$staging/bin/python" -r "$ORCHESTRATION_REQUIREMENTS"
   "$staging/bin/python" "$VALIDATOR" \
     --profile orchestration \
     --requirements "$WEB_REQUIREMENTS" "$ORCHESTRATION_REQUIREMENTS" \

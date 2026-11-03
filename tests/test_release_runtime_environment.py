@@ -82,6 +82,7 @@ def test_dev_web_uses_an_isolated_content_addressed_runtime() -> None:
     assert "requirements_sha256=" in installer
     assert "--profile web" in installer
     assert "mv -Tf" in installer
+    assert '$HOME/.local/bin/uv' in installer
 
 
 def test_validator_rejects_training_and_cuda_packages() -> None:
