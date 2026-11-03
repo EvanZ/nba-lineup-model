@@ -323,3 +323,82 @@ def test_daily_systemd_boundary_is_separate_from_collectors_and_legacy():
         assert "collection_definitions" not in unit
     code_server = (root / "deploy/gestalt-daily-code-server.service").read_text()
     assert "orchestration.daily_definitions" in code_server
+    assert "MemoryHigh=750M" in code_server
+    assert "MemoryMax=1G" in code_server
+
+
+def test_git_preflight_timeout_is_visible_and_bounded(tmp_path, monkeypatch):
+    from nba_lineup_model.orchestration import daily_pipeline
+
+    config = config_fixture(tmp_path)
+
+    def blocked(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=30)
+
+    monkeypatch.setattr(daily_pipeline.subprocess, "check_output", blocked)
+    with pytest.raises(RuntimeError, match="Git preflight exceeded 30 seconds"):
+        prepare_daily_release(config, date(2026, 10, 20))
+
+    report = json.loads(
+        (
+            config.pipeline_root
+            / "reports/2026-10-20/report.json"
+        ).read_text()
+    )
+    assert report["status"] == "failed"
+    assert report["stage"] == "preflight"
+    assert "Git preflight exceeded 30 seconds" in report["error"]
+
+
+def test_post_activation_production_gate_checks_full_player_history(
+    tmp_path, monkeypatch
+):
+    import io
+    from nba_lineup_model.orchestration import daily_activation
+    from nba_lineup_model.season import dev_site_release
+
+    config = config_fixture(tmp_path)
+    release = config.pipeline_root / "release"
+    release.mkdir(parents=True)
+    manifest = {
+        "identity": {
+            "approved_release_sha256": "release-sha",
+            "evidence_through_date": "2026-10-20",
+            "game_count": 2,
+            "serving_bundle_sha256": "serving-sha",
+            "lineup_bundle_sha256": "lineup-sha",
+        },
+        "approved_manifest": {
+            "identity": {"schedule": {"final_game_count": 2}}
+        },
+    }
+    monkeypatch.setattr(
+        daily_activation,
+        "verify_production_site_release",
+        lambda _release: manifest,
+    )
+    health = {"site_release": {"release_sha256": "release-sha"}}
+    monkeypatch.setattr(
+        daily_activation.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: io.BytesIO(json.dumps(health).encode()),
+    )
+    seen = []
+    monkeypatch.setattr(
+        daily_activation,
+        "collect_api_validation",
+        lambda _api, **kwargs: seen.append(kwargs) or {},
+    )
+    monkeypatch.setattr(
+        dev_site_release,
+        "_normalize_api_validation",
+        lambda *_args, **_kwargs: {},
+    )
+
+    daily_activation.verify_environment_api(config, release)
+    assert seen == [
+        {
+            "evidence_date": "2026-10-20",
+            "daily_model_root": config.model_root,
+        }
+    ]

@@ -46,6 +46,10 @@ def _api_validation() -> dict[str, object]:
         "player_id": 201939,
         "lineup_count": 2,
         "scheduled_game_count": 1230,
+        "win_projection_as_of": "2026-10-31",
+        "win_projection_team_count": 30,
+        "wins_completed_team_games": 2,
+        "wins_record_team_games": 2,
         "season_performance_games": 1,
         "canonical_final_game_count": 1,
         "schedule_game_count": 5,
@@ -417,3 +421,18 @@ def test_api_gate_rejects_missed_game_absent_from_box(monkeypatch):
     result=release.collect_api_validation("http://test",evidence_date="2026-11-01",daily_model_root=Path("/model"))
     assert result["verified_player_opportunities"]==1
     assert result["verified_missed_game_logs"]==1
+
+
+def test_api_gate_rejects_stale_wins_page_state():
+    payload = _api_validation()
+    payload["wins_completed_team_games"] = 0
+
+    with pytest.raises(ValueError, match="wins_completed_team_games mismatch"):
+        subject._normalize_api_validation(
+            payload,
+            evidence_date="2026-10-31",
+            expected_game_count=1,
+            expected_final_game_count=1,
+            serving_sha="s" * 64,
+            lineup_sha="l" * 64,
+        )

@@ -43,6 +43,7 @@ from nba_lineup_model.season.slate_time import PACIFIC, summary_slate_date
 EASTERN = ZoneInfo("America/New_York")
 RETRY_POLICY = RetryPolicy(max_retries=3, delay=30)
 WORKLOAD_TAG = "gestalt/workload"
+DAILY_RUN_STALL_SECONDS = 2 * 60 * 60
 DEFAULT_SCHEDULE_STATE_DIR = Path("/var/lib/nba-gestalt/schedule")
 DEFAULT_SCHEDULE_API_URL = "http://127.0.0.1:8010/api/win-projections"
 DEFAULT_SCHEDULE_S3_URI = "s3://nba-gestalt-data/nba-gestalt/schedule"
@@ -1128,6 +1129,37 @@ def backfill_official_history_op(context: OpExecutionContext) -> dict[str, objec
 def backfill_official_history_job() -> None:
     backfill_official_history_op()
 
+def _daily_run_progress_timestamp(config, record) -> float:
+    timestamps = [record.update_timestamp.timestamp()]
+    game_date = record.dagster_run.tags.get("gestalt/game_date", "")
+    reports = [config.pipeline_root / "reports/backfill/report.json"]
+    if game_date:
+        reports.append(config.pipeline_root / f"reports/{game_date}/report.json")
+    timestamps.extend(path.stat().st_mtime for path in reports if path.is_file())
+    return max(timestamps)
+
+
+def _guard_inflight_daily_run(context, config, record, now):
+    run = record.dagster_run
+    age = now.timestamp() - _daily_run_progress_timestamp(config, record)
+    if age <= DAILY_RUN_STALL_SECONDS:
+        return SkipReason(f"Daily pipeline already queued/running: {run.run_id}")
+    if run.status == DagsterRunStatus.CANCELING:
+        raise RuntimeError(
+            f"Daily pipeline {run.run_id} has remained canceling without progress "
+            f"for {int(age)} seconds"
+        )
+    if not context.instance.run_launcher.terminate(run.run_id):
+        raise RuntimeError(
+            f"Daily pipeline {run.run_id} made no progress for {int(age)} seconds "
+            "and could not be terminated"
+        )
+    return SkipReason(
+        f"Terminated stalled daily pipeline {run.run_id} after {int(age)} seconds "
+        "without progress; the next sensor tick will retry"
+    )
+
+
 
 @sensor(name="complete_slate_daily_release", job=backfill_official_history_job, minimum_interval_seconds=300, default_status=DefaultSensorStatus.STOPPED)
 def complete_slate_daily_release_sensor(context: SensorEvaluationContext) -> RunRequest | SkipReason:
@@ -1165,9 +1197,17 @@ def complete_slate_daily_release_sensor(context: SensorEvaluationContext) -> Run
     if not missing:
         return SkipReason("All closed Pacific slates are complete")
     for name in ("backfill_official_history", "prepare_daily_site_release"):
-        inflight = context.instance.get_runs(filters=RunsFilter(job_name=name, statuses=(DagsterRunStatus.QUEUED, DagsterRunStatus.STARTING, DagsterRunStatus.STARTED, DagsterRunStatus.CANCELING)), limit=1)
+        active_statuses = (
+            DagsterRunStatus.QUEUED, DagsterRunStatus.STARTING,
+            DagsterRunStatus.STARTED, DagsterRunStatus.CANCELING,
+        )
+        inflight = [
+            record for record in context.instance.get_run_records(
+                filters=RunsFilter(job_name=name, statuses=active_statuses), limit=1
+            ) if record.dagster_run.status in active_statuses
+        ]
         if inflight:
-            return SkipReason(f"Daily pipeline already queued/running: {inflight[0].run_id}")
+            return _guard_inflight_daily_run(context, config, inflight[0], now)
     tags = {"gestalt/game_date": target.isoformat(), "gestalt/base_evidence_date": tip.isoformat()}
     attempts = context.instance.get_run_records(filters=RunsFilter(job_name="backfill_official_history", tags=tags), limit=3)
     if attempts:

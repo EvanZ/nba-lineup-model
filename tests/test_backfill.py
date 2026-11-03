@@ -337,3 +337,48 @@ def test_missing_daily_board_is_recovered_from_catalog_and_frozen_inputs(tmp_pat
     assert board['games'][0]['projection']['ledger']
     assert board['games'][0]['retrospective']['ledger']
     validate_schedule_artifacts(args['state_root'])
+
+
+def test_backfill_git_preflight_failure_is_reported(tmp_path, monkeypatch):
+    c = setup_pipeline(tmp_path)
+
+    def fail(_code_root):
+        raise RuntimeError("blocked Git preflight")
+
+    monkeypatch.setattr(backfill, "require_clean_code_revision", fail)
+    with pytest.raises(RuntimeError, match="blocked Git preflight"):
+        backfill.run_backfill(c, end_date=date(2026, 10, 20))
+
+    report = json.loads(
+        (c.pipeline_root / "reports/backfill/report.json").read_text()
+    )
+    assert report["status"] == "failed"
+    assert report["stage"] == "preflight"
+
+
+def test_stalled_daily_run_is_terminated_for_sensor_retry(tmp_path):
+    from types import SimpleNamespace
+
+    c = setup_pipeline(tmp_path)
+    now = datetime.now(UTC)
+    run = SimpleNamespace(
+        run_id="stalled-run",
+        status=DagsterRunStatus.STARTED,
+        tags={"gestalt/game_date": "2026-11-02"},
+    )
+    record = SimpleNamespace(
+        dagster_run=run,
+        update_timestamp=now - timedelta(hours=3),
+    )
+    terminated = []
+    context = SimpleNamespace(
+        instance=SimpleNamespace(
+            run_launcher=SimpleNamespace(
+                terminate=lambda run_id: terminated.append(run_id) or True
+            )
+        )
+    )
+
+    result = orchestration._guard_inflight_daily_run(context, c, record, now)
+    assert terminated == ["stalled-run"]
+    assert "next sensor tick will retry" in result.skip_message

@@ -41,7 +41,11 @@ def verify_environment_api(config: DailyPipelineConfig, release: Path) -> None:
             actual = health.get("site_release") or {}
             if actual.get("release_sha256") != expected["approved_release_sha256"]:
                 raise ValueError("Running API is not using the activated release")
-            validation = collect_api_validation(api, evidence_date=expected["evidence_through_date"])
+            validation = collect_api_validation(
+                api,
+                evidence_date=expected["evidence_through_date"],
+                daily_model_root=config.model_root,
+            )
             # Same full endpoint contracts as candidate preflight, not HTTP 200 alone.
             from nba_lineup_model.season.dev_site_release import _normalize_api_validation
             _normalize_api_validation(

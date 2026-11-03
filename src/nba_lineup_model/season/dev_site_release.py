@@ -327,6 +327,10 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
         {},
     )
     current_state = health.get("current_season_state") or {}
+    win_projection = wins.get("win_projection", {})
+    win_teams = win_projection.get("teams", [])
+    wins_completed_team_games = sum(int(row.get("completed_games", 0)) for row in win_teams)
+    wins_record_team_games = sum(int(row.get("actual_wins", 0)) + int(row.get("actual_losses", 0)) for row in win_teams)
     rating_state = rankings.get("rating_state") or {}
     lineup_state = lineups.get("lineup_state") or {}
     return {
@@ -345,8 +349,12 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
         "player_id": int(player.get("player_id", -1)),
         "lineup_count": len(lineups.get("lineups", [])),
         "scheduled_game_count": int(
-            wins.get("win_projection", {}).get("scheduled_game_count", -1)
+            win_projection.get("scheduled_game_count", -1)
         ),
+        "win_projection_as_of": str(win_projection.get("as_of", "")),
+        "win_projection_team_count": len(win_teams),
+        "wins_completed_team_games": wins_completed_team_games,
+        "wins_record_team_games": wins_record_team_games,
         "season_performance_games": int(season_window.get("games", -1)),
         "canonical_final_game_count": len(records.get("completed_game_ids", [])),
         "schedule_game_count": len(schedule.get("games", [])),
@@ -376,6 +384,8 @@ def _normalize_api_validation(
         "lineup_serving_bundle_sha256": serving_sha,
         "lineup_bundle_sha256": lineup_sha,
         "player_id": 201939,
+        "win_projection_as_of": evidence_date,
+        "win_projection_team_count": 30,
     }
     for key, expected in required_equal.items():
         if output.get(key) != expected:
@@ -400,6 +410,13 @@ def _normalize_api_validation(
             raise ValueError(f"Dev API validation has no {key.replace('_', ' ')}")
     if int(output.get("scheduled_game_count", 0)) < expected_game_count:
         raise ValueError("Dev win projection calendar is shorter than completed coverage")
+    expected_team_games = expected_game_count * 2
+    for key in ("wins_completed_team_games", "wins_record_team_games"):
+        if int(output.get(key, -1)) != expected_team_games:
+            raise ValueError(
+                f"Dev win projection {key} mismatch: "
+                f"expected {expected_team_games}, found {output.get(key)!r}"
+            )
     return output
 
 

@@ -19,8 +19,8 @@ ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster api grpc --host 127.0.0.1 -
 Restart=always
 RestartSec=5
 TimeoutStopSec=60
-MemoryHigh=500M
-MemoryMax=750M
+MemoryHigh=750M
+MemoryMax=1G
 Nice=10
 
 [Install]

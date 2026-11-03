@@ -10,14 +10,13 @@ import fcntl
 import hashlib
 import json
 import shutil
-import subprocess
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from nba_lineup_model.orchestration.daily_pipeline import (
     DailyPipelineConfig, _report, causal_schedule_sha256, prepare_daily_release,
-    require_complete_slate, schedule_lock,
+    require_clean_code_revision, require_complete_slate, schedule_lock,
 )
 from nba_lineup_model.season.backfill_recovery import recover_official_slate
 from nba_lineup_model.season.dev_site_release import _tree_sha256
@@ -57,9 +56,22 @@ def run_backfill(config: DailyPipelineConfig, *, end_date: date, start_date: dat
         except BlockingIOError as error:
             raise RuntimeError("Another backfill is already running") from error
         tip = evidence_date(config)
-        revision = subprocess.check_output(["git", "-C", str(config.code_root), "rev-parse", "HEAD"], text=True).strip()
-        if subprocess.check_output(["git", "-C", str(config.code_root), "status", "--porcelain", "--untracked-files=no"], text=True).strip():
-            raise ValueError("Commit tested code before backfill materialization")
+        status = {
+            "game_date": end_date.isoformat(),
+            "status": "running",
+            "stage": "preflight",
+            "requested_start_date": start_date.isoformat(),
+            "requested_end_date": end_date.isoformat(),
+            "days": [],
+        }
+        report_root = config.pipeline_root / "reports" / "backfill"
+        _report(report_root, status)
+        try:
+            revision = require_clean_code_revision(config.code_root)
+        except Exception as error:
+            status.update(status="failed", error=f"{type(error).__name__}: {error}")
+            _report(report_root, status)
+            raise
         with schedule_lock(config.schedule_root):
             require_clean_artifact_sources(config.schedule_root)
             source_sha = _tree_sha256(config.schedule_root)
@@ -77,8 +89,8 @@ def run_backfill(config: DailyPipelineConfig, *, end_date: date, start_date: dat
                 temporary.rename(schedule)
         journal_path = workspace / "checkpoint.json"
         journal = json.loads(journal_path.read_text()) if journal_path.exists() else {"completed_dates": {}}
-        status = {"game_date": end_date.isoformat(), "status": "running", "stage": "backfill", "source_schedule_sha256": source_sha, "requested_start_date": start_date.isoformat(), "requested_end_date": end_date.isoformat(), "days": []}
-        report_root = config.pipeline_root / "reports" / "backfill"
+        status.update(stage="backfill", source_schedule_sha256=source_sha)
+        _report(report_root, status)
         recover = recover or recover_official_slate
         prepare = prepare or prepare_daily_release
         last = None

@@ -27,6 +27,8 @@ import pandas as pd
 from nba_lineup_model.season.slate_time import PACIFIC
 from nba_lineup_model.season.source_policy import require_clean_artifact_sources
 
+GIT_PREFLIGHT_TIMEOUT_SECONDS = 30
+
 
 @dataclass(frozen=True)
 class DailyPipelineConfig:
@@ -162,6 +164,30 @@ def _report(root: Path, payload: dict) -> None:
     temporary = root / ".report.html.tmp"
     temporary.write_text(page)
     temporary.replace(root / "report.html")
+
+
+def require_clean_code_revision(code_root: Path) -> str:
+    """Return the tested revision or fail quickly on a blocked Git preflight."""
+
+    try:
+        revision = subprocess.check_output(
+            ["git", "-C", str(code_root), "rev-parse", "HEAD"],
+            text=True,
+            timeout=GIT_PREFLIGHT_TIMEOUT_SECONDS,
+        ).strip()
+        dirty = subprocess.check_output(
+            ["git", "-C", str(code_root), "status", "--porcelain", "--untracked-files=no"],
+            text=True,
+            timeout=GIT_PREFLIGHT_TIMEOUT_SECONDS,
+        ).strip()
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            "Daily pipeline Git preflight exceeded "
+            f"{GIT_PREFLIGHT_TIMEOUT_SECONDS} seconds"
+        ) from error
+    if dirty:
+        raise ValueError("Commit the tested pipeline code before materialization")
+    return revision
 
 
 class CanonicalPipelineSteps:
@@ -339,11 +365,9 @@ def prepare_daily_release(
         except BlockingIOError as error:
             raise RuntimeError("Another daily pipeline is already running") from error
         try:
+            _report(report_root, report)
             require_complete_slate(config, target)
-            revision = subprocess.check_output(["git", "-C", str(config.code_root), "rev-parse", "HEAD"], text=True).strip()
-            # The source tree must match the revision recorded in the artifact.
-            if subprocess.check_output(["git", "-C", str(config.code_root), "status", "--porcelain", "--untracked-files=no"], text=True).strip():
-                raise ValueError("Commit the tested pipeline code before materialization")
+            revision = require_clean_code_revision(config.code_root)
             candidate = config.pipeline_root / "candidates" / f"{target}-{uuid4().hex}"
             candidate.mkdir(parents=True)
             with schedule_lock(config.schedule_root):
