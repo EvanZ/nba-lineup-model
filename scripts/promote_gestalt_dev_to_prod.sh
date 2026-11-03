@@ -214,15 +214,13 @@ trap - EXIT
 backup_root="$STATE_ROOT/promotion-backups/$(date -u +%Y%m%dT%H%M%SZ)-$approved_release_sha"
 sudo install -d -o "$USER" -g "$(id -gn)" "$backup_root"
 sudo cp /etc/systemd/system/gestalt-web.service "$backup_root/gestalt-web.service"
-for unit in gestalt-collection-code-server.service gestalt-collection-webserver.service gestalt-collection-daemon.service; do
-  sudo cp "/etc/systemd/system/$unit" "$backup_root/$unit"
-done
 old_live_target=""
 if [[ -L "$LIVE_POINTER" ]]; then
   old_live_target="$(readlink -f "$LIVE_POINTER")"
 fi
 old_web_target="$(readlink "$PUBLIC_WEB" 2>/dev/null || true)"
-old_schedule_target="$(readlink -f "$SCHEDULE_CURRENT" 2>/dev/null || true)"
+canonical_schedule_target="$(readlink -f "$SCHEDULE_CURRENT" 2>/dev/null || true)"
+test -d "$canonical_schedule_target"
 old_code_target="$(readlink -f "$CODE_CURRENT" 2>/dev/null || true)"
 mutation_started=0
 
@@ -279,19 +277,12 @@ rollback() {
     if [[ -n "$old_web_target" ]]; then
       atomic_symlink "$old_web_target" "$PUBLIC_WEB"
     fi
-    if [[ -n "$old_schedule_target" ]]; then
-      atomic_symlink "$old_schedule_target" "$SCHEDULE_CURRENT"
-    fi
     if [[ -n "$old_code_target" ]]; then
       atomic_symlink "$old_code_target" "$CODE_CURRENT"
     fi
     sudo cp "$backup_root/gestalt-web.service" /etc/systemd/system/gestalt-web.service
-    for unit in gestalt-collection-code-server.service gestalt-collection-webserver.service gestalt-collection-daemon.service; do
-      sudo cp "$backup_root/$unit" "/etc/systemd/system/$unit"
-    done
     sudo systemctl daemon-reload
     sudo systemctl restart gestalt-web
-    sudo systemctl restart "${collector_services[@]}"
     sudo nginx -t && sudo systemctl reload nginx
   fi
   printf 'Production promotion failed; previous release restored\n' >&2
@@ -300,26 +291,20 @@ rollback() {
 trap rollback ERR
 
 mutation_started=1
-sudo systemctl stop "${collector_services[@]}"
 sudo systemctl stop \
   gestalt-dagster-daemon \
   gestalt-dagster-webserver \
   gestalt-dagster-code-server
 sudo install -m 0644 "$release_root/deploy/gestalt-web.service" \
   /etc/systemd/system/gestalt-web.service
-for unit in gestalt-collection-code-server.service gestalt-collection-webserver.service gestalt-collection-daemon.service; do
-  sudo install -m 0644 "$SOURCE_REPO/deploy/$unit" "/etc/systemd/system/$unit"
-done
 sudo env PYTHONPATH="$release_root/src" \
   "$PROD_RELEASE/.venv/bin/python" \
   -m nba_lineup_model.season.production_site_release switch \
   "$candidate" --live-pointer "$LIVE_POINTER" >/dev/null
 atomic_symlink "$LIVE_POINTER/web" "$PUBLIC_WEB"
-atomic_symlink "$schedule_overlay" "$SCHEDULE_CURRENT"
 atomic_symlink "$release_root" "$CODE_CURRENT"
 sudo systemctl daemon-reload
 sudo systemctl restart gestalt-web
-sudo systemctl restart "${collector_services[@]}"
 sudo nginx -t
 sudo systemctl reload nginx
 
@@ -330,6 +315,15 @@ for _ in {1..60}; do
   sleep 1
 done
 curl --fail --silent --show-error http://127.0.0.1:8010/api/health >/dev/null
+if [[ "$(readlink -f "$SCHEDULE_CURRENT")" != "$canonical_schedule_target" ]]; then
+  printf 'Production promotion changed the canonical live-observation pointer\n' >&2
+  false
+fi
+if ! systemctl show -p Environment --value gestalt-web | grep -q \
+  'GESTALT_LIVE_SCORE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current'; then
+  printf 'Production reader is not bound to the canonical live-observation root\n' >&2
+  false
+fi
 production_release_sha="$(curl --fail --silent http://127.0.0.1:8010/api/health | jq -er '.site_release.release_sha256')"
 if [[ "$production_release_sha" != "$approved_release_sha" ]]; then
   printf 'Production loaded release %s instead of %s\n' \

@@ -72,9 +72,21 @@ def test_promotion_uses_exact_reviewed_dev_runtime_and_clean_schedule_overlay():
     assert "dev_commit=\"$(jq -er '.identity.code_revision' \"$DEV_RUNTIME/runtime-manifest.json\")\"" in script
     assert 'DEV_SCHEDULE_ROOT="$DEV_RUNTIME/schedule-snapshot"' in script
     assert 'FRONTEND_DIST="${GESTALT_PROD_FRONTEND_DIST:-$DEV_RUNTIME/web}"' in script
-    assert '"$SOURCE_REPO/deploy/$unit"' in script
-    assert 'sudo systemctl restart "${collector_services[@]}"' in script
+    assert 'sudo systemctl stop "${collector_services[@]}"' not in script
+    assert 'sudo systemctl restart "${collector_services[@]}"' not in script
+    assert 'SOURCE_REPO/deploy/$unit' not in script
 
+
+
+def test_production_release_cannot_replace_canonical_live_observations():
+    root = Path(__file__).parents[1]
+    script = (root / "scripts" / "promote_gestalt_dev_to_prod.sh").read_text()
+    unit = (root / "deploy" / "gestalt-web.service").read_text()
+    assert 'atomic_symlink "$schedule_overlay" "$SCHEDULE_CURRENT"' not in script
+    assert 'canonical_schedule_target="$(readlink -f "$SCHEDULE_CURRENT"' in script
+    assert "Production promotion changed the canonical live-observation pointer" in script
+    assert "GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/live-release/schedule" in unit
+    assert "GESTALT_LIVE_SCORE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current" in unit
 
 def test_protected_collectors_write_only_to_clean_schedule_overlay():
     root = Path(__file__).parents[1]
