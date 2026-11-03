@@ -1659,7 +1659,7 @@ def read_schedule_performance(
     if not isinstance(manifest, dict):
         manifest = {}
     model_track = manifest.get("model_track")
-    replay_only = model_track == "updated_ratings_updated_minutes"
+    declared_model_track = str(model_track or "").strip()
     completed: list[tuple[str, dict[str, object]]] = []
     latest_archive_time: str | None = None
     final_dir = Path(state_dir) / "final"
@@ -1668,7 +1668,7 @@ def read_schedule_performance(
             payload = json.loads(path.read_text())
             if not isinstance(payload, dict) or payload.get("season") != season:
                 continue
-            if replay_only:
+            if declared_model_track:
                 pregame = payload.get("pregame")
                 pregame = pregame if isinstance(pregame, dict) else {}
                 forecast_version = pregame.get("forecast_version")
@@ -1678,15 +1678,21 @@ def read_schedule_performance(
                 projection = pregame.get("projection")
                 projection = projection if isinstance(projection, dict) else {}
                 belongs_to_updated_track = (
-                    payload.get("record_type")
-                    == "strict_forward_replay_final_game_audit"
-                    or forecast_version.get("model_track")
-                    == "updated_ratings_updated_minutes"
-                    or projection.get("model_track")
-                    == "updated_ratings_updated_minutes"
+                    forecast_version.get("model_track") == declared_model_track
+                    or projection.get("model_track") == declared_model_track
                     or (
-                        projection.get("state_kind") == "in_season_updated"
-                        and bool(projection.get("serving_bundle_sha256"))
+                        declared_model_track == "updated_ratings_updated_minutes"
+                        and (
+                            payload.get("record_type")
+                            == "strict_forward_replay_final_game_audit"
+                            or (
+                                projection.get("state_kind")
+                                == "in_season_updated"
+                                and bool(
+                                    projection.get("serving_bundle_sha256")
+                                )
+                            )
+                        )
                     )
                 )
                 if not belongs_to_updated_track:
@@ -1740,8 +1746,12 @@ def read_schedule_performance(
         "updated_at": latest_archive_time,
         "source": (
             "Strict-forward updated-ratings + updated-minutes replay"
-            if model_track == "updated_ratings_updated_minutes"
-            else "Immutable pregame snapshots and completed-game archive"
+            if declared_model_track == "updated_ratings_updated_minutes"
+            else (
+                "Causal HCA replacement candidate over immutable pregame inputs"
+                if declared_model_track == "causal_hca_replacement_candidate_v2"
+                else "Immutable pregame snapshots and completed-game archive"
+            )
         ),
         "model_track": model_track,
         "evaluation_cell": manifest.get("evaluation_cell"),

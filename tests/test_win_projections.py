@@ -1805,3 +1805,72 @@ def test_rotation_summary_includes_current_state_without_preseason_history(histo
     assert current["actual_total_minutes"]==22.0
     assert current["preseason_predicted_available_share"] is None
     assert current["predicted_minutes_per_available_game"]==20.0
+
+
+def test_candidate_track_performance_uses_manifest_declared_track(tmp_path) -> None:
+    candidate_track = "causal_hca_replacement_candidate_v2"
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "model_track": candidate_track,
+                "through_date": "2026-11-01",
+            }
+        )
+    )
+    final_dir = tmp_path / "final"
+    final_dir.mkdir()
+    common = {
+        "season": "2026-27",
+        "archived_at": "2026-11-02T06:30:00Z",
+        "start_time": "2026-11-02T02:00:00Z",
+        "record_type": "immutable_final_game_audit",
+        "final": {
+            "actual_home_margin": 4.0,
+            "status": {"completed": True},
+        },
+        "grading": {
+            "projected_home_margin": 2.0,
+            "projected_home_win_probability": 0.6,
+        },
+    }
+    (final_dir / "candidate.summary.json").write_text(
+        json.dumps(
+            {
+                **common,
+                "game_id": "0022600157",
+                "pregame": {
+                    "projection": {
+                        "model_track": candidate_track,
+                        "state_kind": "causal_reconstruction",
+                        "serving_bundle_sha256": "a" * 64,
+                    }
+                },
+            }
+        )
+    )
+    (final_dir / "prior-track.summary.json").write_text(
+        json.dumps(
+            {
+                **common,
+                "game_id": "0022600156",
+                "pregame": {
+                    "projection": {
+                        "model_track": "updated_ratings_updated_minutes",
+                        "state_kind": "in_season_updated",
+                        "serving_bundle_sha256": "b" * 64,
+                    }
+                },
+            }
+        )
+    )
+
+    payload = read_schedule_performance(state_dir=tmp_path)
+    season = payload["windows"][-1]
+
+    assert payload["model_track"] == candidate_track
+    assert payload["replay_through_date"] == "2026-11-01"
+    assert payload["source"] == (
+        "Causal HCA replacement candidate over immutable pregame inputs"
+    )
+    assert season["games"] == 1
+    assert season["probability"]["gestalt"]["n"] == 1

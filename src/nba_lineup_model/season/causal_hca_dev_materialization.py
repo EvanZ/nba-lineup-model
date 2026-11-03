@@ -69,6 +69,14 @@ def materialize_causal_hca_dev_schedule(
         raise ValueError("Slate coverage cannot end before model evidence")
     source_sha_before = _tree_sha256(source)
     shutil.copytree(source, output)
+    source_manifest = _read_json(source / "manifest.json")
+    source_manifest_identity = str(source_manifest.get("identity", ""))
+    source_pregame_hashes = source_manifest.get("pregame_sha256_by_game")
+    candidate_pregame_hashes = (
+        dict(source_pregame_hashes)
+        if isinstance(source_pregame_hashes, dict)
+        else {}
+    )
     states, preseason_ratings, prior_hca, prior_sha, preseason_sha = _load_states(
         model_root=model_root,
         preseason_rankings_path=Path(preseason_rankings_path).resolve(),
@@ -89,6 +97,7 @@ def materialize_causal_hca_dev_schedule(
     completed_games = 0
     pending_candidates = 0
     game_ids: list[str] = []
+    completed_game_ids: list[str] = []
     for latest_path in sorted((output / "latest").glob("*.json")):
         game_date = date.fromisoformat(latest_path.stem)
         if not start_date <= game_date <= slate_through_date:
@@ -117,6 +126,9 @@ def materialize_causal_hca_dev_schedule(
                 state=state,
                 probability_scale=probability_scale,
             )
+            candidate_pregame_hashes[game_id] = hashlib.sha256(
+                canonical_json(candidate_pregame)
+            ).hexdigest()
             served = copy.deepcopy(game)
             served["projection"] = copy.deepcopy(candidate_pregame["projection"])
             served["projected_minutes"] = copy.deepcopy(
@@ -156,6 +168,7 @@ def materialize_causal_hca_dev_schedule(
                 _write_json(summary_path, final_summary)
                 served["retrospective"] = copy.deepcopy(retrospective)
                 completed_games += 1
+                completed_game_ids.append(game_id)
             else:
                 start = datetime.fromisoformat(
                     str(served["start_time"]).replace("Z", "+00:00")
@@ -180,6 +193,45 @@ def materialize_causal_hca_dev_schedule(
             "Candidate completed-game coverage is "
             f"{completed_games}, expected {expected_completed}"
         )
+    candidate_manifest = copy.deepcopy(source_manifest)
+    candidate_manifest.update(
+        {
+            "candidate_id": "causal_hca_replacement_candidate_v2",
+            "model_track": "causal_hca_replacement_candidate_v2",
+            "evaluation_cell": "causal_hca_replacement_candidate_v2",
+            "through_date": evidence_through_date.isoformat(),
+            "game_ids": sorted(completed_game_ids),
+            "game_count": completed_games,
+            "source_manifest_identity": source_manifest_identity,
+            "source_schedule_sha256": source_sha_before,
+            "source_model_tip_sha256": source_manifest.get("model_tip_sha256"),
+            "model_tip_sha256": states[-1].bundle_sha256,
+            "pregame_sha256_by_game": {
+                game_id: candidate_pregame_hashes[game_id]
+                for game_id in sorted(candidate_pregame_hashes)
+            },
+        }
+    )
+    projection_controls = copy.deepcopy(
+        candidate_manifest.get("projection_controls") or {}
+    )
+    projection_controls.update(
+        {
+            "home_court": states[-1].home_court,
+            "home_court_candidate_id": "causal_hca_replacement_candidate_v2",
+            "home_court_contract": "strictly-prior daily posterior",
+        }
+    )
+    candidate_manifest["projection_controls"] = projection_controls
+    candidate_identity = {
+        key: value
+        for key, value in candidate_manifest.items()
+        if key != "identity"
+    }
+    candidate_manifest["identity"] = hashlib.sha256(
+        canonical_json(candidate_identity)
+    ).hexdigest()
+    _write_json(output / "manifest.json", candidate_manifest)
     report = {
         "status": "complete",
         "candidate_id": "causal_hca_replacement_candidate_v2",
