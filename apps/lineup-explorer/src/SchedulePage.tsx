@@ -734,11 +734,26 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
   const statusLabel = liveStatus(archived);
   const finalAudit = archived?.final_audit;
   const atsResult = finalAudit?.grading.market?.model_ats_result;
+  const nbaGameUrl = "https://www.nba.com/game/"
+    + game.away_team.toLowerCase()
+    + "-vs-"
+    + game.home_team.toLowerCase()
+    + "-"
+    + game.game_id;
 
   return (
     <article className="schedule-game-card">
       <div className="schedule-game-context">
-        <span className="schedule-game-time">{gameTime(archived?.start_time)}</span>
+        <a
+          className="schedule-game-time schedule-nba-game-link"
+          href={nbaGameUrl}
+          target="_blank"
+          rel="noreferrer"
+          title="Open game on NBA.com"
+          aria-label={"Open " + game.away_team + " at " + game.home_team + " on NBA.com"}
+        >
+          {gameTime(archived?.start_time)}
+        </a>
         <span>{(archived?.broadcasts ?? []).join(" · ") || "League Pass"}</span>
         <span className="schedule-game-status"><Radio size={11} aria-hidden="true" /> {statusLabel}</span>
         {archived?.status.completed && finalAudit && <div className="schedule-result-badges" aria-label="Model results">

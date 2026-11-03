@@ -12,6 +12,7 @@ from nba_lineup_model.season.official_schedule_runtime import (
     _build_official_actual_minutes_retrospective,
     _normalize_official_board,
     _publish_board,
+    _reconcile_stale_scoreboard_games,
     _require_or_attach_frozen_attribution,
     refresh_official_live_score_state,
 )
@@ -468,6 +469,97 @@ def test_live_score_watcher_cannot_strip_prediction_attribution(
         generated["projection"]["ledger"]["home_margin"]
     )
     assert game["projected_minutes"] == generated["projected_minutes"]
+
+
+def test_stale_scoreboard_pregame_is_reconciled_from_official_boxscore(
+    tmp_path, monkeypatch
+) -> None:
+    scoreboard = {
+        GAME_ID: {
+            "gameId": GAME_ID,
+            "gameStatus": 1,
+            "gameStatusText": "9:00 pm ET",
+            "homeTeam": {"teamTricode": "BBB", "score": 0},
+            "awayTeam": {"teamTricode": "AAA", "score": 0},
+        }
+    }
+    live_event = {
+        "gameId": GAME_ID,
+        "gameStatus": 2,
+        "gameStatusText": "Q1 8:59",
+        "gameClock": "PT08M59.00S",
+        "period": 1,
+        "homeTeam": {"teamTricode": "BBB", "score": 4},
+        "awayTeam": {"teamTricode": "AAA", "score": 3},
+    }
+    monkeypatch.setattr(
+        "nba_lineup_model.season.official_schedule_runtime.NbaCdnClient.fetch_boxscore",
+        lambda self, game_id, use_cache=False: SimpleNamespace(
+            payload={"game": live_event}
+        ),
+    )
+
+    result = _reconcile_stale_scoreboard_games(
+        games=[
+            {
+                "game_id": GAME_ID,
+                "start_time": START,
+                "away_team": "AAA",
+                "home_team": "BBB",
+            }
+        ],
+        scoreboard=scoreboard,
+        state_root=tmp_path,
+        observed_at=datetime(2026, 11, 1, 2, 11, tzinfo=UTC),
+    )
+
+    assert result == {
+        "reconciled_game_ids": [GAME_ID],
+        "unavailable_game_ids": [],
+    }
+    assert scoreboard[GAME_ID] == live_event
+
+
+def test_scoreboard_pregame_is_not_reconciled_before_grace_window(
+    tmp_path, monkeypatch
+) -> None:
+    scoreboard = {
+        GAME_ID: {
+            "gameId": GAME_ID,
+            "gameStatus": 1,
+            "gameStatusText": "9:00 pm ET",
+            "homeTeam": {"teamTricode": "BBB", "score": 0},
+            "awayTeam": {"teamTricode": "AAA", "score": 0},
+        }
+    }
+
+    def unexpected_fetch(*_args, **_kwargs):
+        raise AssertionError("game-level box score must not be polled before grace")
+
+    monkeypatch.setattr(
+        "nba_lineup_model.season.official_schedule_runtime.NbaCdnClient.fetch_boxscore",
+        unexpected_fetch,
+    )
+
+    result = _reconcile_stale_scoreboard_games(
+        games=[
+            {
+                "game_id": GAME_ID,
+                "start_time": START,
+                "away_team": "AAA",
+                "home_team": "BBB",
+            }
+        ],
+        scoreboard=scoreboard,
+        state_root=tmp_path,
+        observed_at=datetime(2026, 11, 1, 2, 9, 59, tzinfo=UTC),
+    )
+
+    assert result == {
+        "reconciled_game_ids": [],
+        "unavailable_game_ids": [],
+    }
+    assert scoreboard[GAME_ID]["gameStatus"] == 1
 
 
 def test_game_lifecycle_finalizes_every_serving_artifact_and_repairs_partial_final(

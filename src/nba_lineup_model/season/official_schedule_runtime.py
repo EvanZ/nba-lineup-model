@@ -16,7 +16,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from nba_lineup_model.ingest.nba_cdn import NbaCdnClient, RawJsonCache
+from nba_lineup_model.ingest.nba_cdn import (
+    NbaCdnClient,
+    NbaCdnError,
+    NbaCdnRequestGate,
+    RawJsonCache,
+)
 from nba_lineup_model.season.game_prediction_artifact import (
     build_actual_minutes_ledger,
     build_spread_ledger,
@@ -60,6 +65,7 @@ OFFICIAL_CONSENSUS_BOOKMAKERS = tuple(
     key for key in CONSENSUS_BOOKMAKERS if key.casefold() != "espnbet"
 )
 PREGAME_CANDIDATE_LEAD = timedelta(hours=2)
+STALE_SCOREBOARD_GRACE = timedelta(minutes=10)
 
 
 def _serialized_schedule_write(function):
@@ -200,10 +206,16 @@ def refresh_official_live_score_state(
     games = payload.get("games")
     if not isinstance(games, list):
         raise ValueError(f"Invalid schedule games payload: {latest_path}")
-    scoreboard = _scoreboard_games(state_root)
-    newly_completed: list[dict[str, object]] = []
     observed_at_datetime = datetime.now(UTC)
     observed_at = observed_at_datetime.isoformat().replace("+00:00", "Z")
+    scoreboard = _scoreboard_games(state_root)
+    boxscore_reconciliation = _reconcile_stale_scoreboard_games(
+        games=games,
+        scoreboard=scoreboard,
+        state_root=state_root,
+        observed_at=observed_at_datetime,
+    )
+    newly_completed: list[dict[str, object]] = []
     newly_frozen = 0
     missing_pregame_candidates: list[str] = []
     for game in games:
@@ -356,10 +368,84 @@ def refresh_official_live_score_state(
         "all_final": bool(states) and all(state == "post" for state in states),
         "earliest_start": min(starts) if starts else None,
         "latest_start": max(starts) if starts else None,
+        "boxscore_reconciled_game_ids": boxscore_reconciliation["reconciled_game_ids"],
+        "boxscore_reconciliation_unavailable_game_ids": boxscore_reconciliation[
+            "unavailable_game_ids"
+        ],
         "newly_frozen_game_count": newly_frozen,
         "missing_pregame_candidate_game_ids": sorted(missing_pregame_candidates),
         "newly_finalized_game_count": len(newly_completed),
         "uploaded_final_artifact_count": uploaded,
+    }
+
+
+def _reconcile_stale_scoreboard_games(
+    *,
+    games: list[object],
+    scoreboard: dict[str, dict[str, Any]],
+    state_root: Path,
+    observed_at: datetime,
+) -> dict[str, list[str]]:
+    """Replace stale pregame scoreboard rows with official game-level liveData.
+
+    The slate scoreboard can lag a game-specific box score after tipoff. Once a
+    scheduled start is ten minutes old, a game still marked pregame is checked
+    against the official NBA box-score feed. An unavailable game-level document
+    is expected before tipoff and must not fail the rest of the slate update.
+    """
+
+    eligible: list[tuple[str, datetime]] = []
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        game_id = str(game.get("game_id", ""))
+        event = scoreboard.get(game_id)
+        if not isinstance(event, dict) or int(event.get("gameStatus") or 1) != 1:
+            continue
+        start_value = game.get("start_time")
+        if not start_value:
+            continue
+        scheduled_start = datetime.fromisoformat(
+            str(start_value).replace("Z", "+00:00")
+        )
+        if observed_at < scheduled_start + STALE_SCOREBOARD_GRACE:
+            continue
+        eligible.append((game_id, scheduled_start))
+
+    reconciled: list[str] = []
+    unavailable: list[str] = []
+    if not eligible:
+        return {
+            "reconciled_game_ids": reconciled,
+            "unavailable_game_ids": unavailable,
+        }
+
+    cache = RawJsonCache(state_root / "pending" / "nba-live-data")
+    for game_id, _scheduled_start in sorted(eligible, key=lambda row: row[1]):
+        # One game document may legitimately remain unavailable after another
+        # game at the same listed start has tipped. Give each lookup its own
+        # request gate so that one 403 cannot suppress the rest of the slate.
+        with NbaCdnClient(
+            cache=cache,
+            request_gate=NbaCdnRequestGate(),
+        ) as client:
+            try:
+                response = client.fetch_boxscore(game_id, use_cache=False)
+            except NbaCdnError:
+                unavailable.append(game_id)
+                continue
+        game_event = response.payload.get("game")
+        if not isinstance(game_event, dict):
+            unavailable.append(game_id)
+            continue
+        if int(game_event.get("gameStatus") or 1) not in (2, 3):
+            continue
+        scoreboard[game_id] = game_event
+        reconciled.append(game_id)
+
+    return {
+        "reconciled_game_ids": reconciled,
+        "unavailable_game_ids": unavailable,
     }
 
 
