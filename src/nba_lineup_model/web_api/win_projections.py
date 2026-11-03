@@ -1146,16 +1146,50 @@ def read_schedule_day(
                 served_game=game,
                 game_id=game_id,
             )
-        final_path = (
-            state_root / "final" / f"{game_id}.summary.json"
-        )
+        final_path = state_root / "final" / f"{game_id}.summary.json"
+        final_audit: dict[str, object] | None = None
         if final_path.is_file():
-            final_audit = json.loads(final_path.read_text())
-            if isinstance(final_audit, dict):
-                game["final_audit"] = final_audit
-                retrospective = final_audit.get("retrospective")
-                if isinstance(retrospective, dict):
-                    game["retrospective"] = retrospective
+            stored_final_audit = json.loads(final_path.read_text())
+            if isinstance(stored_final_audit, dict):
+                final_audit = stored_final_audit
+        elif (
+            observation_root != state_root
+            and str(game.get("status", {}).get("state")) == "post"
+            and isinstance(game.get("pregame"), dict)
+        ):
+            observed_final_path = (
+                observation_root / "final" / f"{game_id}.summary.json"
+            )
+            if observed_final_path.is_file():
+                observed_final_audit = json.loads(observed_final_path.read_text())
+                if not isinstance(observed_final_audit, dict):
+                    raise ValueError(
+                        f"Invalid live-score final audit payload: {observed_final_path}"
+                    )
+                for identity_key in ("game_id", "away_team", "home_team"):
+                    if str(observed_final_audit.get(identity_key)) != str(
+                        game.get(identity_key)
+                    ):
+                        raise ValueError(
+                            f"Live-score final audit {identity_key} mismatch for {game_id}"
+                        )
+                retrospective = observed_final_audit.get("retrospective")
+                archived_at = datetime.fromisoformat(
+                    str(observed_final_audit["archived_at"]).replace("Z", "+00:00")
+                )
+                final_audit = _build_final_game_archive(
+                    game,
+                    pregame=game["pregame"],
+                    retrospective=(
+                        retrospective if isinstance(retrospective, dict) else {}
+                    ),
+                    archived_at=archived_at,
+                )
+        if final_audit is not None:
+            game["final_audit"] = final_audit
+            retrospective = final_audit.get("retrospective")
+            if isinstance(retrospective, dict):
+                game["retrospective"] = retrospective
     payload["available"] = True
     manifest_path = state_root / "manifest.json"
     if manifest_path.is_file():
@@ -1669,9 +1703,81 @@ def _signed_integer_or_none(value: object) -> int | None:
         return None
 
 
+def _schedule_final_audits(
+    *,
+    state_dir: Path | str,
+    live_score_state_dir: Path | str | None,
+    season: str,
+) -> list[dict[str, object]]:
+    """Join one canonical final observation to each environment forecast."""
+
+    state_root = Path(state_dir)
+    observation_root = (
+        Path(live_score_state_dir)
+        if live_score_state_dir is not None
+        else state_root
+    )
+    audits: dict[str, dict[str, object]] = {}
+    state_final_dir = state_root / "final"
+    if state_final_dir.is_dir():
+        for path in sorted(state_final_dir.glob("*.summary.json")):
+            audit = json.loads(path.read_text())
+            if not isinstance(audit, dict) or audit.get("season") != season:
+                continue
+            game_id = str(audit.get("game_id", ""))
+            if game_id.startswith("002"):
+                audits[game_id] = audit
+
+    if observation_root != state_root:
+        missing_by_date: dict[str, set[str]] = {}
+        observation_final_dir = observation_root / "final"
+        if observation_final_dir.is_dir():
+            for path in sorted(observation_final_dir.glob("*.summary.json")):
+                observed_audit = json.loads(path.read_text())
+                if (
+                    not isinstance(observed_audit, dict)
+                    or observed_audit.get("season") != season
+                ):
+                    continue
+                game_id = str(observed_audit.get("game_id", ""))
+                if not game_id.startswith("002") or game_id in audits:
+                    continue
+                game_date = str(observed_audit.get("game_date", ""))
+                if not game_date:
+                    raise ValueError(
+                        f"Canonical final audit {game_id} has no game date"
+                    )
+                missing_by_date.setdefault(game_date, set()).add(game_id)
+
+        for game_date, game_ids in sorted(missing_by_date.items()):
+            board = read_schedule_day(
+                game_date,
+                state_dir=state_root,
+                live_score_state_dir=observation_root,
+            )
+            games = board.get("games")
+            if not isinstance(games, list):
+                raise ValueError(f"Invalid joined schedule board for {game_date}")
+            joined = {
+                str(game.get("game_id")): game.get("final_audit")
+                for game in games
+                if isinstance(game, dict) and game.get("game_id")
+            }
+            for game_id in sorted(game_ids):
+                audit = joined.get(game_id)
+                if not isinstance(audit, dict):
+                    raise ValueError(
+                        f"Canonical final {game_id} has no joined forecast audit"
+                    )
+                audits[game_id] = audit
+
+    return [audits[game_id] for game_id in sorted(audits)]
+
+
 def read_current_season_records(
     *,
     state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    live_score_state_dir: Path | str | None = None,
     season: str = PROJECTION_SEASON,
     through_date: str | None = None,
 ) -> dict[str, object]:
@@ -1681,7 +1787,7 @@ def read_current_season_records(
     completed_game_ids: list[str] = []
     latest_game_date: str | None = None
     latest_archive_time: str | None = None
-    final_dir = Path(state_dir) / "final"
+    final_dir = Path(live_score_state_dir or state_dir) / "final"
     if final_dir.is_dir():
         for path in sorted(final_dir.glob("*.summary.json")):
             payload = json.loads(path.read_text())
@@ -1748,6 +1854,7 @@ def read_current_season_records(
 def read_schedule_performance(
     *,
     state_dir: Path | str = DEFAULT_SCHEDULE_STATE_DIR,
+    live_score_state_dir: Path | str | None = None,
     season: str = PROJECTION_SEASON,
 ) -> dict[str, object]:
     """Score frozen pregame forecasts against final regular-season results."""
@@ -1762,59 +1869,58 @@ def read_schedule_performance(
     declared_model_track = str(model_track or "").strip()
     completed: list[tuple[str, dict[str, object]]] = []
     latest_archive_time: str | None = None
-    final_dir = Path(state_dir) / "final"
-    if final_dir.is_dir():
-        for path in sorted(final_dir.glob("*.summary.json")):
-            payload = json.loads(path.read_text())
-            if not isinstance(payload, dict) or payload.get("season") != season:
-                continue
-            if declared_model_track:
-                pregame = payload.get("pregame")
-                pregame = pregame if isinstance(pregame, dict) else {}
-                forecast_version = pregame.get("forecast_version")
-                forecast_version = (
-                    forecast_version if isinstance(forecast_version, dict) else {}
-                )
-                projection = pregame.get("projection")
-                projection = projection if isinstance(projection, dict) else {}
-                belongs_to_updated_track = (
-                    forecast_version.get("model_track") == declared_model_track
-                    or projection.get("model_track") == declared_model_track
-                    or (
-                        declared_model_track == "updated_ratings_updated_minutes"
-                        and (
-                            payload.get("record_type")
-                            == "strict_forward_replay_final_game_audit"
-                            or (
-                                projection.get("state_kind")
-                                == "in_season_updated"
-                                and bool(
-                                    projection.get("serving_bundle_sha256")
-                                )
+    for payload in _schedule_final_audits(
+        state_dir=state_dir,
+        live_score_state_dir=live_score_state_dir,
+        season=season,
+    ):
+        if declared_model_track:
+            pregame = payload.get("pregame")
+            pregame = pregame if isinstance(pregame, dict) else {}
+            forecast_version = pregame.get("forecast_version")
+            forecast_version = (
+                forecast_version if isinstance(forecast_version, dict) else {}
+            )
+            projection = pregame.get("projection")
+            projection = projection if isinstance(projection, dict) else {}
+            belongs_to_updated_track = (
+                forecast_version.get("model_track") == declared_model_track
+                or projection.get("model_track") == declared_model_track
+                or (
+                    declared_model_track == "updated_ratings_updated_minutes"
+                    and (
+                        payload.get("record_type")
+                        == "strict_forward_replay_final_game_audit"
+                        or (
+                            projection.get("state_kind")
+                            == "in_season_updated"
+                            and bool(
+                                projection.get("serving_bundle_sha256")
                             )
                         )
                     )
                 )
-                if not belongs_to_updated_track:
-                    continue
-            if not str(payload.get("game_id", "")).startswith("002"):
+            )
+            if not belongs_to_updated_track:
                 continue
-            final = payload.get("final")
-            grading = payload.get("grading")
-            if not isinstance(final, dict) or not isinstance(grading, dict):
-                continue
-            status = final.get("status")
-            if isinstance(status, dict) and status.get("completed") is not True:
-                continue
-            start_time = str(payload.get("start_time", ""))
-            try:
-                game_date = pacific_date(start_time).isoformat()
-            except ValueError:
-                continue
-            completed.append((game_date, payload))
-            archived_at = payload.get("archived_at")
-            if isinstance(archived_at, str):
-                latest_archive_time = max(latest_archive_time or archived_at, archived_at)
+        if not str(payload.get("game_id", "")).startswith("002"):
+            continue
+        final = payload.get("final")
+        grading = payload.get("grading")
+        if not isinstance(final, dict) or not isinstance(grading, dict):
+            continue
+        status = final.get("status")
+        if isinstance(status, dict) and status.get("completed") is not True:
+            continue
+        start_time = str(payload.get("start_time", ""))
+        try:
+            game_date = pacific_date(start_time).isoformat()
+        except ValueError:
+            continue
+        completed.append((game_date, payload))
+        archived_at = payload.get("archived_at")
+        if isinstance(archived_at, str):
+            latest_archive_time = max(latest_archive_time or archived_at, archived_at)
 
     as_of = max((game_date for game_date, _payload in completed), default=None)
     windows: list[dict[str, object]] = []

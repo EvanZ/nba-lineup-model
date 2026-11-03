@@ -713,6 +713,118 @@ def test_schedule_day_overlays_live_scores_without_changing_frozen_projection(
     assert json.loads(frozen.read_text()) == frozen_payload
 
 
+def test_schedule_day_grades_dev_pregame_against_canonical_final(tmp_path) -> None:
+    release_root = tmp_path / "release"
+    observation_root = tmp_path / "observations"
+    release_latest = release_root / "latest" / "2026-11-02.json"
+    observation_latest = observation_root / "latest" / "2026-11-02.json"
+    frozen = release_root / "frozen" / "0022600158.json"
+    observed_final = observation_root / "final" / "0022600158.summary.json"
+    for path in (release_latest, observation_latest, frozen, observed_final):
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    release_board = {
+        "games": [{
+            "game_id": "0022600158",
+            "away_team": "OKC",
+            "home_team": "CLE",
+            "start_time": "2026-11-03T00:00:00Z",
+            "away_score": 0,
+            "home_score": 0,
+            "status": {"state": "pre", "period": 0},
+        }]
+    }
+    frozen_payload = {
+        "game_id": "0022600158",
+        "away_team": "OKC",
+        "home_team": "CLE",
+        "frozen_at": "2026-11-02T23:55:00Z",
+        "projection": {
+            "home_margin": 2.5,
+            "home_win_probability": 0.57,
+            "model": "Dev candidate",
+        },
+        "market": {
+            "provider": "Market consensus",
+            "provider_key": "market_consensus",
+            "home_spread": -1.5,
+            "away_spread": 1.5,
+        },
+    }
+    observed_board = {
+        "games": [{
+            **release_board["games"][0],
+            "away_score": 90,
+            "home_score": 100,
+            "status": {"state": "post", "completed": True},
+        }]
+    }
+    canonical_final = {
+        "archived_at": "2026-11-03T03:00:00Z",
+        "season": "2026-27",
+        "game_date": "2026-11-02",
+        "game_id": "0022600158",
+        "start_time": "2026-11-03T00:00:00Z",
+        "away_team": "OKC",
+        "home_team": "CLE",
+        "final": {
+            "away_score": 90,
+            "home_score": 100,
+            "actual_home_margin": 10,
+            "winner": "CLE",
+            "status": {"state": "post", "completed": True},
+        },
+        "grading": {
+            "projected_home_margin": -9.0,
+            "model_favorite_won": False,
+            "market": {"model_ats_result": "loss"},
+        },
+        "retrospective": {"home_win_probability": 0.8},
+    }
+    release_latest.write_text(json.dumps(release_board))
+    frozen.write_text(json.dumps(frozen_payload))
+    observation_latest.write_text(json.dumps(observed_board))
+    observed_final.write_text(json.dumps(canonical_final))
+
+    payload = read_schedule_day(
+        "2026-11-02",
+        state_dir=release_root,
+        live_score_state_dir=observation_root,
+    )
+
+    game = payload["games"][0]
+    assert game["pregame"]["projection"]["home_margin"] == 2.5
+    assert game["final_audit"]["grading"]["projected_home_margin"] == 2.5
+    assert game["final_audit"]["grading"]["model_favorite_won"] is True
+    assert game["final_audit"]["grading"]["market"]["model_ats_result"] == "win"
+    assert game["retrospective"] == {"home_win_probability": 0.8}
+
+    records = read_current_season_records(
+        state_dir=release_root,
+        live_score_state_dir=observation_root,
+    )
+    assert records["completed_game_ids"] == ["0022600158"]
+    assert records["teams"] == [
+        {"team": "CLE", "games": 1, "wins": 1, "losses": 0, "last_game_date": "2026-11-02"},
+        {"team": "OKC", "games": 1, "wins": 0, "losses": 1, "last_game_date": "2026-11-02"},
+    ]
+
+    performance = read_schedule_performance(
+        state_dir=release_root,
+        live_score_state_dir=observation_root,
+    )
+    season_window = next(
+        window for window in performance["windows"] if window["key"] == "season"
+    )
+    assert season_window["games"] == 1
+    assert season_window["ats"]["wins"] == 1
+    assert season_window["ats"]["losses"] == 0
+
+    assert json.loads(release_latest.read_text()) == release_board
+    assert json.loads(frozen.read_text()) == frozen_payload
+    assert json.loads(observed_final.read_text()) == canonical_final
+
+
 def test_schedule_day_selects_latest_checksum_verified_pretip_candidate(
     tmp_path,
 ) -> None:
