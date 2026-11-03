@@ -752,7 +752,8 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
           title="Open game on NBA.com"
           aria-label={"Open " + game.away_team + " at " + game.home_team + " on NBA.com"}
         >
-          {gameTime(archived?.start_time)}
+          <span>{gameTime(archived?.start_time)}</span>
+          <span className="schedule-nba-game-link-label" aria-hidden="true">NBA ↗</span>
         </a>
         <span>{(archived?.broadcasts ?? []).join(" · ") || "League Pass"}</span>
         <span className="schedule-game-status"><Radio size={11} aria-hidden="true" /> {statusLabel}</span>

@@ -1322,8 +1322,10 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-game-context { grid-column: 1 / -1; min-height: 31px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid #e2dfd7; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .schedule-game-context > span + span::before { margin-right: 10px; color: #b5bab5; content: "/"; }
 .schedule-game-time { color: #17201c; }
-.schedule-nba-game-link { text-decoration: none; text-underline-offset: 3px; }
-.schedule-nba-game-link:hover, .schedule-nba-game-link:focus-visible { color: #245a47; text-decoration: underline; text-decoration-color: #e8502f; }
+.schedule-nba-game-link { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; text-underline-offset: 3px; white-space: nowrap; }
+.schedule-nba-game-link-label { padding: 2px 4px; border: 1px solid #aeb5af; color: #245a47; font-size: 7px; font-weight: 900; letter-spacing: 0.03em; line-height: 1; }
+.schedule-nba-game-link:hover > span:first-child, .schedule-nba-game-link:focus-visible > span:first-child { color: #245a47; text-decoration: underline; text-decoration-color: #e8502f; }
+.schedule-nba-game-link:hover .schedule-nba-game-link-label, .schedule-nba-game-link:focus-visible .schedule-nba-game-link-label { border-color: #e8502f; background: #f4dfd7; color: #a33e28; }
 .schedule-game-status { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: #3e7891; }
 .schedule-result-badges { display: inline-flex; align-items: center; gap: 5px; }
 .schedule-result-badges span { padding: 3px 6px; border: 1px solid #cfd3ce; background: #eceeea; color: #69716b; font-size: 7px; font-weight: 900; letter-spacing: 0.02em; line-height: 1; white-space: nowrap; }
