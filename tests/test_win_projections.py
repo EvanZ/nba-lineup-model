@@ -713,6 +713,78 @@ def test_schedule_day_overlays_live_scores_without_changing_frozen_projection(
     assert json.loads(frozen.read_text()) == frozen_payload
 
 
+def test_schedule_day_selects_latest_checksum_verified_pretip_candidate(
+    tmp_path,
+) -> None:
+    release_root = tmp_path / "release"
+    observation_root = tmp_path / "observations"
+    latest = release_root / "latest" / "2026-11-02.json"
+    observation = observation_root / "latest" / "2026-11-02.json"
+    candidates = release_root / "pregame-candidates" / "0022600164"
+    for path in (latest.parent, observation.parent, candidates):
+        path.mkdir(parents=True, exist_ok=True)
+    game = {
+        "game_id": "0022600164",
+        "away_team": "SAC",
+        "home_team": "DAL",
+        "start_time": "2026-11-03T01:00:00Z",
+        "away_score": 0,
+        "home_score": 0,
+        "status": {"state": "pre"},
+    }
+    latest.write_text(json.dumps({"games": [game]}))
+    observed = {
+        **game,
+        "away_score": 7,
+        "home_score": 4,
+        "status": {"state": "in", "period": 1},
+    }
+    observation.write_text(json.dumps({"games": [observed]}))
+
+    def write_candidate(captured_at: str, margin: float) -> dict[str, object]:
+        unsigned = {
+            "schema_version": 1,
+            "game_id": "0022600164",
+            "captured_at": captured_at,
+            "scheduled_start_time": game["start_time"],
+            "game": {
+                **game,
+                "projection": {"home_margin": margin},
+            },
+        }
+        digest = hashlib.sha256(
+            json.dumps(
+                unsigned,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        payload = {**unsigned, "candidate_sha256": digest}
+        (candidates / f"{captured_at.replace(':', '')}.{digest}.json").write_text(
+            json.dumps(payload)
+        )
+        return payload
+
+    selected = write_candidate("2026-11-03T00:59:00Z", -2.25)
+    write_candidate("2026-11-03T01:01:00Z", 9.0)
+    before = {path.name: path.read_bytes() for path in candidates.iterdir()}
+
+    payload = read_schedule_day(
+        "2026-11-02",
+        state_dir=release_root,
+        live_score_state_dir=observation_root,
+    )
+
+    rendered = payload["games"][0]
+    assert rendered["status"]["state"] == "in"
+    assert rendered["pregame"]["projection"]["home_margin"] == -2.25
+    assert rendered["pregame"]["pregame_candidate_sha256"] == selected[
+        "candidate_sha256"
+    ]
+    assert not (release_root / "frozen" / "0022600164.json").exists()
+    assert {path.name: path.read_bytes() for path in candidates.iterdir()} == before
+
+
 def test_schedule_day_renders_verified_attribution_for_legacy_freeze(tmp_path) -> None:
     latest = tmp_path / "latest" / "2026-11-01.json"
     frozen_path = tmp_path / "frozen" / "0022600154.json"

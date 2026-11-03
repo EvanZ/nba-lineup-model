@@ -1132,14 +1132,20 @@ def read_schedule_day(
         if not game_id:
             continue
         frozen_path = state_root / "frozen" / f"{game_id}.json"
+        frozen = None
         if frozen_path.is_file():
             frozen = json.loads(frozen_path.read_text())
-            if isinstance(frozen, dict):
-                game["pregame"] = _renderable_frozen_pregame(
-                    frozen,
-                    served_game=game,
-                    game_id=game_id,
-                )
+        elif str(game.get("status", {}).get("state")) != "pre":
+            frozen = _select_immutable_pretip_candidate(
+                state_root=state_root,
+                game=game,
+            )
+        if isinstance(frozen, dict):
+            game["pregame"] = _renderable_frozen_pregame(
+                frozen,
+                served_game=game,
+                game_id=game_id,
+            )
         final_path = (
             state_root / "final" / f"{game_id}.summary.json"
         )
@@ -1163,6 +1169,60 @@ def read_schedule_day(
                 "identity": manifest.get("identity"),
             }
     return payload
+
+
+def _select_immutable_pretip_candidate(
+    *,
+    state_root: Path,
+    game: dict[str, object],
+) -> dict[str, object] | None:
+    """Render the exact pre-tip candidate when a read-only release turns live."""
+
+    game_id = str(game["game_id"])
+    scheduled_start = datetime.fromisoformat(
+        str(game["start_time"]).replace("Z", "+00:00")
+    )
+    candidates: list[tuple[datetime, dict[str, object]]] = []
+    for path in sorted((state_root / "pregame-candidates" / game_id).glob("*.json")):
+        candidate = json.loads(path.read_text())
+        if not isinstance(candidate, dict):
+            raise ValueError(f"Invalid pregame candidate: {path}")
+        digest = str(candidate.get("candidate_sha256", ""))
+        unsigned = {
+            key: value
+            for key, value in candidate.items()
+            if key != "candidate_sha256"
+        }
+        actual_digest = hashlib.sha256(
+            json.dumps(
+                unsigned,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        if not digest or digest != actual_digest:
+            raise ValueError(f"Pregame candidate checksum changed: {path}")
+        if str(candidate.get("game_id")) != game_id:
+            raise ValueError(f"Pregame candidate game mismatch: {path}")
+        captured_at = datetime.fromisoformat(
+            str(candidate["captured_at"]).replace("Z", "+00:00")
+        )
+        if captured_at < scheduled_start:
+            candidates.append((captured_at, candidate))
+    if not candidates:
+        return None
+    captured_at, selected = max(candidates, key=lambda row: row[0])
+    selected_game = selected.get("game")
+    if not isinstance(selected_game, dict):
+        raise ValueError(f"Pregame candidate has no game payload for {game_id}")
+    return {
+        **copy.deepcopy(selected_game),
+        "pregame_candidate_sha256": selected["candidate_sha256"],
+        "pregame_captured_at": captured_at.isoformat().replace("+00:00", "Z"),
+        "frozen_at": scheduled_start.isoformat().replace("+00:00", "Z"),
+        "freeze_policy": "latest checksum-verified candidate captured before tipoff",
+        "late_freeze": False,
+    }
 
 
 def _renderable_frozen_pregame(
