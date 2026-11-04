@@ -434,6 +434,8 @@ def _legacy_fixture(tmp_path, monkeypatch):
     manifest["runtime_sha256"] = hashlib.sha256(canonical_json(manifest["identity"])).hexdigest()
     (old / "runtime-manifest.json").write_text(json.dumps(manifest))
     active["runtime_sha256"] = manifest["runtime_sha256"]
+    # Real pre-seal activations have three identity fields, no sealing flag.
+    active["code"].pop("sealed")
     (generation / "activation.json").write_text(json.dumps(active))
     return fixture, old, candidate, root, live, active
 
@@ -518,7 +520,11 @@ def test_explicit_legacy_migration_preserves_data_and_recovers(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize(
-    "damage", ["approval", "recorded_code", "data", "generation", "receipt", "extra_file"]
+    "damage",
+    [
+        "approval", "recorded_code", "recorded_lock", "recorded_revision",
+        "data", "generation", "receipt", "extra_file",
+    ],
 )
 def test_legacy_migration_rejects_unsafe_inputs_without_pointer_changes(
     tmp_path, monkeypatch, damage
@@ -533,9 +539,13 @@ def test_legacy_migration_rejects_unsafe_inputs_without_pointer_changes(
         approval = ""
     elif damage == "recorded_code":
         active["code"]["package_sha256"] = "f" * 64
+    elif damage == "recorded_lock":
+        active["code"]["dependency_lock_sha256"] = "f" * 64
+    elif damage == "recorded_revision":
+        active["code"]["git_revision"] = "f" * 40
     elif damage == "data":
         (old / "schedule-snapshot/final/game.json").write_text("changed")
-    if damage in {"approval", "recorded_code", "data"}:
+    if damage in {"approval", "recorded_code", "recorded_lock", "recorded_revision", "data"}:
         with pytest.raises(ValueError):
             prepare_legacy_code_migration(
                 active=active,

@@ -531,8 +531,9 @@ def activate_release(
 
             restored = verify_legacy_code_migration(legacy_code_migration, active)
             restored_identity = _validated_release_identity(restored)
+            expected_legacy = {**active, "code": {"sealed": True, **active["code"]}}
             for key in ("binding_map_sha256", "edition_id", "code"):
-                if restored_identity[key] != active[key]:
+                if restored_identity[key] != expected_legacy[key]:
                     raise ValueError(f"Legacy migration changed {key}")
             rollback_target = {
                 **active,

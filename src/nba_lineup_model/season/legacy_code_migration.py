@@ -123,7 +123,10 @@ def prepare_legacy_code_migration(
                     check=True,
                     capture_output=True,
                 )
-        if package["identity"] != active["code"]:
+        # Old records predate sealing. Preserve every recorded identity field;
+        # the new seal is independently verified by the package validator.
+        expected_code = {"sealed": True, **active["code"]}
+        if package["identity"] != expected_code:
             raise ValueError("Reconstructed code differs from recorded activation checksum")
         identity = {**original["identity"], "code_identity": package["identity"]}
         migrated = {**original, "identity": identity, "runtime_sha256": _digest(identity)}
@@ -173,7 +176,8 @@ def verify_legacy_code_migration(receipt: dict, active: dict) -> Path:
     migrated = verify_production_site_release(runtime)
     if migrated["runtime_sha256"] != receipt["sealed_runtime_sha256"]:
         raise ValueError("Sealed rollback identity changed")
-    if migrated["identity"] != {**original["identity"], "code_identity": active["code"]}:
+    expected_code = {"sealed": True, **active["code"]}
+    if migrated["identity"] != {**original["identity"], "code_identity": expected_code}:
         raise ValueError("Legacy migration altered more than code sealing")
     if migrated["approved_manifest"] != original["approved_manifest"]:
         raise ValueError("Legacy migration altered the approved artifacts")
