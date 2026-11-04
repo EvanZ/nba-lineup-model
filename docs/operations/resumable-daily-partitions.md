@@ -118,3 +118,23 @@ the standalone Dagster job, not an automatic nightly production cutover.
 Production and all three protected collection services were left unchanged.
 Do not infer authorization to promote, start the new sensor, push publicly,
 or post a public issue summary from this dev-only exercise.
+
+## Accepted closeout and follow-up verification
+
+The user subsequently approved pushing this branch, posting the validation
+summary, closing #56, and beginning #57. That approval does not activate the
+nightly sensor or authorize production deployment or a historical model replay.
+
+Commit `f82edc5` fixes two presentation defects: integral NBA numeric plus-minus
+values are retained, and game-log deltas use the stored canonical game delta.
+The resulting dev runtime is
+`d3e989748736ea256913de49c5a7fd813770aa9ce05273c036900181b23813b2`.
+All underlying data, model, serving, lineup, and forecast-selection artifact
+identities remain unchanged. Verification covered 584 API responses, 2,889
+plus-minus values (including 576 zeros), and 3,675 canonical game deltas;
+110 relevant tests passed. Rendered checks included 1440, 768, and 390 pixels
+and Curry's Nov 2 PHX game with raw plus-minus +21. The tablet header overflow
+and EC2 browser logo-loading limitation remain disclosed follow-ups for #57.
+
+The separate minutes-clipping model bug is tracked in #60. Its prior-season
+study and any subsequent approved replay are not part of #56 or #57.
