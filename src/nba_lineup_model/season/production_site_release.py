@@ -50,6 +50,11 @@ def stage_production_site_release(
     frontend_root: Path | str,
     output_root: Path | str,
     live_pointer: Path | str,
+    historical_runtime_root: Path | str | None = None,
+    observation_root: Path | str | None = None,
+    forecast_registry_root: Path | None = None,
+    version_references: dict[str, str] | None = None,
+    environment: str = "dev",
 ) -> Path:
     """Copy a reviewed dev release into an immutable production candidate."""
 
@@ -75,6 +80,7 @@ def stage_production_site_release(
 
     schedule_source = Path(schedule_snapshot_root).resolve()
     from nba_lineup_model.season.source_policy import require_clean_artifact_sources
+
     require_clean_artifact_sources(schedule_source)
     schedule_sha = _tree_sha256(schedule_source)
     if schedule_sha != approved["schedule"]["tree_sha256"]:
@@ -130,7 +136,7 @@ def stage_production_site_release(
     runtime_sha = hashlib.sha256(canonical_json(runtime_identity)).hexdigest()
 
     output.mkdir(parents=True, exist_ok=True)
-    if target.exists():
+    if target.exists() and historical_runtime_root is None:
         existing = verify_production_site_release(target)
         if existing["runtime_sha256"] != runtime_sha:
             raise ValueError("Existing production candidate has different runtime inputs")
@@ -161,6 +167,22 @@ def stage_production_site_release(
             f"{live / 'preseason' / 'profiles.parquet'}\n",
             encoding="utf-8",
         )
+        if historical_runtime_root is not None:
+            from nba_lineup_model.web_api.release_serving import build_serving_bindings
+
+            bindings = build_serving_bindings(
+                staging,
+                runtime_identity=runtime_identity,
+                approved=approved,
+                historical_runtime=Path(historical_runtime_root),
+                observation_root=Path(observation_root) if observation_root else None,
+                forecast_registry_root=forecast_registry_root,
+                version_references=version_references,
+                environment=environment,
+            )
+            runtime_identity["serving_bindings_sha256"] = bindings["bindings_sha256"]
+            runtime_sha = hashlib.sha256(canonical_json(runtime_identity)).hexdigest()
+            target = output / f"runtime_sha256={runtime_sha}"
         runtime_manifest = {
             "runtime_sha256": runtime_sha,
             "identity": runtime_identity,
@@ -170,7 +192,14 @@ def stage_production_site_release(
             json.dumps(runtime_manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        staging.replace(target)
+        if target.exists():
+            existing = verify_production_site_release(target)
+            if existing["runtime_sha256"] != runtime_sha:
+                raise ValueError(
+                    "Existing release has different bound inputs; use a new approval record"
+                )
+        else:
+            staging.replace(target)
     finally:
         if staging.exists():
             shutil.rmtree(staging)
@@ -194,6 +223,12 @@ def verify_production_site_release(path: Path | str) -> dict[str, Any]:
     if manifest.get("runtime_sha256") != runtime_sha:
         raise ValueError("Production runtime checksum is invalid")
 
+    if identity.get("serving_bindings_sha256"):
+        from nba_lineup_model.web_api.release_serving import verify_serving_bindings
+
+        bindings = verify_serving_bindings(release)
+        if identity["serving_bindings_sha256"] != bindings["bindings_sha256"]:
+            raise ValueError("Serving bindings changed after staging")
     approved_release = resolve_latest_dev_site_release(release / "site-releases")
     approved_manifest = verify_dev_site_release(approved_release)
     if approved_manifest["release_sha256"] != identity["approved_release_sha256"]:
@@ -246,7 +281,6 @@ def verify_production_site_release(path: Path | str) -> dict[str, Any]:
     if not (release / "web" / "index.html").is_file():
         raise FileNotFoundError("Production frontend has no index.html")
     return manifest
-
 
 
 def _require_file_checksum(path: Path, expected: str, label: str) -> None:

@@ -1,3 +1,4 @@
+import { releaseFetch as fetch } from "./releaseFetch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Download, LoaderCircle, Search, X } from "lucide-react";
 

@@ -1343,6 +1343,9 @@ def test_health_reports_process_loaded_activation_identity(
     }
     activation_path = generation / "activation.json"
     activation_path.write_text(json.dumps(record))
+    # An activation-only fixture also supplies the legacy runtime manifest.
+    # New declared serving bindings must never downgrade if their file is lost.
+    (generation / "runtime-manifest.json").write_text(json.dumps({"identity": {}}))
     live = tmp_path / "live-release"
     live.symlink_to(generation, target_is_directory=True)
     monkeypatch.setenv("GESTALT_ACTIVE_RELEASE_ROOT", str(live))

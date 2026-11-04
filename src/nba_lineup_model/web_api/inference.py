@@ -422,6 +422,11 @@ class LineupEvaluator:
         season: str = DISPLAY_SEASON,
         panel_path: Path | str = "data/analytical/player_season_panel/player_seasons.parquet",
         include_current_season_lineups: bool = True,
+        run_id: str | None = None,
+        preseason_rankings_override: Path | None = None,
+        preseason_profiles_override: Path | None = None,
+        current_serving_bundle: Path | None = None,
+        current_lineups_bundle: Path | None = None,
     ) -> LineupEvaluator:
         """Load the published completed-fit model state used by the local Lineup Lab.
 
@@ -432,11 +437,12 @@ class LineupEvaluator:
 
         root = Path(artifacts_dir) / MODEL_ARTIFACT / season
         latest_path = root / "latest.json"
-        if not latest_path.is_file():
-            raise FileNotFoundError(
-                f"No published {MODEL_DISPLAY_NAME} artifact for {season}: {latest_path}"
-            )
-        run_id = str(json.loads(latest_path.read_text())["run_id"])
+        if run_id is None:
+            if not latest_path.is_file():
+                raise FileNotFoundError(
+                    f"No published {MODEL_DISPLAY_NAME} artifact for {season}: {latest_path}"
+                )
+            run_id = str(json.loads(latest_path.read_text())["run_id"])
         run_dir = root / run_id
         metadata = json.loads((run_dir / "metadata.json").read_text())
         if metadata.get("model") != MODEL_NAME:
@@ -520,7 +526,7 @@ class LineupEvaluator:
             constrained_split_ratings,
         )
         preseason_path = preseason_rankings_path(MODEL_ARTIFACT, run_id, PRESEASON_PREVIEW_SEASON)
-        configured_preseason_rankings = os.environ.get(
+        configured_preseason_rankings = preseason_rankings_override or os.environ.get(
             "GESTALT_PRESEASON_RANKINGS_PATH"
         )
         if configured_preseason_rankings:
@@ -545,7 +551,7 @@ class LineupEvaluator:
         preseason_profile_cache_path = preseason_profiles_path(
             MODEL_ARTIFACT, run_id, PRESEASON_PREVIEW_SEASON
         )
-        configured_preseason_profiles = os.environ.get(
+        configured_preseason_profiles = preseason_profiles_override or os.environ.get(
             "GESTALT_PRESEASON_PROFILES_PATH"
         )
         if bool(configured_preseason_rankings) != bool(configured_preseason_profiles):
@@ -571,10 +577,12 @@ class LineupEvaluator:
                 raise LineupEvaluationError(
                     "Configured preseason rankings and profiles use different players"
                 )
-        current_season = load_current_season_serving_catalog(preseason_rankings)
+        current_season = load_current_season_serving_catalog(
+            preseason_rankings, bundle_path=current_serving_bundle,
+        )
         current_lineups = (
             load_current_season_lineup_catalog(
-                serving_metadata=current_season.metadata,
+                serving_metadata=current_season.metadata, bundle_path=current_lineups_bundle,
             )
             if current_season is not None and include_current_season_lineups
             else None

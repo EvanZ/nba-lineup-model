@@ -596,12 +596,14 @@ def select_authoritative_forecast(
     for forecast in forecasts:
         if (
             forecast.game_id != scheduling.game_id
+            or forecast.edition_id != edition_id
+            or forecast.scheduling.cutoff_at != scheduling.cutoff_at
             or forecast.scheduling.scheduling_instance_id != scheduling.scheduling_instance_id
             or forecast.validation.status != "clean"
         ):
             continue
         for receipt in receipt_by_forecast.get(forecast.forecast_id, []):
-            if receipt.published_at < scheduling.cutoff_at:
+            if forecast.computed_at <= receipt.published_at < scheduling.cutoff_at:
                 candidates.append((receipt.published_at, receipt.receipt_id, forecast, receipt))
     if not candidates:
         return ForecastSelectionManifest(
@@ -615,7 +617,9 @@ def select_authoritative_forecast(
             selected_at=selected_at,
             failure_reason="no successful forecast publication strictly before cutoff",
         )
-    _, _, forecast, receipt = max(candidates, key=lambda row: (row[0], row[1]))
+    _, _, forecast, receipt = max(
+        candidates, key=lambda row: (row[0], row[3].publisher_generation, row[1])
+    )
     return ForecastSelectionManifest(
         selection_id=selection_id,
         edition_id=edition_id,
@@ -635,6 +639,7 @@ def select_evaluation_market(
     selection_id: str,
     scheduling: SchedulingInstance,
     snapshots: tuple[MarketSnapshotManifest, ...],
+    source: Literal["bookmaker_consensus", "polymarket"] = "bookmaker_consensus",
 ) -> MarketSelectionManifest:
     """Select the market independently from the forecast version."""
 
@@ -643,7 +648,7 @@ def select_evaluation_market(
         for snapshot in snapshots
         if snapshot.game_id == scheduling.game_id
         and snapshot.scheduling_instance_id == scheduling.scheduling_instance_id
-        and snapshot.source == "bookmaker_consensus"
+        and snapshot.source == source
         and snapshot.valid
         and snapshot.captured_at < scheduling.cutoff_at
     ]
@@ -654,7 +659,7 @@ def select_evaluation_market(
             scheduling_instance_id=scheduling.scheduling_instance_id,
             cutoff_at=scheduling.cutoff_at,
             state="missing_market",
-            failure_reason="no valid bookmaker consensus captured strictly before cutoff",
+            failure_reason=f"no valid {source} snapshot captured strictly before cutoff",
         )
     selected = max(candidates, key=lambda item: (item.captured_at, item.snapshot_id))
     return MarketSelectionManifest(

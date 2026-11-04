@@ -1,0 +1,44 @@
+import assert from "node:assert/strict";
+import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+const temporary = await mkdtemp(join(tmpdir(), "gestalt-request-test-"));
+execFileSync(process.execPath, [fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url)), fileURLToPath(new URL("../src/releaseFetch.ts", import.meta.url)), "--target", "es2022", "--module", "esnext", "--outDir", temporary, "--skipLibCheck"], { cwd: temporary });
+const compiled = await readFile(join(temporary, "releaseFetch.js"), "utf8");
+await rm(temporary, { recursive: true });
+
+let current = "A", handshakes = 0, resets = 0, pending;
+const requests = [];
+globalThis.window = new EventTarget();
+window.addEventListener("gestalt-release-changed", () => resets++);
+globalThis.fetch = async (input, init) => {
+  if (input === "/api/serving-view") { handshakes++; return Response.json({ release_id: current }); }
+  const expected = new Headers(init?.headers).get("X-Gestalt-Release");
+  requests.push(expected);
+  if (input === "/api/slow") return new Promise((resolve) => { pending = resolve; });
+  return Response.json({ current }, { status: expected === current ? 200 : 409, headers: { "X-Gestalt-Release": current } });
+};
+const mod = await import("data:text/javascript;base64," + Buffer.from(compiled).toString("base64"));
+mod.beginSurface("rankings");
+await Promise.all([mod.releaseFetch("/api/rankings"), mod.releaseFetch("/api/teams")]);
+assert.equal(handshakes, 1);
+assert.deepEqual(requests, ["A", "A"]);
+current = "B";
+await assert.rejects(mod.releaseFetch("/api/teams"), { name: "AbortError" });
+assert.equal(resets, 1);
+mod.beginSurface("teams:refresh");
+assert.equal((await (await mod.releaseFetch("/api/teams")).json()).current, "B");
+const slow = mod.releaseFetch("/api/slow");
+await new Promise((resolve) => setImmediate(resolve));
+mod.beginSurface("player");
+pending(Response.json({ current: "B" }, { headers: { "X-Gestalt-Release": "B" } }));
+await assert.rejects(slow, { name: "AbortError" });
+const response = await mod.releaseFetch("/api/players/1");
+mod.beginSurface("wins");
+await assert.rejects(response.json(), { name: "AbortError" });
+current = "C";
+assert.equal((await (await mod.releaseFetch("/api/wins")).json()).current, "C");
+assert.equal(handshakes, 4);
+console.log("PASS: concurrent calls, release switch, stale response, stale JSON, independent next surface");

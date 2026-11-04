@@ -123,19 +123,12 @@ def _append_event(
         "recorded_at": _timestamp(),
         **fields,
     }
-    path = (
-        publisher_root
-        / "journal"
-        / operation_id
-        / f"{payload['sequence']:04d}-{state}.json"
-    )
+    path = publisher_root / "journal" / operation_id / f"{payload['sequence']:04d}-{state}.json"
     _atomic_write_json(path, payload)
     return payload
 
 
-def _last_event(
-    publisher_root: Path, operation_id: str, state: str
-) -> dict[str, Any] | None:
+def _last_event(publisher_root: Path, operation_id: str, state: str) -> dict[str, Any] | None:
     for event in reversed(_operation_events(publisher_root, operation_id)):
         if event.get("state") == state:
             return event
@@ -209,15 +202,23 @@ def _validated_release_identity(release: Path) -> dict[str, Any]:
     if code["git_revision"] != identity["code_revision"]:
         raise ValueError("Release code revision differs from its runtime manifest")
     approved_identity = manifest["approved_manifest"]["identity"]
+    bindings = (
+        _read_json(release / "serving-bindings.json")
+        if identity.get("serving_bindings_sha256")
+        else None
+    )
     return {
         "release_path": release.as_posix(),
-        "release_id": str(identity["approved_release_sha256"]),
+        "release_id": str(
+            manifest["runtime_sha256"] if bindings else identity["approved_release_sha256"]
+        ),
         "runtime_sha256": str(manifest["runtime_sha256"]),
         "binding_map_sha256": hashlib.sha256(
-            canonical_json(approved_identity)
+            canonical_json(bindings or approved_identity)
         ).hexdigest(),
         "edition_id": str(
-            approved_identity.get("edition_id")
+            (bindings or {}).get("edition_id")
+            or approved_identity.get("edition_id")
             or approved_identity.get("season")
             or "legacy-original"
         ),
@@ -294,12 +295,8 @@ def read_active_generation(live_pointer: Path | str) -> int:
 
 def _verify_rollback_target(active: dict[str, Any] | None) -> None:
     if active is None:
-        raise RuntimeError(
-            "Activation requires an existing verified release for rollback"
-        )
-    identity = _validated_release_identity(
-        Path(str(active["release_path"])).resolve()
-    )
+        raise RuntimeError("Activation requires an existing verified release for rollback")
+    identity = _validated_release_identity(Path(str(active["release_path"])).resolve())
     if int(active["generation"]) == 0:
         return
     for key in (
@@ -310,9 +307,7 @@ def _verify_rollback_target(active: dict[str, Any] | None) -> None:
         "code",
     ):
         if active.get(key) != identity[key]:
-            raise ValueError(
-                f"Active rollback release identity changed after activation: {key}"
-            )
+            raise ValueError(f"Active rollback release identity changed after activation: {key}")
 
 
 def _stage_generation(
@@ -326,11 +321,7 @@ def _stage_generation(
     reason: str,
     approval_reference: str | None,
 ) -> tuple[Path, dict[str, Any]]:
-    target = (
-        publisher_root
-        / "generations"
-        / f"generation={generation:020d}"
-    )
+    target = publisher_root / "generations" / f"generation={generation:020d}"
     identity = _validated_release_identity(release)
     record = {
         "schema_version": PUBLISHER_SCHEMA_VERSION,
@@ -349,9 +340,7 @@ def _stage_generation(
     if target.exists():
         existing = _validate_activation_record(_read_json(target / ACTIVATION_FILENAME))
         comparable = {key: value for key, value in record.items() if key != "created_at"}
-        existing_comparable = {
-            key: value for key, value in existing.items() if key != "created_at"
-        }
+        existing_comparable = {key: value for key, value in existing.items() if key != "created_at"}
         if comparable != existing_comparable:
             raise ValueError("Existing activation generation has different inputs")
         return target, existing
@@ -388,6 +377,15 @@ def _reload_and_verify(
 ) -> None:
     reload_api(record)
     verify_api(record)
+    from nba_lineup_model.season.forecast_publication import record_verified_release_forecasts
+
+    record_verified_release_forecasts(
+        Path(record["release_path"]),
+        environment=record["environment"],
+        generation=record["generation"],
+        operation_id=record["operation_id"],
+        published_at=datetime.now(UTC),
+    )
 
 
 def _rollback_locked(
@@ -485,13 +483,9 @@ def activate_release(
                 "reason": reason,
                 "approval_reference": approval_reference,
             }
-            actual_request = {
-                key: requested.get(key) for key in expected_request
-            }
+            actual_request = {key: requested.get(key) for key in expected_request}
             if actual_request != expected_request:
-                raise ValueError(
-                    "Operation ID was already used with different activation inputs"
-                )
+                raise ValueError("Operation ID was already used with different activation inputs")
         activated = next(
             (event for event in reversed(events) if event.get("state") == "activated"),
             None,
@@ -507,13 +501,9 @@ def activate_release(
                     "A newer activation superseded this completed operation"
                 )
             generation_root = (
-                root
-                / "generations"
-                / f"generation={int(activated['generation']):020d}"
+                root / "generations" / f"generation={int(activated['generation']):020d}"
             )
-            record = _validate_activation_record(
-                _read_json(generation_root / ACTIVATION_FILENAME)
-            )
+            record = _validate_activation_record(_read_json(generation_root / ACTIVATION_FILENAME))
             return ActivationResult(
                 operation_id=operation_id,
                 generation=int(record["generation"]),
@@ -760,9 +750,7 @@ def verify_loaded_identity(
                 actual = {key: loaded.get(key) for key in expected}
                 if actual == expected:
                     return
-                last_error = ValueError(
-                    f"API loaded release identity mismatch: {actual!r}"
-                )
+                last_error = ValueError(f"API loaded release identity mismatch: {actual!r}")
             else:
                 last_error = ValueError("API health has no loaded release identity")
         except Exception as error:

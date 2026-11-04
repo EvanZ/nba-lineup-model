@@ -1,3 +1,4 @@
+import { releaseFetch as fetch } from "./releaseFetch";
 import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, CircleAlert, Radio, TrendingUp } from "lucide-react";
 
@@ -177,6 +178,8 @@ type ArchivedGame = {
   final_audit?: FinalAudit;
   pregame?: ArchivedGame;
   frozen_at?: string;
+  data_quality_errors?: string[];
+  latest_observations?: { injury_report?: ArchivedGame["injury_report"]; market?: MarketLine | null; prediction_market?: PredictionMarket | null };
 };
 
 type ScheduleDay = {
@@ -313,20 +316,7 @@ function shortMonthDay(value: string) {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(parseDate(value));
 }
 
-function sigmoid(value: number) {
-  return 1 / (1 + Math.exp(-value));
-}
 
-function homeProjection(game: WinProjectionScheduledGame, forecast: WinProjectionPayload) {
-  const strength = new Map(forecast.teams.map((team) => [team.team, team.team_strength]));
-  const margin = (strength.get(game.home_team) ?? 0) - (strength.get(game.away_team) ?? 0)
-    + forecast.home_court
-    + forecast.back_to_back * (game.home_back_to_back - game.away_back_to_back);
-  return {
-    margin,
-    winProbability: sigmoid(forecast.win_probability_scale * margin),
-  };
-}
 
 function formatSpread(value: number) {
   if (Math.abs(value) < 0.05) return "PK";
@@ -700,16 +690,25 @@ function PerformanceSummary({ window, asOf, modelTrack }: { window: PerformanceW
   </aside>;
 }
 
-function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionScheduledGame; forecast: WinProjectionPayload; archived?: ArchivedGame }) {
-  const liveProjection = homeProjection(game, forecast);
+function ScheduleGameCard({ game, archived }: { game: WinProjectionScheduledGame; forecast: WinProjectionPayload; archived?: ArchivedGame }) {
   const pregame = archived?.pregame ?? archived;
-  const projection = pregame?.projection
-    ? { margin: pregame.projection.home_margin, winProbability: pregame.projection.home_win_probability }
-    : liveProjection;
-  const market = pregame?.market ?? archived?.market ?? null;
+  if (!pregame?.projection) return <article className="schedule-game-card">
+    <div className="schedule-game-context">
+      <a href={`https://www.nba.com/game/${game.away_team.toLowerCase()}-vs-${game.home_team.toLowerCase()}-${game.game_id}`} target="_blank" rel="noreferrer">NBA ↗</a>
+      <span>{liveStatus(archived)}</span>
+    </div>
+    <div className="schedule-matchup">
+      <a className="schedule-team away" href={teamHref(game.away_team)}><img alt="" src={teamLogoUrl(game.away_team)} /><strong>{game.away_team} {archived?.away_score ?? ""}</strong></a>
+      <span>at</span>
+      <a className="schedule-team home" href={teamHref(game.home_team)}><img alt="" src={teamLogoUrl(game.home_team)} /><strong>{game.home_team} {archived?.home_score ?? ""}</strong></a>
+    </div>
+    <div className="schedule-projection-panel"><p>Forecast unavailable</p><small>No eligible forecast is published for this game. It is not included in model scoring.</small></div>
+  </article>;
+  const projection = { margin: pregame.projection.home_margin, winProbability: pregame.projection.home_win_probability };
+  const market = (archived?.status.state === "pre" ? archived.latest_observations?.market : null) ?? pregame.market ?? null;
   const marketProbability = market ? marketProbabilities(market) : null;
-  const predictionMarket = pregame?.prediction_market ?? archived?.prediction_market ?? null;
-  const injuryReport = archived?.injury_report ?? pregame?.injury_report;
+  const predictionMarket = (archived?.status.state === "pre" ? archived.latest_observations?.prediction_market : null) ?? pregame?.prediction_market ?? null;
+  const injuryReport = archived?.status.state === "pre" ? archived.latest_observations?.injury_report ?? pregame.injury_report : pregame.injury_report;
   const projectedMinutes = pregame?.projected_minutes ?? archived?.projected_minutes;
   const spreadLedger = pregame?.projection.ledger ?? archived?.projection.ledger;
   const reportUpdatedAfterFreeze = Boolean(
@@ -822,6 +821,7 @@ function ScheduleGameCard({ game, forecast, archived }: { game: WinProjectionSch
         <strong>{modelEdge === null ? "—" : `${Math.abs(modelEdge).toFixed(1)} pts`}</strong>
       </div>
 
+      {archived?.data_quality_errors?.length ? <p className="error schedule-error" role="alert">Data quality: {archived.data_quality_errors.join("; ")}</p> : null}
       {injuryReport && displayedMinutes && <details className="schedule-assumptions">
         <summary>
           <span>{spreadLedger ? "Rotation, ratings & spread ledger" : "Rotation & injury assumptions"}</span>
@@ -867,95 +867,44 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
     setSelectedDate((currentDate) => currentDate === nextDate ? currentDate : nextDate);
   }, [initialDate]);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/win-projections")
-      .then(async (response) => {
-        const payload = await response.json() as MinutesProjectionPayload;
-        if (!response.ok || !payload.win_projection) throw new Error("Schedule projections are unavailable.");
-        if (!cancelled) setForecast(payload.win_projection);
-      })
-      .catch((reason: Error) => { if (!cancelled) setError(reason.message); });
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/schedule-performance")
-      .then(async (response) => {
-        const payload = await response.json() as SchedulePerformance;
-        if (!response.ok) throw new Error("Schedule performance is unavailable.");
-        if (!cancelled) setPerformance(payload);
-      })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    if (!forecast || initialDate) return;
-    const dates = forecast.scheduled_games.map((game) => game.game_date).sort();
-    const today = dateKey(new Date());
-    if (dates.includes(today) || !dates.length) return;
-    const fallbackDate = dates.find((date) => date > today) ?? dates[dates.length - 1];
-    setSelectedDate(fallbackDate);
-    window.history.replaceState(null, "", scheduleHref(fallbackDate));
-  }, [forecast, initialDate]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setScheduleDay(null);
-    fetch(`/api/schedule?date=${selectedDate}`)
-      .then(async (response) => {
-        const payload = await response.json() as ScheduleDay;
-        if (!response.ok) throw new Error("Archived lines are temporarily unavailable.");
-        if (!cancelled) setScheduleDay(payload);
-      })
-      .catch((reason: Error) => { if (!cancelled) setError(reason.message); });
-    return () => { cancelled = true; };
-  }, [selectedDate]);
-
-  useEffect(() => {
-    if (!scheduleDay?.games.some((game) => game.status.state === "in")) return;
-    let cancelled = false;
-    const refresh = () => {
-      fetch(`/api/schedule?date=${selectedDate}`)
-        .then(async (response) => {
-          const payload = await response.json() as ScheduleDay;
-          if (response.ok && !cancelled) setScheduleDay(payload);
-        })
-        .catch(() => undefined);
-    };
-    const timer = window.setInterval(refresh, 30_000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [scheduleDay, selectedDate]);
-
   const dateRail = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(selectedDate, index - 3)), [selectedDate]);
   useEffect(() => {
-    let cancelled = false;
-    Promise.all(dateRail.map(async (date) => {
+    const controller = new AbortController();
+    let timer: number | undefined;
+    setScheduleDay(null);
+    setError(null);
+    async function refresh() {
       try {
-        const response = await fetch(`/api/schedule?date=${date}`);
-        if (!response.ok) return null;
-        const payload = await response.json() as ScheduleDay;
-        return [date, dailyRecord(payload)] as const;
-      } catch {
-        return null;
+        const response = await fetch(`/api/schedule-view?date=${selectedDate}`, { signal: controller.signal });
+        const payload = await response.json() as {
+          day: ScheduleDay;
+          calendar: Record<string, ScheduleDay>;
+          performance: SchedulePerformance;
+          forecast: MinutesProjectionPayload;
+        };
+        if (!response.ok || !payload.forecast.win_projection) {
+          throw new Error("The selected schedule release is unavailable. No substitute projections are being shown.");
+        }
+        if (controller.signal.aborted) return;
+        // One response and one observation snapshot supply every part of the page.
+        setForecast(payload.forecast.win_projection);
+        setScheduleDay(payload.day);
+        setPerformance(payload.performance);
+        setDateRecords(Object.fromEntries(Object.entries(payload.calendar).flatMap(([date, day]) => {
+          const record = dailyRecord(day);
+          return record ? [[date, record]] : [];
+        })));
+        setError(null);
+        if (payload.day.games.some((game) => game.status.state !== "post")) {
+          timer = window.setTimeout(refresh, 30_000);
+        }
+      } catch (reason) {
+        if (!controller.signal.aborted) setError((reason as Error).message);
       }
-    })).then((rows) => {
-      if (cancelled) return;
-      setDateRecords((current) => {
-        const next = { ...current };
-        rows.forEach((row) => {
-          if (!row) return;
-          const [date, record] = row;
-          if (record) next[date] = record;
-          else delete next[date];
-        });
-        return next;
-      });
-    });
-    return () => { cancelled = true; };
-  }, [dateRail]);
+    }
+    void refresh();
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [selectedDate]);
   const gamesByDate = useMemo(() => {
     const counts = new Map<string, number>();
     forecast?.scheduled_games.forEach((game) => counts.set(game.game_date, (counts.get(game.game_date) ?? 0) + 1));

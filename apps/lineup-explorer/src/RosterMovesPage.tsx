@@ -1,3 +1,4 @@
+import { releaseFetch as fetch } from "./releaseFetch";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { geoAlbersUsa } from "d3-geo";
 import { GIFEncoder, applyPalette, quantize } from "gifenc";

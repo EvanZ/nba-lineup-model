@@ -1073,6 +1073,9 @@ def read_schedule_day(
     """Read the latest board with immutable pregame and final audit records."""
 
     state_root = Path(state_dir)
+    from nba_lineup_model.season.serving_selection import INDEX_FILENAME, read_selected_day
+    if (state_root / INDEX_FILENAME).is_file():
+        return read_selected_day(game_date, root=state_root)
     path = state_root / "latest" / f"{game_date}.json"
     if not path.is_file():
         return {
@@ -1712,6 +1715,16 @@ def _schedule_final_audits(
     """Join one canonical final observation to each environment forecast."""
 
     state_root = Path(state_dir)
+    from nba_lineup_model.season.serving_selection import INDEX_FILENAME, read_selected_day
+    if (state_root / INDEX_FILENAME).is_file():
+        index = json.loads((state_root / INDEX_FILENAME).read_text())
+        return [
+            game["final_audit"]
+            for game_date in sorted(index["dates"])
+            for game in read_selected_day(game_date, root=state_root)["games"]
+            if isinstance(game.get("final_audit"), dict)
+            and game["final_audit"].get("season") == season
+        ]
     observation_root = (
         Path(live_score_state_dir)
         if live_score_state_dir is not None
@@ -1788,9 +1801,14 @@ def read_current_season_records(
     latest_game_date: str | None = None
     latest_archive_time: str | None = None
     final_dir = Path(live_score_state_dir or state_dir) / "final"
-    if final_dir.is_dir():
-        for path in sorted(final_dir.glob("*.summary.json")):
-            payload = json.loads(path.read_text())
+    from nba_lineup_model.season.serving_selection import INDEX_FILENAME, selected_result_records
+    if final_dir.is_dir() or (Path(state_dir) / INDEX_FILENAME).is_file():
+        payloads = (
+            selected_result_records(Path(state_dir), season=season)
+            if (Path(state_dir) / INDEX_FILENAME).is_file()
+            else [json.loads(path.read_text()) for path in sorted(final_dir.glob("*.summary.json"))]
+        )
+        for payload in payloads:
             if not isinstance(payload, dict) or payload.get("season") != season:
                 continue
             game_id = str(payload.get("game_id", ""))
@@ -1874,7 +1892,8 @@ def read_schedule_performance(
         live_score_state_dir=live_score_state_dir,
         season=season,
     ):
-        if declared_model_track:
+        # Explicit selected references supersede historical display-label filters.
+        if declared_model_track and not (Path(state_dir) / "forecast-selections.json").is_file():
             pregame = payload.get("pregame")
             pregame = pregame if isinstance(pregame, dict) else {}
             forecast_version = pregame.get("forecast_version")

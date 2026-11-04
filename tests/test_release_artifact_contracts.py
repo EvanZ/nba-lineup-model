@@ -81,7 +81,7 @@ def _forecast(forecast_id: str) -> ForecastVersionManifest:
         market_snapshots=(),
         roster_revision=_ref("roster_revision", "1"),
         information_cutoff_at=TIP,
-        computed_at=TIP,
+        computed_at=datetime(2026, 11, 3, 2, 30, tzinfo=UTC),
         components=components,
         predicted_home_margin=2.5,
         predicted_home_win_probability=0.57,

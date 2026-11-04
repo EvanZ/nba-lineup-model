@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from nba_lineup_model.season.current_serving import (
@@ -30,6 +30,7 @@ from nba_lineup_model.season.dev_site_release import (
 from nba_lineup_model.season.release_publisher import (
     load_process_activation_identity,
 )
+from nba_lineup_model.season.serving_selection import observation_context
 from nba_lineup_model.web_api.inference import (
     MODEL_ARTIFACT,
     MODEL_DISPLAY_NAME,
@@ -40,6 +41,7 @@ from nba_lineup_model.web_api.inference import (
 from nba_lineup_model.web_api.preseason_minutes import (
     build_forward_conditional_preseason_minutes_payload,
 )
+from nba_lineup_model.web_api.release_serving import ReleaseServing
 from nba_lineup_model.web_api.roster_movements import build_roster_movement_payload
 from nba_lineup_model.web_api.win_projections import (
     build_current_season_minutes_payload,
@@ -86,13 +88,24 @@ def _headshot_png(player_id: int) -> bytes:
 
 def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     """Create the API, loading the published model state only once per process."""
-    loaded_release = load_process_activation_identity(
-        os.environ.get("GESTALT_ACTIVE_RELEASE_ROOT")
+    loaded_release = load_process_activation_identity(os.environ.get("GESTALT_ACTIVE_RELEASE_ROOT"))
+
+    serving = ReleaseServing.load(os.environ.get("GESTALT_ACTIVE_RELEASE_ROOT"))
+    schedule_root = (
+        serving.path("schedule")
+        if serving
+        else Path(
+            os.environ.get("GESTALT_SCHEDULE_STATE_DIR", "/var/lib/nba-gestalt/schedule")
+        ).resolve()
     )
+    configured_observations = os.environ.get("GESTALT_LIVE_SCORE_STATE_DIR")
+    observation_root = Path(configured_observations) if configured_observations else None
 
     @lru_cache(maxsize=1)
     def get_evaluator() -> LineupEvaluator:
-        return evaluator or LineupEvaluator.from_latest_artifact()
+        return evaluator or LineupEvaluator.from_latest_artifact(
+            **(serving.evaluator_kwargs() if serving else {})
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -109,6 +122,49 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def consistent_serving(request: Request, call_next):
+        if serving is None:
+            return await call_next(request)
+        expected = request.headers.get("X-Gestalt-Release")
+        if expected and expected != serving.release_id:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "release_changed", "release_id": serving.release_id},
+                headers={"X-Gestalt-Release": serving.release_id, "Cache-Control": "no-store"},
+            )
+        snapshot = None
+        token = None
+        if request.url.path in {
+            "/api/schedule",
+            "/api/schedule-performance",
+            "/api/schedule-view",
+            "/api/current-season-records",
+        }:
+            # Capture once for the whole response, including every nested read.
+            from starlette.concurrency import run_in_threadpool
+
+            snapshot = await run_in_threadpool(serving.observations, observation_root)
+            token = observation_context.set(snapshot)
+        try:
+            response = await call_next(request)
+            response.headers["X-Gestalt-Release"] = serving.release_id
+            response.headers["X-Gestalt-Edition"] = serving.bindings["edition_id"]
+            response.headers["X-Gestalt-Selection"] = serving.bindings["components"][
+                "forecast_selection_id"
+            ]
+            response.headers["Cache-Control"] = "no-store"
+            if snapshot:
+                response.headers["X-Gestalt-Observations"] = snapshot.observation_id
+            return response
+        finally:
+            if token is not None:
+                observation_context.reset(token)
+
+    @app.get("/api/serving-view")
+    def serving_view():
+        return serving.metadata() if serving else {"release_id": None}
+
     @lru_cache(maxsize=1)
     def get_win_projection_payload() -> dict[str, object]:
         def with_current_state(
@@ -122,21 +178,17 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 evaluator=state,
                 preseason_minutes_payload=minutes,
             )
-            schedule_state_dir = Path(
-                os.environ.get(
-                    "GESTALT_SCHEDULE_STATE_DIR",
-                    "/var/lib/nba-gestalt/schedule",
-                )
-            )
+            schedule_state_dir = schedule_root
             current_projection = build_current_season_win_projection_payload(
                 evaluator=state,
                 minutes_payload=current_minutes,
                 preseason_forecast=win_projection,
                 state_dir=schedule_state_dir,
-                catalog_path=Path(
-                    os.environ.get(
-                        "GESTALT_GAME_CATALOG_PATH",
-                        "data/catalog/games.parquet",
+                catalog_path=(
+                    serving.path("catalog")
+                    if serving
+                    else Path(
+                        os.environ.get("GESTALT_GAME_CATALOG_PATH", "data/catalog/games.parquet")
                     )
                 ),
             )
@@ -147,7 +199,9 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 "preseason_win_projection": win_projection,
             }
 
-        preview_path = os.environ.get("GESTALT_WIN_PROJECTION_CACHE_PATH")
+        preview_path = (
+            os.environ.get("GESTALT_WIN_PROJECTION_CACHE_PATH") if serving is None else None
+        )
         if preview_path:
             path = Path(preview_path)
             if not path.is_file():
@@ -174,6 +228,9 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 raise ValueError("Invalid combined win projection cache payload")
             return with_current_state(minutes, win_projection)
 
+        if serving is not None:
+            raise ValueError("Selected release is missing its bound win-projection cache")
+
         # Keep local development self-contained and tolerate an older cache.
         # The release publisher writes the combined payload above, so production
         # never reconstructs it from the training-only availability mart.
@@ -183,9 +240,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         win_projection = (
             cached
             if cached is not None
-            else build_win_projection_payload(
-                evaluator=get_evaluator(), minutes_payload=minutes
-            )
+            else build_win_projection_payload(evaluator=get_evaluator(), minutes_payload=minutes)
         )
         return with_current_state(minutes, win_projection)
 
@@ -193,7 +248,11 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     def health() -> dict[str, object]:
         state = get_evaluator()
         site_release = None
-        site_release_root = os.environ.get("GESTALT_SITE_RELEASE_ROOT")
+        site_release_root = (
+            str(serving.root / "site-releases")
+            if serving
+            else os.environ.get("GESTALT_SITE_RELEASE_ROOT")
+        )
         if site_release_root and (Path(site_release_root) / "latest.json").is_file():
             release_path = resolve_latest_dev_site_release(site_release_root)
             release_manifest = verify_dev_site_release(release_path)
@@ -222,6 +281,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             "current_season_state": state.current_season_metadata or None,
             "site_release": site_release,
             "loaded_release": loaded_release,
+            "serving_view": serving.metadata() if serving else None,
         }
 
     @app.get("/api/reports/daily-pipeline")
@@ -246,7 +306,9 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             )
         )
         try:
-            report_path = resolve_latest_bundle(root) / REPORT_FILENAME
+            report_path = (
+                serving.path("serving_bundle") if serving else resolve_latest_bundle(root)
+            ) / REPORT_FILENAME
         except (FileNotFoundError, ValueError) as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         if not report_path.is_file():
@@ -258,13 +320,15 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     def dev_release_report() -> FileResponse:
         """Serve the approved release-level verification report when configured."""
 
-        root = os.environ.get("GESTALT_SITE_RELEASE_ROOT")
+        root = (
+            str(serving.root / "site-releases")
+            if serving
+            else os.environ.get("GESTALT_SITE_RELEASE_ROOT")
+        )
         if not root:
             raise HTTPException(status_code=404, detail="Dev release reporting is disabled")
         try:
-            report_path = (
-                resolve_latest_dev_site_release(root) / DEV_RELEASE_REPORT_FILENAME
-            )
+            report_path = resolve_latest_dev_site_release(root) / DEV_RELEASE_REPORT_FILENAME
         except (FileNotFoundError, ValueError) as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         return FileResponse(report_path, media_type="text/html")
@@ -381,11 +445,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             profile = get_evaluator().player(player_id)
             trajectory = profile.get("current_season_trajectory")
             if isinstance(trajectory, list) and trajectory:
-                state_dir = Path(
-                    os.environ.get(
-                        "GESTALT_SCHEDULE_STATE_DIR", "/var/lib/nba-gestalt/schedule"
-                    )
-                )
+                state_dir = schedule_root
                 profile["current_season_trajectory"] = enrich_player_game_trajectory(
                     trajectory,
                     player_id=player_id,
@@ -484,17 +544,13 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     ) -> dict[str, object]:
         """Return the latest archived board plus immutable pregame snapshots."""
 
-        state_dir = Path(
-            os.environ.get("GESTALT_SCHEDULE_STATE_DIR", "/var/lib/nba-gestalt/schedule")
-        )
+        state_dir = schedule_root
         live_score_state_dir = os.environ.get("GESTALT_LIVE_SCORE_STATE_DIR")
         try:
             return read_schedule_day(
                 date,
                 state_dir=state_dir,
-                live_score_state_dir=(
-                    Path(live_score_state_dir) if live_score_state_dir else None
-                ),
+                live_score_state_dir=(Path(live_score_state_dir) if live_score_state_dir else None),
             )
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
@@ -503,9 +559,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     def current_season_records() -> dict[str, object]:
         """Return actual records derived from immutable completed-game audits."""
 
-        state_dir = Path(
-            os.environ.get("GESTALT_SCHEDULE_STATE_DIR", "/var/lib/nba-gestalt/schedule")
-        )
+        state_dir = schedule_root
         live_score_state_dir = os.environ.get("GESTALT_LIVE_SCORE_STATE_DIR")
         try:
             return read_current_season_records(
@@ -519,9 +573,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     def schedule_performance() -> dict[str, object]:
         """Return rolling model-versus-market metrics from immutable audits."""
 
-        state_dir = Path(
-            os.environ.get("GESTALT_SCHEDULE_STATE_DIR", "/var/lib/nba-gestalt/schedule")
-        )
+        state_dir = schedule_root
         live_score_state_dir = os.environ.get("GESTALT_LIVE_SCORE_STATE_DIR")
         try:
             return read_schedule_performance(
@@ -530,6 +582,32 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             )
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/api/schedule-view")
+    def schedule_view(date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$")):
+        """Calendar, game cards and metrics share one observation snapshot."""
+        from datetime import date as calendar_date
+        from datetime import timedelta
+
+        selected = calendar_date.fromisoformat(date)
+        days = {
+            (selected + timedelta(days=offset)).isoformat(): read_schedule_day(
+                (selected + timedelta(days=offset)).isoformat(),
+                state_dir=schedule_root,
+                live_score_state_dir=observation_root,
+            )
+            for offset in range(-3, 4)
+        }
+        return {
+            "day": days[date],
+            "calendar": days,
+            "performance": read_schedule_performance(
+                state_dir=schedule_root,
+                live_score_state_dir=observation_root,
+            ),
+            "forecast": get_win_projection_payload(),
+            "serving_view": serving.metadata() if serving else None,
+        }
 
     @app.get("/api/default-opponent")
     def default_opponent(
