@@ -1718,13 +1718,13 @@ def _schedule_final_audits(
     from nba_lineup_model.season.serving_selection import INDEX_FILENAME, read_selected_day
     if (state_root / INDEX_FILENAME).is_file():
         index = json.loads((state_root / INDEX_FILENAME).read_text())
-        return [
+        return sorted([
             game["final_audit"]
             for game_date in sorted(index["dates"])
             for game in read_selected_day(game_date, root=state_root)["games"]
             if isinstance(game.get("final_audit"), dict)
             and game["final_audit"].get("season") == season
-        ]
+        ], key=lambda audit: str(audit["game_id"]))
     observation_root = (
         Path(live_score_state_dir)
         if live_score_state_dir is not None

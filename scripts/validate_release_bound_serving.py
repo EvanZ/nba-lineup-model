@@ -53,6 +53,12 @@ def capture(api, schedule_root, output):
 
 def normalized(value):
     if isinstance(value, dict):
+        # The new response also exposes the already-selected nested provenance
+        # at the game level. Compare the same meaning, never drop model fields.
+        if "game_id" in value and isinstance(value.get("pregame"), dict):
+            value = dict(value)
+            if "forecast_version" not in value and "forecast_version" in value["pregame"]:
+                value["forecast_version"] = value["pregame"]["forecast_version"]
         return {
             k: normalized(v)
             for k, v in value.items()
@@ -65,6 +71,7 @@ def normalized(value):
                 "site_release",
                 "latest_observations",
                 "observation_id",
+                "live_score_collected_at",
             }
         }
     if isinstance(value, list):
