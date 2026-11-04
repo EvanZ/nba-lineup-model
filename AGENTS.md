@@ -9,6 +9,12 @@ These instructions apply to every task in this repository.
   laptop checkout as the working implementation environment.
 - Keep large datasets and model artifacts on EC2/S3. Never copy them to the
   laptop without the user's explicit approval.
+- Keep remote inspection remote. Do not transfer or stream substantial source
+  files, logs, reports, directory listings, artifacts, or other remote context
+  from EC2 into the conversation or laptop without the user's explicit approval.
+- Search, filter, edit, test, and summarize on EC2. Return only the smallest
+  relevant excerpts, diffs, test summaries, and validation evidence needed for
+  the user to understand and verify the result.
 
 ## Release workflow
 
