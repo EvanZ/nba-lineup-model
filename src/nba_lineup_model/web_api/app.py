@@ -27,6 +27,9 @@ from nba_lineup_model.season.dev_site_release import (
     resolve_latest_dev_site_release,
     verify_dev_site_release,
 )
+from nba_lineup_model.season.release_publisher import (
+    load_process_activation_identity,
+)
 from nba_lineup_model.web_api.inference import (
     MODEL_ARTIFACT,
     MODEL_DISPLAY_NAME,
@@ -83,6 +86,9 @@ def _headshot_png(player_id: int) -> bytes:
 
 def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     """Create the API, loading the published model state only once per process."""
+    loaded_release = load_process_activation_identity(
+        os.environ.get("GESTALT_ACTIVE_RELEASE_ROOT")
+    )
 
     @lru_cache(maxsize=1)
     def get_evaluator() -> LineupEvaluator:
@@ -215,6 +221,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             "lab_seasons": state.available_lab_seasons(),
             "current_season_state": state.current_season_metadata or None,
             "site_release": site_release,
+            "loaded_release": loaded_release,
         }
 
     @app.get("/api/reports/daily-pipeline")

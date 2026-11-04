@@ -35,8 +35,10 @@ def config_fixture(tmp_path):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload))
     config.coverage_path.write_text(json.dumps({"season":"2026-27", "games":{"0022600001":["a"*64], "0022600002":["b"*64]}}))
-    config.live_pointer.mkdir()
-    (config.live_pointer / "unchanged").write_text("original")
+    bootstrap_release = root / "bootstrap-release"
+    bootstrap_release.mkdir()
+    (bootstrap_release / "unchanged").write_text("original")
+    config.live_pointer.symlink_to(bootstrap_release, target_is_directory=True)
     return config
 
 
@@ -188,27 +190,47 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
     new = config.pipeline_root / "releases/new"
     old.mkdir(parents=True)
     new.mkdir()
-    (config.live_pointer / "unchanged").unlink()
-    config.live_pointer.rmdir()
-    config.live_pointer.symlink_to(old)
+    config.live_pointer.unlink()
+    config.live_pointer.symlink_to(old, target_is_directory=True)
     (new / "schedule").mkdir()
     report = {
         "status": "validated_candidate",
         "game_date": "2026-10-20",
         "runtime_release": str(new),
+        "activation_operation_id": "daily-test-operation",
+        "expected_previous_generation": 0,
         "source_causal_schedule_sha256": causal_schedule_sha256(
             config.schedule_root
         ),
     }
     manifest = {"identity":{"live_pointer":str(config.live_pointer), "evidence_through_date":"2026-10-20"}}
     monkeypatch.setattr(activation, "verify_production_site_release", lambda path: manifest)
-    monkeypatch.setattr("nba_lineup_model.season.production_site_release.verify_production_site_release", lambda path: manifest)
+    monkeypatch.setattr(
+        "nba_lineup_model.season.release_publisher.verify_production_site_release",
+        lambda path: manifest,
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.season.release_publisher._validated_release_identity",
+        lambda release: {
+            "release_path": Path(release).resolve().as_posix(),
+            "release_id": f"release-{Path(release).resolve().name}",
+            "runtime_sha256": "runtime-sha",
+            "binding_map_sha256": "bindings-sha",
+            "edition_id": "original",
+            "code": {
+                "git_revision": "a" * 40,
+                "package_sha256": "b" * 64,
+                "dependency_lock_sha256": "c" * 64,
+            },
+        },
+    )
     events = []
-    def reload_api(c):
-        events.append(("reload", c.live_pointer.resolve().name))
-        if scenario == "reload_failure" and c.live_pointer.resolve() == new:
+    def reload_api(c, record):
+        release_name = Path(record["release_path"]).name
+        events.append(("reload", release_name))
+        if scenario == "reload_failure" and release_name == "new":
             raise RuntimeError("restart failed")
-    def verify_api(c, release):
+    def verify_api(c, release, _record):
         events.append(("verify", release.name))
         if scenario in {"health_failure", "rollback_failure"}:
             if release == new or scenario == "rollback_failure":
@@ -228,7 +250,9 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
         activation.activate_daily_release(
             config, report, reload_api=reload_api, verify_api=verify_api
         )
-        assert config.live_pointer.resolve() == new
+        active = activation.read_active_activation(config.live_pointer)
+        assert active["release_path"] == new.as_posix()
+        assert active["generation"] == 1
         assert report["status"] == "activated"
         assert events == [("reload", "new"), ("verify", "new")]
         return
@@ -238,7 +262,8 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
         assert ("reload","old") in events
         assert ("verify","old") in events
         assert report["status"] == ("rollback_failed" if scenario == "rollback_failure" else "activation_failed")
-    assert config.live_pointer.resolve() == old
+    active = activation.read_active_activation(config.live_pointer)
+    assert active["release_path"] == old.as_posix()
 
 
 def test_pipeline_report_is_accessible_without_publishing_a_failed_candidate(tmp_path, monkeypatch):
@@ -399,7 +424,13 @@ def test_post_activation_production_gate_checks_full_player_history(
         lambda *_args, **_kwargs: {},
     )
 
-    daily_activation.verify_environment_api(config, release)
+    monkeypatch.setattr(
+        daily_activation,
+        "verify_loaded_identity",
+        lambda *_args, **_kwargs: None,
+    )
+
+    daily_activation.verify_environment_api(config, release, {})
     assert seen == [
         {
             "evidence_date": "2026-10-20",

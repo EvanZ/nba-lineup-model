@@ -1315,6 +1315,48 @@ def test_preseason_rankings_include_returners_and_cold_starts(tmp_path) -> None:
     assert rookie.json()["rating_history"] == []
 
 
+
+def test_health_reports_process_loaded_activation_identity(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    publisher_root = tmp_path / "publisher"
+    generation = publisher_root / "generation=00000000000000000001"
+    generation.mkdir(parents=True)
+    record = {
+        "schema_version": 1,
+        "artifact_kind": "release_activation",
+        "environment": "dev",
+        "generation": 1,
+        "operation_id": "startup-operation",
+        "release_path": (tmp_path / "release").as_posix(),
+        "release_id": "release-sha",
+        "runtime_sha256": "runtime-sha",
+        "binding_map_sha256": "bindings-sha",
+        "edition_id": "original",
+        "code": {
+            "git_revision": "a" * 40,
+            "package_sha256": "b" * 64,
+            "dependency_lock_sha256": "c" * 64,
+        },
+        "created_at": "2026-11-03T00:00:00Z",
+    }
+    activation_path = generation / "activation.json"
+    activation_path.write_text(json.dumps(record))
+    live = tmp_path / "live-release"
+    live.symlink_to(generation, target_is_directory=True)
+    monkeypatch.setenv("GESTALT_ACTIVE_RELEASE_ROOT", str(live))
+
+    app = create_app(_evaluator(compiled_linear=True))
+    changed = {**record, "operation_id": "changed-after-startup"}
+    activation_path.write_text(json.dumps(changed))
+    client = TestClient(app)
+
+    loaded = client.get("/api/health").json()["loaded_release"]
+    assert loaded["operation_id"] == "startup-operation"
+    assert loaded["generation"] == 1
+    assert loaded["release_id"] == "release-sha"
+
 def test_preseason_projection_state_is_available_to_the_matchup_lab() -> None:
     evaluator = _evaluator(compiled_linear=True)
     ranking_columns = [

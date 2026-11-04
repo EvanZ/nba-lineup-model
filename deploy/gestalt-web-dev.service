@@ -10,7 +10,8 @@ WorkingDirectory=/opt/nba-gestalt/current
 Environment=PYTHONUNBUFFERED=1
 Environment=GESTALT_DAILY_PIPELINE_ROOT=/var/lib/nba-gestalt-dev/daily-pipeline
 Environment=GESTALT_SCHEDULE_LOCK_PATH=/var/lib/nba-gestalt-dev/.schedule-writer.lock
-Environment=PYTHONPATH=/home/ubuntu/nba-lineup-model/src
+Environment=GESTALT_ACTIVE_RELEASE_ROOT=/var/lib/nba-gestalt-dev/live-release
+Environment=PYTHONPATH=/var/lib/nba-gestalt-dev/live-release/code/src
 Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt-dev/live-release/current-season-serving
 Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt-dev/live-release/current-season-lineups
 Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt-dev/live-release/schedule

@@ -8,6 +8,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/nba-gestalt/current
 Environment=PYTHONUNBUFFERED=1
+Environment=GESTALT_ACTIVE_RELEASE_ROOT=/var/lib/nba-gestalt/live-release
 Environment=PYTHONPATH=/var/lib/nba-gestalt/live-release/code/src
 Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt/live-release/current-season-serving
 Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt/live-release/current-season-lineups

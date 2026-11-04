@@ -16,6 +16,7 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 
 PROD_REF="${GESTALT_PROD_REF:?GESTALT_PROD_REF is required}"
+PROD_APPROVAL_REFERENCE="${GESTALT_PROD_APPROVAL_REFERENCE:?GESTALT_PROD_APPROVAL_REFERENCE is required}"
 SOURCE_REPO="${GESTALT_SOURCE_REPO:-$HOME/nba-lineup-model}"
 APP_ROOT="${GESTALT_APP_ROOT:-/opt/nba-gestalt}"
 CODE_ROOT="${GESTALT_CODE_ROOT:-/opt/nba-gestalt-code}"
@@ -33,6 +34,7 @@ DEV_CATALOG_PATH="$DEV_RUNTIME/catalog/games.parquet"
 DEV_PRESEASON_ENV="$DEV_RUNTIME/site-release.env"
 PRODUCTION_RELEASE_ROOT="$STATE_ROOT/site-releases"
 LIVE_POINTER="$STATE_ROOT/live-release"
+PUBLISHER_ROOT="$STATE_ROOT/release-publisher"
 SCHEDULE_RELEASE_ROOT="$STATE_ROOT/schedule-serving/releases"
 SCHEDULE_CURRENT="$STATE_ROOT/schedule-serving/current"
 PUBLIC_WEB=/var/www/nba-gestalt
@@ -96,9 +98,11 @@ if ! [[ "$approved_evidence_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
 fi
 
 release_id="${GESTALT_PROD_RELEASE_ID:-$(git -C "$SOURCE_REPO" rev-parse --short=12 "$PROD_REF")}"
+publisher_operation_id="${GESTALT_PROD_OPERATION_ID:-prod-$release_id-${approved_release_sha:0:12}}"
 release_root="$CODE_ROOT/releases/$release_id"
 sudo install -d -o "$USER" -g "$(id -gn)" "$CODE_ROOT/releases"
 sudo install -d -o "$USER" -g "$(id -gn)" "$PRODUCTION_RELEASE_ROOT"
+sudo install -d -o root -g root -m 0755 "$PUBLISHER_ROOT"
 sudo install -d -o "$USER" -g "$(id -gn)" "$SCHEDULE_RELEASE_ROOT"
 if [[ ! -d "$release_root" ]]; then
   git -C "$SOURCE_REPO" worktree add --detach "$release_root" "$PROD_REF"
@@ -214,15 +218,35 @@ trap - EXIT
 backup_root="$STATE_ROOT/promotion-backups/$(date -u +%Y%m%dT%H%M%SZ)-$approved_release_sha"
 sudo install -d -o "$USER" -g "$(id -gn)" "$backup_root"
 sudo cp /etc/systemd/system/gestalt-web.service "$backup_root/gestalt-web.service"
-old_live_target=""
-if [[ -L "$LIVE_POINTER" ]]; then
-  old_live_target="$(readlink -f "$LIVE_POINTER")"
+publisher_status="$(
+  sudo env PYTHONPATH="$release_root/src" \
+    "$PROD_RELEASE/.venv/bin/python" -P \
+    -m nba_lineup_model.season.release_publisher status \
+    --live-pointer "$LIVE_POINTER"
+)"
+active_generation="$(jq -er '.generation // 0' <<<"$publisher_status")"
+active_operation_id="$(jq -r '.operation_id // empty' <<<"$publisher_status")"
+operation_request="$PUBLISHER_ROOT/journal/$publisher_operation_id/0001-requested.json"
+if [[ -f "$operation_request" ]]; then
+  expected_generation="$(jq -er '.expected_previous_generation' "$operation_request")"
+else
+  expected_generation="$active_generation"
+fi
+if [[ "$active_operation_id" == "$publisher_operation_id" ]]; then
+  old_release_path="$(jq -r '.previous_release_path // empty' <<<"$publisher_status")"
+else
+  old_release_path="$(jq -r '.release_path // empty' <<<"$publisher_status")"
+fi
+if [[ -z "$old_release_path" ]]; then
+  printf 'Production promotion requires an existing rollback release\n' >&2
+  exit 1
 fi
 old_web_target="$(readlink "$PUBLIC_WEB" 2>/dev/null || true)"
 canonical_schedule_target="$(readlink -f "$SCHEDULE_CURRENT" 2>/dev/null || true)"
 test -d "$canonical_schedule_target"
 old_code_target="$(readlink -f "$CODE_CURRENT" 2>/dev/null || true)"
 mutation_started=0
+publisher_activated=0
 
 atomic_symlink() {
   local target="$1"
@@ -266,13 +290,27 @@ rollback() {
       gestalt-dagster-daemon \
       gestalt-dagster-webserver \
       gestalt-dagster-code-server
-    if [[ -n "$old_live_target" ]]; then
+    if [[ "$publisher_activated" == "1" ]]; then
+      rollback_status="$(
+        sudo env PYTHONPATH="$release_root/src" \
+          "$PROD_RELEASE/.venv/bin/python" -P \
+          -m nba_lineup_model.season.release_publisher status \
+          --live-pointer "$LIVE_POINTER"
+      )"
+      rollback_generation="$(jq -er '.generation' <<<"$rollback_status")"
       sudo env PYTHONPATH="$release_root/src" \
-        "$PROD_RELEASE/.venv/bin/python" \
-        -m nba_lineup_model.season.production_site_release switch \
-        "$old_live_target" --live-pointer "$LIVE_POINTER" >/dev/null
-    else
-      sudo unlink "$LIVE_POINTER" 2>/dev/null || true
+        "$PROD_RELEASE/.venv/bin/python" -P \
+        -m nba_lineup_model.season.release_publisher activate \
+        --release "$old_release_path" \
+        --live-pointer "$LIVE_POINTER" \
+        --publisher-root "$PUBLISHER_ROOT" \
+        --environment prod \
+        --operation-id "$publisher_operation_id-script-rollback-$rollback_generation" \
+        --expected-previous-generation "$rollback_generation" \
+        --reason "rollback failed production promotion $publisher_operation_id" \
+        --approval-reference "$PROD_APPROVAL_REFERENCE" \
+        --service gestalt-web \
+        --api-root http://127.0.0.1:8010 >/dev/null
     fi
     if [[ -n "$old_web_target" ]]; then
       atomic_symlink "$old_web_target" "$PUBLIC_WEB"
@@ -297,14 +335,23 @@ sudo systemctl stop \
   gestalt-dagster-code-server
 sudo install -m 0644 "$release_root/deploy/gestalt-web.service" \
   /etc/systemd/system/gestalt-web.service
+sudo systemctl daemon-reload
 sudo env PYTHONPATH="$release_root/src" \
-  "$PROD_RELEASE/.venv/bin/python" \
-  -m nba_lineup_model.season.production_site_release switch \
-  "$candidate" --live-pointer "$LIVE_POINTER" >/dev/null
+  "$PROD_RELEASE/.venv/bin/python" -P \
+  -m nba_lineup_model.season.release_publisher activate \
+  --release "$candidate" \
+  --live-pointer "$LIVE_POINTER" \
+  --publisher-root "$PUBLISHER_ROOT" \
+  --environment prod \
+  --operation-id "$publisher_operation_id" \
+  --expected-previous-generation "$expected_generation" \
+  --reason "approved dev-to-production promotion $approved_release_sha" \
+  --approval-reference "$PROD_APPROVAL_REFERENCE" \
+  --service gestalt-web \
+  --api-root http://127.0.0.1:8010 >/dev/null
+publisher_activated=1
 atomic_symlink "$LIVE_POINTER/web" "$PUBLIC_WEB"
 atomic_symlink "$release_root" "$CODE_CURRENT"
-sudo systemctl daemon-reload
-sudo systemctl restart gestalt-web
 sudo nginx -t
 sudo systemctl reload nginx
 

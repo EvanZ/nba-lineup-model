@@ -8,8 +8,15 @@ REPORT="${GESTALT_DEV_PIPELINE_REPORT:?Set the fully validated daily pipeline re
 LIVE=/var/lib/nba-gestalt-dev/live-release
 test -L "$LIVE" || { echo 'Initial atomic dev runtime bootstrap must be reviewed first.' >&2; exit 1; }
 SOURCE_REPO="${GESTALT_SOURCE_REPO:-/home/ubuntu/nba-lineup-model}"
+sudo install -d -o root -g root -m 0755 /var/lib/nba-gestalt-dev/release-publisher
+sudo chown root:root /var/lib/nba-gestalt-dev
+sudo chmod 0755 /var/lib/nba-gestalt-dev
+sudo install -m 0644 "$SOURCE_REPO/deploy/gestalt-web-dev.service" \
+  /etc/systemd/system/gestalt-web-dev.service
+sudo systemctl daemon-reload
 cd /opt/nba-gestalt/current
-PYTHONPATH="$SOURCE_REPO/src" .venv/bin/python - "$CONFIG" "$REPORT" <<'PY'
+sudo env PYTHONPATH="$SOURCE_REPO/src" \
+  .venv/bin/python - "$CONFIG" "$REPORT" <<'PY'
 import json
 import sys
 from pathlib import Path

@@ -24,7 +24,10 @@ from uuid import uuid4
 
 import pandas as pd
 
+from nba_lineup_model.season.release_publisher import read_active_generation
 from nba_lineup_model.season.slate_time import PACIFIC
+from nba_lineup_model.season.source_policy import require_clean_artifact_sources
+
 CAUSAL_HCA_MODEL_TRACK = "causal_hca_replacement_candidate_v2"
 MODEL_IMPLEMENTATION_PATHS = (
     "src/nba_lineup_model/modeling",
@@ -34,7 +37,6 @@ MODEL_IMPLEMENTATION_PATHS = (
     "src/nba_lineup_model/season/daily_model_replay.py",
     "src/nba_lineup_model/web_api/inference.py",
 )
-from nba_lineup_model.season.source_policy import require_clean_artifact_sources
 
 GIT_PREFLIGHT_TIMEOUT_SECONDS = 30
 
@@ -482,6 +484,13 @@ def prepare_daily_release(
     config.pipeline_root.mkdir(parents=True, exist_ok=True)
     report_root = config.pipeline_root / "reports" / target.isoformat()
     report = {
+        "activation_operation_id": (
+            f"daily-{config.environment_root.name}-{target.isoformat()}-"
+            f"{uuid4().hex}"
+        ),
+        "expected_previous_generation": read_active_generation(
+            config.live_pointer
+        ),
         "game_date": target.isoformat(),
         "data_replay_dates": [day.isoformat() for day in replay_dates],
         "approved_historical_model_replay_from": (

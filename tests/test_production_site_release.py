@@ -134,7 +134,11 @@ def _stage(tmp_path: Path, fixture: dict[str, object]) -> Path:
     )
 
 
-def test_stage_and_switch_one_verified_release(tmp_path: Path, monkeypatch) -> None:
+
+def test_stage_one_verified_release_without_moving_pointer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     fixture = _fixture(tmp_path, monkeypatch)
     candidate = _stage(tmp_path, fixture)
 
@@ -142,42 +146,24 @@ def test_stage_and_switch_one_verified_release(tmp_path: Path, monkeypatch) -> N
     assert manifest["identity"]["approved_release_sha256"] == fixture["release_sha"]
     assert (candidate / "schedule").is_symlink()
     assert (candidate / "site-release.env").is_file()
-
-    previous = subject.switch_production_release(
-        candidate,
-        live_pointer=tmp_path / "live-release",
-    )
-    assert previous is None
-    assert (tmp_path / "live-release").resolve() == candidate
+    assert not (tmp_path / "live-release").exists()
 
 
-def test_missing_or_stale_candidate_cannot_move_live_pointer(
-    tmp_path: Path, monkeypatch
+def test_stale_candidate_fails_verification_without_a_pointer_mutator(
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     fixture = _fixture(tmp_path, monkeypatch)
-    old = _stage(tmp_path, fixture)
-    live = tmp_path / "live-release"
-    subject.switch_production_release(old, live_pointer=live)
-    (old / "catalog" / "games.parquet").write_text("changed")
+    candidate = _stage(tmp_path, fixture)
+    (candidate / "catalog" / "games.parquet").write_text("changed")
 
     with pytest.raises(ValueError, match="Game catalog"):
-        subject.switch_production_release(old, live_pointer=live)
-    assert live.resolve() == old
+        subject.verify_production_site_release(candidate)
+    assert not hasattr(subject, "switch_production_release")
+    assert not hasattr(subject, "promote_with_rollback")
 
 
-def test_failed_health_check_restores_previous_release(tmp_path: Path, monkeypatch) -> None:
-    fixture = _fixture(tmp_path, monkeypatch)
-    old = _stage(tmp_path, fixture)
-    new = tmp_path / "production-releases" / "release_sha256=new"
-    new.mkdir()
-    live = tmp_path / "live-release"
-    subject.switch_production_release(old, live_pointer=live)
-
-    monkeypatch.setattr(subject, "verify_production_site_release", lambda path: {})
-
-    def fail() -> None:
-        raise RuntimeError("simulated reload failure")
-
-    with pytest.raises(RuntimeError, match="simulated reload failure"):
-        subject.promote_with_rollback(new, live_pointer=live, health_check=fail)
-    assert live.resolve() == old
+def test_release_cli_does_not_expose_a_switch_command() -> None:
+    parser = subject._parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["switch", "/tmp/release", "--live-pointer", "/tmp/live"])

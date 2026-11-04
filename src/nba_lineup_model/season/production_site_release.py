@@ -1,9 +1,9 @@
-"""Stage and atomically activate one reviewed GESTALT site release.
+"""Stage and verify one reviewed GESTALT site release.
 
 The development release is the approval record.  Production staging copies its
 verified serving artifacts into an immutable runtime directory, binds the exact
 code and frontend, and leaves the mutable Schedule watcher in a separate
-overlay.  Only the ``live-release`` symlink is switched during activation.
+overlay. Activation authority belongs exclusively to ``release_publisher``.
 """
 
 from __future__ import annotations
@@ -11,10 +11,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -250,45 +248,6 @@ def verify_production_site_release(path: Path | str) -> dict[str, Any]:
     return manifest
 
 
-def switch_production_release(
-    release: Path | str,
-    *,
-    live_pointer: Path | str,
-) -> Path | None:
-    """Atomically switch the single live pointer after full verification."""
-
-    candidate = Path(release).resolve()
-    verify_production_site_release(candidate)
-    pointer = Path(live_pointer).absolute()
-    if pointer.exists() and not pointer.is_symlink():
-        raise ValueError("Live release pointer is not a symlink")
-    previous = pointer.resolve() if pointer.is_symlink() else None
-    temporary = pointer.with_name(f".{pointer.name}.tmp-{uuid4().hex}")
-    temporary.symlink_to(candidate, target_is_directory=True)
-    os.replace(temporary, pointer)
-    return previous
-
-
-def promote_with_rollback(
-    release: Path | str,
-    *,
-    live_pointer: Path | str,
-    health_check: Callable[[], None],
-) -> Path | None:
-    """Switch, run a caller-supplied health check, and restore on failure."""
-
-    pointer = Path(live_pointer).absolute()
-    previous = switch_production_release(release, live_pointer=pointer)
-    try:
-        health_check()
-    except Exception:
-        if previous is None:
-            pointer.unlink(missing_ok=True)
-        else:
-            switch_production_release(previous, live_pointer=pointer)
-        raise
-    return previous
-
 
 def _require_file_checksum(path: Path, expected: str, label: str) -> None:
     if not path.is_file():
@@ -339,9 +298,6 @@ def _parser() -> argparse.ArgumentParser:
     stage.add_argument("--live-pointer", type=Path, required=True)
     verify = subparsers.add_parser("verify")
     verify.add_argument("release", type=Path)
-    switch = subparsers.add_parser("switch")
-    switch.add_argument("release", type=Path)
-    switch.add_argument("--live-pointer", type=Path, required=True)
     return parser
 
 
@@ -363,15 +319,9 @@ def main() -> None:
             live_pointer=args.live_pointer,
         )
         print(path)
-    elif args.command == "verify":
+    else:
         manifest = verify_production_site_release(args.release)
         print(json.dumps(manifest, sort_keys=True))
-    else:
-        previous = switch_production_release(
-            args.release,
-            live_pointer=args.live_pointer,
-        )
-        print(json.dumps({"previous": previous.as_posix() if previous else None}))
 
 
 if __name__ == "__main__":

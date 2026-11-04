@@ -78,7 +78,14 @@ def test_dev_web_uses_an_isolated_content_addressed_runtime() -> None:
     assert "/opt/nba-gestalt-web-dev/current/bin/uvicorn" in unit
     assert "/opt/nba-gestalt/current/.venv/bin/uvicorn" not in unit
     assert "WorkingDirectory=/opt/nba-gestalt/current" in unit
-    assert "PYTHONPATH=/home/ubuntu/nba-lineup-model/src" in unit
+    assert (
+        "PYTHONPATH=/var/lib/nba-gestalt-dev/live-release/code/src"
+        in unit
+    )
+    assert (
+        "GESTALT_ACTIVE_RELEASE_ROOT=/var/lib/nba-gestalt-dev/live-release"
+        in unit
+    )
 
     installer = (ROOT / "scripts" / "ensure_gestalt_web_environment.sh").read_text()
     assert "requirements_sha256=" in installer
@@ -107,3 +114,23 @@ def test_validator_rejects_orchestration_packages_in_web_runtime() -> None:
     packages["pypdf"] = "1"
     errors = validator.validate_inventory("web", packages)
     assert errors == ["forbidden packages installed: dagster, pypdf"]
+
+
+def test_production_web_reports_the_active_release_root() -> None:
+    unit = (ROOT / "deploy" / "gestalt-web.service").read_text()
+    assert "GESTALT_ACTIVE_RELEASE_ROOT=/var/lib/nba-gestalt/live-release" in unit
+
+
+def test_production_promotion_cannot_bypass_release_publisher() -> None:
+    script = (ROOT / "scripts" / "promote_gestalt_dev_to_prod.sh").read_text()
+    assert "GESTALT_PROD_APPROVAL_REFERENCE" in script
+    assert "nba_lineup_model.season.release_publisher activate" in script
+    assert "nba_lineup_model.season.release_publisher status" in script
+    assert "production_site_release switch" not in script
+
+
+def test_dev_activation_runs_as_the_authorized_root_publisher() -> None:
+    script = (ROOT / "scripts" / "deploy_gestalt_dev.sh").read_text()
+    assert "release-publisher" in script
+    assert "sudo chown root:root /var/lib/nba-gestalt-dev" in script
+    assert 'sudo env PYTHONPATH="$SOURCE_REPO/src"' in script
