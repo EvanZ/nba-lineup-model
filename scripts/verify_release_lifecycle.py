@@ -93,6 +93,8 @@ def _private_api(
         operation_id="issue-57-browser-private",
         expected_previous_generation=0,
         reason="issue 57 private assembled API verification",
+        reload_api=lambda _record: None,
+        verify_api=lambda _record: None,
     )
     port = _free_port()
     api_root = "http://127.0.0.1:" + str(port)
