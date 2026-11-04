@@ -76,6 +76,13 @@ These instructions apply to every task in this repository.
   retrospective artifacts must be separately labeled.
 - NBA GESTALT basketball data must come from the official NBA sources selected
   by the repository architecture.
+- When validation exposes a bug, schema mismatch, or broken contract, stop the
+  affected workflow and report the root cause and scope to the user.
+- Do not hide a bug with a one-off manifest edit, pointer coercion, fallback,
+  compatibility exception, or partial repair. Fix the canonical producer or
+  contract and add regression coverage that reproduces the failure.
+- If that root-cause repair expands the approved scope or changes pipeline,
+  artifact, model, or product behavior, obtain the user's approval first.
 
 ## Protected raw-data collection
 
