@@ -20,7 +20,10 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nba_lineup_model.season.release_publisher import activate_release
+from nba_lineup_model.season.release_publisher import (
+    activate_release,
+    read_active_generation,
+)
 
 TESTS = [
     "tests/test_release_lifecycle_integration.py",
@@ -91,7 +94,7 @@ def _private_api(
         publisher_root=output / "browser-private-publisher",
         environment="dev",
         operation_id="issue-57-browser-private",
-        expected_previous_generation=0,
+        expected_previous_generation=read_active_generation(pointer),
         reason="issue 57 private assembled API verification",
         reload_api=lambda _record: None,
         verify_api=lambda _record: None,
