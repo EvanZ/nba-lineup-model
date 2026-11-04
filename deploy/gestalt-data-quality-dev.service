@@ -7,10 +7,11 @@ Wants=network-online.target
 Type=oneshot
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/var/lib/nba-gestalt-dev/live-release/code
+WorkingDirectory=@WATCHDOG_PACKAGE@/code
 Environment=PYTHONUNBUFFERED=1
-Environment=PYTHONPATH=/var/lib/nba-gestalt-dev/live-release/code/src
-ExecStart=@ORCHESTRATION_PYTHON@ -m nba_lineup_model.orchestration.data_quality_probe --environment dev --live-release /var/lib/nba-gestalt-dev/live-release --schedule-root /var/lib/nba-gestalt/schedule-serving/current --dagster-home /var/lib/nba-gestalt/collection-dagster --daily-dagster-home /var/lib/nba-gestalt/daily-dagster --api-root http://127.0.0.1:8011 --output-root /var/lib/nba-gestalt-dev/data-quality --thresholds /etc/nba-gestalt/data-quality-thresholds.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=@WATCHDOG_PACKAGE@/code/src
+ExecStart=@ORCHESTRATION_PYTHON@ -m nba_lineup_model.orchestration.data_quality_probe --watchdog-package-root @WATCHDOG_PACKAGE@ --watchdog-package-sha256 @WATCHDOG_SHA256@ --environment dev --live-release /var/lib/nba-gestalt-dev/live-release --schedule-root /var/lib/nba-gestalt/schedule-serving/current --dagster-home /var/lib/nba-gestalt/collection-dagster --daily-dagster-home /var/lib/nba-gestalt/daily-dagster --api-root http://127.0.0.1:8011 --output-root /var/lib/nba-gestalt-dev/data-quality --thresholds /etc/nba-gestalt/data-quality-thresholds.json
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

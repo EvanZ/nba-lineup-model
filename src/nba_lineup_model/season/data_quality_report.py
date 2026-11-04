@@ -147,6 +147,10 @@ def _normalize_collector(payload: Mapping[str, object]) -> dict[str, object]:
         "job_name": str(payload.get("job_name") or ""),
         "automation_name": str(payload.get("automation_name") or ""),
         "automation_status": str(payload.get("automation_status") or "unknown"),
+        "automation_status_source": str(payload.get("automation_status_source") or "unverified"),
+        "automation_error": str(payload.get("automation_error") or ""),
+        "last_failure_run_id": str(payload.get("last_failure_run_id") or ""),
+        "last_failure_at": str(payload.get("last_failure_at") or ""),
         "latest_run_id": str(payload.get("latest_run_id") or ""),
         "latest_run_status": str(payload.get("latest_run_status") or "missing").upper(),
         "latest_run_created_at": str(payload.get("latest_run_created_at") or ""),
@@ -347,32 +351,43 @@ def build_data_quality_report(
     for collector in normalized_collectors:
         scope = f"collector:{collector['name']}"
         automation_status = str(collector["automation_status"]).upper()
-        if automation_status in {"STOPPED", "DISABLED", "MISSING", "UNKNOWN"}:
+        if automation_status not in {"RUNNING", "ENABLED"}:
             findings.append(
                 _finding(
                     category="freshness",
                     code="collector_automation_inactive",
                     severity="error",
                     scope=scope,
-                    message="Required collector automation is not running.",
+                    message="Automation is disabled or its effective state cannot be verified.",
                     expected="RUNNING",
                     observed=automation_status,
+                    evidence={"error": collector["automation_error"]},
                 )
             )
-        if not collector["required_now"]:
-            continue
+        # Quiet hours suppress expected fresh captures, never actual failures or stalls.
         run_status = str(collector["latest_run_status"]).upper()
-        if run_status in FAILED_STATUSES:
+        failed_at = parse_timestamp(collector["last_failure_at"])
+        succeeded_at = parse_timestamp(collector["last_success_at"])
+        unresolved_failure = bool(collector["last_failure_run_id"]) and (
+            failed_at is None or succeeded_at is None or succeeded_at <= failed_at
+        )
+        if run_status in FAILED_STATUSES or unresolved_failure:
             findings.append(
                 _finding(
                     category="freshness",
                     code="collector_run_failed",
                     severity="error",
                     scope=scope,
-                    message="Latest required collector run failed.",
+                    message="A job failed and no later successful run has verified recovery.",
                     expected="SUCCESS",
-                    observed=run_status,
-                    evidence={"run_id": collector["latest_run_id"]},
+                    observed="FAILURE",
+                    evidence={
+                        "run_id": (
+                            collector["last_failure_run_id"]
+                            if unresolved_failure
+                            else collector["latest_run_id"]
+                        )
+                    },
                 )
             )
         if run_status in RUNNING_STATUSES:
@@ -394,6 +409,8 @@ def build_data_quality_report(
                         },
                     )
                 )
+        if not collector["required_now"]:
+            continue
         required_since = parse_timestamp(collector["required_since_at"])
         expected_by = parse_timestamp(collector["expected_by"])
         due_now = expected_by is None or now >= expected_by
@@ -734,10 +751,20 @@ def render_data_quality_html(report: Mapping[str, object]) -> str:
     ]
     collector_rows = []
     for item in report.get("collectors", []):
+        status = str(item.get("automation_status", "UNKNOWN")).upper()
+        enabled = {
+            "RUNNING": "Enabled",
+            "ENABLED": "Enabled",
+            "STOPPED": "Disabled",
+            "DISABLED": "Disabled",
+        }.get(status, "Unknown")
+        origin = {"code_default": "code default", "operator_override": "operator override"}.get(
+            str(item.get("automation_status_source")), "unverified"
+        )
         collector_rows.append(
             "<tr>"
             f"<td><strong>{esc(item.get('name'))}</strong><br><small>{esc(item.get('job_name'))}</small></td>"
-            f"<td>{esc(item.get('automation_status'))}</td>"
+            f"<td>{esc(enabled)} — {esc(origin)}<br><small>{esc(item.get('automation_error'))}</small></td>"
             f"<td>{esc(item.get('latest_run_status'))}<br><small>{esc(item.get('latest_run_id'))}</small></td>"
             f"<td>{esc(item.get('last_success_at'))}</td>"
             f"<td>{esc(item.get('artifact_observed_at'))}</td>"

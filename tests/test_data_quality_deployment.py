@@ -46,3 +46,85 @@ def test_watchdog_reads_current_wal_commits_without_mutating_database(tmp_path):
             reader.close()
     finally:
         writer.close()
+
+
+def test_watchdog_release_is_sealed_and_independent_of_site(tmp_path):
+    import subprocess
+    from nba_lineup_model.orchestration.watchdog_deployment import seal_watchdog
+    from nba_lineup_model.season.sealed_code_package import verify_sealed_code_package
+
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    (source / "uv.lock").write_text("version = 1\n")
+    (source / "watchdog.py").write_text("print('first')\n")
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "watchdog",
+        ],
+        check=True,
+    )
+    package, checksum = seal_watchdog(source, tmp_path / "releases")
+    assert verify_sealed_code_package(package)["identity"]["package_sha256"] == checksum
+    (source / "watchdog.py").write_text("print('changed')\n")
+    assert (package / "code/watchdog.py").read_text() == "print('first')\n"
+    assert verify_sealed_code_package(package)["identity"]["package_sha256"] == checksum
+    path = package / "code/watchdog.py"
+    path.chmod(0o644)
+    path.write_text("print('tampered')\n")
+    with pytest.raises(ValueError):
+        verify_sealed_code_package(package)
+    unit = (ROOT / "deploy/gestalt-data-quality-dev.service").read_text()
+    assert "WorkingDirectory=@WATCHDOG_PACKAGE@/code" in unit
+    assert "--watchdog-package-sha256 @WATCHDOG_SHA256@" in unit
+
+
+def test_wrong_watchdog_checksum_publishes_urgent_failure(tmp_path, monkeypatch):
+    from nba_lineup_model.orchestration import data_quality_probe as probe
+    from nba_lineup_model.season import sealed_code_package
+    from nba_lineup_model.web_api.data_quality_reports import read_data_quality_status
+
+    monkeypatch.setattr(
+        sealed_code_package,
+        "verify_sealed_code_package",
+        lambda p: {"identity": {"package_sha256": "actual"}},
+    )
+
+    def must_not_run(**kwargs):
+        pytest.fail("Invalid package must not run the environment probe")
+
+    monkeypatch.setattr(probe, "collect_environment_report", must_not_run)
+    result = probe.main(
+        [
+            "--environment",
+            "dev",
+            "--live-release",
+            str(tmp_path),
+            "--schedule-root",
+            str(tmp_path),
+            "--dagster-home",
+            str(tmp_path),
+            "--daily-dagster-home",
+            str(tmp_path),
+            "--api-root",
+            "http://unused",
+            "--output-root",
+            str(tmp_path / "reports"),
+            "--watchdog-package-root",
+            str(tmp_path),
+            "--watchdog-package-sha256",
+            "wrong",
+        ]
+    )
+    assert result == 1
+    assert read_data_quality_status(tmp_path / "reports")["urgent"] is True

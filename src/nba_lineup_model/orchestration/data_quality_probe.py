@@ -162,6 +162,69 @@ def dagster_automation_states(schedules_db: Path) -> dict[str, str]:
     return result
 
 
+def effective_automation_states(schedules_db: Path, api_root: str) -> dict[str, dict[str, str]]:
+    """Resolve defaults/overrides through Dagster's currently loaded workspace."""
+    stored = dagster_automation_states(schedules_db)
+    query = """{ repositoriesOrError { __typename ... on RepositoryConnection {
+      nodes { schedules { name scheduleState { status } }
+              sensors { name sensorState { status } } }
+    } } }"""
+    try:
+        request = urllib.request.Request(
+            api_root.rstrip("/") + "/graphql",
+            data=json.dumps({"query": query}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.load(response)
+        connection = (payload.get("data") or {}).get("repositoriesOrError") or {}
+        if payload.get("errors") or connection.get("__typename") != "RepositoryConnection":
+            raise ValueError("Dagster could not resolve its loaded automation definitions")
+        result = {}
+        for repository in connection["nodes"]:
+            for kind, field in (("schedules", "scheduleState"), ("sensors", "sensorState")):
+                for item in repository[kind]:
+                    name, status = item["name"], item[field]["status"]
+                    if name in result or status not in {"RUNNING", "STOPPED"}:
+                        raise ValueError(f"Ambiguous automation state: {name}")
+                    result[name] = {
+                        "automation_status": status,
+                        "automation_status_source": (
+                            "operator_override"
+                            if stored.get(name) in {"RUNNING", "STOPPED"}
+                            else "code_default"
+                        ),
+                        "automation_error": "",
+                    }
+        for name in stored.keys() - result.keys():
+            result[name] = {
+                "automation_status": "MISSING",
+                "automation_status_source": "unverified",
+                "automation_error": "Automation is absent from the loaded Dagster workspace.",
+            }
+        return result
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return {
+            name: {
+                "automation_status": "UNKNOWN",
+                "automation_status_source": "unverified",
+                "automation_error": f"Cannot verify loaded automation: {type(error).__name__}: {error}",
+            }
+            for name in stored
+        }
+
+
+def automation_fields(states: Mapping[str, dict[str, str]], name: str) -> dict[str, str]:
+    return states.get(
+        name,
+        {
+            "automation_status": "UNKNOWN",
+            "automation_status_source": "unverified",
+            "automation_error": "Automation could not be verified in the loaded workspace.",
+        },
+    )
+
+
 def dagster_run_states(
     runs_db: Path,
     job_names: Sequence[str],
@@ -187,9 +250,24 @@ def dagster_run_states(
                 """,
                 (job_name,),
             ).fetchone()
+            failure = connection.execute(
+                """select run_id, end_time, update_timestamp from runs
+                where pipeline_name = ? and status = 'FAILURE'
+                order by id desc limit 1""",
+                (job_name,),
+            ).fetchone()
             if not latest:
                 continue
             output[job_name] = {
+                "job_name": job_name,
+                "last_failure_run_id": str(failure[0]) if failure else "",
+                "last_failure_at": (
+                    iso_from_epoch(failure[1])
+                    if failure and failure[1] is not None
+                    else iso_from_sqlite(failure[2])
+                    if failure
+                    else ""
+                ),
                 "run_id": str(latest[0] or ""),
                 "status": str(latest[1] or "MISSING"),
                 "created_at": iso_from_sqlite(latest[2]),
@@ -405,8 +483,11 @@ def collector_rows(
     expected: Mapping[str, object],
     thresholds: Mapping[str, object],
     generated_at: datetime,
+    dagster_api_root: str = "http://127.0.0.1:3000",
 ) -> list[dict[str, object]]:
-    automation = dagster_automation_states(dagster_home / "schedules" / "schedules.db")
+    automation = effective_automation_states(
+        dagster_home / "schedules" / "schedules.db", dagster_api_root
+    )
     jobs = dagster_run_states(
         dagster_home / "history" / "runs.db",
         [value[0] for value in COLLECTOR_JOBS.values()],
@@ -463,7 +544,9 @@ def collector_rows(
                 "name": name,
                 "job_name": job_name,
                 "automation_name": automation_name,
-                "automation_status": automation.get(automation_name, "MISSING"),
+                **automation_fields(automation, automation_name),
+                "last_failure_run_id": run.get("last_failure_run_id", ""),
+                "last_failure_at": run.get("last_failure_at", ""),
                 "latest_run_id": run.get("run_id", ""),
                 "latest_run_status": run.get("status", "MISSING"),
                 "latest_run_created_at": run.get("created_at", ""),
@@ -491,9 +574,12 @@ def daily_publication_row(
     activation: Mapping[str, object],
     expected: Mapping[str, object],
     thresholds: Mapping[str, object],
+    dagster_api_root: str = "http://127.0.0.1:3001",
 ) -> dict[str, object]:
     automation_name = "complete_slate_daily_release"
-    automation = dagster_automation_states(dagster_home / "schedules" / "schedules.db")
+    automation = effective_automation_states(
+        dagster_home / "schedules" / "schedules.db", dagster_api_root
+    )
     jobs = dagster_run_states(
         dagster_home / "history" / "runs.db",
         ["backfill_official_history", "prepare_daily_site_release"],
@@ -508,9 +594,11 @@ def daily_publication_row(
     overdue = bool(expected.get("nightly_publication_due")) and active < latest
     return {
         "name": "daily_publication",
-        "job_name": "backfill_official_history",
+        "job_name": run.get("job_name", ""),
         "automation_name": automation_name,
-        "automation_status": automation.get(automation_name, "MISSING"),
+        **automation_fields(automation, automation_name),
+        "last_failure_run_id": run.get("last_failure_run_id", ""),
+        "last_failure_at": run.get("last_failure_at", ""),
         "latest_run_id": run.get("run_id", ""),
         "latest_run_status": run.get("status", "MISSING"),
         "latest_run_created_at": run.get("created_at", ""),
@@ -577,6 +665,8 @@ def collect_environment_report(
     report_date: str,
     thresholds: Mapping[str, object] | None = None,
     generated_at: datetime | None = None,
+    collector_dagster_api_root: str = "http://127.0.0.1:3000",
+    daily_dagster_api_root: str = "http://127.0.0.1:3001",
 ) -> dict[str, object]:
     """Collect the full report from immutable release and live serving state."""
 
@@ -900,6 +990,7 @@ def collect_environment_report(
         activation=activation,
         artifacts=artifacts,
         collectors=collector_rows(
+            dagster_api_root=collector_dagster_api_root,
             dagster_home=dagster_home,
             schedule_root=schedule_root,
             report_date=report_date,
@@ -909,6 +1000,7 @@ def collect_environment_report(
         )
         + [
             daily_publication_row(
+                dagster_api_root=daily_dagster_api_root,
                 dagster_home=daily_dagster_home,
                 activation=activation,
                 expected=official,
@@ -938,9 +1030,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dagster-home", type=Path, required=True)
     parser.add_argument("--daily-dagster-home", type=Path, required=True)
     parser.add_argument("--api-root", required=True)
+    parser.add_argument("--collector-dagster-api-root", default="http://127.0.0.1:3000")
+    parser.add_argument("--daily-dagster-api-root", default="http://127.0.0.1:3001")
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--report-date")
     parser.add_argument("--thresholds", type=Path)
+    parser.add_argument("--watchdog-package-root", type=Path)
+    parser.add_argument("--watchdog-package-sha256")
     return parser.parse_args(argv)
 
 
@@ -950,7 +1046,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     thresholds = read_json(args.thresholds) if args.thresholds else {}
     probe_error = ""
     try:
+        watchdog_identity = None
+        if args.watchdog_package_root or args.watchdog_package_sha256:
+            from nba_lineup_model.season.sealed_code_package import verify_sealed_code_package
+
+            if not args.watchdog_package_root or not args.watchdog_package_sha256:
+                raise ValueError("Watchdog package and checksum must be supplied together")
+            watchdog_identity = verify_sealed_code_package(args.watchdog_package_root)["identity"]
+            if watchdog_identity["package_sha256"] != args.watchdog_package_sha256:
+                raise ValueError("Watchdog code does not match its pinned package checksum")
+            if (
+                not Path(__file__)
+                .resolve()
+                .is_relative_to((args.watchdog_package_root / "code").resolve())
+            ):
+                raise ValueError("Watchdog is not executing from its sealed package")
         report = collect_environment_report(
+            collector_dagster_api_root=args.collector_dagster_api_root,
+            daily_dagster_api_root=args.daily_dagster_api_root,
             environment=args.environment,
             live_release=args.live_release,
             schedule_root=args.schedule_root,
@@ -960,6 +1073,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             report_date=report_date,
             thresholds=thresholds,
         )
+        if watchdog_identity:
+            report["watchdog_code"] = watchdog_identity
         bundle = publish_data_quality_report(report, args.output_root)
     except Exception as error:
         bundle = publish_failed_data_quality_report(
