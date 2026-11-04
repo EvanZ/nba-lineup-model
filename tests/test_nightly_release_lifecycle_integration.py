@@ -18,7 +18,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
-from nba_lineup_model.orchestration.daily_work import atomic_json, digest, read_object
+from nba_lineup_model.orchestration.daily_work import (
+    atomic_json,
+    digest,
+    file_reference,
+    read_object,
+)
 from nba_lineup_model.orchestration.partition_definitions import prepare_daily_partition_job
 from nba_lineup_model.orchestration.resumable_pipeline import bind_execution
 from nba_lineup_model.season.production_site_release import verify_production_site_release
@@ -83,11 +88,7 @@ def _prepare_private_work(tmp_path: Path):
     execution = identity.pop("execution")
     identity.pop("configuration_digest", None)
     identity["code_identity"] = revision
-    identity["inputs"][str(model_configuration)] = {
-        "path": str(model_configuration),
-        "sha256": __import__("hashlib").sha256(model_configuration.read_bytes()).hexdigest(),
-        "size": model_configuration.stat().st_size,
-    }
+    identity["inputs"][str(model_configuration)] = file_reference(model_configuration)
     spec = bind_execution({"identity": identity}, config, execution)
     config_path = env / "config.json"
     spec_path = env / "spec.json"
