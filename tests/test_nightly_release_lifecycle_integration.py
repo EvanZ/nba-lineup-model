@@ -28,7 +28,9 @@ from nba_lineup_model.orchestration.partition_definitions import prepare_daily_p
 from nba_lineup_model.orchestration.resumable_pipeline import bind_execution
 from nba_lineup_model.season.production_site_release import verify_production_site_release
 from nba_lineup_model.season.release_publisher import (
-    activate_release, read_active_activation,
+    StalePublisherError,
+    activate_release,
+    read_active_activation,
 )
 from nba_lineup_model.web_api.release_serving import ReleaseServing
 
@@ -205,6 +207,7 @@ def test_isolated_dagster_job_builds_all_surfaces_and_actual_api(
             for key in ("data", "model", "serving", "lineups")
         },
         "api": api,
+        "observation_root": str(config.observation_root),
         "model_retrained": False,
         "production_changed": False,
     }
@@ -244,6 +247,17 @@ def test_assembled_runtime_activation_rollback_and_recovery(
     )
     assert success.status == "activated"
     assert read_active_activation(pointer)["generation"] == 1
+    with pytest.raises(StalePublisherError, match="expected generation 0"):
+        activate_release(
+            release=runtime, live_pointer=pointer, publisher_root=publisher,
+            environment="dev", operation_id="integrated-stale",
+            expected_previous_generation=0, reason="issue 57 stale writer",
+            reload_api=lambda record: verify(record), verify_api=verify,
+        )
+    stale_active = read_active_activation(pointer)
+    assert stale_active["generation"] == 1
+    assert stale_active["operation_id"] == "integrated-success"
+
 
     calls = []
     def fail_second(record):
@@ -262,6 +276,7 @@ def test_assembled_runtime_activation_rollback_and_recovery(
     active = read_active_activation(pointer)
     assert active["generation"] == 3
     assert active["operation_id"].startswith("integrated-failure:rollback")
+    rollback_active = dict(active)
     assert calls == [2, 3]
 
     recovery_publisher = config.environment_root / "test-recovery-publisher"
@@ -285,3 +300,16 @@ def test_assembled_runtime_activation_rollback_and_recovery(
     )
     assert recovered.status == "recovered"
     assert read_active_activation(recovery_pointer)["generation"] == 1
+    atomic_json(tmp_path / "activation-lifecycle-evidence.json", {
+        "runtime_release": str(runtime),
+        "runtime_sha256": verify_production_site_release(runtime)["runtime_sha256"],
+        "success_generation": success.generation,
+        "stale_writer_rejected": True,
+        "rollback_generation": rollback_active["generation"],
+        "rollback_operation_id": rollback_active["operation_id"],
+        "failed_candidate_generations": calls,
+        "interrupted_activation_recovered": recovered.status == "recovered",
+        "recovered_generation": recovered.generation,
+        "validated_release_ids": sorted({release_id for _, release_id in validated}),
+        "production_changed": False,
+    })
