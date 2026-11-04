@@ -66,6 +66,9 @@ class DailyPipelineConfig:
     model_provenance_matchup_url: str | None = None
     season: str = "2026-27"
     activate_after_validation: bool = False
+    historical_runtime_root: Path | None = None
+    observation_root: Path | None = None
+    preserve_schedule_selections: bool = False
 
     @classmethod
     def read(cls, path: Path | str) -> "DailyPipelineConfig":
@@ -455,13 +458,14 @@ class CanonicalPipelineSteps:
         with self.api() as api:
             # Only forward boards use the updated ratings/minutes. No historical
             # replay, changed frozen pregame, or postgame rating substitution.
-            reproject_captured_schedule_window(start_date=(target + timedelta(days=1)).isoformat(), days_ahead=7, state_dir=out / "schedule", projection_url=api + "/api/win-projections")
+            if not c.preserve_schedule_selections:
+                reproject_captured_schedule_window(start_date=(target + timedelta(days=1)).isoformat(), days_ahead=7, state_dir=out / "schedule", projection_url=api + "/api/win-projections")
             if any(_frozen_hashes(out / "schedule").get(key) != value for key, value in before.items()):
                 raise ValueError("Nightly refresh changed a frozen forecast")
             validate_schedule_artifacts(out / "schedule")
             validation = collect_api_validation(api, evidence_date=target.isoformat(), daily_model_root=c.model_root)
             publish_dev_site_release(daily_data_root=c.data_root, daily_model_root=c.model_root, serving_root=out / "serving", lineups_root=out / "lineups", schedule_state_dir=out / "schedule", catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_revision=self.revision, api_validation=validation, output_root=out / "site-releases")
-        return stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=out / "schedule", schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer)
+        return stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=out / "schedule", schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
 
 
 def prepare_daily_release(

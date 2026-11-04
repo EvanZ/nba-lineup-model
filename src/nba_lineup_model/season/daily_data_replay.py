@@ -182,6 +182,7 @@ def _build_date(
     injury_report_loader: InjuryReportLoader,
     inactive_list_loader: InactiveListLoader,
     season: str,
+    play_by_play_loader: Callable[[str], tuple[dict, str]] | None = None,
 ) -> PublishedDailyDataArtifact:
     errors: list[dict[str, str]] = []
     repairs: list[dict[str, str]] = []
@@ -212,7 +213,10 @@ def _build_date(
                 f"{play_by_play_s3_prefix.rstrip('/')}/season={season}/"
                 f"game_id={game_id}/{play_by_play_sha}.json"
             )
-            play_by_play = _fetch_verified_s3_json(play_by_play_uri, play_by_play_sha)
+            if play_by_play_loader is None:
+                play_by_play = _fetch_verified_s3_json(play_by_play_uri, play_by_play_sha)
+            else:
+                play_by_play, play_by_play_uri = play_by_play_loader(game_id)
             official_boxscore = boxscore_loader(game_id)
             official_inactives = inactive_list_loader(catalog_game)
             boxscore = official_boxscore.payload
