@@ -50,6 +50,7 @@ def test_watchdog_reads_current_wal_commits_without_mutating_database(tmp_path):
 
 def test_watchdog_release_is_sealed_and_independent_of_site(tmp_path):
     import subprocess
+    import sys
     from nba_lineup_model.orchestration.watchdog_deployment import seal_watchdog
     from nba_lineup_model.season.sealed_code_package import verify_sealed_code_package
 
@@ -76,6 +77,13 @@ def test_watchdog_release_is_sealed_and_independent_of_site(tmp_path):
     )
     package, checksum = seal_watchdog(source, tmp_path / "releases")
     assert verify_sealed_code_package(package)["identity"]["package_sha256"] == checksum
+    subprocess.run([sys.executable, "-B", "-c",
+                    "import sys; sys.path.insert(0, sys.argv[1]); import watchdog",
+                    str(package / "code")], check=True, capture_output=True)
+    assert not (package / "code/__pycache__").exists()
+    assert verify_sealed_code_package(package)["identity"]["package_sha256"] == checksum
+    assert '"$runtime/bin/python" -B -c' in (ROOT / "scripts/migrate_gestalt_daily_history.sh").read_text()
+    assert "export PYTHONDONTWRITEBYTECODE=1" in (ROOT / "scripts/deploy_gestalt_daily_dev.sh").read_text()
     (source / "watchdog.py").write_text("print('changed')\n")
     assert (package / "code/watchdog.py").read_text() == "print('first')\n"
     assert verify_sealed_code_package(package)["identity"]["package_sha256"] == checksum

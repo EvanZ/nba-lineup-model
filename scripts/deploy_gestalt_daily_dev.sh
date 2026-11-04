@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install the permanent dev-only instance. No site publication or job requests.
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test -z "$(git -C "$REPO_ROOT" status --porcelain)" || {
   printf 'Commit tested code before installing the daily worker\n' >&2

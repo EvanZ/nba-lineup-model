@@ -22,6 +22,7 @@ For a manual rerun, use `nba_lineup_model.orchestration.daily_service` with
 `--component manual`, the installed service's exact `--package`, `--sha256`
 and `--home`, and `--job` plus the pinned `--request`. Run it with the same
 versioned Python interpreter and sealed-code `PYTHONPATH` as the service.
+Use Python's `-B` flag: cache writes inside sealed code invalidate its inventory.
 Do not run a new isolated Dagster instance or execute an old work request
 against different code. Code/input changes require a newly pinned request.
 
