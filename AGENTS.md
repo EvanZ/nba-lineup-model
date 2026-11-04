@@ -19,6 +19,13 @@ These instructions apply to every task in this repository.
   checkout instead of mixing standalone remote and local shell commands. Before
   any mutating batch, verify the remote hostname, working directory, and Git
   branch inside that shell.
+- Treat that verified shell as an execution-context lock for the task. Keep its
+  session open and run all repository inspection, editing, testing, Git, build,
+  materialization, and deployment work through that same session.
+- If the persistent shell closes, resets, changes host/path/branch, or otherwise
+  becomes ambiguous, stop before making another change. Reconnect to EC2 and
+  re-verify hostname, checkout path, branch, and worktree status; never fall
+  back to the laptop checkout.
 - Keep every edit, Git operation, test, build, and deployment command inside the
   verified EC2 shell. Do not run local Git or file-edit commands for repository
   implementation, and never place local commands after a remote heredoc or
