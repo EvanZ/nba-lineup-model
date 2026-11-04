@@ -88,6 +88,31 @@ and atomically switch one pointer. A stale writer is rejected. Rollback creates
 a new monotonic generation that reuses earlier approved artifacts; it never
 rewrites activation history.
 
+### Executable code seal
+
+Runtime staging exports the exact committed Git tree into a release-owned
+`code/` directory. The source checkout must be clean. A symlink to any checkout,
+including a detached checkout, is not a code package.
+
+`code-package.json` contains the existing `SealedCodeIdentity` and the complete
+file inventory. The runtime identity pins the same code identity, so its
+content hash also binds the package digest, lock digest, and Git revision.
+The staging verifier and publisher both recompute the file and package digests.
+The code tree is read-only; Python bytecode cannot be written into the package.
+Subsequent edits or commits in the source checkout cannot change the release.
+Publisher generation directories may reference the sealed runtime, as before.
+Their code and manifest references must resolve to that exact runtime's owned
+package, and its digest must match the activation receipt. The runtime itself
+may never reference a checkout.
+
+Legacy releases without a pinned code package are rejected explicitly. This
+change does not rewrite old manifests, move pointers, or migrate existing
+activations. Repairing an active legacy release requires an explicitly approved
+migration; a missing seal must never trigger a permissive fallback.
+
+Tests exercise real Git checkouts, staging, and the publisher together, including
+checkout advancement, altered or missing package files, and a forged code seal.
+
 ## Acceptance examples
 
 Focused tests prove these contract cases:

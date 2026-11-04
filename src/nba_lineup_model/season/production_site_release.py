@@ -27,6 +27,11 @@ from nba_lineup_model.season.dev_site_release import (
     resolve_latest_dev_site_release,
     verify_dev_site_release,
 )
+from nba_lineup_model.season.sealed_code_package import (
+    inspect_source_code,
+    materialize_sealed_code_package,
+    verify_sealed_code_package,
+)
 from nba_lineup_model.web_api.current_season_lineups import (
     verify_current_season_lineup_bundle,
 )
@@ -106,7 +111,8 @@ def stage_production_site_release(
     )
 
     code_source = Path(code_root).resolve()
-    code_revision = _git_revision(code_source)
+    code_identity = inspect_source_code(code_source)["identity"]
+    code_revision = code_identity["git_revision"]
     if code_revision != approved["code_revision"]:
         raise ValueError("Code checkout differs from the approved dev release")
     frontend_source = Path(frontend_root).resolve()
@@ -123,6 +129,7 @@ def stage_production_site_release(
         "evidence_through_date": approved["evidence_through_date"],
         "game_count": approved["game_count"],
         "code_revision": code_revision,
+        "code_identity": code_identity,
         "serving_bundle_sha256": serving_manifest["bundle_sha256"],
         "lineup_bundle_sha256": lineup_manifest["bundle_sha256"],
         "schedule_snapshot_sha256": schedule_sha,
@@ -155,7 +162,11 @@ def stage_production_site_release(
         (staging / "preseason").mkdir()
         shutil.copy2(rankings_source, staging / "preseason" / "rankings.parquet")
         shutil.copy2(profiles_source, staging / "preseason" / "profiles.parquet")
-        (staging / "code").symlink_to(code_source, target_is_directory=True)
+        sealed = materialize_sealed_code_package(
+            code_source, staging, expected_revision=code_revision
+        )
+        if sealed["identity"] != code_identity:
+            raise ValueError("Release code changed while staging")
         (staging / "schedule").symlink_to(
             Path(schedule_overlay_path).resolve(), target_is_directory=True
         )
@@ -199,9 +210,16 @@ def stage_production_site_release(
                     "Existing release has different bound inputs; use a new approval record"
                 )
         else:
+            verify_production_site_release(staging)
             staging.replace(target)
     finally:
         if staging.exists():
+            # Only temporary package directories are made writable for cleanup.
+            temporary_code = staging / "code"
+            if temporary_code.is_dir() and not temporary_code.is_symlink():
+                for directory in [temporary_code, *temporary_code.rglob("*")]:
+                    if directory.is_dir() and not directory.is_symlink():
+                        directory.chmod(0o755)
             shutil.rmtree(staging)
     verify_production_site_release(target)
     return target
@@ -271,8 +289,13 @@ def verify_production_site_release(path: Path | str) -> dict[str, Any]:
         str(identity["preseason_profiles_sha256"]),
         "Preseason profiles",
     )
-    if _git_revision(release / "code") != identity["code_revision"]:
-        raise ValueError("Production code changed after staging")
+    if not identity.get("code_identity"):
+        raise ValueError(
+            "Release lacks a sealed code identity; explicit legacy migration is required"
+        )
+    code = verify_sealed_code_package(release)["identity"]
+    if code != identity["code_identity"] or code["git_revision"] != identity["code_revision"]:
+        raise ValueError("Release code identity differs from its runtime manifest")
     schedule_link = release / "schedule"
     if not schedule_link.is_symlink():
         raise ValueError("Production Schedule overlay link is missing")

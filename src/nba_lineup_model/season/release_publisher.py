@@ -23,10 +23,11 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from nba_lineup_model.season.daily_artifact_common import canonical_json, file_sha256
+from nba_lineup_model.season.daily_artifact_common import canonical_json
 from nba_lineup_model.season.production_site_release import (
     verify_production_site_release,
 )
+from nba_lineup_model.season.sealed_code_package import verify_sealed_code_package
 
 PUBLISHER_SCHEMA_VERSION = 1
 ACTIVATION_FILENAME = "activation.json"
@@ -135,70 +136,12 @@ def _last_event(publisher_root: Path, operation_id: str, state: str) -> dict[str
     return None
 
 
-def _git_output(code_root: Path, *arguments: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(code_root), *arguments],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout
-
-
-def _sealed_code_identity(code_root: Path) -> dict[str, str]:
-    tracked_status = _git_output(
-        code_root,
-        "status",
-        "--porcelain",
-        "--untracked-files=no",
-    )
-    if tracked_status:
-        raise ValueError("Release code package has modified tracked files")
-    untracked_runtime = _git_output(
-        code_root,
-        "ls-files",
-        "--others",
-        "--exclude-standard",
-        "--",
-        "src",
-        "deploy",
-        "scripts",
-        "pyproject.toml",
-        "uv.lock",
-    )
-    if untracked_runtime:
-        raise ValueError("Release code package has untracked runtime files")
-    revision = _git_output(code_root, "rev-parse", "HEAD").strip()
-    tracked = subprocess.run(
-        ["git", "-C", str(code_root), "ls-files", "-z"],
-        check=True,
-        capture_output=True,
-    ).stdout.split(b"\0")
-    digest = hashlib.sha256()
-    for raw in tracked:
-        if not raw:
-            continue
-        relative = raw.decode("utf-8")
-        path = code_root / relative
-        if not path.is_file():
-            raise FileNotFoundError(f"Tracked release file is missing: {relative}")
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(path.read_bytes()).digest())
-    lock_path = code_root / "uv.lock"
-    if not lock_path.is_file():
-        raise FileNotFoundError("Release code package has no uv.lock")
-    return {
-        "git_revision": revision,
-        "package_sha256": digest.hexdigest(),
-        "dependency_lock_sha256": file_sha256(lock_path),
-    }
-
-
 def _validated_release_identity(release: Path) -> dict[str, Any]:
     manifest = verify_production_site_release(release)
     identity = manifest["identity"]
-    code = _sealed_code_identity((release / "code").resolve())
+    code = verify_sealed_code_package(release)["identity"]
+    if code != identity["code_identity"]:
+        raise ValueError("Release code digest differs from its runtime manifest")
     if code["git_revision"] != identity["code_revision"]:
         raise ValueError("Release code revision differs from its runtime manifest")
     approved_identity = manifest["approved_manifest"]["identity"]

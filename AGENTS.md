@@ -39,6 +39,24 @@ These instructions apply to every task in this repository.
 - Do not promote or deploy to production without the user's explicit approval.
 - Dev and production must use the same canonical artifact schemas and coverage
   checks; environment-specific pointers may differ.
+- Use the canonical daily release workflow and its validated report for site
+  activation. Do not manually assemble artifacts, invoke lower-level staging or
+  publisher commands, or edit release pointers to bypass that workflow.
+- A small UI/reporting change does not justify a release shortcut. If the
+  canonical workflow cannot express the requested change, report the limitation
+  and obtain explicit approval for a scoped workflow repair before proceeding.
+- A staged release must own a sealed copy of its exact committed code, with a
+  verified file inventory, package checksum, dependency-lock checksum, and Git
+  revision. Never link a release's code to an editable checkout, including a
+  detached checkout: a commit label alone does not freeze its files.
+- Enforce this contract in staging and activation. Tests must prove that later
+  checkout edits cannot change a staged release and that code symlinks, changed
+  package files, and missing code seals are rejected before pointer movement.
+- Never modify an already activated release in place to make a failed check pass.
+  A legacy-release repair requires explicit approval for its scope and verified
+  identity; never weaken or bypass validation to perform the repair.
+- When a release check fails, report the failure and repair the canonical path.
+  Never patch manifests, invent substitute inputs, or silently omit a failed gate.
 
 ## Change classification and historical immutability
 

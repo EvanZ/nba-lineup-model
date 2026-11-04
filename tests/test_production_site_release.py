@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -33,9 +34,7 @@ def _fixture(tmp_path: Path, monkeypatch):
     (serving_bundle / "payload").write_text("serving")
     (lineup_bundle / "payload").write_text("lineups")
     (serving_root / "latest.json").write_text("{}")
-    (lineups_root / "latest.json").write_text(
-        json.dumps({"bundle_path": "lineup-bundle"})
-    )
+    (lineups_root / "latest.json").write_text(json.dumps({"bundle_path": "lineup-bundle"}))
     (schedule_root / "final").mkdir()
     (schedule_root / "final" / "game.json").write_text('{"source":"NBA official CDN"}')
     catalog = tmp_path / "games.parquet"
@@ -46,6 +45,25 @@ def _fixture(tmp_path: Path, monkeypatch):
     profiles.write_text("profiles")
     (web_root / "index.html").write_text("<html>release</html>")
     (code_root / "module.py").write_text("VERSION = 1\n")
+    (code_root / "uv.lock").write_text("version = 1\n")
+    subprocess.run(["git", "init", "-q", str(code_root)], check=True)
+    subprocess.run(["git", "-C", str(code_root), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(code_root),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    revision = subject._git_revision(code_root)
 
     identity = {
         "schema_version": 1,
@@ -53,7 +71,7 @@ def _fixture(tmp_path: Path, monkeypatch):
         "season": "2026-27",
         "evidence_through_date": "2026-10-31",
         "game_count": 88,
-        "code_revision": "a" * 40,
+        "code_revision": revision,
         "serving": {"bundle_sha256": "s" * 64},
         "lineups": {"bundle_sha256": "l" * 64},
         "schedule": {"tree_sha256": subject._tree_sha256(schedule_root)},
@@ -102,7 +120,6 @@ def _fixture(tmp_path: Path, monkeypatch):
         "verify_current_season_lineup_bundle",
         lambda path: {"bundle_sha256": "l" * 64},
     )
-    monkeypatch.setattr(subject, "_git_revision", lambda path: "a" * 40)
     return {
         "site_release_root": site_release_root,
         "serving_root": serving_root,
@@ -134,7 +151,6 @@ def _stage(tmp_path: Path, fixture: dict[str, object]) -> Path:
     )
 
 
-
 def test_stage_one_verified_release_without_moving_pointer(
     tmp_path: Path,
     monkeypatch,
@@ -146,6 +162,9 @@ def test_stage_one_verified_release_without_moving_pointer(
     assert manifest["identity"]["approved_release_sha256"] == fixture["release_sha"]
     assert (candidate / "schedule").is_symlink()
     assert (candidate / "site-release.env").is_file()
+    assert (candidate / "code").is_dir()
+    assert not (candidate / "code").is_symlink()
+    assert manifest["identity"]["code_identity"]["sealed"] is True
     assert not (tmp_path / "live-release").exists()
 
 
@@ -167,3 +186,214 @@ def test_release_cli_does_not_expose_a_switch_command() -> None:
     parser = subject._parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["switch", "/tmp/release", "--live-pointer", "/tmp/live"])
+
+
+@pytest.mark.parametrize("edit", ["working_file", "new_commit"])
+def test_checkout_changes_cannot_change_staged_release(tmp_path, monkeypatch, edit):
+    fixture = _fixture(tmp_path, monkeypatch)
+    candidate = _stage(tmp_path, fixture)
+    before = subject.verify_production_site_release(candidate)
+    (fixture["code_root"] / "module.py").write_text("VERSION = 2\n")
+    if edit == "new_commit":
+        subprocess.run(["git", "-C", str(fixture["code_root"]), "add", "."], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(fixture["code_root"]),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "next",
+            ],
+            check=True,
+        )
+    assert (candidate / "code" / "module.py").read_text() == "VERSION = 1\n"
+    assert subject.verify_production_site_release(candidate) == before
+    from nba_lineup_model.season.release_publisher import _validated_release_identity
+
+    assert _validated_release_identity(candidate)["code"] == before["identity"]["code_identity"]
+
+
+def test_dirty_checkout_cannot_be_staged(tmp_path, monkeypatch):
+    fixture = _fixture(tmp_path, monkeypatch)
+    (fixture["code_root"] / "module.py").write_text("UNCOMMITTED = True\n")
+    with pytest.raises(ValueError, match="modified tracked files"):
+        _stage(tmp_path, fixture)
+    assert not (tmp_path / "production-releases").exists()
+
+
+@pytest.mark.parametrize(
+    "damage", ["changed_file", "missing_seal", "code_symlink", "extra_file", "forged_seal"]
+)
+def test_publisher_rejects_damaged_code_before_pointer_change(tmp_path, monkeypatch, damage):
+    from nba_lineup_model.season import release_publisher as publisher
+
+    fixture = _fixture(tmp_path, monkeypatch)
+    candidate = _stage(tmp_path, fixture)
+    old = tmp_path / "existing-release"
+    old.mkdir()
+    live = tmp_path / "live-release"
+    live.symlink_to(old, target_is_directory=True)
+    if damage == "changed_file":
+        path = candidate / "code" / "module.py"
+        path.chmod(0o644)
+        path.write_text("CHANGED = True\n")
+    elif damage == "missing_seal":
+        (candidate / "code-package.json").unlink()
+    elif damage == "code_symlink":
+        (candidate / "code").rename(candidate / "saved-code")
+        (candidate / "code").symlink_to(fixture["code_root"], target_is_directory=True)
+    elif damage == "extra_file":
+        (candidate / "code").chmod(0o755)
+        (candidate / "code" / "unexpected.py").write_text("UNTRACKED = True\n")
+    else:
+        path = candidate / "code-package.json"
+        seal = json.loads(path.read_text())
+        seal["identity"]["git_revision"] = "b" * 40
+        path.write_text(json.dumps(seal))
+
+    with pytest.raises((ValueError, FileNotFoundError)):
+        publisher._validated_release_identity(candidate)
+    with pytest.raises((ValueError, FileNotFoundError)):
+        publisher.activate_release(
+            release=candidate,
+            live_pointer=live,
+            publisher_root=tmp_path / "publisher",
+            environment="dev",
+            operation_id=f"invalid-{damage}",
+            expected_previous_generation=0,
+            reason="Regression test",
+            reload_api=lambda _: pytest.fail("Must not reload"),
+            verify_api=lambda _: pytest.fail("Must not call API"),
+        )
+    assert live.resolve() == old
+    assert not (tmp_path / "publisher" / "generations").exists()
+
+
+def test_repeated_staging_reuses_the_verified_package(tmp_path, monkeypatch):
+    fixture = _fixture(tmp_path, monkeypatch)
+    first = _stage(tmp_path, fixture)
+    assert _stage(tmp_path, fixture) == first
+
+
+def test_failed_staging_cleans_temporary_read_only_code(tmp_path, monkeypatch):
+    fixture = _fixture(tmp_path, monkeypatch)
+    original = subject.verify_production_site_release
+
+    def reject_staging(path):
+        if Path(path).name.startswith(".production-release.tmp-"):
+            raise ValueError("Injected staging failure")
+        return original(path)
+
+    monkeypatch.setattr(subject, "verify_production_site_release", reject_staging)
+    with pytest.raises(ValueError, match="Injected staging failure"):
+        _stage(tmp_path, fixture)
+    assert list((tmp_path / "production-releases").iterdir()) == []
+
+
+def test_real_publisher_can_activate_after_source_checkout_advances(tmp_path, monkeypatch):
+    from nba_lineup_model.season import release_publisher as publisher
+
+    fixture = _fixture(tmp_path, monkeypatch)
+    old = _stage(tmp_path / "old", fixture)
+    candidate = _stage(tmp_path, fixture)
+    live = tmp_path / "live-release"
+    live.symlink_to(old, target_is_directory=True)
+    (fixture["code_root"] / "module.py").write_text("VERSION = 99\n")
+    reloads = []
+    result = publisher.activate_release(
+        release=candidate,
+        live_pointer=live,
+        publisher_root=tmp_path / "publisher",
+        environment="dev",
+        operation_id="sealed-code-activation",
+        expected_previous_generation=0,
+        reason="Real staging and publisher regression test",
+        reload_api=lambda record: reloads.append(record["code"]),
+        verify_api=lambda record: publisher._validated_release_identity(
+            Path(record["release_path"])
+        ),
+    )
+    assert result.status == "activated"
+    active = publisher.read_active_activation(live)
+    assert (
+        active["code"]
+        == subject.verify_production_site_release(candidate)["identity"]["code_identity"]
+    )
+    assert reloads == [active["code"]]
+    assert (live / "code" / "module.py").read_text() == "VERSION = 1\n"
+    publisher._verify_rollback_target(active)
+
+
+def test_code_import_does_not_pollute_sealed_package(tmp_path, monkeypatch):
+    fixture = _fixture(tmp_path, monkeypatch)
+    candidate = _stage(tmp_path, fixture)
+    subprocess.run(
+        ["python3", "-c", "import module; assert module.VERSION == 1"],
+        cwd=candidate / "code",
+        check=True,
+    )
+    assert not (candidate / "code" / "__pycache__").exists()
+    subject.verify_production_site_release(candidate)
+
+
+def test_source_symlink_is_rejected(tmp_path, monkeypatch):
+    fixture = _fixture(tmp_path, monkeypatch)
+    code = fixture["code_root"]
+    (code / "link.py").symlink_to(code / "module.py")
+    subprocess.run(["git", "-C", str(code), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(code),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "symlink",
+        ],
+        check=True,
+    )
+    with pytest.raises(ValueError, match="symlinks"):
+        _stage(tmp_path, fixture)
+
+
+def test_staged_release_does_not_require_original_checkout(tmp_path, monkeypatch):
+    fixture = _fixture(tmp_path, monkeypatch)
+    candidate = _stage(tmp_path, fixture)
+    before = subject.verify_production_site_release(candidate)
+    fixture["code_root"].rename(tmp_path / "moved-development-checkout")
+    assert subject.verify_production_site_release(candidate) == before
+
+
+def test_generation_cannot_redirect_code_to_another_package(tmp_path, monkeypatch):
+    from nba_lineup_model.season import release_publisher as publisher
+
+    fixture = _fixture(tmp_path, monkeypatch)
+    old = _stage(tmp_path / "old", fixture)
+    candidate = _stage(tmp_path, fixture)
+    live = tmp_path / "live-release"
+    live.symlink_to(old, target_is_directory=True)
+    result = publisher.activate_release(
+        release=candidate,
+        live_pointer=live,
+        publisher_root=tmp_path / "publisher",
+        environment="dev",
+        operation_id="test-reference",
+        expected_previous_generation=0,
+        reason="Verify generation code target",
+        reload_api=lambda _: None,
+        verify_api=lambda _: None,
+    )
+    code_link = result.activation_root / "code"
+    code_link.unlink()
+    code_link.symlink_to(old / "code", target_is_directory=True)
+    with pytest.raises(ValueError, match="differs from its sealed runtime"):
+        subject.verify_production_site_release(result.activation_root)

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from nba_lineup_model.season import release_publisher as subject
+from nba_lineup_model.season.sealed_code_package import inspect_source_code
 
 
 def _candidate(root: Path, name: str) -> Path:
@@ -16,7 +17,7 @@ def _candidate(root: Path, name: str) -> Path:
     return candidate
 
 
-def test_sealed_code_ignores_non_runtime_node_modules_but_rejects_runtime_files(
+def test_code_source_ignores_non_runtime_node_modules_but_rejects_runtime_files(
     tmp_path: Path,
 ) -> None:
     repository = tmp_path / "code"
@@ -47,12 +48,12 @@ def test_sealed_code_ignores_non_runtime_node_modules_but_rejects_runtime_files(
     node_modules.mkdir(parents=True)
     (node_modules / "package.js").write_text("ignored by runtime identity\n")
 
-    identity = subject._sealed_code_identity(repository)
+    identity = inspect_source_code(repository)["identity"]
     assert identity["git_revision"]
 
     (repository / "src/rogue.py").write_text("VALUE = 2\n")
     with pytest.raises(ValueError, match="untracked runtime files"):
-        subject._sealed_code_identity(repository)
+        inspect_source_code(repository)
 
 
 @pytest.fixture
@@ -190,10 +191,7 @@ def test_interrupted_activation_finishes_same_release_on_retry(publisher):
     recovered = _activate(first, live, root, "interrupted", 0)
     assert recovered.status == "recovered"
     assert recovered.generation == 1
-    states = [
-        event["state"]
-        for event in subject._operation_events(root, "interrupted")
-    ]
+    states = [event["state"] for event in subject._operation_events(root, "interrupted")]
     assert states[-2:] == ["recovery_started", "activated"]
 
 
@@ -332,4 +330,3 @@ def test_loaded_process_identity_is_the_activation_record(publisher):
     assert loaded["operation_id"] == "identity"
     assert loaded["generation"] == 1
     assert loaded["release_id"] == "release-first"
-
