@@ -16,4 +16,13 @@ PrivateTmp=true
 ProtectSystem=full
 ReadOnlyPaths=/var/lib/nba-gestalt
 ReadWritePaths=/var/lib/nba-gestalt-dev/data-quality
+# SQLite WAL readers need their normal shared-memory sidecars. Queries use mode=ro;
+# keep database files themselves read-only while permitting SQLite coordination.
+ReadWritePaths=/var/lib/nba-gestalt/collection-dagster/schedules
+ReadWritePaths=/var/lib/nba-gestalt/collection-dagster/history
+ReadWritePaths=/var/lib/nba-gestalt/daily-dagster/schedules
+ReadWritePaths=/var/lib/nba-gestalt/daily-dagster/history
+ReadOnlyPaths=/var/lib/nba-gestalt/collection-dagster/schedules/schedules.db /var/lib/nba-gestalt/collection-dagster/history/runs.db
+ReadOnlyPaths=/var/lib/nba-gestalt/daily-dagster/schedules/schedules.db /var/lib/nba-gestalt/daily-dagster/history/runs.db
+
 TimeoutStartSec=10min
