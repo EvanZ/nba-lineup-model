@@ -15,6 +15,14 @@ These instructions apply to every task in this repository.
 - Search, filter, edit, test, and summarize on EC2. Return only the smallest
   relevant excerpts, diffs, test summaries, and validation evidence needed for
   the user to understand and verify the result.
+- For implementation work, use one persistent SSH shell rooted in the EC2
+  checkout instead of mixing standalone remote and local shell commands. Before
+  any mutating batch, verify the remote hostname, working directory, and Git
+  branch inside that shell.
+- Keep every edit, Git operation, test, build, and deployment command inside the
+  verified EC2 shell. Do not run local Git or file-edit commands for repository
+  implementation, and never place local commands after a remote heredoc or
+  closing SSH boundary.
 
 ## Release workflow
 
