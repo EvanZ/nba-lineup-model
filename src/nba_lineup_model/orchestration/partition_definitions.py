@@ -15,6 +15,7 @@ from dagster import (
 )
 
 from nba_lineup_model.orchestration.daily_work import read_object, verify_spec
+from nba_lineup_model.orchestration.daily_instance import run_guard, binding_for_instance
 
 
 @op(config_schema={"config_path": str, "spec_path": str,
@@ -25,8 +26,9 @@ def prepare_daily_partition_op(context):
     cfg = context.op_config
     spec = read_object(Path(cfg["spec_path"]))
     approval = read_object(Path(cfg["approval_path"])) if cfg.get("approval_path") else None
-    result = prepare_partition(DailyPipelineConfig.read(cfg["config_path"]), spec,
-                               approval=approval)
+    with run_guard(context, "prepare_daily_partition", cfg):
+        result = prepare_partition(DailyPipelineConfig.read(cfg["config_path"]), spec,
+                                   approval=approval)
     context.add_output_metadata({"work_id": result["work_id"],
         "status": result["status"], "runtime_release": result["runtime_release"]})
     return result
@@ -41,12 +43,15 @@ def prepare_daily_partition_job():
 @sensor(name="resumable_daily_partition", job=prepare_daily_partition_job,
         minimum_interval_seconds=300, default_status=DefaultSensorStatus.STOPPED)
 def resumable_daily_partition_sensor(context):
-    queue = os.environ.get("GESTALT_DAILY_REQUEST_ROOT")
-    if not queue:
-        return SkipReason("No explicit daily request queue configured")
+    binding = binding_for_instance(context.instance)
+    queue = binding.requests
+    configured = os.environ.get("GESTALT_DAILY_REQUEST_ROOT")
+    if configured and Path(configured).absolute() != queue:
+        raise ValueError("Daily request queue differs from its environment binding")
     pending = []
     for path in sorted(Path(queue).glob("*.json")):
         request = read_object(path)
+        binding.tags("prepare_daily_partition", request)
         spec = read_object(Path(request["spec_path"]))
         verify_spec(spec)
         pending.append((spec["identity"]["game_date_pacific"], spec["work_id"], request))
@@ -67,7 +72,8 @@ def resumable_daily_partition_sensor(context):
             return SkipReason(f"{day}: retry cooling down for 15 minutes")
         return RunRequest(run_key=f"daily:{work_id}:attempt-{len(runs)+1}",
             run_config={"ops":{"prepare_daily_partition_op":{"config":request}}},
-            tags={"gestalt/game_date":day,"gestalt/work_id":work_id})
+            tags={**binding.tags("prepare_daily_partition", request),
+                  "gestalt/trigger": "sensor"})
     return SkipReason("All explicitly requested partitions are validated; activation remains separate")
 
 
@@ -76,8 +82,9 @@ def prepare_forecast_date_op(context):
     from datetime import date
     from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
     from nba_lineup_model.orchestration.forecast_partition import prepare_forecast_date
-    result = prepare_forecast_date(DailyPipelineConfig.read(context.op_config["config_path"]),
-                                  date.fromisoformat(context.op_config["forecast_date"]))
+    with run_guard(context, "prepare_forecast_date", context.op_config):
+        result = prepare_forecast_date(DailyPipelineConfig.read(context.op_config["config_path"]),
+                                      date.fromisoformat(context.op_config["forecast_date"]))
     context.add_output_metadata({key: result[key] for key in (
         "forecast_date", "model_date", "model_sha256", "work_id", "runtime_release")})
     return result

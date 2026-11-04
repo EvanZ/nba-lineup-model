@@ -152,6 +152,8 @@ def _normalize_collector(payload: Mapping[str, object]) -> dict[str, object]:
         "last_failure_run_id": str(payload.get("last_failure_run_id") or ""),
         "last_failure_at": str(payload.get("last_failure_at") or ""),
         "latest_run_id": str(payload.get("latest_run_id") or ""),
+        "unresolved_failures": payload.get("unresolved_failures"),
+        "unfinished_runs": payload.get("unfinished_runs", []),
         "latest_run_status": str(payload.get("latest_run_status") or "missing").upper(),
         "latest_run_created_at": str(payload.get("latest_run_created_at") or ""),
         "latest_run_started_at": str(payload.get("latest_run_started_at") or ""),
@@ -350,6 +352,14 @@ def build_data_quality_report(
 
     for collector in normalized_collectors:
         scope = f"collector:{collector['name']}"
+        if collector["details"].get("run_count") == 0:
+            findings.append(_finding(
+                category="freshness", code="daily_history_unverified", severity="error",
+                scope=scope,
+                message="No runs are recorded in this environment's permanent job log. Recovery has not been verified.",
+                expected="A verified run in this environment", observed="No recorded runs",
+                evidence={"run_history": collector["details"].get("run_history")},
+            ))
         automation_status = str(collector["automation_status"]).upper()
         if automation_status not in {"RUNNING", "ENABLED"}:
             findings.append(
@@ -371,7 +381,19 @@ def build_data_quality_report(
         unresolved_failure = bool(collector["last_failure_run_id"]) and (
             failed_at is None or succeeded_at is None or succeeded_at <= failed_at
         )
-        if run_status in FAILED_STATUSES or unresolved_failure:
+        work_failures = collector["unresolved_failures"]
+        if work_failures is not None:
+            for failed_work in work_failures:
+                findings.append(_finding(
+                    category="freshness", code="collector_run_failed", severity="error",
+                    scope=f"{scope}:{failed_work['recovery_key']}",
+                    message="This work failed. Only a later successful run of the same work clears its alert.",
+                    expected="SUCCESS", observed="FAILURE",
+                    evidence={"run_id": failed_work["run_id"],
+                              "job_name": failed_work["job_name"],
+                              "recovery_key": failed_work["recovery_key"]},
+                ))
+        elif run_status in FAILED_STATUSES or unresolved_failure:
             findings.append(
                 _finding(
                     category="freshness",
@@ -390,7 +412,18 @@ def build_data_quality_report(
                     },
                 )
             )
-        if run_status in RUNNING_STATUSES:
+        for pending in collector["unfinished_runs"]:
+            age = _age_minutes(now, pending["created_at"])
+            limit = collector["stall_after_minutes"]
+            if limit is not None and age is not None and age > limit:
+                findings.append(_finding(
+                    category="freshness", code="collector_run_stalled", severity="error",
+                    scope=f"{scope}:{pending['recovery_key']}",
+                    message="This work is still queued or running beyond its allowed time.",
+                    expected=f"at most {limit:g} minutes", observed=f"{age:.1f} minutes",
+                    evidence={"run_id": pending["run_id"]},
+                ))
+        if run_status in RUNNING_STATUSES and not collector["unfinished_runs"]:
             age = _age_minutes(now, collector["latest_run_created_at"])
             limit = collector["stall_after_minutes"]
             if limit is not None and age is not None and age > limit:

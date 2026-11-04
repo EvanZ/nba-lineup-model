@@ -571,23 +571,19 @@ def collector_rows(
 def daily_publication_row(
     *,
     dagster_home: Path,
+    environment: str,
+    environment_root: Path,
     activation: Mapping[str, object],
     expected: Mapping[str, object],
     thresholds: Mapping[str, object],
     dagster_api_root: str = "http://127.0.0.1:3001",
 ) -> dict[str, object]:
-    automation_name = "complete_slate_daily_release"
+    from nba_lineup_model.orchestration.daily_run_status import read_daily_runs
+
+    automation_name = "resumable_daily_partition"
+    run = read_daily_runs(dagster_home, environment, environment_root)
     automation = effective_automation_states(
         dagster_home / "schedules" / "schedules.db", dagster_api_root
-    )
-    jobs = dagster_run_states(
-        dagster_home / "history" / "runs.db",
-        ["backfill_official_history", "prepare_daily_site_release"],
-    )
-    run = max(
-        jobs.values(),
-        key=lambda item: str(item.get("created_at") or ""),
-        default={},
     )
     latest = str(expected.get("latest_eligible_completed_date") or "")
     active = str(expected.get("active_evidence_through_date") or "")
@@ -597,6 +593,8 @@ def daily_publication_row(
         "job_name": run.get("job_name", ""),
         "automation_name": automation_name,
         **automation_fields(automation, automation_name),
+        "unresolved_failures": run["unresolved_failures"],
+        "unfinished_runs": run["unfinished_runs"],
         "last_failure_run_id": run.get("last_failure_run_id", ""),
         "last_failure_at": run.get("last_failure_at", ""),
         "latest_run_id": run.get("run_id", ""),
@@ -619,6 +617,11 @@ def daily_publication_row(
             thresholds, "daily_publication", "stall_after_minutes"
         ),
         "details": {
+            "environment": run["environment"],
+            "run_history": run["history_path"],
+            "run_count": run["run_count"],
+            "last_success_run_id": run["last_success_run_id"],
+            "execution_policy": "Only explicitly requested work; manual and sensor runs share this history.",
             "active_evidence_through_date": active,
             "latest_eligible_completed_date": latest,
         },
@@ -1002,6 +1005,8 @@ def collect_environment_report(
             daily_publication_row(
                 dagster_api_root=daily_dagster_api_root,
                 dagster_home=daily_dagster_home,
+                environment=environment,
+                environment_root=live_release.absolute().parent,
                 activation=activation,
                 expected=official,
                 thresholds=thresholds,

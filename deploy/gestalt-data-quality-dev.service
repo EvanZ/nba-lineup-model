@@ -11,7 +11,7 @@ WorkingDirectory=@WATCHDOG_PACKAGE@/code
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONPATH=@WATCHDOG_PACKAGE@/code/src
-ExecStart=@ORCHESTRATION_PYTHON@ -m nba_lineup_model.orchestration.data_quality_probe --watchdog-package-root @WATCHDOG_PACKAGE@ --watchdog-package-sha256 @WATCHDOG_SHA256@ --environment dev --live-release /var/lib/nba-gestalt-dev/live-release --schedule-root /var/lib/nba-gestalt/schedule-serving/current --dagster-home /var/lib/nba-gestalt/collection-dagster --daily-dagster-home /var/lib/nba-gestalt/daily-dagster --api-root http://127.0.0.1:8011 --output-root /var/lib/nba-gestalt-dev/data-quality --thresholds /etc/nba-gestalt/data-quality-thresholds.json
+ExecStart=@ORCHESTRATION_PYTHON@ -m nba_lineup_model.orchestration.data_quality_probe --watchdog-package-root @WATCHDOG_PACKAGE@ --watchdog-package-sha256 @WATCHDOG_SHA256@ --environment dev --live-release /var/lib/nba-gestalt-dev/live-release --schedule-root /var/lib/nba-gestalt/schedule-serving/current --dagster-home /var/lib/nba-gestalt/collection-dagster --daily-dagster-home /var/lib/nba-gestalt-dev/daily-dagster --daily-dagster-api-root http://127.0.0.1:3002 --api-root http://127.0.0.1:8011 --output-root /var/lib/nba-gestalt-dev/data-quality --thresholds /etc/nba-gestalt/data-quality-thresholds.json
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
@@ -21,9 +21,9 @@ ReadWritePaths=/var/lib/nba-gestalt-dev/data-quality
 # keep database files themselves read-only while permitting SQLite coordination.
 ReadWritePaths=/var/lib/nba-gestalt/collection-dagster/schedules
 ReadWritePaths=/var/lib/nba-gestalt/collection-dagster/history
-ReadWritePaths=/var/lib/nba-gestalt/daily-dagster/schedules
-ReadWritePaths=/var/lib/nba-gestalt/daily-dagster/history
+ReadWritePaths=/var/lib/nba-gestalt-dev/daily-dagster/schedules
+ReadWritePaths=/var/lib/nba-gestalt-dev/daily-dagster/history
 ReadOnlyPaths=/var/lib/nba-gestalt/collection-dagster/schedules/schedules.db /var/lib/nba-gestalt/collection-dagster/history/runs.db
-ReadOnlyPaths=/var/lib/nba-gestalt/daily-dagster/schedules/schedules.db /var/lib/nba-gestalt/daily-dagster/history/runs.db
+ReadOnlyPaths=/var/lib/nba-gestalt-dev/daily-dagster/schedules/schedules.db /var/lib/nba-gestalt-dev/daily-dagster/history/runs.db
 
 TimeoutStartSec=10min

@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_watchdog_allows_wal_sidecars_but_keeps_databases_read_only():
     unit = (ROOT / "deploy/gestalt-data-quality-dev.service").read_text()
-    for home in ("collection-dagster", "daily-dagster"):
+    for root, home in (("nba-gestalt", "collection-dagster"), ("nba-gestalt-dev", "daily-dagster")):
         for folder, name in (("schedules", "schedules.db"), ("history", "runs.db")):
-            directory = f"/var/lib/nba-gestalt/{home}/{folder}"
+            directory = f"/var/lib/{root}/{home}/{folder}"
             assert f"ReadWritePaths={directory}\n" in unit
             assert any(
                 f"{directory}/{name}" in line.split("=", 1)[1].split()

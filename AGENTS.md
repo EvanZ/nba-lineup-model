@@ -58,6 +58,16 @@ These instructions apply to every task in this repository.
 - When a release check fails, report the failure and repair the canonical path.
   Never patch manifests, invent substitute inputs, or silently omit a failed gate.
 
+## Daily job history and alert recovery
+
+- Real dev/production daily runs use their environment's permanent Dagster home.
+  Manual reruns and sensors must use the same bound instance; never create a new
+  release-local or temporary instance for real work. Temporary instances are for tests.
+- Watchdogs read that same environment's history. A success in another environment,
+  another job, or different work must not clear its failure.
+- Recovery comes from actual successful runs, never edited alert state or fabricated
+  run records. Any initial history migration requires approval and preserves originals.
+
 ## Change classification and historical immutability
 
 - Classify every change before implementation as UI-only, observed-data,

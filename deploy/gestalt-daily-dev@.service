@@ -1,0 +1,25 @@
+[Unit]
+Description=NBA GESTALT dev daily jobs (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=@DAILY_PACKAGE@/code
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=@DAILY_PACKAGE@/code/src
+Environment=DAGSTER_HOME=/var/lib/nba-gestalt-dev/daily-dagster
+Environment=AWS_REGION=us-west-1
+ExecStart=@ORCHESTRATION_PYTHON@ -m nba_lineup_model.orchestration.daily_service --package @DAILY_PACKAGE@ --sha256 @DAILY_SHA256@ --home /var/lib/nba-gestalt-dev/daily-dagster --grpc-port 4004 --web-port 3002 --component %i
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

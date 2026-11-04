@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Install the permanent dev-only instance. No site publication or job requests.
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+test -z "$(git -C "$REPO_ROOT" status --porcelain)" || {
+  printf 'Commit tested code before installing the daily worker\n' >&2
+  exit 1
+}
+requirements_sha="$("$REPO_ROOT/scripts/validate_gestalt_runtime_environment.py" \
+  --hash-only --requirements "$REPO_ROOT/deploy/web-requirements.txt" \
+  "$REPO_ROOT/deploy/orchestration-requirements.txt")"
+runtime="/opt/nba-gestalt-orchestration/environments/requirements_sha256=$requirements_sha"
+test -x "$runtime/bin/python"
+"$runtime/bin/python" "$REPO_ROOT/scripts/validate_gestalt_runtime_environment.py" \
+  --profile orchestration --requirements "$REPO_ROOT/deploy/web-requirements.txt" \
+  "$REPO_ROOT/deploy/orchestration-requirements.txt" >/dev/null
+sudo -n install -d -o ubuntu -g ubuntu -m 0755 /var/lib/nba-gestalt-dev/daily-releases
+read -r package checksum < <(
+  PYTHONPATH="$REPO_ROOT/src" "$runtime/bin/python" -m nba_lineup_model.orchestration.watchdog_deployment \
+    --source "$REPO_ROOT" --output /var/lib/nba-gestalt-dev/daily-releases
+)
+test -n "$package" && test -n "$checksum"
+PYTHONPATH="$package/code/src" "$runtime/bin/python" -m nba_lineup_model.orchestration.daily_instance \
+  initialize --environment dev --environment-root /var/lib/nba-gestalt-dev \
+  --template "$package/code/deploy/dagster-daily.yaml"
+# Initialize real Dagster storage, without creating or importing any runs.
+PYTHONPATH="$package/code/src" "$runtime/bin/python" - <<'PY'
+from dagster import DagsterInstance, RunsFilter, DagsterRunStatus
+with DagsterInstance.from_config("/var/lib/nba-gestalt-dev/daily-dagster") as instance:
+    active = instance.get_runs(filters=RunsFilter(statuses=[
+        DagsterRunStatus.QUEUED, DagsterRunStatus.STARTING,
+        DagsterRunStatus.STARTED, DagsterRunStatus.CANCELING]), limit=1)
+    if active:
+        raise RuntimeError("Do not replace daily worker code while work is active")
+PY
+install -m 0644 "$package/code/deploy/gestalt-daily-dev-workspace.yaml" \
+  /var/lib/nba-gestalt-dev/daily-dagster/workspace.yaml
+staging="$(mktemp -d /tmp/gestalt-daily-dev.XXXXXX)"
+trap 'rm -f -- "$staging/gestalt-daily-dev@.service"; rmdir -- "$staging"' EXIT
+sed -e "s|@ORCHESTRATION_PYTHON@|$runtime/bin/python|g" \
+  -e "s|@DAILY_PACKAGE@|$package|g" -e "s|@DAILY_SHA256@|$checksum|g" \
+  "$package/code/deploy/gestalt-daily-dev@.service" > "$staging/gestalt-daily-dev@.service"
+systemd-analyze verify "$staging/gestalt-daily-dev@.service"
+sudo -n install -m 0644 "$staging/gestalt-daily-dev@.service" /etc/systemd/system/gestalt-daily-dev@.service
+sudo -n systemctl daemon-reload
+sudo -n systemctl enable gestalt-daily-dev@code gestalt-daily-dev@web gestalt-daily-dev@daemon
+sudo -n systemctl restart gestalt-daily-dev@code gestalt-daily-dev@web gestalt-daily-dev@daemon
+for attempt in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:3002/server_info >/dev/null; then break; fi
+  sleep 1
+done
+DAGSTER_HOME=/var/lib/nba-gestalt-dev/daily-dagster "$runtime/bin/dagster" sensor start \
+  --workspace /var/lib/nba-gestalt-dev/daily-dagster/workspace.yaml resumable_daily_partition
+systemctl is-active gestalt-daily-dev@code gestalt-daily-dev@web gestalt-daily-dev@daemon

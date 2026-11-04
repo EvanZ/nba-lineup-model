@@ -1,0 +1,5 @@
+load_from:
+  - grpc_server:
+      host: 127.0.0.1
+      port: 4004
+      location_name: nba_gestalt_dev_daily_pipeline
