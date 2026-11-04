@@ -1,0 +1,19 @@
+[Unit]
+Description=NBA GESTALT independent dev data-quality watchdog
+After=network-online.target gestalt-web-dev.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/var/lib/nba-gestalt-dev/live-release/code
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/var/lib/nba-gestalt-dev/live-release/code/src
+ExecStart=/opt/nba-gestalt-orchestration/current/bin/python -m nba_lineup_model.orchestration.data_quality_probe --environment dev --live-release /var/lib/nba-gestalt-dev/live-release --schedule-root /var/lib/nba-gestalt/schedule-serving/current --dagster-home /var/lib/nba-gestalt/collection-dagster --daily-dagster-home /var/lib/nba-gestalt/daily-dagster --api-root http://127.0.0.1:8011 --output-root /var/lib/nba-gestalt-dev/data-quality --thresholds /etc/nba-gestalt/data-quality-thresholds.json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadOnlyPaths=/var/lib/nba-gestalt
+ReadWritePaths=/var/lib/nba-gestalt-dev/data-quality
+TimeoutStartSec=10min

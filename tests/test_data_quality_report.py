@@ -61,6 +61,8 @@ def collector(
     last_success_at: str = "2026-11-04T15:30:00Z",
     artifact_observed_at: str = "2026-11-04T15:30:00Z",
     created_at: str = "2026-11-04T15:29:00Z",
+    required_since_at: str = "",
+    expected_by: str = "",
 ) -> dict[str, object]:
     return {
         "name": name,
@@ -74,6 +76,8 @@ def collector(
         "latest_run_finished_at": last_success_at,
         "last_success_at": last_success_at,
         "artifact_observed_at": artifact_observed_at,
+        "required_since_at": required_since_at,
+        "expected_by": expected_by,
         "required_now": required_now,
         "quiet_reason": "" if required_now else "No NBA games are scheduled today.",
         "stale_after_minutes": 90,
@@ -264,11 +268,7 @@ def test_required_simulated_incidents_are_persisted_in_browsable_html(
             "model_edition_mismatch",
         ),
         (
-            report(
-                collectors=[
-                    collector("schedule_injuries", latest_status="FAILURE")
-                ]
-            ),
+            report(collectors=[collector("schedule_injuries", latest_status="FAILURE")]),
             "collector_run_failed",
         ),
         (
@@ -322,9 +322,7 @@ def test_successful_report_publishes_date_and_global_pointers(tmp_path: Path):
     assert second_bundle == bundle
     assert verify_data_quality_report(second_bundle) == first
     global_pointer = json.loads((tmp_path / "latest.json").read_text())
-    date_pointer = json.loads(
-        (tmp_path / "reports" / "2026-11-04" / "latest.json").read_text()
-    )
+    date_pointer = json.loads((tmp_path / "reports" / "2026-11-04" / "latest.json").read_text())
     assert global_pointer == date_pointer
     assert global_pointer["status"] == "clean"
     assert (tmp_path / "current").resolve() == bundle
@@ -364,3 +362,77 @@ def test_lifecycle_state_failure_is_reported():
     payload = report(artifacts=[artifact("player_pages", states=states)])
     assert "artifact_not_served" in finding_codes(payload)
 
+
+def test_scheduled_poll_detects_missed_due_run_and_artifact():
+    payload = report(
+        collectors=[
+            collector(
+                "odds",
+                last_success_at="2026-11-04T14:00:00Z",
+                artifact_observed_at="2026-11-04T14:00:00Z",
+                required_since_at="2026-11-04T15:20:00Z",
+                expected_by="2026-11-04T15:50:00Z",
+            )
+        ]
+    )
+    assert finding_codes(payload) == {
+        "collector_scheduled_success_missing",
+        "collector_scheduled_artifact_missing",
+    }
+
+
+def test_quiet_collector_still_reports_disabled_automation():
+    payload = report(
+        collectors=[
+            collector(
+                "official_scores",
+                required_now=False,
+                automation_status="STOPPED",
+            )
+        ]
+    )
+    assert "collector_automation_inactive" in finding_codes(payload)
+
+
+def test_nightly_publication_is_late_only_after_five_am_deadline():
+    common = {
+        "season": "2026-27",
+        "latest_eligible_completed_date": "2026-11-03",
+        "required_evidence_through_date": "2026-11-03",
+        "active_evidence_through_date": "2026-11-02",
+        "completed_games": 110,
+        "in_progress_games": 0,
+        "scheduled_games_today": 0,
+    }
+    before = build_data_quality_report(
+        report_date="2026-11-04",
+        environment="dev",
+        expected={**common, "nightly_publication_due": False},
+        activation={
+            "state": "active",
+            "edition_id": "edition-v2",
+            "observed_data_revision": "data-r2",
+        },
+        artifacts=[],
+        collectors=[],
+        generated_at=datetime(2026, 11, 4, 12, 59, tzinfo=UTC),
+    )
+    after = build_data_quality_report(
+        report_date="2026-11-04",
+        environment="dev",
+        expected={
+            **common,
+            "nightly_publication_due": True,
+            "nightly_publication_deadline": "2026-11-04T13:00:00Z",
+        },
+        activation={
+            "state": "active",
+            "edition_id": "edition-v2",
+            "observed_data_revision": "data-r2",
+        },
+        artifacts=[],
+        collectors=[],
+        generated_at=datetime(2026, 11, 4, 13, 1, tzinfo=UTC),
+    )
+    assert "nightly_publication_late" not in finding_codes(before)
+    assert "nightly_publication_late" in finding_codes(after)

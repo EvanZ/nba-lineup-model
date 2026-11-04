@@ -1862,6 +1862,11 @@ function App() {
   const [isLoadingUnit, setIsLoadingUnit] = useState(false);
   const [isLoadingOpponent, setIsLoadingOpponent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dataQualityAlert, setDataQualityAlert] = useState({
+    urgent: false,
+    open_incident_count: 0,
+    status: "loading",
+  });
 
   const canEvaluate = unit.length === 5 && opponent.length === 5;
   useEffect(() => {
@@ -1887,6 +1892,38 @@ function App() {
       }
     })();
     return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        const response = await fetch("/api/reports/data-quality-status");
+        if (!response.ok) throw new Error("Data-quality status is unavailable.");
+        const payload = (await response.json()) as {
+          urgent?: boolean;
+          open_incident_count?: number;
+          status?: string;
+        };
+        if (!disposed) {
+          setDataQualityAlert({
+            urgent: Boolean(payload.urgent),
+            open_incident_count: Number(payload.open_incident_count ?? 0),
+            status: String(payload.status ?? "unavailable"),
+          });
+        }
+      } catch {
+        if (!disposed) {
+          setDataQualityAlert({ urgent: true, open_incident_count: 1, status: "unavailable" });
+        }
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(refresh, 60_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
   }, []);
 
   async function loadRandomLineup(side: Side) {
@@ -2028,14 +2065,22 @@ function App() {
               <span>Search</span>
             </button>
             <a
-              className="header-link"
+              className="header-link data-quality-link"
               href="/api/reports/current-season"
               target="_blank"
               rel="noreferrer"
-              aria-label="Open the daily data quality report"
+              aria-label={
+                dataQualityAlert.urgent
+                  ? `Open the daily data quality report; ${dataQualityAlert.open_incident_count} urgent incident${dataQualityAlert.open_incident_count === 1 ? "" : "s"}`
+                  : "Open the daily data quality report"
+              }
+              title={dataQualityAlert.urgent ? "Urgent data-quality incident" : "Data quality is clean"}
             >
               <ClipboardCheck size={15} aria-hidden="true" />
               <span>Data quality</span>
+              {dataQualityAlert.urgent && (
+                <i className="data-quality-alert-dot" aria-hidden="true" />
+              )}
             </a>
             <a
               className="header-link"

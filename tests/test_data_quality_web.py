@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from nba_lineup_model.web_api.data_quality_reports import compose_data_quality_report
+from nba_lineup_model.web_api.data_quality_reports import (
+    compose_data_quality_report,
+    read_data_quality_status,
+)
 
 OPERATIONAL = """<!doctype html><html><head><style>main{max-width:100%}</style></head>
 <body><main><h1>Daily Data Quality — 2026-11-04</h1><p>No findings.</p></main></body></html>"""
@@ -40,3 +43,32 @@ def test_compose_data_quality_report_rejects_malformed_inputs(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         compose_data_quality_report(operational, current)
+
+
+def test_open_incident_adds_urgent_banner():
+    report = compose_data_quality_report(
+        OPERATIONAL,
+        CURRENT_SEASON,
+        quality_status={
+            "urgent": True,
+            "open_incident_count": 1,
+            "incidents": [
+                {"finding": {"scope": "collector:odds", "message": "Scheduled poll is late."}}
+            ],
+        },
+    )
+    assert "Urgent attention required · 1 open incident" in report
+    assert "Scheduled poll is late." in report
+    assert 'role="alert"' in report
+
+
+def test_status_reader_exposes_open_incidents(tmp_path):
+    (tmp_path / "latest.json").write_text(
+        '{"status":"failed","report_date":"2026-11-04","generated_at":"now"}'
+    )
+    (tmp_path / "alert-state.json").write_text(
+        '{"updated_at":"now","active":{"abc":{"finding":{"code":"late"}}}}'
+    )
+    status = read_data_quality_status(tmp_path)
+    assert status["urgent"] is True
+    assert status["open_incident_count"] == 1

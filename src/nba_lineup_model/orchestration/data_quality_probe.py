@@ -14,7 +14,7 @@ import sqlite3
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping, Sequence
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -102,6 +102,7 @@ def official_schedule_snapshot(
     scheduled_game_count = 0
     in_progress_game_count = 0
     today_games: list[dict[str, Any]] = []
+    tomorrow_game_count = 0
     for game_date, payload in latest_dates.items():
         games = [game for game in payload.get("games", []) if isinstance(game, dict)]
         if games and all(bool((game.get("status") or {}).get("completed")) for game in games):
@@ -110,9 +111,10 @@ def official_schedule_snapshot(
             today_games = games
             scheduled_game_count = len(games)
             in_progress_game_count = sum(
-                str((game.get("status") or {}).get("state") or "").lower() == "in"
-                for game in games
+                str((game.get("status") or {}).get("state") or "").lower() == "in" for game in games
             )
+        if game_date == (date.fromisoformat(report_date) + timedelta(days=1)).isoformat():
+            tomorrow_game_count = len(games)
 
     final_ids: set[str] = set()
     for path in sorted((schedule_root / "final").glob("*.summary.json")):
@@ -130,12 +132,11 @@ def official_schedule_snapshot(
         "completed_game_ids": sorted(final_ids),
         "completed_games": len(final_ids),
         "scheduled_games_today": scheduled_game_count,
+        "scheduled_games_tomorrow": tomorrow_game_count,
         "in_progress_games": in_progress_game_count,
         "zero_game_day": scheduled_game_count == 0,
         "today_game_ids": sorted(
-            str(game.get("game_id"))
-            for game in today_games
-            if game.get("game_id") is not None
+            str(game.get("game_id")) for game in today_games if game.get("game_id") is not None
         ),
         "latest_day_count": len(latest_dates),
     }
@@ -146,9 +147,7 @@ def dagster_automation_states(schedules_db: Path) -> dict[str, str]:
         return {}
     connection = sqlite3.connect(f"file:{schedules_db}?mode=ro", uri=True)
     try:
-        rows = connection.execute(
-            "select status, instigator_body from instigators"
-        ).fetchall()
+        rows = connection.execute("select status, instigator_body from instigators").fetchall()
     finally:
         connection.close()
     result: dict[str, str] = {}
@@ -245,9 +244,7 @@ def odds_artifact_observed_at(schedule_root: Path) -> str:
         payload = read_json(path)
         if payload.get("collected_at"):
             return utc_timestamp(
-                datetime.fromisoformat(
-                    str(payload["collected_at"]).replace("Z", "+00:00")
-                )
+                datetime.fromisoformat(str(payload["collected_at"]).replace("Z", "+00:00"))
             )
     except (OSError, ValueError, json.JSONDecodeError):
         pass
@@ -268,16 +265,10 @@ def current_surface_snapshot(api_root: str, evidence_date: str) -> dict[str, obj
     records = get_json(api_root, "/api/current-season-records")
     performance = get_json(api_root, "/api/schedule-performance")
     schedule = (
-        get_json(api_root, f"/api/schedule?date={encoded_date}")
-        if evidence_date
-        else {"games": []}
+        get_json(api_root, f"/api/schedule?date={encoded_date}") if evidence_date else {"games": []}
     )
     season_window = next(
-        (
-            window
-            for window in performance.get("windows", [])
-            if window.get("key") == "season"
-        ),
+        (window for window in performance.get("windows", []) if window.get("key") == "season"),
         {},
     )
     win_projection = wins.get("win_projection") or {}
@@ -291,9 +282,7 @@ def current_surface_snapshot(api_root: str, evidence_date: str) -> dict[str, obj
         "lineup_count": len(lineups.get("lineups") or []),
         "lineup_state": lineups.get("lineup_state") or {},
         "win_team_count": len(win_teams),
-        "wins_completed_team_games": sum(
-            int(team.get("completed_games", 0)) for team in win_teams
-        ),
+        "wins_completed_team_games": sum(int(team.get("completed_games", 0)) for team in win_teams),
         "wins_as_of": str(win_projection.get("as_of") or ""),
         "record_game_count": len(records.get("completed_game_ids") or []),
         "records_as_of": str(records.get("as_of") or records.get("through_date") or ""),
@@ -354,6 +343,60 @@ def threshold_for(
     return float(row[field])
 
 
+def scheduled_poll_window(
+    generated_at: datetime,
+    schedule_times: Sequence[str],
+    grace_minutes: float,
+) -> dict[str, object]:
+    local = generated_at.astimezone(PACIFIC)
+    due_times: list[datetime] = []
+    for raw in schedule_times:
+        hour, minute = (int(value) for value in str(raw).split(":", 1))
+        candidate = datetime.combine(local.date(), time(hour, minute), tzinfo=PACIFIC)
+        if candidate <= local:
+            due_times.append(candidate)
+    if not due_times:
+        return {
+            "required": False,
+            "required_since_at": "",
+            "expected_by": "",
+            "quiet_reason": "No configured odds poll is due yet today.",
+        }
+    latest = max(due_times)
+    expected_by = latest + timedelta(minutes=grace_minutes)
+    return {
+        "required": local >= expected_by,
+        "required_since_at": utc_timestamp(latest),
+        "expected_by": utc_timestamp(expected_by),
+        "quiet_reason": (
+            "The latest configured odds poll is still inside its grace window."
+            if local < expected_by
+            else ""
+        ),
+    }
+
+
+def nightly_publication_state(
+    latest_completed_date: str,
+    generated_at: datetime,
+    deadline_hour_pacific: int,
+) -> dict[str, object]:
+    if not latest_completed_date:
+        return {
+            "nightly_publication_due": False,
+            "nightly_publication_deadline": "",
+        }
+    deadline = datetime.combine(
+        date.fromisoformat(latest_completed_date) + timedelta(days=1),
+        time(deadline_hour_pacific),
+        tzinfo=PACIFIC,
+    )
+    return {
+        "nightly_publication_due": generated_at.astimezone(PACIFIC) >= deadline,
+        "nightly_publication_deadline": utc_timestamp(deadline),
+    }
+
+
 def collector_rows(
     *,
     dagster_home: Path,
@@ -361,6 +404,7 @@ def collector_rows(
     report_date: str,
     expected: Mapping[str, object],
     thresholds: Mapping[str, object],
+    generated_at: datetime,
 ) -> list[dict[str, object]]:
     automation = dagster_automation_states(dagster_home / "schedules" / "schedules.db")
     jobs = dagster_run_states(
@@ -376,26 +420,44 @@ def collector_rows(
         ),
     }
     scheduled = int(expected.get("scheduled_games_today") or 0)
+    tomorrow = int(expected.get("scheduled_games_tomorrow") or 0)
     in_progress = int(expected.get("in_progress_games") or 0)
+    odds_thresholds = thresholds.get("odds")
+    odds_config = odds_thresholds if isinstance(odds_thresholds, Mapping) else {}
+    odds_window = scheduled_poll_window(
+        generated_at,
+        [str(value) for value in odds_config.get("scheduled_times_pacific", ())],
+        float(odds_config.get("grace_minutes", 30)),
+    )
     required = {
         "schedule": True,
-        "injury_reports": scheduled > 0,
-        "odds": scheduled > 0,
+        "injury_reports": scheduled + tomorrow > 0,
+        "odds": scheduled > 0 and bool(odds_window["required"]),
         "official_scores": in_progress > 0,
     }
     quiet_reasons = {
         "schedule": "",
-        "injury_reports": "No games are scheduled today." if scheduled == 0 else "",
-        "odds": "No games are scheduled today." if scheduled == 0 else "",
+        "injury_reports": (
+            "No games are scheduled today or tomorrow." if scheduled + tomorrow == 0 else ""
+        ),
+        "odds": (
+            "No games are scheduled today." if scheduled == 0 else str(odds_window["quiet_reason"])
+        ),
         "official_scores": (
-            "No official NBA game is currently in progress."
-            if in_progress == 0
-            else ""
+            "No official NBA game is currently in progress." if in_progress == 0 else ""
         ),
     }
     rows: list[dict[str, object]] = []
     for name, (job_name, automation_name) in COLLECTOR_JOBS.items():
         run = jobs.get(job_name, {})
+        scheduled_fields = (
+            {
+                "required_since_at": odds_window["required_since_at"],
+                "expected_by": odds_window["expected_by"],
+            }
+            if name == "odds"
+            else {"required_since_at": "", "expected_by": ""}
+        )
         rows.append(
             {
                 "name": name,
@@ -409,17 +471,70 @@ def collector_rows(
                 "latest_run_finished_at": run.get("finished_at", ""),
                 "last_success_at": run.get("last_success_at", ""),
                 "artifact_observed_at": artifacts[name],
+                **scheduled_fields,
                 "required_now": required[name],
                 "quiet_reason": quiet_reasons[name],
-                "stale_after_minutes": threshold_for(
-                    thresholds, name, "stale_after_minutes"
+                "stale_after_minutes": (
+                    None
+                    if name == "odds"
+                    else threshold_for(thresholds, name, "stale_after_minutes")
                 ),
-                "stall_after_minutes": threshold_for(
-                    thresholds, name, "stall_after_minutes"
-                ),
+                "stall_after_minutes": threshold_for(thresholds, name, "stall_after_minutes"),
             }
         )
     return rows
+
+
+def daily_publication_row(
+    *,
+    dagster_home: Path,
+    activation: Mapping[str, object],
+    expected: Mapping[str, object],
+    thresholds: Mapping[str, object],
+) -> dict[str, object]:
+    automation_name = "complete_slate_daily_release"
+    automation = dagster_automation_states(dagster_home / "schedules" / "schedules.db")
+    jobs = dagster_run_states(
+        dagster_home / "history" / "runs.db",
+        ["backfill_official_history", "prepare_daily_site_release"],
+    )
+    run = max(
+        jobs.values(),
+        key=lambda item: str(item.get("created_at") or ""),
+        default={},
+    )
+    latest = str(expected.get("latest_eligible_completed_date") or "")
+    active = str(expected.get("active_evidence_through_date") or "")
+    overdue = bool(expected.get("nightly_publication_due")) and active < latest
+    return {
+        "name": "daily_publication",
+        "job_name": "backfill_official_history",
+        "automation_name": automation_name,
+        "automation_status": automation.get(automation_name, "MISSING"),
+        "latest_run_id": run.get("run_id", ""),
+        "latest_run_status": run.get("status", "MISSING"),
+        "latest_run_created_at": run.get("created_at", ""),
+        "latest_run_started_at": run.get("started_at", ""),
+        "latest_run_finished_at": run.get("finished_at", ""),
+        "last_success_at": run.get("last_success_at", ""),
+        "artifact_observed_at": activation.get("created_at", ""),
+        "required_since_at": "",
+        "expected_by": str(expected.get("nightly_publication_deadline") or ""),
+        "required_now": overdue,
+        "quiet_reason": (
+            "The active release covers the latest completed slate."
+            if active >= latest
+            else "The 5:00 AM Pacific publication deadline has not arrived."
+        ),
+        "stale_after_minutes": None,
+        "stall_after_minutes": threshold_for(
+            thresholds, "daily_publication", "stall_after_minutes"
+        ),
+        "details": {
+            "active_evidence_through_date": active,
+            "latest_eligible_completed_date": latest,
+        },
+    }
 
 
 def artifact_row(
@@ -457,6 +572,7 @@ def collect_environment_report(
     live_release: Path,
     schedule_root: Path,
     dagster_home: Path,
+    daily_dagster_home: Path,
     api_root: str,
     report_date: str,
     thresholds: Mapping[str, object] | None = None,
@@ -464,6 +580,11 @@ def collect_environment_report(
 ) -> dict[str, object]:
     """Collect the full report from immutable release and live serving state."""
 
+    thresholds = thresholds or {}
+    generated = generated_at or datetime.now(UTC)
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=UTC)
+    generated = generated.astimezone(UTC)
     active = read_active_activation(live_release)
     if active is None:
         raise ValueError(f"No active release at {live_release}")
@@ -478,6 +599,22 @@ def collect_environment_report(
     evidence_date = str(bindings.get("evidence_through_date") or "")
     official = official_schedule_snapshot(schedule_root, report_date=report_date)
     official["season"] = str(approved.get("season") or "")
+    deadline_hour = int(
+        threshold_for(thresholds, "daily_publication", "deadline_hour_pacific") or 5
+    )
+    official.update(
+        nightly_publication_state(
+            str(official.get("latest_eligible_completed_date") or ""),
+            generated,
+            deadline_hour,
+        )
+    )
+    official["active_evidence_through_date"] = evidence_date
+    official["required_evidence_through_date"] = (
+        str(official.get("latest_eligible_completed_date") or "")
+        if official["nightly_publication_due"]
+        else evidence_date
+    )
     surfaces = current_surface_snapshot(api_root, evidence_date)
     release_matches = str(surfaces["serving"].get("release_id") or "") == str(
         active.get("release_id") or ""
@@ -486,7 +623,12 @@ def collect_environment_report(
     component_matches = all(
         surface_components.get(name) == value for name, value in components.items()
     )
-    expected_games = int(official["completed_games"])
+    expected_games = (
+        int(official["completed_games"])
+        if official["nightly_publication_due"]
+        else int(approved["game_count"])
+    )
+    official["required_completed_games"] = expected_games
     approved_api = dict(approved.get("api_validation") or {})
     model_quality = dict(surfaces["ranking_state"].get("data_quality") or {})
     source_exclusions = dict(model_quality.get("source_exclusions") or {})
@@ -670,19 +812,13 @@ def collect_environment_report(
             edition=edition,
             coverage={
                 "pregame_ledgers": {
-                    "expected": int(
-                        approved["schedule"]["attribution_audit"]["served_games"]
-                    ),
-                    "observed": int(
-                        approved["schedule"]["attribution_audit"]["pregame_ledgers"]
-                    ),
+                    "expected": int(approved["schedule"]["attribution_audit"]["served_games"]),
+                    "observed": int(approved["schedule"]["attribution_audit"]["pregame_ledgers"]),
                 },
                 "actual_minutes_ledgers": {
                     "expected": expected_games,
                     "observed": int(
-                        approved["schedule"]["attribution_audit"][
-                            "actual_minutes_ledgers"
-                        ]
+                        approved["schedule"]["attribution_audit"]["actual_minutes_ledgers"]
                     ),
                 },
             },
@@ -744,9 +880,10 @@ def collect_environment_report(
         "observed_data_revision": revision,
         "changed_components": transition["changed_components"],
         "transition": transition,
+        "stall_after_minutes": threshold_for(thresholds, "activation", "stall_after_minutes"),
     }
     notes = [
-        "Collector thresholds are not active unless a reviewed threshold file is supplied.",
+        "Collector freshness thresholds and the 5:00 AM Pacific nightly deadline are active.",
         "Player opportunity coverage comes from the exhaustive API validation sealed into "
         "the active release; the current served release/component identity is checked "
         "independently.",
@@ -767,9 +904,18 @@ def collect_environment_report(
             schedule_root=schedule_root,
             report_date=report_date,
             expected=official,
-            thresholds=thresholds or {},
-        ),
-        generated_at=generated_at,
+            thresholds=thresholds,
+            generated_at=generated,
+        )
+        + [
+            daily_publication_row(
+                dagster_home=daily_dagster_home,
+                activation=activation,
+                expected=official,
+                thresholds=thresholds,
+            )
+        ],
+        generated_at=generated,
         notes=notes,
     )
 
@@ -790,6 +936,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--live-release", type=Path, required=True)
     parser.add_argument("--schedule-root", type=Path, required=True)
     parser.add_argument("--dagster-home", type=Path, required=True)
+    parser.add_argument("--daily-dagster-home", type=Path, required=True)
     parser.add_argument("--api-root", required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--report-date")
@@ -808,6 +955,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             live_release=args.live_release,
             schedule_root=args.schedule_root,
             dagster_home=args.dagster_home,
+            daily_dagster_home=args.daily_dagster_home,
             api_root=args.api_root,
             report_date=report_date,
             thresholds=thresholds,
@@ -827,11 +975,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     previous = read_json(state_path) if state_path.is_file() else None
     state, notifications = reconcile_alert_state(report, previous)
     atomic_json(state_path, state)
-    event_path = (
-        args.output_root
-        / "alert-events"
-        / f"{bundle.name}.json"
-    )
+    event_path = args.output_root / "alert-events" / f"{bundle.name}.json"
     atomic_json(
         event_path,
         {"events": notifications, "updated_at": state["updated_at"]},
@@ -848,9 +992,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             indent=2,
         )
     )
-    return 0 if report["status"] == "clean" else 2
+    return 1 if probe_error else 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

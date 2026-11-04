@@ -1,8 +1,9 @@
 # Issue #58 alert policy proposal
 
-Status: **not activated**. This document proposes monitoring behavior for user
-approval. It does not change any Dagster schedule, collector cadence, paid API
-usage, production service, or notification destination.
+Status: **approved for dev activation on 2026-11-04**. The independent watchdog
+runs hourly, uses a 5:00 AM Pacific nightly publication deadline, and surfaces
+open incidents in the existing daily report plus a red site-header indicator.
+It does not change collector cadence, paid API usage, or model artifacts.
 
 ## Separation of responsibilities
 
@@ -33,9 +34,9 @@ only reads local persisted artifacts.
 | Daily model/site update | Latest eligible completed slate is newer than the active served evidence date after the approved nightly grace window | Zero-game date or slate still in progress |
 | Activation | Staging/activating state exceeds 20 minutes, or active API release/component identity differs from the activation | Fully active matching release |
 
-The exact nightly grace window is deliberately left unset until the user
-chooses it. The report already derives the latest eligible completed slate from
-the official schedule, so no date or game-count constant is required.
+The nightly publication deadline is 5:00 AM Pacific on the morning after the
+latest completed slate. The report derives that slate from the official schedule,
+so no date or game-count constant is required.
 
 ## Notification behavior
 
@@ -48,14 +49,10 @@ the official schedule, so no date or game-count constant is required.
 - Report-generation failure itself is an incident, and its failed HTML/JSON
   report remains under the stable report root.
 
-## Activation decision still required
+## Approved notification behavior
 
-Before enabling an hourly service/timer or any external notification, approve:
-
-1. the thresholds above;
-2. the nightly grace window;
-3. the notification destination.
-
-Until then, dev reports may be generated manually and include collector
-timestamps/run states, but age thresholds are not applied.
+The hourly dev watchdog applies the thresholds above. Notifications remain
+inside NBA GESTALT: the existing Data Quality report lists each finding and the
+site header shows a red indicator while any error incident is open. The indicator
+links directly to the report. Production activation remains separately gated.
 

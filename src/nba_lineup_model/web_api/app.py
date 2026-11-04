@@ -31,7 +31,10 @@ from nba_lineup_model.season.release_publisher import (
     load_process_activation_identity,
 )
 from nba_lineup_model.season.serving_selection import observation_context
-from nba_lineup_model.web_api.data_quality_reports import compose_data_quality_report
+from nba_lineup_model.web_api.data_quality_reports import (
+    compose_data_quality_report,
+    read_data_quality_status,
+)
 from nba_lineup_model.web_api.inference import (
     MODEL_ARTIFACT,
     MODEL_DISPLAY_NAME,
@@ -324,9 +327,11 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 detail="The operational data-quality report is not available",
             )
         try:
+            quality_status = read_data_quality_status(Path(quality_root))
             combined = compose_data_quality_report(
                 quality_path.read_text(encoding="utf-8"),
                 report_path.read_text(encoding="utf-8"),
+                quality_status=quality_status,
             )
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
@@ -334,6 +339,32 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             combined,
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.get("/api/reports/data-quality-status")
+    def data_quality_status() -> dict[str, object]:
+        """Expose the current incident state for the site-wide urgency indicator."""
+
+        configured = os.environ.get("GESTALT_DATA_QUALITY_ROOT")
+        if not configured:
+            return {
+                "status": "unavailable",
+                "urgent": True,
+                "open_incident_count": 1,
+                "updated_at": "",
+                "report_date": "",
+                "incidents": [],
+            }
+        try:
+            return read_data_quality_status(Path(configured))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return {
+                "status": "unavailable",
+                "urgent": True,
+                "open_incident_count": 1,
+                "updated_at": "",
+                "report_date": "",
+                "incidents": [],
+            }
 
     @app.get("/api/reports/dev-release")
     @app.get("/api/reports/site-release")

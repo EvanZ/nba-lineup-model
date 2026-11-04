@@ -107,11 +107,7 @@ def _normalize_coverage(
 def _normalize_states(payload: object) -> dict[str, bool | None]:
     source = payload if isinstance(payload, Mapping) else {}
     return {
-        name: (
-            None
-            if source.get(name) is None
-            else bool(source.get(name))
-        )
+        name: (None if source.get(name) is None else bool(source.get(name)))
         for name in ("materialized", "validated", "activated", "served")
     }
 
@@ -158,6 +154,8 @@ def _normalize_collector(payload: Mapping[str, object]) -> dict[str, object]:
         "latest_run_finished_at": str(payload.get("latest_run_finished_at") or ""),
         "last_success_at": str(payload.get("last_success_at") or ""),
         "artifact_observed_at": str(payload.get("artifact_observed_at") or ""),
+        "required_since_at": str(payload.get("required_since_at") or ""),
+        "expected_by": str(payload.get("expected_by") or ""),
         "required_now": bool(payload.get("required_now", True)),
         "quiet_reason": str(payload.get("quiet_reason") or ""),
         "stale_after_minutes": (
@@ -192,7 +190,11 @@ def build_data_quality_report(
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
     now = now.astimezone(UTC)
-    expected_date = str(expected.get("latest_eligible_completed_date") or "")
+    expected_date = str(
+        expected.get("required_evidence_through_date")
+        or expected.get("latest_eligible_completed_date")
+        or ""
+    )
     expected_edition = str(activation.get("edition_id") or "")
     expected_revision = str(activation.get("observed_data_revision") or "")
     normalized_artifacts = [_normalize_artifact(item) for item in artifacts]
@@ -220,6 +222,26 @@ def build_data_quality_report(
                 expected="active",
                 observed=activation_state,
                 evidence={"age_minutes": age, "stall_after_minutes": limit},
+            )
+        )
+
+    latest_eligible = str(expected.get("latest_eligible_completed_date") or "")
+    active_evidence = str(expected.get("active_evidence_through_date") or "")
+    if (
+        bool(expected.get("nightly_publication_due"))
+        and latest_eligible
+        and active_evidence < latest_eligible
+    ):
+        findings.append(
+            _finding(
+                category="freshness",
+                code="nightly_publication_late",
+                severity="error",
+                scope="pipeline:daily_publication",
+                message=("The completed slate was not published by the 5:00 AM Pacific deadline."),
+                expected=latest_eligible,
+                observed=active_evidence or "no active evidence date",
+                evidence={"deadline": expected.get("nightly_publication_deadline")},
             )
         )
 
@@ -324,8 +346,6 @@ def build_data_quality_report(
 
     for collector in normalized_collectors:
         scope = f"collector:{collector['name']}"
-        if not collector["required_now"]:
-            continue
         automation_status = str(collector["automation_status"]).upper()
         if automation_status in {"STOPPED", "DISABLED", "MISSING", "UNKNOWN"}:
             findings.append(
@@ -339,6 +359,8 @@ def build_data_quality_report(
                     observed=automation_status,
                 )
             )
+        if not collector["required_now"]:
+            continue
         run_status = str(collector["latest_run_status"]).upper()
         if run_status in FAILED_STATUSES:
             findings.append(
@@ -372,42 +394,59 @@ def build_data_quality_report(
                         },
                     )
                 )
-        stale_limit = collector["stale_after_minutes"]
-        if stale_limit is not None:
-            success_age = _age_minutes(now, collector["last_success_at"])
-            if success_age is None or success_age > stale_limit:
+        required_since = parse_timestamp(collector["required_since_at"])
+        expected_by = parse_timestamp(collector["expected_by"])
+        due_now = expected_by is None or now >= expected_by
+        if required_since is not None and due_now:
+            success = parse_timestamp(collector["last_success_at"])
+            if success is None or success < required_since:
                 findings.append(
                     _finding(
                         category="freshness",
-                        code="collector_success_stale",
+                        code="collector_scheduled_success_missing",
                         severity="error",
                         scope=scope,
-                        message="Collector has no sufficiently recent successful run.",
-                        expected=f"success within {stale_limit:g} minutes",
-                        observed=(
-                            "no success"
-                            if success_age is None
-                            else f"{success_age:.1f} minutes ago"
-                        ),
+                        message="Collector has not succeeded for its latest scheduled poll.",
+                        expected=f"success after {collector['required_since_at']}",
+                        observed=collector["last_success_at"] or "no success",
                     )
                 )
-            artifact_age = _age_minutes(now, collector["artifact_observed_at"])
-            if artifact_age is None or artifact_age > stale_limit:
+            observed = parse_timestamp(collector["artifact_observed_at"])
+            if observed is None or observed < required_since:
                 findings.append(
                     _finding(
                         category="freshness",
-                        code="collector_artifact_stale",
+                        code="collector_scheduled_artifact_missing",
                         severity="error",
                         scope=scope,
-                        message="Collector output artifact is not sufficiently recent.",
-                        expected=f"artifact within {stale_limit:g} minutes",
-                        observed=(
-                            "no observed artifact"
-                            if artifact_age is None
-                            else f"{artifact_age:.1f} minutes ago"
-                        ),
+                        message="Collector output was not refreshed for its latest scheduled poll.",
+                        expected=f"artifact after {collector['required_since_at']}",
+                        observed=collector["artifact_observed_at"] or "no observed artifact",
                     )
                 )
+        elif required_since is None:
+            stale_limit = collector["stale_after_minutes"]
+            if stale_limit is not None:
+                checks = (
+                    ("last_success_at", "collector_success_stale", "successful run"),
+                    ("artifact_observed_at", "collector_artifact_stale", "output artifact"),
+                )
+                for field, code, label in checks:
+                    age = _age_minutes(now, collector[field])
+                    if age is None or age > stale_limit:
+                        findings.append(
+                            _finding(
+                                category="freshness",
+                                code=code,
+                                severity="error",
+                                scope=scope,
+                                message=f"Collector {label} is not sufficiently recent.",
+                                expected=f"within {stale_limit:g} minutes",
+                                observed=(
+                                    f"{age:.1f} minutes ago" if age is not None else f"no {label}"
+                                ),
+                            )
+                        )
 
     normalized_failures: list[dict[str, object]] = []
     for failure in pipeline_failures:
@@ -441,11 +480,7 @@ def build_data_quality_report(
         for severity in ("error", "warning", "info")
     }
     status = (
-        "failed"
-        if finding_counts["error"]
-        else "warning"
-        if finding_counts["warning"]
-        else "clean"
+        "failed" if finding_counts["error"] else "warning" if finding_counts["warning"] else "clean"
     )
     return {
         "schema_version": SCHEMA_VERSION,
@@ -660,31 +695,38 @@ def verify_data_quality_report(path: Path | str) -> dict[str, object]:
 def render_data_quality_html(report: Mapping[str, object]) -> str:
     def esc(value: object) -> str:
         return html.escape(str(value if value is not None else ""))
+
     status = str(report.get("status") or "unknown")
     counts = report.get("finding_counts") or {}
     artifact_rows = []
     for artifact in report.get("artifacts", []):
-        coverage = ", ".join(
-            f"{name} {values.get('observed')}/{values.get('expected')}"
-            for name, values in artifact.get("coverage", {}).items()
-        ) or "—"
-        states = " · ".join(
-            f"{name}={value}"
-            for name, value in artifact.get("states", {}).items()
-            if value is not None
-        ) or "—"
+        coverage = (
+            ", ".join(
+                f"{name} {values.get('observed')}/{values.get('expected')}"
+                for name, values in artifact.get("coverage", {}).items()
+            )
+            or "—"
+        )
+        states = (
+            " · ".join(
+                f"{name}={value}"
+                for name, value in artifact.get("states", {}).items()
+                if value is not None
+            )
+            or "—"
+        )
         artifact_rows.append(
             "<tr>"
             f"<td><strong>{esc(artifact.get('name'))}</strong><br><small>{esc(artifact.get('layer'))}</small></td>"
-            f"<td class=\"mono\">{esc(artifact.get('artifact_id'))}<br>{esc(artifact.get('checksum'))}</td>"
+            f'<td class="mono">{esc(artifact.get("artifact_id"))}<br>{esc(artifact.get("checksum"))}</td>'
             f"<td>{esc(artifact.get('evidence_through_date'))}</td>"
-            f"<td class=\"mono\">{esc(artifact.get('observed_data_revision'))}</td>"
+            f'<td class="mono">{esc(artifact.get("observed_data_revision"))}</td>'
             f"<td>{esc(artifact.get('model_edition'))}</td>"
             f"<td>{esc(coverage)}</td><td>{esc(states)}</td></tr>"
         )
     finding_rows = [
         "<tr>"
-        f"<td><span class=\"pill {esc(item.get('severity'))}\">{esc(item.get('severity'))}</span></td>"
+        f'<td><span class="pill {esc(item.get("severity"))}">{esc(item.get("severity"))}</span></td>'
         f"<td>{esc(item.get('category'))}</td><td>{esc(item.get('scope'))}</td>"
         f"<td><strong>{esc(item.get('code'))}</strong><br>{esc(item.get('message'))}</td>"
         f"<td>{esc(item.get('expected'))}</td><td>{esc(item.get('observed'))}</td></tr>"
@@ -715,9 +757,9 @@ def render_data_quality_html(report: Mapping[str, object]) -> str:
     )
     expected = report.get("expected") or {}
     transition_html = (
-        "<h2>Release and official-slate state</h2><div class=\"card\">"
+        '<h2>Release and official-slate state</h2><div class="card">'
         f"<p><strong>Edition:</strong> {esc(activation.get('edition_id'))}<br>"
-        f"<strong>Observed-data revision:</strong> <span class=\"mono\">{esc(activation.get('observed_data_revision'))}</span><br>"
+        f'<strong>Observed-data revision:</strong> <span class="mono">{esc(activation.get("observed_data_revision"))}</span><br>'
         f"<strong>Changed components from prior activation:</strong> {esc(changed_components)}<br>"
         f"<strong>Forecast selection changed:</strong> {esc(transition.get('forecast_selection_changed', False))}</p>"
         f"<p><strong>Official completed games:</strong> {esc(expected.get('completed_games'))} · "
@@ -725,8 +767,8 @@ def render_data_quality_html(report: Mapping[str, object]) -> str:
         f"<strong>live now:</strong> {esc(expected.get('in_progress_games'))}</p></div>"
     )
     return (
-        "<!doctype html><html><head><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        '<!doctype html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>Data Quality — {esc(report.get('report_date'))}</title>"
         "<style>"
         ":root{color-scheme:light;--ink:#173c31;--muted:#68736d;--line:#d8d7d0;--paper:#faf9f5;"
@@ -743,23 +785,23 @@ def render_data_quality_html(report: Mapping[str, object]) -> str:
         "</style></head><body><main>"
         f"<h1>Daily Data Quality — {esc(report.get('report_date'))}</h1>"
         f"<p>{esc(report.get('environment'))} · generated {esc(report.get('generated_at'))}</p>"
-        "<div class=\"summary\">"
-        f"<div class=\"card\"><small>Status</small><div class=\"status {esc(status)}\">{esc(status)}</div></div>"
-        f"<div class=\"card\"><small>Errors</small><div>{esc(counts.get('error', 0))}</div></div>"
-        f"<div class=\"card\"><small>Warnings</small><div>{esc(counts.get('warning', 0))}</div></div>"
-        f"<div class=\"card\"><small>Eligible evidence date</small><div>{esc((report.get('expected') or {}).get('latest_eligible_completed_date'))}</div></div>"
-        f"<div class=\"card\"><small>Active generation</small><div>{esc((report.get('activation') or {}).get('generation'))}</div></div>"
+        '<div class="summary">'
+        f'<div class="card"><small>Status</small><div class="status {esc(status)}">{esc(status)}</div></div>'
+        f'<div class="card"><small>Errors</small><div>{esc(counts.get("error", 0))}</div></div>'
+        f'<div class="card"><small>Warnings</small><div>{esc(counts.get("warning", 0))}</div></div>'
+        f'<div class="card"><small>Eligible evidence date</small><div>{esc((report.get("expected") or {}).get("latest_eligible_completed_date"))}</div></div>'
+        f'<div class="card"><small>Active generation</small><div>{esc((report.get("activation") or {}).get("generation"))}</div></div>'
         "</div>"
         + transition_html
         + (f"<h2>Failed pipeline stages</h2><ul>{failure_items}</ul>" if failure_items else "")
-        + "<h2>Findings</h2><div class=\"table-wrap\"><table><thead><tr><th>Severity</th><th>Category</th><th>Scope</th><th>Finding</th><th>Expected</th><th>Observed</th></tr></thead><tbody>"
-        + ("".join(finding_rows) or "<tr><td colspan=\"6\">No findings.</td></tr>")
+        + '<h2>Findings</h2><div class="table-wrap"><table><thead><tr><th>Severity</th><th>Category</th><th>Scope</th><th>Finding</th><th>Expected</th><th>Observed</th></tr></thead><tbody>'
+        + ("".join(finding_rows) or '<tr><td colspan="6">No findings.</td></tr>')
         + "</tbody></table></div>"
-        "<h2>Validated artifacts</h2><div class=\"table-wrap\"><table><thead><tr><th>Artifact</th><th>ID / checksum</th><th>Evidence</th><th>Observed revision</th><th>Edition</th><th>Coverage</th><th>Lifecycle</th></tr></thead><tbody>"
-        + ("".join(artifact_rows) or "<tr><td colspan=\"7\">No artifacts were observed.</td></tr>")
+        '<h2>Validated artifacts</h2><div class="table-wrap"><table><thead><tr><th>Artifact</th><th>ID / checksum</th><th>Evidence</th><th>Observed revision</th><th>Edition</th><th>Coverage</th><th>Lifecycle</th></tr></thead><tbody>'
+        + ("".join(artifact_rows) or '<tr><td colspan="7">No artifacts were observed.</td></tr>')
         + "</tbody></table></div>"
-        "<h2>Independent collectors</h2><div class=\"table-wrap\"><table><thead><tr><th>Collector</th><th>Automation</th><th>Latest run</th><th>Last success</th><th>Artifact observed</th><th>Expectation</th></tr></thead><tbody>"
-        + ("".join(collector_rows) or "<tr><td colspan=\"6\">No collector observations.</td></tr>")
+        '<h2>Independent collectors</h2><div class="table-wrap"><table><thead><tr><th>Collector</th><th>Automation</th><th>Latest run</th><th>Last success</th><th>Artifact observed</th><th>Expectation</th></tr></thead><tbody>'
+        + ("".join(collector_rows) or '<tr><td colspan="6">No collector observations.</td></tr>')
         + "</tbody></table></div>"
         + (f"<h2>Notes</h2><ul>{note_items}</ul>" if note_items else "")
         + "</main></body></html>"

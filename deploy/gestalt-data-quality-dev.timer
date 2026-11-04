@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the NBA GESTALT dev data-quality watchdog hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+AccuracySec=1min
+Unit=gestalt-data-quality-dev.service
+
+[Install]
+WantedBy=timers.target

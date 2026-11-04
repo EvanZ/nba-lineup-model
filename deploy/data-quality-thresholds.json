@@ -1,0 +1,34 @@
+{
+  "activation": {
+    "stall_after_minutes": 20
+  },
+  "daily_publication": {
+    "deadline_hour_pacific": 5,
+    "stall_after_minutes": 45
+  },
+  "injury_reports": {
+    "stale_after_minutes": 90,
+    "stall_after_minutes": 45
+  },
+  "odds": {
+    "grace_minutes": 30,
+    "scheduled_times_pacific": [
+      "08:20",
+      "12:20",
+      "15:20",
+      "16:20",
+      "17:20",
+      "18:20",
+      "19:20"
+    ],
+    "stall_after_minutes": 45
+  },
+  "official_scores": {
+    "stale_after_minutes": 15,
+    "stall_after_minutes": 10
+  },
+  "schedule": {
+    "stale_after_minutes": 90,
+    "stall_after_minutes": 45
+  }
+}
