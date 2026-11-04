@@ -97,8 +97,10 @@ def verify_migration(home: Path) -> dict:
 
 
 def migrate(environment: str, root: Path, sources: list[Path], template: Path,
-            approval_reference: str) -> dict:
+            approval_reference: str, owner: str | None = None) -> dict:
     from dagster import DagsterInstance
+    import pwd
+    account = pwd.getpwnam(owner) if owner else pwd.getpwuid(os.geteuid())
     if not approval_reference.strip():
         raise PermissionError("An explicit migration approval reference is required")
     binding = DailyInstance(environment, root.resolve(strict=True))
@@ -187,8 +189,14 @@ def migrate(environment: str, root: Path, sources: list[Path], template: Path,
             raise ValueError("Source history changed during migration")
     if binding.home.exists():
         raise FileExistsError("Permanent instance appeared during migration")
+    # Only the newly created staging tree changes ownership; originals are untouched.
+    for path in [stage, *stage.rglob("*")]:
+        if path.is_symlink():
+            raise ValueError("Unexpected symlink in staged history")
+        os.chown(path, account.pw_uid, account.pw_gid)
     os.rename(stage, binding.home)
     binding.requests.mkdir(exist_ok=True)
+    os.chown(binding.requests, account.pw_uid, account.pw_gid)
     return verify_migration(binding.home)
 
 
@@ -199,8 +207,9 @@ def main():
     p.add_argument("--source", type=Path, action="append", required=True)
     p.add_argument("--template", type=Path, required=True)
     p.add_argument("--approval-reference", required=True)
+    p.add_argument("--owner", required=True, help="Service account that owns the migrated instance")
     args = p.parse_args()
-    print(json.dumps(migrate(args.environment,args.root,args.source,args.template,args.approval_reference),indent=2))
+    print(json.dumps(migrate(args.environment,args.root,args.source,args.template,args.approval_reference,args.owner),indent=2))
 
 
 if __name__ == "__main__":
