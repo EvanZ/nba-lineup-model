@@ -92,7 +92,7 @@ def _prepare_private_work(tmp_path: Path):
     config_path = env / "config.json"
     spec_path = env / "spec.json"
     approval_path = env / "approval.json"
-    atomic_json(config_path, asdict(config))
+    atomic_json(config_path, json.loads(json.dumps(asdict(config), default=str)))
     atomic_json(spec_path, spec)
     atomic_json(approval_path, source_approval)
     return source, config, spec, source_approval, config_path, spec_path, approval_path
