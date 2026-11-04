@@ -137,4 +137,9 @@ These instructions apply to every task in this repository.
   or speculative optimization. Explain the concrete source of complexity,
   present the simplest viable choices, and ask the user to decide before
   proceeding.
+- After completing any material work, promptly report the outcome to the user:
+  what changed, the validation evidence, any remaining failures or limitations,
+  and the exact next state. Do not silently stop after tool use, leave completed
+  work unreported, or abandon an active task merely because an intervening
+  request was handled; resume the active task unless the user stops or redirects it.
 - When the user stops or redirects work, stop immediately.
