@@ -8,8 +8,12 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from dagster._core.remote_origin import RemoteJobOrigin, RemoteRepositoryOrigin, RegisteredCodeLocationOrigin
 from dagster import DagsterInstance, DagsterRunStatus, Definitions, build_sensor_context
+from dagster._core.remote_origin import (
+    RegisteredCodeLocationOrigin,
+    RemoteJobOrigin,
+    RemoteRepositoryOrigin,
+)
 
 from nba_lineup_model.orchestration.daily_pipeline import (
     DailyPipelineConfig,
@@ -17,7 +21,11 @@ from nba_lineup_model.orchestration.daily_pipeline import (
     prepare_daily_release,
     require_complete_slate,
 )
-from nba_lineup_model.orchestration.definitions import complete_slate_daily_release_sensor, defs, prepare_daily_site_release_job
+from nba_lineup_model.orchestration.definitions import (
+    complete_slate_daily_release_sensor,
+    defs,
+    prepare_daily_site_release_job,
+)
 
 
 def config_fixture(tmp_path):
@@ -268,8 +276,9 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
 
 def test_pipeline_report_is_accessible_without_publishing_a_failed_candidate(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
-    from nba_lineup_model.web_api.app import create_app
+
     from nba_lineup_model.orchestration.daily_pipeline import _report
+    from nba_lineup_model.web_api.app import create_app
     monkeypatch.setenv("GESTALT_DAILY_PIPELINE_ROOT", str(tmp_path))
     client = TestClient(create_app(evaluator=object()))
     assert client.get("/api/reports/daily-pipeline").status_code == 404
@@ -288,6 +297,7 @@ def test_automatic_activation_is_opt_in(tmp_path):
 @pytest.mark.parametrize("missing_context", [False, True])
 def test_model_uses_pinned_context_api_and_rejects_neutral_fallback(tmp_path, monkeypatch, missing_context):
     from contextlib import contextmanager
+
     from nba_lineup_model.orchestration.daily_pipeline import CanonicalPipelineSteps
     from nba_lineup_model.season import daily_model_replay as replay
     config = config_fixture(tmp_path)
@@ -383,6 +393,7 @@ def test_post_activation_production_gate_checks_full_player_history(
     tmp_path, monkeypatch
 ):
     import io
+
     from nba_lineup_model.orchestration import daily_activation
     from nba_lineup_model.season import dev_site_release
 
@@ -658,3 +669,81 @@ def test_production_config_names_accepted_hca_lineage():
         "558385560bbb2b2d518bceb847468e2f87900a33964191f54a4ecc2bd07534c3"
     )
     assert config["model_root"].endswith("/daily-model-causal-hca-v2")
+
+
+@pytest.mark.parametrize("damage", [None, "unfinished", "input", "checkpoint", "artifact", "active"])
+def test_resumable_work_handoff_verifies_every_receipt(tmp_path, monkeypatch, damage):
+    import shutil
+
+    from nba_lineup_model.orchestration import daily_activation as activation
+    from nba_lineup_model.orchestration.daily_work import (
+        STAGES,
+        DailyWork,
+        atomic_json,
+        digest,
+        file_reference,
+        work_spec,
+    )
+    from nba_lineup_model.orchestration.resumable_pipeline import bind_execution
+
+    config = config_fixture(tmp_path)
+    base = config.live_pointer.resolve() / "runtime-manifest.json"
+    atomic_json(base, {"runtime_sha256": "old"})
+    runtime = config.pipeline_root / "releases" / "tested"
+    runtime.mkdir(parents=True)
+    artifact = runtime / "payload"
+    artifact.write_text("verified")
+    shutil.copytree(config.schedule_root, runtime / "schedule-snapshot")
+    spec = work_spec(
+        season=config.season, game_date=date(2026, 10, 20), source_revisions={},
+        model_configuration={"version": "test"}, parent_model=None, edition_id="test",
+        code_identity="c" * 40, inputs={str(base): file_reference(base)}, expected_game_ids=[],
+    )
+    spec = bind_execution(spec, config, {"base_release_manifest": file_reference(base)})
+    work = DailyWork(config.pipeline_root / "partitions", spec)
+    work.run({stage: lambda: {
+        "artifacts": [file_reference(artifact)], "result": {"runtime_release": str(runtime)},
+    } for stage in STAGES})
+    monkeypatch.setattr(activation, "verify_production_site_release", lambda _: {
+        "identity": {"code_revision": "c" * 40},
+    })
+    monkeypatch.setattr(activation, "read_active_activation", lambda _: {
+        "runtime_sha256": "different" if damage == "active" else "old", "generation": 7,
+    })
+    if damage == "unfinished":
+        status = json.loads((work.root / "status.json").read_text())
+        atomic_json(work.root / "status.json", {**status, "status": "running"})
+    elif damage == "input":
+        atomic_json(base, {"runtime_sha256": "changed"})
+    elif damage == "artifact":
+        artifact.write_text("changed")
+    elif damage == "checkpoint":
+        path = work.root / "checkpoints/model.json"
+        receipt = json.loads(path.read_text())
+        receipt["stage_key"] = "f" * 64
+        receipt["receipt_id"] = digest({k:v for k,v in receipt.items() if k != "receipt_id"})
+        atomic_json(path, receipt)
+    if damage:
+        with pytest.raises(ValueError):
+            activation.activation_report_from_work(config, work.root)
+        assert not (config.pipeline_root / "reports/2026-10-20/report.json").exists()
+    else:
+        report = activation.activation_report_from_work(config, work.root)
+        assert report["status"] == "validated_candidate"
+        assert report["expected_previous_generation"] == 7
+        assert report["work_id"] == spec["work_id"]
+        assert len(report["checkpoint_ids"]) == 5
+        assert activation.activation_report_from_work(config, work.root) == report
+    assert (config.live_pointer / "unchanged").read_text() == "original"
+
+
+def test_activation_cli_accepts_approved_migration_and_validated_work():
+    from nba_lineup_model.orchestration.daily_activation import _parser
+
+    args = _parser().parse_args([
+        "--config", "/dev/config.json", "--work", "/dev/work",
+        "--legacy-migration-approval", "explicit-user-approval",
+    ])
+    assert args.legacy_migration_approval == "explicit-user-approval"
+    assert args.work == Path("/dev/work")
+    assert args.report is None

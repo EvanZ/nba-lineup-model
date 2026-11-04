@@ -143,3 +143,10 @@ new generation. Normal activation and rollback use fully verified sealed
 packages. Retrying an interrupted activation retains that same rollback target;
 it does not return to the mutable checkout. This mechanism does not authorize
 historical data corrections, model replay, forecast changes, or production rollout.
+
+Resumable preparation is handed to the same daily activation command with
+`--work <canonical-work-directory>`. The command verifies the pinned inputs,
+configuration, every ordered checkpoint and parent receipt, the sealed runtime,
+unchanged schedule, and expected active release before creating its activation
+report. Operators must not translate `serving_validated` to `validated_candidate`
+by editing JSON or invoke the lower-level publisher instead of this handoff.

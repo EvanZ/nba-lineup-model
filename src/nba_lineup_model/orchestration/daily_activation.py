@@ -190,16 +190,105 @@ def activate_daily_release(
     _report(report_root, report)
 
 
-def main() -> None:
+def activation_report_from_work(config: DailyPipelineConfig, work_root: Path) -> dict:
+    """Verify resumable receipts and create the normal publisher handoff report."""
+    from nba_lineup_model.orchestration.daily_work import (
+        STAGES,
+        DailyWork,
+        digest,
+        read_object,
+        verify_receipt,
+    )
+    from nba_lineup_model.orchestration.resumable_pipeline import config_identity
+
+    config.validate()
+    work_root = work_root.resolve(strict=True)
+    spec = read_object(work_root / "work.json")
+    work = DailyWork(config.pipeline_root / "partitions", spec)
+    if work.root != work_root:
+        raise ValueError("Work is outside this configuration's canonical partition root")
+    if spec["identity"]["configuration_digest"] != digest(config_identity(config)):
+        raise ValueError("Activation configuration differs from the validated work")
+    with work.lock():
+        status = read_object(work_root / "status.json")
+        if status.get("status") != "serving_validated" or status.get("work_id") != spec["work_id"]:
+            raise ValueError("Work has not completed serving validation")
+        receipts = []
+        for stage in STAGES:
+            receipt = read_object(work_root / "checkpoints" / f"{stage}.json")
+            expected = digest(
+                {
+                    "work_id": spec["work_id"],
+                    "stage": stage,
+                    "parents": [r["receipt_id"] for r in receipts],
+                }
+            )
+            if receipt["stage"] != stage or receipt["stage_key"] != expected:
+                raise ValueError("Activation checkpoint belongs to different inputs")
+            verify_receipt(receipt)
+            receipts.append(receipt)
+        if status.get("completed_stages") != list(STAGES):
+            raise ValueError("Activation work is missing completed stages")
+        runtime = Path(receipts[-1]["result"]["runtime_release"]).resolve(strict=True)
+        manifest = verify_production_site_release(runtime)
+        if manifest["identity"]["code_revision"] != spec["identity"]["code_identity"]:
+            raise ValueError("Runtime code differs from the validated work")
+        day = spec["identity"]["game_date_pacific"]
+        report_root = config.pipeline_root / "reports" / day
+        report_path = report_root / "report.json"
+        if report_path.exists():
+            prior = read_object(report_path)
+            if prior.get("work_id") != spec["work_id"] or prior.get("runtime_release") != str(
+                runtime
+            ):
+                raise ValueError("A different activation already owns this pipeline report")
+            if prior.get("checkpoint_ids") != [r["receipt_id"] for r in receipts]:
+                raise ValueError("Activation report checkpoints changed")
+            return prior
+        active = read_active_activation(config.live_pointer)
+        base = read_object(Path(spec["identity"]["execution"]["base_release_manifest"]["path"]))
+        if active is None or active["runtime_sha256"] != base["runtime_sha256"]:
+            raise ValueError("Active release changed since work was prepared")
+        if causal_schedule_sha256(runtime / "schedule-snapshot") != causal_schedule_sha256(
+            config.schedule_root
+        ):
+            raise ValueError("Schedule differs from the validated work")
+        report = {
+            "work_id": spec["work_id"],
+            "game_date": day,
+            "status": "validated_candidate",
+            "stage": "awaiting_activation",
+            "runtime_release": str(runtime),
+            "completed_stages": list(STAGES),
+            "checkpoint_ids": [r["receipt_id"] for r in receipts],
+            "activation_operation_id": "daily-work-" + spec["work_id"],
+            "expected_previous_generation": active["generation"],
+            "source_causal_schedule_sha256": causal_schedule_sha256(config.schedule_root),
+        }
+        _report(report_root, report)
+        return report
+
+
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--report", type=Path, required=True)
-    args = parser.parse_args()
-    config = DailyPipelineConfig.read(args.config)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--report", type=Path)
+    source.add_argument("--work", type=Path, help="Canonical validated daily-work directory")
     parser.add_argument(
         "--legacy-migration-approval", help="Explicit approval reference for legacy dev migration"
     )
-    report = json.loads(args.report.read_text())
+    return parser
+
+
+def main() -> None:
+    args = _parser().parse_args()
+    config = DailyPipelineConfig.read(args.config)
+    report = (
+        activation_report_from_work(config, args.work)
+        if args.work
+        else json.loads(args.report.read_text())
+    )
     activate_daily_release(
         config,
         report,
