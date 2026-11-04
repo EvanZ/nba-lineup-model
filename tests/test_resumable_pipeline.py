@@ -12,6 +12,7 @@ import pytest
 from nba_lineup_model.orchestration.daily_work import file_reference, work_spec
 from nba_lineup_model.orchestration.resumable_pipeline import (
     PartitionSteps, artifact_files, bind_execution, validate_execution,
+    validate_existing_target,
 )
 from nba_lineup_model.season.daily_input_selection import build_selected_daily_data
 from test_daily_artifacts import _publish_data, _publish_model
@@ -95,3 +96,44 @@ assert not defs.schedules
 """
     import sys
     subprocess.run([sys.executable,"-c",code],check=True)
+
+
+def existing_target_fixture(tmp_path):
+    cfg, spec, _, parent = execution_fixture(tmp_path)
+    data = _publish_data(tmp_path / "target", game_date=date(2026,10,21),
+                         game_ids=["0022600002"])
+    model = _publish_model(tmp_path / "target", data_bundle=data.path, parent=parent.path)
+    for ref in artifact_files(data.path) + artifact_files(model.path):
+        spec["identity"]["inputs"][ref["path"]] = ref
+    spec["identity"]["source_revisions"] = data.manifest["identity"]["game_sources"]
+    spec["identity"]["expected_game_ids"] = ["0022600002"]
+    spec["identity"]["execution"]["data_manifests"].append(file_reference(data.path / "manifest.json"))
+    spec["identity"]["execution"]["target_model_manifest"] = file_reference(model.path / "manifest.json")
+    return cfg, spec, model
+
+
+def test_existing_model_reused_without_retraining(tmp_path, monkeypatch):
+    cfg, spec, model = existing_target_fixture(tmp_path)
+    validate_execution(cfg, spec, None)
+    cfg.model_root.mkdir(parents=True)
+    steps = object.__new__(PartitionSteps)
+    steps.spec, steps.config = spec, cfg
+    steps.model_inputs = spec["identity"]["execution"]["model_manifests"]
+    monkeypatch.setattr("nba_lineup_model.orchestration.daily_pipeline.CanonicalPipelineSteps.model",
+                        lambda *a: pytest.fail("Existing model must not be retrained"))
+    steps.model(date(2026,10,21))
+    pointer = json.loads((cfg.model_root / "latest.json").read_text())
+    assert pointer["bundle_sha256"] == model.manifest["bundle_sha256"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("parent_model", "0"*64),
+    ("model_configuration", {"wrong":"configuration"}),
+    ("expected_game_ids", []),
+    ("source_revisions", {}),
+])
+def test_existing_model_reuse_rejects_different_causal_inputs(tmp_path, field, value):
+    _, spec, _ = existing_target_fixture(tmp_path)
+    spec["identity"][field] = value
+    with pytest.raises(ValueError, match="pinned causal identity"):
+        validate_existing_target(spec)

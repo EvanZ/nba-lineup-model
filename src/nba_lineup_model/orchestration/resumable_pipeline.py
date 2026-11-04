@@ -137,6 +137,18 @@ class PartitionSteps(CanonicalPipelineSteps):
             raise ValueError("Parent model differs from work identity")
         if self.model_inputs and not (self.config.model_root / "latest.json").exists():
             _write_latest_pointer(self.config.model_root, destination)
+        selected = self.spec["identity"]["execution"].get("target_model_manifest")
+        if selected:
+            manifest = validate_existing_target(self.spec)
+            source = _input(self.spec, selected).parent
+            for ref in artifact_files(source):
+                _input(self.spec, ref)
+            destination = (self.config.model_root / f"season={self.config.season}" /
+                           f"game_date_pacific={target.isoformat()}" / source.name)
+            _install_bundle(source, destination)
+            verify_daily_model_artifact(destination)
+            _write_latest_pointer(self.config.model_root, destination)
+            return
         super().model(target)
 
     def stage_receipt(self, stage, result):
@@ -149,6 +161,39 @@ class PartitionSteps(CanonicalPipelineSteps):
                                   file_reference(Path(result) / "serving-bindings.json")],
                     "result": {"runtime_release": str(result)}}
         return {"artifacts": artifact_files(roots[stage]), "result": {}}
+
+def validate_existing_target(spec):
+    """Reuse a built day only when its full causal identity matches this work."""
+    identity = spec["identity"]
+    execution = identity["execution"]
+    source = _input(spec, execution["target_model_manifest"]).parent
+    manifest = verify_daily_model_artifact(source)
+    info = manifest["identity"]
+    target_data = []
+    for ref in execution["data_manifests"]:
+        path = _input(spec, ref).parent
+        data = verify_daily_data_artifact(path)
+        if data["identity"]["game_date_pacific"] == identity["game_date_pacific"]:
+            target_data.append((path, data))
+    if len(target_data) != 1:
+        raise ValueError("Existing target requires one exact selected daily data artifact")
+    path, data = target_data[0]
+    verify_daily_model_artifact(source, data_bundle=path)
+    if (info["season"] != identity["season"] or
+        info["game_date_pacific"] != identity["game_date_pacific"] or
+        info["parent_model_sha256"] != identity["parent_model"] or
+        info["model_provenance"] != identity["model_configuration"] or
+        sorted(info["daily_game_ids"]) != identity["expected_game_ids"] or
+        data["identity"]["game_sources"] != identity["source_revisions"]):
+        raise ValueError("Existing target differs from pinned causal identity")
+    prefix = verify_daily_model_artifact(
+        _input(spec, execution["model_manifests"][-1]).parent
+    ) if execution["model_manifests"] else None
+    expected = set(prefix["identity"]["cumulative_game_ids"] if prefix else [])
+    expected.update(identity["expected_game_ids"])
+    if sorted(info["cumulative_game_ids"]) != sorted(expected):
+        raise ValueError("Existing target has different cumulative game coverage")
+    return manifest
 
 def validate_execution(config, spec, approval):
     """Derive approval needs from selected history, never trust caller flags."""
@@ -211,6 +256,8 @@ def validate_execution(config, spec, approval):
         model = verify_daily_model_artifact(verify_reference(ref).parent)["identity"]
         if selected_data.get(model["game_date_pacific"]) != model["input_data_sha256"]:
             raise ValueError("Repaired input invalidates this parent; request its causal suffix")
+    if execution.get("target_model_manifest"):
+        validate_existing_target(spec)
 
 
 def config_identity(config):
