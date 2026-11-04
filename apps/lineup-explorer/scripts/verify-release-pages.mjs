@@ -6,7 +6,9 @@ import { resolve, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 
-const [frontendArg, api, output, playwrightPath] = process.argv.slice(2);
+const [frontendArg, api, output, playwrightPath, baselinePath] = process.argv.slice(2);
+assert.equal(process.env.GESTALT_QA_RESOURCE_LIMITED, "1", "Run this check in the documented resource-limited systemd unit.");
+const baseline = baselinePath ? JSON.parse(await readFile(baselinePath, "utf8")) : null;
 const frontend = await realpath(frontendArg);
 const { chromium } = await import(pathToFileURL(playwrightPath).href);
 await mkdir(output, { recursive: true });
@@ -29,19 +31,13 @@ const server = createServer(async (req, res) => {
 await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const address = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage();
+let page;
 const errors = [];
-page.on("pageerror", (error) => errors.push(String(error)));
 const failedRequests = [];
-page.on("response", (response) => {
-  if (response.status() >= 400 && response.url().includes("/api/")) {
-    failedRequests.push({ url: response.url(), status: response.status() });
-  }
-});
-const report = { frontend, api, views: [], errors, failedRequests };
+const layoutFailures = [];
+const report = { frontend, api, baselinePath, views: [], errors, failedRequests, layoutFailures, layoutRegressions: [] };
 try {
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
-    await page.setViewportSize(viewport);
     for (const [name, route, selector] of [
       ["schedule", "#schedule/2026-11-02", ".schedule-result-badges"],
       ["player", "#player/201939", ".current-season-game-log-table tbody tr, .current-season-game-log-card"],
@@ -50,34 +46,71 @@ try {
       ["lineups", "#lineups", ".rankings-table tbody tr, .mobile-lineup-card"],
       ["wins", "#wins", ".win-forecast-table tbody tr"],
     ]) {
-      await page.goto(address + "/" + route);
+      console.log(`Checking ${name} at ${viewport.width}px`);
+      page = await browser.newPage({ viewport });
+      page.on("pageerror", (error) => errors.push(String(error)));
+      page.on("crash", () => errors.push(`Browser page crashed: ${name} ${viewport.width}`));
+      page.on("response", (response) => {
+        if (response.status() >= 400 && response.url().includes("/api/"))
+          failedRequests.push({ url: response.url(), status: response.status() });
+      });
+      await page.goto(address + "/" + route, { waitUntil: "domcontentloaded" });
       try {
         await page.locator(selector).first().waitFor({ state: "visible", timeout: 60000 });
       } catch (error) {
-        await page.screenshot({ path: join(output, `failed-${name}-${viewport.width}.png`) });
-        await writeFile(join(output, `failed-${name}-${viewport.width}.txt`), await page.locator("body").innerText());
+        await writeFile(join(output, `failed-${name}-${viewport.width}.txt`), await page.locator("body").innerText({ timeout: 5000 }).catch(String));
+        await page.screenshot({ path: join(output, `failed-${name}-${viewport.width}.png`), timeout: 10000 }).catch((error) => errors.push(String(error)));
         throw error;
       }
       if (name === "schedule") {
         await page.locator("details.schedule-assumptions").first().evaluate((el) => { el.open = true; });
       }
-      await page.evaluate(() => document.fonts.ready);
+      await page.evaluate(() => Promise.race([document.fonts.ready, new Promise((resolve) => setTimeout(resolve, 10000))]));
+      await page.addStyleTag({ content: "html, body, * { scroll-behavior: auto !important; }" });
       const layout = await page.evaluate(() => ({
         viewport: innerWidth, document: document.documentElement.scrollWidth,
         title: document.querySelector("h1")?.textContent,
         games: document.querySelectorAll(".schedule-game-card").length,
         badges: document.querySelectorAll(".schedule-result-badges").length,
         gameLogRows: document.querySelectorAll(".current-season-game-log-table tbody tr").length,
+        gameLogDates: [...document.querySelectorAll(".current-season-game-log-date time")].map((el) => el.getAttribute("datetime")),
+        trajectoryDates: [...document.querySelectorAll(".current-rating-date")].map((el) => el.textContent),
         errors: [...document.querySelectorAll(".error")].map((el) => el.textContent).filter(Boolean),
       }));
       report.views.push({ name, viewport, ...layout });
       await page.screenshot({ path: join(output, `${name}-${viewport.width}.png`), fullPage: false });
-      assert.ok(layout.document <= viewport.width + 1, `${name}: page overflows at ${viewport.width}`);
+      if (layout.document > viewport.width + 1) layoutFailures.push(`${name}: page overflows at ${viewport.width} (${layout.document}px)`);
       assert.deepEqual(layout.errors, [], `${name}: visible API error`);
+      const detailSelectors = name === "player"
+        ? [".current-rating-trajectory", ".current-season-game-log-table-wrap"]
+        : name === "schedule" ? [".schedule-spread-ledger"] : [];
+      for (const [index, detail] of detailSelectors.entries()) {
+        const section = page.locator(detail).first();
+        await section.evaluate((el) => window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - 20, behavior: "instant" }));
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await page.screenshot({ path: join(output, `${name}-detail-${index}-${viewport.width}.png`) });
+      }
+      await page.close();
     }
   }
   assert.deepEqual(errors, []);
   assert.deepEqual(failedRequests, []);
+  if (baseline) {
+    // Keep existing defects visible; never exempt a page or permit worse overflow.
+    for (const view of report.views) {
+      const previous = baseline.views.find((entry) => entry.name === view.name && entry.viewport === view.viewport);
+      assert.ok(previous, `Missing baseline view: ${view.name} ${view.viewport}`);
+      if (view.document > Math.max(view.viewport, previous.document) + 1)
+        report.layoutRegressions.push(`${view.name}: ${previous.document}px → ${view.document}px`);
+      assert.deepEqual(view.gameLogDates, previous.gameLogDates, `${view.name}: changed game-log dates`);
+      assert.deepEqual(view.trajectoryDates, previous.trajectoryDates, `${view.name}: changed trajectory points`);
+      assert.equal(view.games, previous.games, `${view.name}: changed game coverage`);
+      assert.equal(view.badges, previous.badges, `${view.name}: changed result-badge coverage`);
+    }
+    assert.deepEqual(report.layoutRegressions, []);
+  } else {
+    assert.deepEqual(layoutFailures, []);
+  }
 } finally {
   await writeFile(join(output, "browser-evidence.json"), JSON.stringify(report, null, 2));
   await browser.close();

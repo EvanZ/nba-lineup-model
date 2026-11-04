@@ -212,10 +212,7 @@ class ForecastRegistry:
                     for p in (self.root / "receipts").glob("*.json")
                 )
                 snapshots = tuple(
-                    MarketSnapshotManifest.model_validate_json(
-                        json.dumps(read_object(p)["manifest"])
-                    )
-                    for p in (self.root / "markets").glob("*.json")
+                    self.market(p.stem)[0] for p in (self.root / "markets").glob("*.json")
                 )
                 forecast = select_authoritative_forecast(
                     selection_id=key,
@@ -268,22 +265,41 @@ class ForecastRegistry:
         ):
             raise ValueError("Selected forecast belongs to another edition/game")
         payload = json.loads(json.dumps(source_payload))
-        market = selection["market"]
-        payload["market"] = (
-            read_object(self.root / "markets" / f"{market['selected_snapshot_id']}.json")["payload"]
-            if market["state"] == "selected"
-            else None
-        )
-        prediction_market = selection.get("prediction_market", {})
-        payload["prediction_market"] = (
-            read_object(
-                self.root / "markets" / f"{prediction_market['selected_snapshot_id']}.json"
-            )["payload"]
-            if prediction_market.get("state") == "selected"
-            else None
-        )
+        for field, source in (
+            ("market", "bookmaker_consensus"),
+            ("prediction_market", "polymarket"),
+        ):
+            chosen = selection.get(field, {})
+            payload[field] = None
+            if chosen.get("state") != "selected":
+                continue
+            market, market_payload = self.market(chosen["selected_snapshot_id"])
+            if (
+                market.game_id != manifest.game_id
+                or market.source != source
+                or market.scheduling_instance_id != chosen["scheduling_instance_id"]
+                or market.line_id != chosen["selected_line_id"]
+                or not market.valid
+                or market.captured_at >= datetime.fromisoformat(chosen["cutoff_at"])
+            ):
+                raise ValueError("Selected market reference does not match its snapshot")
+            payload[field] = market_payload
         payload["forecast_selection"] = selection
         return payload
+
+    def market(self, snapshot_id: str) -> tuple[MarketSnapshotManifest, dict[str, Any]]:
+        if Path(snapshot_id).name != snapshot_id or snapshot_id in {".", ".."}:
+            raise ValueError("Invalid market reference")
+        record = read_object(self.root / "markets" / f"{snapshot_id}.json")
+        if (
+            digest({k: v for k, v in record.items() if k != "record_sha256"})
+            != record["record_sha256"]
+        ):
+            raise ValueError("Market snapshot checksum mismatch")
+        manifest = MarketSnapshotManifest.model_validate_json(json.dumps(record["manifest"]))
+        if manifest.snapshot_id != snapshot_id:
+            raise ValueError("Market snapshot identity mismatch")
+        return manifest, record["payload"]
 
     def version(self, forecast_id: str) -> tuple[ForecastVersionManifest, dict[str, Any]]:
         if Path(forecast_id).name != forecast_id or forecast_id in {".", ".."}:

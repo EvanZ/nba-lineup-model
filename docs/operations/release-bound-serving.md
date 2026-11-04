@@ -81,3 +81,20 @@ from current team strength when an original is absent.
 The dev migration intentionally preserves the currently approved model evidence
 date. It does not perform the missing nightly data/model work assigned to #56;
 new serving machinery is not evidence that missing player updates were rebuilt.
+
+## Browser resource isolation
+
+On this small EC2 instance, never run browser QA concurrently or alongside a
+temporary third API. Use the existing dev API, a fresh browser context for each
+page, and a single `flock` across runs. Launch the checker under a transient
+systemd unit with `MemoryHigh=700M`, `MemoryMax=850M`, `CPUQuota=75%`,
+`Nice=10`, `RuntimeMaxSec=300`, and `KillMode=control-group`.
+Set `GESTALT_QA_RESOURCE_LIMITED=1` only in that bounded unit. The checker
+takes deployed frontend path, API URL, evidence directory, Playwright module,
+and an optional prior browser-evidence JSON. A baseline preserves visibility of
+existing layout defects while failing new or worsened overflow, changed game-log
+dates/chart points, changed game/badge coverage, and all API/JavaScript failures.
+
+The #54 baseline has existing phone-width overflow on team and Wins pages.
+Those layout defects are not repaired by #55. They must remain explicit in
+acceptance evidence rather than being silently ignored.

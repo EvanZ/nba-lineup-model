@@ -311,3 +311,37 @@ def test_verified_activation_receipts_are_idempotent_and_never_backdated(tmp_pat
     assert PublicationReceipt.model_validate_json(
         receipts[0].read_bytes()
     ).published_at == TIP + timedelta(seconds=1)
+
+
+@pytest.mark.parametrize("source", ["bookmaker_consensus", "polymarket"])
+def test_selected_market_integrity_is_checked_without_substituting_another_line(tmp_path, source):
+    registry = ForecastRegistry(tmp_path)
+    forecast, _ = candidate(registry, "first")
+    registry.record_scheduling(forecast.scheduling)
+    receipt(registry, "first", BEFORE)
+    registry.record_market(
+        MarketSnapshotManifest(
+            snapshot_id="locked-market",
+            game_id=GAME_ID,
+            scheduling_instance_id="original",
+            source=source,
+            captured_at=BEFORE,
+            line_id="line",
+            valid=True,
+        ),
+        {"home_spread": -1.5},
+    )
+    selected = registry.lock(
+        edition_id="edition",
+        scheduling=forecast.scheduling,
+        environment="dev",
+        now=TIP,
+    )
+    field = "market" if source == "bookmaker_consensus" else "prediction_market"
+    assert registry.selected_payload(selected)[field]["home_spread"] == -1.5
+    path = tmp_path / "markets/locked-market.json"
+    record = json.loads(path.read_text())
+    record["payload"]["home_spread"] = -20.0
+    path.write_text(json.dumps(record))
+    with pytest.raises(ValueError, match="checksum"):
+        registry.selected_payload(selected)
