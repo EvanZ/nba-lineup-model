@@ -20,6 +20,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from nba_lineup_model.season.release_publisher import activate_release
+
 TESTS = [
     "tests/test_release_lifecycle_integration.py",
     "tests/test_nightly_release_lifecycle_integration.py",
@@ -76,12 +78,22 @@ def _release_id_from_health(payload: dict) -> str | None:
 def _private_api(
     *,
     runtime: Path,
+    base_release: Path,
     observation_root: Path,
     output: Path,
 ):
     bindings = _read_json(runtime / "serving-bindings.json")
     pointer = output / "browser-new-live"
-    pointer.symlink_to(runtime, target_is_directory=True)
+    pointer.symlink_to(base_release, target_is_directory=True)
+    activate_release(
+        release=runtime,
+        live_pointer=pointer,
+        publisher_root=output / "browser-private-publisher",
+        environment="dev",
+        operation_id="issue-57-browser-private",
+        expected_previous_generation=0,
+        reason="issue 57 private assembled API verification",
+    )
     port = _free_port()
     api_root = "http://127.0.0.1:" + str(port)
     log_path = output / "browser-new-api.log"
@@ -173,7 +185,10 @@ def _run_browser(args, output: Path, nightly: dict, source_manifest: dict) -> tu
     observation_root = Path(nightly["observation_root"]).resolve(strict=True)
     browser_output = output / "browser"
     browser_output.mkdir()
-    with _private_api(runtime=runtime, observation_root=observation_root, output=output) as new_api:
+    with _private_api(
+        runtime=runtime, base_release=args.source_release.resolve(strict=True),
+        observation_root=observation_root, output=output,
+    ) as new_api:
         env = dict(
             os.environ,
             GESTALT_BROWSER_WEB=str(runtime / "web"),
