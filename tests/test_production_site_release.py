@@ -397,3 +397,177 @@ def test_generation_cannot_redirect_code_to_another_package(tmp_path, monkeypatc
     code_link.symlink_to(old / "code", target_is_directory=True)
     with pytest.raises(ValueError, match="differs from its sealed runtime"):
         subject.verify_production_site_release(result.activation_root)
+
+
+def _legacy_fixture(tmp_path, monkeypatch):
+    import shutil
+
+    from nba_lineup_model.season import release_publisher as publisher
+
+    fixture = _fixture(tmp_path, monkeypatch)
+    old = _stage(tmp_path, fixture)
+    candidate = tmp_path / "new-candidate"
+    shutil.copytree(old, candidate, symlinks=True)
+    root = tmp_path / "publisher"
+    generation, active = publisher._stage_generation(
+        publisher_root=root,
+        environment="dev",
+        generation=7,
+        operation_id="old",
+        release=old,
+        previous=None,
+        reason="old release",
+        approval_reference=None,
+    )
+    live = tmp_path / "live-release"
+    live.symlink_to(generation)
+    # Reproduce a genuine pre-seal runtime, not a validator stub.
+    for path in (old / "code").rglob("*"):
+        if path.is_dir():
+            path.chmod(0o755)
+    (old / "code").chmod(0o755)
+    shutil.rmtree(old / "code")
+    (old / "code").symlink_to(fixture["code_root"])
+    (old / "code-package.json").unlink()
+    manifest = json.loads((old / "runtime-manifest.json").read_text())
+    manifest["identity"].pop("code_identity")
+    manifest["runtime_sha256"] = hashlib.sha256(canonical_json(manifest["identity"])).hexdigest()
+    (old / "runtime-manifest.json").write_text(json.dumps(manifest))
+    active["runtime_sha256"] = manifest["runtime_sha256"]
+    (generation / "activation.json").write_text(json.dumps(active))
+    return fixture, old, candidate, root, live, active
+
+
+@pytest.mark.parametrize("mode", ["success", "rollback", "interrupted"])
+def test_explicit_legacy_migration_preserves_data_and_recovers(tmp_path, monkeypatch, mode):
+    from nba_lineup_model.season import release_publisher as publisher
+    from nba_lineup_model.season.legacy_code_migration import (
+        _inventory,
+        prepare_legacy_code_migration,
+    )
+
+    fixture, old, candidate, root, live, active = _legacy_fixture(tmp_path, monkeypatch)
+    original_manifest = (old / "runtime-manifest.json").read_bytes()
+    original_inventory = _inventory(old)
+    receipt = prepare_legacy_code_migration(
+        active=active,
+        repository=fixture["code_root"],
+        output_root=tmp_path / "migrations",
+        approval_reference="user approved dev-only code migration",
+    )
+    restored = Path(receipt["sealed_runtime"])
+    assert live.resolve().name == "generation=00000000000000000007"
+    assert subject.verify_production_site_release(restored)
+    assert not (restored / "code").is_symlink()
+    assert _inventory(restored) == original_inventory
+    assert (
+        prepare_legacy_code_migration(
+            active=active,
+            repository=fixture["code_root"],
+            output_root=tmp_path / "migrations",
+            approval_reference=receipt["approval_reference"],
+        )
+        == receipt
+    )
+
+    reloaded = []
+
+    def verify(record):
+        subject.verify_production_site_release(Path(record["release_path"]))
+        if mode == "rollback" and record["generation"] == 8:
+            raise ValueError("injected API validation failure")
+
+    kwargs = dict(
+        release=candidate,
+        live_pointer=live,
+        publisher_root=root,
+        environment="dev",
+        operation_id="migrated",
+        expected_previous_generation=7,
+        reason="daily release",
+        reload_api=lambda record: reloaded.append(record["generation"]),
+        verify_api=verify,
+        legacy_code_migration=receipt,
+    )
+    if mode == "rollback":
+        with pytest.raises(ValueError, match="injected API"):
+            publisher.activate_release(**kwargs)
+        current = publisher.read_active_activation(live)
+        assert current["generation"] == 9
+        assert current["release_path"] == str(restored)
+        assert reloaded == [8, 9]
+    elif mode == "interrupted":
+
+        def crash(record):
+            raise RuntimeError("injected interruption")
+
+        with pytest.raises(RuntimeError, match="injected interruption"):
+            publisher.activate_release(**kwargs, after_pointer_switch=crash)
+        result = publisher.activate_release(**kwargs)
+        assert result.status == "recovered"
+        assert result.generation == 8
+    else:
+        result = publisher.activate_release(**kwargs)
+        assert result.generation == 8
+        assert publisher.activate_release(**kwargs).status == "already_activated"
+    current = publisher.read_active_activation(live)
+    assert current["rollback_migration"]["migration_sha256"] == receipt["migration_sha256"]
+    assert (old / "runtime-manifest.json").read_bytes() == original_manifest
+    assert (old / "code").is_symlink()
+    assert _inventory(old) == original_inventory
+
+
+@pytest.mark.parametrize(
+    "damage", ["approval", "recorded_code", "data", "generation", "receipt", "extra_file"]
+)
+def test_legacy_migration_rejects_unsafe_inputs_without_pointer_changes(
+    tmp_path, monkeypatch, damage
+):
+    from nba_lineup_model.season import release_publisher as publisher
+    from nba_lineup_model.season.legacy_code_migration import prepare_legacy_code_migration
+
+    fixture, old, candidate, root, live, active = _legacy_fixture(tmp_path, monkeypatch)
+    before = live.resolve()
+    approval = "approved"
+    if damage == "approval":
+        approval = ""
+    elif damage == "recorded_code":
+        active["code"]["package_sha256"] = "f" * 64
+    elif damage == "data":
+        (old / "schedule-snapshot/final/game.json").write_text("changed")
+    if damage in {"approval", "recorded_code", "data"}:
+        with pytest.raises(ValueError):
+            prepare_legacy_code_migration(
+                active=active,
+                repository=fixture["code_root"],
+                output_root=tmp_path / "migrations",
+                approval_reference=approval,
+            )
+    else:
+        receipt = prepare_legacy_code_migration(
+            active=active,
+            repository=fixture["code_root"],
+            output_root=tmp_path / "migrations",
+            approval_reference=approval,
+        )
+        if damage == "generation":
+            active["generation"] = 6
+            (before / "activation.json").write_text(json.dumps(active))
+        elif damage == "receipt":
+            receipt["approval_reference"] = "changed"
+        else:
+            (Path(receipt["sealed_runtime"]) / "extra.txt").write_text("untracked input")
+        with pytest.raises(ValueError):
+            publisher.activate_release(
+                release=candidate,
+                live_pointer=live,
+                publisher_root=root,
+                environment="dev",
+                operation_id="bad",
+                expected_previous_generation=7,
+                reason="test",
+                reload_api=lambda _: pytest.fail("must not reload"),
+                verify_api=lambda _: None,
+                legacy_code_migration=receipt,
+            )
+    assert live.resolve() == before

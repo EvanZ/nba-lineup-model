@@ -127,3 +127,19 @@ Focused tests prove these contract cases:
 - a stale expected generation is rejected;
 - official reschedules require an explicit superseded scheduling instance;
 - forecast ledgers must reconcile to the reported spread.
+
+### Explicit migration of a pre-seal runtime
+
+The daily activation command accepts `--legacy-migration-approval` only for an
+explicitly approved migration. It constructs a separate sealed rollback runtime
+from the existing activation's exact Git revision and recorded package checksum.
+The old runtime and generation are never edited. Every non-code file and link,
+the approved artifacts, and all existing runtime identity fields must match.
+Missing recorded identities, different code bytes, changed data, an altered
+receipt, or a different active generation fail before pointer movement.
+
+The migration receipt is persisted in the daily report, publisher journal, and
+new generation. Normal activation and rollback use fully verified sealed
+packages. Retrying an interrupted activation retains that same rollback target;
+it does not return to the mutable checkout. This mechanism does not authorize
+historical data corrections, model replay, forecast changes, or production rollout.

@@ -279,6 +279,8 @@ def _stage_generation(
         "approval_reference": approval_reference,
         "created_at": _timestamp(),
     }
+    if previous and previous.get("rollback_migration"):
+        record["rollback_migration"] = previous["rollback_migration"]
     _validate_activation_record(record)
     if target.exists():
         existing = _validate_activation_record(_read_json(target / ACTIVATION_FILENAME))
@@ -400,6 +402,7 @@ def activate_release(
     verify_api: VerifyCallback,
     approval_reference: str | None = None,
     after_pointer_switch: Callable[[dict[str, Any]], None] | None = None,
+    legacy_code_migration: dict[str, Any] | None = None,
 ) -> ActivationResult:
     """Activate or recover one idempotent, generation-fenced operation."""
 
@@ -425,6 +428,9 @@ def activate_release(
                 "release_path": candidate.as_posix(),
                 "reason": reason,
                 "approval_reference": approval_reference,
+                "legacy_code_migration_sha256": (
+                    legacy_code_migration["migration_sha256"] if legacy_code_migration else None
+                ),
             }
             actual_request = {key: requested.get(key) for key in expected_request}
             if actual_request != expected_request:
@@ -443,6 +449,7 @@ def activate_release(
                 raise ActivationSupersededError(
                     "A newer activation superseded this completed operation"
                 )
+            _verify_rollback_target(active)
             generation_root = (
                 root / "generations" / f"generation={int(activated['generation']):020d}"
             )
@@ -459,6 +466,7 @@ def activate_release(
             and active.get("operation_id") == operation_id
             and int(active["generation"]) == expected_previous_generation + 1
         ):
+            _verify_rollback_target(active)
             _append_event(
                 root,
                 operation_id,
@@ -517,7 +525,21 @@ def activate_release(
                 activation_root=pointer.resolve(),
             )
 
-        _verify_rollback_target(active)
+        rollback_target = active
+        if legacy_code_migration is not None:
+            from nba_lineup_model.season.legacy_code_migration import verify_legacy_code_migration
+
+            restored = verify_legacy_code_migration(legacy_code_migration, active)
+            restored_identity = _validated_release_identity(restored)
+            for key in ("binding_map_sha256", "edition_id", "code"):
+                if restored_identity[key] != active[key]:
+                    raise ValueError(f"Legacy migration changed {key}")
+            rollback_target = {
+                **active,
+                **restored_identity,
+                "rollback_migration": legacy_code_migration,
+            }
+        _verify_rollback_target(rollback_target)
         current_generation = int(active["generation"])
         if (
             requested is not None
@@ -556,6 +578,9 @@ def activate_release(
             release_path=candidate.as_posix(),
             reason=reason,
             approval_reference=approval_reference,
+            legacy_code_migration_sha256=(
+                legacy_code_migration["migration_sha256"] if legacy_code_migration else None
+            ),
         )
         generation = expected_previous_generation + 1
         generation_root, record = _stage_generation(
@@ -564,7 +589,7 @@ def activate_release(
             generation=generation,
             operation_id=operation_id,
             release=candidate,
-            previous=active,
+            previous=rollback_target,
             reason=reason,
             approval_reference=approval_reference,
         )

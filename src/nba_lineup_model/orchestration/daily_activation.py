@@ -3,6 +3,7 @@
 No Dagster service is started here. Automatic activation is opt-in in the
 environment configuration, and deployment approval is still required for prod.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -80,9 +81,7 @@ def verify_environment_api(
                 evidence_date=expected["evidence_through_date"],
                 expected_game_count=int(expected["game_count"]),
                 expected_final_game_count=int(
-                    manifest["approved_manifest"]["identity"]["schedule"][
-                        "final_game_count"
-                    ]
+                    manifest["approved_manifest"]["identity"]["schedule"]["final_game_count"]
                 ),
                 serving_sha=expected["serving_bundle_sha256"],
                 lineup_sha=expected["lineup_bundle_sha256"],
@@ -100,6 +99,7 @@ def activate_daily_release(
     *,
     reload_api=None,
     verify_api=None,
+    legacy_migration_approval: str | None = None,
 ) -> None:
     config.validate()
     if report.get("status") != "validated_candidate":
@@ -133,6 +133,23 @@ def activate_daily_release(
 
     previous = read_active_activation(config.live_pointer)
     try:
+        migration = report.get("legacy_code_migration")
+        if legacy_migration_approval:
+            from nba_lineup_model.season.legacy_code_migration import prepare_legacy_code_migration
+
+            if migration and migration["approval_reference"] != legacy_migration_approval:
+                raise ValueError("Migration approval differs from the recorded report")
+            if not migration:
+                if previous is None or previous["generation"] != expected_generation:
+                    raise ValueError("Active generation differs from the migration approval scope")
+                migration = prepare_legacy_code_migration(
+                    active=previous,
+                    repository=config.code_root,
+                    output_root=config.pipeline_root / "legacy-code-migrations",
+                    approval_reference=legacy_migration_approval,
+                )
+                report["legacy_code_migration"] = migration
+                _report(report_root, report)
         result = activate_release(
             release=release,
             live_pointer=config.live_pointer,
@@ -142,6 +159,7 @@ def activate_daily_release(
             expected_previous_generation=expected_generation,
             reason=f"daily release through {report['game_date']}",
             approval_reference=report.get("approval_reference"),
+            legacy_code_migration=migration,
             reload_api=lambda record: reload_api(config, record),
             verify_api=lambda record: verify_api(
                 config,
@@ -150,11 +168,7 @@ def activate_daily_release(
             ),
         )
     except Exception as error:
-        status = (
-            "rollback_failed"
-            if isinstance(error, ExceptionGroup)
-            else "activation_failed"
-        )
+        status = "rollback_failed" if isinstance(error, ExceptionGroup) else "activation_failed"
         active = read_active_activation(config.live_pointer)
         report.update(
             status=status,
@@ -175,14 +189,22 @@ def activate_daily_release(
     )
     _report(report_root, report)
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     config = DailyPipelineConfig.read(args.config)
+    parser.add_argument(
+        "--legacy-migration-approval", help="Explicit approval reference for legacy dev migration"
+    )
     report = json.loads(args.report.read_text())
-    activate_daily_release(config, report)
+    activate_daily_release(
+        config,
+        report,
+        legacy_migration_approval=args.legacy_migration_approval,
+    )
     print(json.dumps(report, indent=2))
 
 
