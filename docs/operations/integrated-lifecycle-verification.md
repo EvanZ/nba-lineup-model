@@ -1,8 +1,8 @@
 # Integrated lifecycle verification (#57)
 
-Status: implementation in progress. This is test/pipeline verification, not a
-model change or an authorization to deploy production, enable the new nightly
-sensor, or replay the real season. The minutes clipping study stays in #60.
+Status: implemented; acceptance is determined by the clean-commit EC2 command
+below. This is verification only, not a model change or authorization to
+activate dev/prod, enable a new sensor, or replay the real season.
 
 ## Recorded-source game lifecycle
 
@@ -23,7 +23,8 @@ grading, metrics, and records. The model evaluator is supplied as an unused
 placeholder: these endpoints do not require it. No tested endpoint response
 or schedule/ledger/metric reader is mocked.
 
-Nine cases currently cover:
+Recorded-source cases cover:
+
 - Full slate pregame publication, delayed cutoff processing, final scores
   before boxes, official box arrival, actual contributions, metrics and W-L.
 - Injury-driven minute/spread revisions before cutoff and observation-only
@@ -44,47 +45,73 @@ rounding differences in summed player minutes. No formula was changed.
 Use the already installed project runtime and test dependencies:
 
 ```sh
-PYTHONPATH=src:/tmp/nba-gestalt-test-deps OPENBLAS_NUM_THREADS=1 \
+PYTHONPATH=src:/var/lib/nba-gestalt-dev/test-tools/pytest-8.4.2 \
+  OPENBLAS_NUM_THREADS=1 \
   /opt/nba-gestalt/releases/gestalt-web-d739c28/.venv/bin/python \
   scripts/verify_release_lifecycle.py \
   --source-release /var/lib/nba-gestalt-dev/live-release \
-  --output /tmp/gestalt-lifecycle-57-NEW-RUN
+  --source-work-root \
+    /var/lib/nba-gestalt-dev/release-architecture-56/approved-nov2-bound \
+  --output \
+    /var/lib/nba-gestalt-dev/release-architecture-57/acceptance-COMMIT
 ```
 
 The output directory must not exist. The runner pins the resolved source
-release at startup and emits JSON, HTML, JUnit, individual test results, source
-hashes and explicit remaining work. A skipped integration suite is not success.
+release and work root at startup. It emits JSON, HTML, JUnit, individual test
+results, runtime manifests, activation evidence, browser evidence, logs and
+screenshots. A failure or skipped integration case makes the command fail.
 
-## Still required before accepting #57
+## Connected nightly lifecycle
 
-- Connect the isolated Dagster job, data builder, coupled updater, all serving
-  surfaces and publisher in the same nightly lifecycle fixture.
-- Fault-inject the real assembled runtime/API activation, not just publisher
-  unit-test callbacks; test multi-request browser coherence during activation.
-- Repeat full materialized dev API and rendered coverage checks, including
-  missed-game rows, points, badges, ledgers, metrics and Wins advancement.
-- Resolve or explicitly assess the existing 768px header overflow and verify
-  NBA logo rendering; capture viewport evidence.
+`tests/test_nightly_release_lifecycle_integration.py` runs the real isolated
+Dagster job from the approved #56 Nov. 2 inputs. It builds observed data,
+coupled ratings/minutes, all six serving surfaces and one runtime without
+activating a live environment. Its materialized API assertions require:
 
-The earlier focused tests remain regression coverage, not a substitute for
-these outstanding integrated acceptance checks.
+- all 15 Nov. 2 games and all 107 completed-season games;
+- 528 current rankings players;
+- schedule badges, projected and retrospective ledgers and aggregate metrics;
+- Curry's Nov. 2 Phoenix row and trajectory point;
+- coherent players, rankings, teams, lineups, wins and schedule endpoints;
+- unchanged source artifacts and no retraining.
 
-## Initial verification result
+The publisher test uses private pointers only. It proves successful activation,
+stale-writer rejection, verification-failure rollback and interrupted-pointer
+recovery. No dev or production pointer is used.
 
-On EC2, the first tranche passed 155 tests with no failures or skips, including
-all nine new recorded-source integration cases. The complete fixture slate was
-Oct 20 (three games), with 68 positive-minute NBA player rows checked against
-the retrospective ledger. Forecast/source artifact hashes remained unchanged.
+## Rendered browser and release transition
 
-Source runtime:
-`d3e989748736ea256913de49c5a7fd813770aa9ce05273c036900181b23813b2`.
+The runner starts the assembled API privately and renders schedule, player,
+rankings, team, lineups and wins pages at 1440, 768 and 390 pixels. It requires
+the same counts as the API, no application alerts, complete visible official
+NBA-logo rendering and zero ESPN requests.
 
-Evidence on EC2:
-`/tmp/gestalt-lifecycle-57-verified/report.html` and adjacent JSON/JUnit/logs.
-The report was rendered at 1440, 768, and 390 pixels without horizontal
-overflow. This is validation of the report layout, not a resolution of the
-separate site-header overflow listed above.
+EC2 Chromium's direct HTTP/2 requests to the official NBA logo CDN are
+unreliable. The test-only route fetches the exact requested `cdn.nba.com`
+asset through Node and fulfills it unchanged; this does not alter the site,
+the artifact or its provenance. The headless browser process is restarted
+after every view so the 18-view matrix fits the production-sized EC2 host.
 
-No dev/prod activation, collector change, nightly sensor enablement or real
-season replay occurred. #57 remains open until the outstanding lifecycle and
-rendered-site checks are complete.
+During the final browser check, the proxy deliberately switches from the
+pinned old API to the private new API after serving the old release identity.
+The client must observe a fenced 409, reload the new release identity and then
+succeed. A mixed-release 200 response fails acceptance.
+
+## Layout assessment
+
+Functional assertions and screenshot capture are separate from layout
+findings. The current site retains its existing desktop table minimum widths:
+all six pages horizontally scroll at 768 pixels. At 390 pixels, player,
+rankings, team and lineups retain a 1280-pixel width and wins retains a
+1342-pixel width; schedule is responsive. These are recorded in
+`browser-evidence.json` and are not data loss, mixed-release rendering, or an
+alert. Any UI change to remove those minimum widths is separate from #57 and
+must still follow dev-first review.
+
+## Safety boundary
+
+The verifier creates only private output roots and private API/publisher
+processes. It does not activate dev or production, change collectors, enable a
+sensor, replay a live season, alter frozen forecasts or introduce ESPN data.
+The production and dev release pointers must be unchanged before and after the
+run.
