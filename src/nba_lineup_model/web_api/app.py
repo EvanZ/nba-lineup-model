@@ -584,12 +584,15 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
     @app.get("/api/schedule-view")
-    def schedule_view(date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$")):
+    def schedule_view(date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$")) -> dict[str, object]:
         """Calendar, game cards and metrics share one observation snapshot."""
         from datetime import date as calendar_date
         from datetime import timedelta
 
-        selected = calendar_date.fromisoformat(date)
+        try:
+            selected = calendar_date.fromisoformat(date)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="Invalid calendar date") from error
         days = {
             (selected + timedelta(days=offset)).isoformat(): read_schedule_day(
                 (selected + timedelta(days=offset)).isoformat(),

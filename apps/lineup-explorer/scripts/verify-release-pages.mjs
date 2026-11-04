@@ -32,20 +32,32 @@ const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 const errors = [];
 page.on("pageerror", (error) => errors.push(String(error)));
-const report = { frontend, api, views: [], errors };
+const failedRequests = [];
+page.on("response", (response) => {
+  if (response.status() >= 400 && response.url().includes("/api/")) {
+    failedRequests.push({ url: response.url(), status: response.status() });
+  }
+});
+const report = { frontend, api, views: [], errors, failedRequests };
 try {
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     for (const [name, route, selector] of [
       ["schedule", "#schedule/2026-11-02", ".schedule-result-badges"],
-      ["player", "#player/201939", ".current-season-game-log-table tbody tr"],
-      ["rankings", "#rankings", ".rankings-table tbody tr"],
-      ["team", "#team/GSW?season=2026-27", "h1"],
-      ["lineups", "#lineups", "h1"],
-      ["wins", "#wins", ".win-projection-table tbody tr"],
+      ["player", "#player/201939", ".current-season-game-log-table tbody tr, .current-season-game-log-card"],
+      ["rankings", "#rankings", ".rankings-table tbody tr, .mobile-player-rankings li"],
+      ["team", "#team/GSW?season=2026-27", ".team-roster-table tbody tr, .team-roster-mobile-list li"],
+      ["lineups", "#lineups", ".rankings-table tbody tr, .mobile-lineup-card"],
+      ["wins", "#wins", ".win-forecast-table tbody tr"],
     ]) {
       await page.goto(address + "/" + route);
-      await page.locator(selector).first().waitFor({ state: "visible", timeout: 60000 });
+      try {
+        await page.locator(selector).first().waitFor({ state: "visible", timeout: 60000 });
+      } catch (error) {
+        await page.screenshot({ path: join(output, `failed-${name}-${viewport.width}.png`) });
+        await writeFile(join(output, `failed-${name}-${viewport.width}.txt`), await page.locator("body").innerText());
+        throw error;
+      }
       if (name === "schedule") {
         await page.locator("details.schedule-assumptions").first().evaluate((el) => { el.open = true; });
       }
@@ -65,6 +77,7 @@ try {
     }
   }
   assert.deepEqual(errors, []);
+  assert.deepEqual(failedRequests, []);
 } finally {
   await writeFile(join(output, "browser-evidence.json"), JSON.stringify(report, null, 2));
   await browser.close();

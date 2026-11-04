@@ -250,3 +250,61 @@ def test_malformed_observation_date_does_not_drop_other_dates(tmp_path):
     snapshot = ObservationSnapshot.capture(root, ["2026-11-01", "2026-11-02"])
     assert snapshot.errors["2026-11-01"]
     assert snapshot.boards["2026-11-02"]["games"] == []
+
+
+def test_schedule_view_serializes_like_existing_endpoints_and_shares_snapshot(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    import nba_lineup_model.web_api.app as api
+    from nba_lineup_model.season.serving_selection import observation_context
+
+    root, board = selection(tmp_path, monkeypatch)
+    snapshot = ObservationSnapshot.capture(root, [GAME_DATE])
+    captured = []
+
+    class Bound:
+        release_id = "test-release"
+        bindings = {"edition_id": "edition", "components": {"forecast_selection_id": "selection"}}
+
+        def path(self, name):
+            return root
+
+        def metadata(self):
+            return {"release_id": self.release_id}
+
+        def observations(self, observation_root):
+            captured.append(snapshot)
+            return snapshot
+
+    def day(value, **kwargs):
+        assert observation_context.get() is snapshot
+        return {"date": value, "games": board["games"]}
+
+    def performance(**kwargs):
+        assert observation_context.get() is snapshot
+        return {"windows": []}
+
+    monkeypatch.setattr(api.ReleaseServing, "load", lambda root: Bound())
+    monkeypatch.setattr(api, "load_process_activation_identity", lambda root: None)
+    monkeypatch.setattr(api, "read_schedule_day", day)
+    monkeypatch.setattr(api, "read_schedule_performance", performance)
+    monkeypatch.setattr(api, "read_win_projection_cache", lambda **kwargs: {
+        "minutes": {"players": [{"unavailable_stat": float("nan")}]},
+        "win_projection": {"teams": []},
+    })
+    evaluator = SimpleNamespace(run_id="test", current_season_rankings=pd.DataFrame())
+    client = TestClient(api.create_app(evaluator=evaluator))
+    existing = client.get("/api/win-projections")
+    response = client.get(f"/api/schedule-view?date={GAME_DATE}")
+    assert existing.status_code == response.status_code == 200
+    assert response.json()["forecast"] == existing.json()
+    assert response.json()["forecast"]["players"][0]["unavailable_stat"] is None
+    assert len(response.json()["calendar"]) == 7
+    assert response.json()["day"]["games"] == board["games"]
+    assert captured == [snapshot]
+    assert response.headers["X-Gestalt-Observations"] == snapshot.observation_id
+    assert client.get("/api/schedule-view?date=2026-02-31").status_code == 422
