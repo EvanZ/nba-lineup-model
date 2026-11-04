@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import date
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from nba_lineup_model.season.daily_data_artifact import (
     DEFAULT_REQUIRED_COMPONENTS as DATA_COMPONENTS,
 )
 from nba_lineup_model.season.daily_data_artifact import (
+    migrate_legacy_daily_data_pointer,
     promote_daily_data_artifact,
     publish_daily_data_artifact,
     resolve_daily_data_pointer,
@@ -90,12 +92,29 @@ def _publish_data(
         game_sources=_sources(game_ids),
         game_quality=_quality(game_ids),
         components=_components(tmp_path, DATA_COMPONENTS, f"data{suffix}"),
-        repairs=[
-            {"game_id": game_ids[0], "action": "identity alias reconciled", "source": "NBA"}
-        ]
+        repairs=[{"game_id": game_ids[0], "action": "identity alias reconciled", "source": "NBA"}]
         if game_ids
         else [],
     )
+
+
+def _write_legacy_pointer(root: Path, artifact) -> dict[str, object]:
+    identity = artifact.manifest["identity"]
+    relative = artifact.path.relative_to(root)
+    pointer = {
+        "schema_version": 1,
+        "artifact_kind": "daily_data",
+        "season": identity["season"],
+        "game_date_pacific": identity["game_date_pacific"],
+        "bundle_sha256": artifact.manifest["bundle_sha256"],
+        "bundle_path": relative.as_posix(),
+        "promoted_at": "2026-11-04T12:00:00Z",
+    }
+    history = root / "pointer_history"
+    history.mkdir(parents=True, exist_ok=True)
+    (history / f"{artifact.manifest['bundle_sha256']}.json").write_text(json.dumps(pointer))
+    (root / "latest.json").write_text(json.dumps(pointer))
+    return pointer
 
 
 def _publish_model(
@@ -126,9 +145,7 @@ def test_data_artifacts_are_independent_while_model_artifacts_are_causal(tmp_pat
         game_ids=["0022600001", "0022600002"],
         suffix="-one",
     )
-    day_one_model = _publish_model(
-        tmp_path, data_bundle=day_one_data.path, suffix="-one"
-    )
+    day_one_model = _publish_model(tmp_path, data_bundle=day_one_data.path, suffix="-one")
     day_two_data = _publish_data(
         tmp_path,
         game_date=date(2026, 10, 21),
@@ -143,17 +160,16 @@ def test_data_artifacts_are_independent_while_model_artifacts_are_causal(tmp_pat
     )
 
     data_manifest = verify_daily_data_artifact(day_two_data.path)
-    model_manifest = verify_daily_model_artifact(
-        day_two_model.path, data_bundle=day_two_data.path
-    )
+    model_manifest = verify_daily_model_artifact(day_two_model.path, data_bundle=day_two_data.path)
 
     assert "parent_data_sha256" not in data_manifest["identity"]
     assert "player_ratings" not in data_manifest["identity"]["components"]
-    assert model_manifest["identity"]["input_data_sha256"] == (
-        day_two_data.manifest["bundle_sha256"]
+    assert (
+        model_manifest["identity"]["input_data_sha256"] == (day_two_data.manifest["bundle_sha256"])
     )
-    assert model_manifest["identity"]["parent_model_sha256"] == (
-        day_one_model.manifest["bundle_sha256"]
+    assert (
+        model_manifest["identity"]["parent_model_sha256"]
+        == (day_one_model.manifest["bundle_sha256"])
     )
     assert model_manifest["identity"]["cumulative_game_ids"] == [
         "0022600001",
@@ -163,12 +179,8 @@ def test_data_artifacts_are_independent_while_model_artifacts_are_causal(tmp_pat
 
 
 def test_daily_data_publish_is_idempotent(tmp_path: Path) -> None:
-    first = _publish_data(
-        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
-    )
-    second = _publish_data(
-        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
-    )
+    first = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
+    second = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
 
     assert first.created is True
     assert second.created is False
@@ -205,10 +217,55 @@ def test_daily_data_rejects_unresolved_errors(tmp_path: Path) -> None:
         )
 
 
-def test_daily_data_collection_rejects_a_new_date_gap(tmp_path: Path) -> None:
-    day_one = _publish_data(
-        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
+def test_migrate_legacy_daily_data_pointer_builds_exact_collection(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "data-root"
+    day_one = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
+    day_two = _publish_data(
+        tmp_path,
+        game_date=date(2026, 10, 21),
+        game_ids=["0022600002"],
+        suffix="-day-two",
     )
+    _write_legacy_pointer(root, day_one)
+    _write_legacy_pointer(root, day_two)
+
+    pointer, migrated = migrate_legacy_daily_data_pointer(root)
+    collection = resolve_daily_data_pointer(root, pointer)
+
+    assert migrated is True
+    assert pointer["artifact_kind"] == "daily_data_collection"
+    assert pointer["date_count"] == 2
+    assert (
+        collection["identity"]["dates"]["2026-10-21"]["bundle_sha256"]
+        == day_two.manifest["bundle_sha256"]
+    )
+    repeated, changed = migrate_legacy_daily_data_pointer(root)
+    assert repeated == pointer
+    assert changed is False
+
+
+def test_migrate_legacy_daily_data_pointer_rejects_conflicting_history(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "data-root"
+    original = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
+    replacement = _publish_data(
+        tmp_path,
+        game_date=date(2026, 10, 20),
+        game_ids=["0022600001"],
+        suffix="-replacement",
+    )
+    _write_legacy_pointer(root, original)
+    _write_legacy_pointer(root, replacement)
+
+    with pytest.raises(ValueError, match="selects multiple artifacts"):
+        migrate_legacy_daily_data_pointer(root)
+
+
+def test_daily_data_collection_rejects_a_new_date_gap(tmp_path: Path) -> None:
+    day_one = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
     day_three = _publish_data(
         tmp_path,
         game_date=date(2026, 10, 22),
@@ -221,12 +278,10 @@ def test_daily_data_collection_rejects_a_new_date_gap(tmp_path: Path) -> None:
 
 
 def test_daily_data_verification_detects_component_mutation(tmp_path: Path) -> None:
-    artifact = _publish_data(
-        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
+    artifact = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
+    component = (
+        artifact.path / artifact.manifest["identity"]["components"]["actual_minutes"]["path"]
     )
-    component = artifact.path / artifact.manifest["identity"]["components"]["actual_minutes"][
-        "path"
-    ]
     component.write_text("changed")
 
     with pytest.raises(ValueError, match="checksum changed"):
@@ -262,27 +317,19 @@ def test_daily_data_rejects_score_or_possession_nonconservation(tmp_path: Path) 
 
 
 def test_repair_reselects_one_date_without_rewriting_later_data(tmp_path: Path) -> None:
-    first = _publish_data(
-        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
-    )
+    first = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
     second = _publish_data(
         tmp_path,
         game_date=date(2026, 10, 21),
         game_ids=["0022600002"],
         suffix="-second",
     )
-    _, first_advanced = promote_daily_data_artifact(
-        first.path, root=tmp_path / "data-root"
-    )
+    _, first_advanced = promote_daily_data_artifact(first.path, root=tmp_path / "data-root")
     original_pointer, second_advanced = promote_daily_data_artifact(
         second.path, root=tmp_path / "data-root"
     )
-    original_collection = resolve_daily_data_pointer(
-        tmp_path / "data-root", original_pointer
-    )
-    original_second = dict(
-        original_collection["identity"]["dates"]["2026-10-21"]
-    )
+    original_collection = resolve_daily_data_pointer(tmp_path / "data-root", original_pointer)
+    original_second = dict(original_collection["identity"]["dates"]["2026-10-21"])
 
     repaired_first = _publish_data(
         tmp_path,
@@ -293,18 +340,17 @@ def test_repair_reselects_one_date_without_rewriting_later_data(tmp_path: Path) 
     repaired_pointer, repaired_advanced = promote_daily_data_artifact(
         repaired_first.path, root=tmp_path / "data-root"
     )
-    repaired_collection = resolve_daily_data_pointer(
-        tmp_path / "data-root", repaired_pointer
-    )
+    repaired_collection = resolve_daily_data_pointer(tmp_path / "data-root", repaired_pointer)
 
     assert first_advanced is True
     assert second_advanced is True
     assert repaired_advanced is True
     assert original_pointer["collection_sha256"] != repaired_pointer["collection_sha256"]
     assert repaired_pointer["through_date"] == "2026-10-21"
-    assert repaired_collection["identity"]["dates"]["2026-10-20"][
-        "bundle_sha256"
-    ] == repaired_first.manifest["bundle_sha256"]
+    assert (
+        repaired_collection["identity"]["dates"]["2026-10-20"]["bundle_sha256"]
+        == repaired_first.manifest["bundle_sha256"]
+    )
     assert repaired_collection["identity"]["dates"]["2026-10-21"] == original_second
     assert second.path.is_dir()
     verify_daily_data_collection(
@@ -314,9 +360,7 @@ def test_repair_reselects_one_date_without_rewriting_later_data(tmp_path: Path) 
 
 
 def test_daily_data_chain_report_summarizes_the_promoted_chain(tmp_path: Path) -> None:
-    artifact = _publish_data(
-        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
-    )
+    artifact = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
     promote_daily_data_artifact(artifact.path, root=tmp_path / "data-root")
 
     report = write_daily_data_chain_report(tmp_path / "data-root")
@@ -328,9 +372,7 @@ def test_daily_data_chain_report_summarizes_the_promoted_chain(tmp_path: Path) -
 
 
 def test_daily_model_rejects_excluded_games(tmp_path: Path) -> None:
-    data = _publish_data(
-        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
-    )
+    data = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
     with pytest.raises(ValueError, match="cannot publish with excluded games"):
         publish_daily_model_artifact(
             root=tmp_path / "model-root",
@@ -347,9 +389,7 @@ def test_daily_model_rejects_excluded_games(tmp_path: Path) -> None:
 
 
 def test_daily_model_parent_remains_causally_consecutive(tmp_path: Path) -> None:
-    day_one_data = _publish_data(
-        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
-    )
+    day_one_data = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
     day_one_model = _publish_model(tmp_path, data_bundle=day_one_data.path)
     day_three_data = _publish_data(
         tmp_path,
@@ -368,9 +408,7 @@ def test_daily_model_parent_remains_causally_consecutive(tmp_path: Path) -> None
 
 
 def test_daily_model_rejects_a_parent_with_different_provenance(tmp_path: Path) -> None:
-    day_one_data = _publish_data(
-        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
-    )
+    day_one_data = _publish_data(tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"])
     day_one_model = _publish_model(tmp_path, data_bundle=day_one_data.path)
     day_two_data = _publish_data(
         tmp_path,

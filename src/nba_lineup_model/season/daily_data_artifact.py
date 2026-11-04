@@ -35,6 +35,7 @@ ARTIFACT_KIND = "daily_data"
 COLLECTION_SCHEMA_VERSION = 1
 COLLECTION_KIND = "daily_data_collection"
 POINTER_SCHEMA_VERSION = 2
+LEGACY_POINTER_SCHEMA_VERSION = 1
 REPORT_FILENAME = "report.html"
 DEFAULT_REQUIRED_COMPONENTS = frozenset(
     {
@@ -99,9 +100,7 @@ def publish_daily_data_artifact(
     )
     quality = _normalize_game_quality(game_quality, game_ids=normalized_game_ids)
     required = {require_logical_name(name, "Required component") for name in required_components}
-    component_names = {
-        require_logical_name(name, "Component name") for name in components
-    }
+    component_names = {require_logical_name(name, "Component name") for name in components}
     missing_components = sorted(required - component_names)
     if missing_components:
         raise ValueError(
@@ -222,10 +221,7 @@ def promote_daily_data_artifact(
         current_identity = current["identity"]
         if current_identity["season"] != identity["season"]:
             raise ValueError("Daily data collection season does not match")
-        selections = {
-            key: dict(value)
-            for key, value in current_identity["dates"].items()
-        }
+        selections = {key: dict(value) for key, value in current_identity["dates"].items()}
         selected = selections.get(identity["game_date_pacific"])
         if selected and selected["bundle_sha256"] == manifest["bundle_sha256"]:
             return _read_json(latest_path), False
@@ -233,9 +229,7 @@ def promote_daily_data_artifact(
             through = date.fromisoformat(current_identity["through_date"])
             incoming = date.fromisoformat(identity["game_date_pacific"])
             if incoming != through + timedelta(days=1):
-                raise ValueError(
-                    "A new daily data date must immediately follow the collection tip"
-                )
+                raise ValueError("A new daily data date must immediately follow the collection tip")
     selections[identity["game_date_pacific"]] = {
         "bundle_sha256": manifest["bundle_sha256"],
         "bundle_path": relative.as_posix(),
@@ -262,11 +256,124 @@ def promote_daily_data_artifact(
         "promoted_at": _utc_timestamp(promoted_at or datetime.now(UTC)),
     }
     _atomic_write_json(latest_path, pointer)
-    history = (
-        root_path
-        / "pointer_history"
-        / f"{collection_manifest['collection_sha256']}.json"
+    history = root_path / "pointer_history" / f"{collection_manifest['collection_sha256']}.json"
+    if not history.exists():
+        _atomic_write_json(history, pointer)
+    return pointer, True
+
+
+def migrate_legacy_daily_data_pointer(
+    root: Path | str,
+    *,
+    promoted_at: datetime | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Replace a legacy tip pointer with an audited immutable collection.
+
+    The migration derives selections only from the root's immutable legacy
+    pointer history. It never guesses among artifact directories or changes a
+    daily bundle. Conflicting selections, missing dates, or a history tip that
+    differs from ``latest.json`` fail closed.
+    """
+
+    root_path = Path(root).resolve()
+    latest_path = root_path / "latest.json"
+    latest = _read_json(latest_path)
+    if (
+        latest.get("schema_version") == POINTER_SCHEMA_VERSION
+        and latest.get("artifact_kind") == COLLECTION_KIND
+    ):
+        resolve_daily_data_pointer(root_path, latest)
+        return latest, False
+    if (
+        latest.get("schema_version") != LEGACY_POINTER_SCHEMA_VERSION
+        or latest.get("artifact_kind") != ARTIFACT_KIND
+    ):
+        raise ValueError("Unsupported legacy daily data pointer")
+
+    history_root = root_path / "pointer_history"
+    history_paths = sorted(history_root.glob("*.json"))
+    if not history_paths:
+        raise ValueError("Legacy daily data pointer history is missing")
+
+    selections: dict[str, dict[str, object]] = {}
+    season = ""
+    for history_path in history_paths:
+        pointer = _read_json(history_path)
+        if (
+            pointer.get("schema_version") != LEGACY_POINTER_SCHEMA_VERSION
+            or pointer.get("artifact_kind") != ARTIFACT_KIND
+        ):
+            continue
+        raw_path = pointer.get("bundle_path")
+        if not isinstance(raw_path, str) or not raw_path:
+            raise ValueError("Legacy daily data bundle path is missing")
+        bundle = (root_path / raw_path).resolve()
+        try:
+            relative = bundle.relative_to(root_path)
+        except ValueError as error:
+            raise ValueError("Legacy daily data bundle escapes its root") from error
+        manifest = verify_daily_data_artifact(bundle)
+        identity = manifest["identity"]
+        bundle_sha = str(manifest["bundle_sha256"])
+        game_date = str(identity["game_date_pacific"])
+        if pointer.get("bundle_sha256") != bundle_sha:
+            raise ValueError("Legacy pointer checksum differs from its artifact")
+        if pointer.get("game_date_pacific") != game_date:
+            raise ValueError("Legacy pointer date differs from its artifact")
+        if pointer.get("season") != identity["season"]:
+            raise ValueError("Legacy pointer season differs from its artifact")
+        if season and season != identity["season"]:
+            raise ValueError("Legacy pointer history mixes seasons")
+        season = str(identity["season"])
+        selection = {
+            "bundle_sha256": bundle_sha,
+            "bundle_path": relative.as_posix(),
+            "game_count": int(identity["game_count"]),
+        }
+        existing = selections.get(game_date)
+        if existing and existing != selection:
+            raise ValueError(f"Legacy pointer history selects multiple artifacts for {game_date}")
+        selections[game_date] = selection
+
+    if not selections:
+        raise ValueError("Legacy daily data pointer history has no valid selections")
+    latest_date = str(latest.get("game_date_pacific") or "")
+    if latest_date != max(selections):
+        raise ValueError("Legacy latest pointer differs from pointer-history tip")
+    latest_selection = selections[latest_date]
+    if latest.get("bundle_sha256") != latest_selection["bundle_sha256"]:
+        raise ValueError("Legacy latest pointer checksum differs from history tip")
+
+    ordered_dates = sorted(date.fromisoformat(value) for value in selections)
+    if any(
+        current != previous + timedelta(days=1)
+        for previous, current in zip(ordered_dates, ordered_dates[1:], strict=False)
+    ):
+        raise ValueError("Legacy daily data pointer history has a date gap")
+
+    generated = promoted_at or datetime.now(UTC)
+    collection = _publish_daily_data_collection(
+        root_path,
+        season=season,
+        selections=selections,
+        generated_at=generated,
     )
+    collection_relative = collection["path"].relative_to(root_path)
+    collection_manifest = collection["manifest"]
+    collection_identity = collection_manifest["identity"]
+    pointer = {
+        "schema_version": POINTER_SCHEMA_VERSION,
+        "artifact_kind": COLLECTION_KIND,
+        "season": season,
+        "through_date": collection_identity["through_date"],
+        "date_count": collection_identity["date_count"],
+        "game_count": collection_identity["game_count"],
+        "collection_sha256": collection_manifest["collection_sha256"],
+        "collection_path": collection_relative.as_posix(),
+        "promoted_at": _utc_timestamp(generated),
+    }
+    _atomic_write_json(latest_path, pointer)
+    history = history_root / f"{collection_manifest['collection_sha256']}.json"
     if not history.exists():
         _atomic_write_json(history, pointer)
     return pointer, True
@@ -316,7 +423,7 @@ def verify_daily_data_collection(
     ordered_dates = sorted(date.fromisoformat(str(value)) for value in selections)
     if any(
         current != previous + timedelta(days=1)
-        for previous, current in zip(ordered_dates, ordered_dates[1:])
+        for previous, current in zip(ordered_dates, ordered_dates[1:], strict=False)
     ):
         raise ValueError("Daily data collection dates are not contiguous")
     if identity.get("through_date") != ordered_dates[-1].isoformat():
@@ -380,12 +487,7 @@ def _publish_daily_data_collection(
         "generated_at": _utc_timestamp(generated_at),
         "identity": identity,
     }
-    target = (
-        root
-        / f"season={season}"
-        / "collections"
-        / f"collection_sha256={collection_sha}"
-    )
+    target = root / f"season={season}" / "collections" / f"collection_sha256={collection_sha}"
     if not target.exists():
         staging = root / f".daily-data-collection.tmp-{uuid4().hex}"
         staging.mkdir(parents=True)
@@ -421,9 +523,7 @@ def _normalize_game_sources(
     required = {require_logical_name(name, "Required game source") for name in required_names}
     for game_id in game_ids:
         raw_sources = sources[game_id]
-        normalized_names = {
-            require_logical_name(name, "Game source name") for name in raw_sources
-        }
+        normalized_names = {require_logical_name(name, "Game source name") for name in raw_sources}
         missing = sorted(required - normalized_names)
         if missing:
             raise ValueError(f"Game {game_id} is missing sources: {', '.join(missing)}")
@@ -473,9 +573,7 @@ def _normalize_game_quality(
         )
         possession_fields = ("play_by_play_possessions", "observed_stint_possessions")
         try:
-            values: dict[str, float | int] = {
-                field: int(raw[field]) for field in score_fields
-            }
+            values: dict[str, float | int] = {field: int(raw[field]) for field in score_fields}
             values.update({field: float(raw[field]) for field in possession_fields})
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"Game quality checks are incomplete: {game_id}") from error
@@ -566,30 +664,33 @@ def _render_report(identity: Mapping[str, Any]) -> str:
     if not rows:
         rows.append("<tr><td colspan='4'>No games scheduled.</td></tr>")
     repairs = identity["validation"]["repairs"]
-    repair_rows = "".join(
-        "<li>"
-        f"{html.escape(repair['game_id'] or 'slate')}: "
-        f"{html.escape(repair['action'])}"
-        + (f" ({html.escape(repair['source'])})" if repair["source"] else "")
-        + "</li>"
-        for repair in repairs
-    ) or "<li>None</li>"
+    repair_rows = (
+        "".join(
+            "<li>"
+            f"{html.escape(repair['game_id'] or 'slate')}: "
+            f"{html.escape(repair['action'])}"
+            + (f" ({html.escape(repair['source'])})" if repair["source"] else "")
+            + "</li>"
+            for repair in repairs
+        )
+        or "<li>None</li>"
+    )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>Daily data reconciliation — {html.escape(identity['game_date_pacific'])}</title>
+<title>Daily data reconciliation — {html.escape(identity["game_date_pacific"])}</title>
 <style>body{{font:16px system-ui;margin:2rem;max-width:960px}}
 table{{border-collapse:collapse;width:100%}}
 th,td{{padding:.55rem;border-bottom:1px solid #ddd;text-align:left}}
 .ok{{color:#176b3a;font-weight:700}}
 code{{background:#f4f4f4;padding:.15rem .3rem}}</style></head><body>
 <h1>Daily data reconciliation</h1>
-<p><strong>{html.escape(identity['season'])}</strong> · Pacific slate
-<strong>{html.escape(identity['game_date_pacific'])}</strong> · {identity['game_count']} games</p>
+<p><strong>{html.escape(identity["season"])}</strong> · Pacific slate
+<strong>{html.escape(identity["game_date_pacific"])}</strong> · {identity["game_count"]} games</p>
 <p>Status: <span class="ok">CLEAN</span>. All expected games, scores, possessions, players,
 and required observed-data components passed publication checks.</p>
 <table><thead><tr><th>Game ID</th><th>Away–home score</th>
 <th>Possessions</th><th>Checks</th></tr></thead>
-<tbody>{''.join(rows)}</tbody></table><h2>Repairs</h2><ul>{repair_rows}</ul>
+<tbody>{"".join(rows)}</tbody></table><h2>Repairs</h2><ul>{repair_rows}</ul>
 <h2>Artifact contract</h2><p>This Pacific date is independently replaceable.
 Its immutable checksum is selected by the season data collection.</p>
 </body></html>"""
