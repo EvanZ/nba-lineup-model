@@ -38,6 +38,13 @@ def _espn_references(value: object, *, path: str = "$") -> list[str]:
 
 def validate_schedule_artifacts(root: Path | str) -> dict[str, object]:
     state_root = Path(root).resolve()
+    selections = None
+    if (state_root / "forecast-selections.json").is_file():
+        from nba_lineup_model.season.serving_selection import verify_schedule_selection
+        try:
+            selections = verify_schedule_selection(state_root)
+        except (OSError, ValueError, KeyError) as error:
+            raise ScheduleArtifactContractError(f"Invalid forecast selection: {error}") from error
     failures: list[str] = []
     latest_paths = sorted((state_root / "latest").glob("*.json"))
     if not latest_paths:
@@ -105,10 +112,16 @@ def validate_schedule_artifacts(root: Path | str) -> dict[str, object]:
             if started:
                 started_ids.add(game_id)
                 frozen_path = state_root / "frozen" / f"{game_id}.json"
-                if not frozen_path.is_file():
+                frozen = None
+                if selections is not None:
+                    # The verified #55 map pins the exact forecast and market.
+                    # Never synthesize or require a second legacy frozen copy.
+                    frozen = game.get("pregame", game)
+                elif frozen_path.is_file():
+                    frozen = _read_object(frozen_path)
+                if frozen is None:
                     failures.append(f"missing-frozen:{game_id}")
                 else:
-                    frozen = _read_object(frozen_path)
                     frozen_projection = frozen.get("projection")
                     if not isinstance(frozen_projection, dict):
                         failures.append(f"missing-frozen-projection:{game_id}")
