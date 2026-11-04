@@ -133,7 +133,7 @@ def _api_checks(runtime: Path, pointer: Path, observation_root: Path, monkeypatc
         assert all(g.get("final_audit") for g in schedule["games"])
         assert all(g.get("retrospective", {}).get("ledger") for g in schedule["games"])
         player = responses["player"].json()
-        curry = [g for g in player["current_season"]["games"] if g["game_date"] == "2026-11-02"]
+        curry = [g for g in player["current_season_trajectory"] if g["game_date"] == "2026-11-02"]
         assert len(curry) == 1 and curry[0]["opponent"] == "PHX"
         performance = responses["performance"].json()
         season = next(row for row in performance["windows"] if row["key"] == "season")
