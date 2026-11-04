@@ -162,6 +162,7 @@ export type Player = {
     evidence_through_date?: string | null;
     as_of_cutoff_time?: string | null;
     rating: number;
+    rating_delta?: number | null;
     preseason_rating?: number;
     in_season_delta?: number;
     raw_on_court_possessions?: number;

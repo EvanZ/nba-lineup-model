@@ -1011,7 +1011,7 @@ def test_player_game_trajectory_uses_frozen_minutes_and_archived_box_score(
                                 "threePointersAttempted": 9,
                                 "freeThrowsMade": 1,
                                 "freeThrowsAttempted": 1,
-                                "plusMinusPoints": -22,
+                                "plusMinusPoints": -22.0,
                             },
                         }
                         ]

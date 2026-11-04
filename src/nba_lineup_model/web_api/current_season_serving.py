@@ -395,6 +395,12 @@ def _player_game_rating_trajectories(
                     "evidence_through_date": str(row.game_date),
                     "as_of_cutoff_time": str(row.game_time_utc),
                     "rating": float(row.updated_rating),
+                    # This slate's stored change, not the difference since the
+                    # player's previous appearance (other slates can move ratings).
+                    "rating_delta": (
+                        float(row.rating_delta)
+                        if pd.notna(getattr(row, "rating_delta", None)) else None
+                    ),
                     "preseason_rating": float(row.preseason_rating),
                     "in_season_delta": float(row.in_season_delta),
                     "game_on_court_possessions": float(

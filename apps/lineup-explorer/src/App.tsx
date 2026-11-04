@@ -576,10 +576,9 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
 
   useEffect(() => setVisibleCount(10), [player.player_id]);
 
-  const games = points.flatMap((point, index) => {
+  const games = points.flatMap((point) => {
     if (!point.game_id || !point.game_date) return [];
-    const previousRating = points[index - 1]?.rating ?? point.preseason_rating ?? point.rating;
-    return [{ point, previousRating }];
+    return [point];
   }).reverse();
   if (games.length === 0) return null;
 
@@ -651,7 +650,7 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
             </span>
           </th>;
         })}</tr></thead>
-        <tbody>{visibleGames.map(({ point, previousRating }) => {
+        <tbody>{visibleGames.map((point) => {
           const box = point.box_score;
           const gameDate = point.game_date ?? "";
           const result = point.result && point.team_score !== null && point.team_score !== undefined && point.opponent_score !== null && point.opponent_score !== undefined
@@ -660,7 +659,7 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
           const projectedMinutes = point.projected_minutes;
           const actualMinutes = point.actual_minutes ?? (point.played === false ? 0 : null);
           const hasMinutes = projectedMinutes !== null && projectedMinutes !== undefined || actualMinutes !== null;
-          const ratingDelta = point.rating - previousRating;
+          const ratingDelta = point.rating_delta ?? null;
           const status = point.played === false ? point.pregame_status ?? "DNP" : null;
           const cells: Record<GameLogColumn, () => ReactNode> = {
             date: () => <td key="date" className="current-season-game-log-date" data-label="Date"><time dateTime={gameDate}>{formatGameLogDate(gameDate)}</time></td>,
@@ -675,7 +674,7 @@ function CurrentSeasonGameLog({ player }: { player: Player }) {
               {status && <small><strong>{status}</strong>{point.pregame_reason && <> · {point.pregame_reason}</>}</small>}
             </td>,
             rating: () => <td key="rating" className="current-season-game-log-rating" data-label="NAIL after slate"><Rating value={point.rating} /></td>,
-            rating_delta: () => <td key="rating_delta" className={ratingDelta < 0 ? "negative current-season-game-log-delta" : "positive current-season-game-log-delta"} data-label="Game Δ">{formatPreciseRating(ratingDelta)}</td>,
+            rating_delta: () => <td key="rating_delta" className={ratingDelta === null ? "current-season-game-log-delta" : ratingDelta < 0 ? "negative current-season-game-log-delta" : "positive current-season-game-log-delta"} data-label="Game Δ">{ratingDelta === null ? "-" : formatPreciseRating(ratingDelta)}</td>,
             points: () => <td key="points" className="quantity-cell current-season-game-log-stat" data-label="PTS">{box?.points ?? "-"}</td>,
             rebounds: () => <td key="rebounds" className="quantity-cell current-season-game-log-stat" data-label="REB">{box?.rebounds ?? "-"}</td>,
             assists: () => <td key="assists" className="quantity-cell current-season-game-log-stat" data-label="AST">{box?.assists ?? "-"}</td>,

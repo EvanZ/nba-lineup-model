@@ -1700,10 +1700,16 @@ def _made_attempted(value: object) -> tuple[int | None, int | None]:
 
 
 def _signed_integer_or_none(value: object) -> int | None:
-    try:
-        return int(str(value).strip().replace("+", ""))
-    except (TypeError, ValueError):
+    """Accept NBA integral floats without truncating malformed fractional stats."""
+    if isinstance(value, bool):
         return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not np.isfinite(number) or not number.is_integer():
+        return None
+    return int(number)
 
 
 def _schedule_final_audits(
