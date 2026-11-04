@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -752,7 +752,7 @@ def test_candidate_reprojection_consumes_captured_sources_only(
         days_ahead=0,
         state_dir=tmp_path,
         projection_url="http://candidate/api/win-projections",
-        now=datetime(2026, 11, 1, 12, tzinfo=UTC),
+        now=datetime.fromisoformat(START.replace("Z", "+00:00")) - timedelta(minutes=30),
     )
 
     assert result["source_collection_requests"] == 0
@@ -790,7 +790,7 @@ def test_candidate_reprojection_treats_uncaptured_zero_game_date_as_noop(
         days_ahead=0,
         state_dir=tmp_path,
         projection_url="http://candidate/api/win-projections",
-        now=datetime(2026, 11, 1, 12, tzinfo=UTC),
+        now=datetime.fromisoformat(START.replace("Z", "+00:00")) - timedelta(minutes=30),
     )
     assert result == {
         "start_date": GAME_DATE,

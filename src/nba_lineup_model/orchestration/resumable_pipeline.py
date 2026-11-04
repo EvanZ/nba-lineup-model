@@ -81,7 +81,7 @@ class PartitionSteps(CanonicalPipelineSteps):
             preseason_rankings_path=candidate / "inputs/rankings.parquet",
             preseason_minutes_path=candidate / "inputs/minutes.json",
             preseason_profiles_path=candidate / "inputs/profiles.parquet",
-            preserve_schedule_selections=True, activate_after_validation=False,
+            activate_after_validation=False,
         )
         if config.model_configuration_path is not None:
             private = replace(private, model_configuration_path=candidate / "inputs/model-configuration.json")
@@ -208,8 +208,21 @@ def validate_execution(config, spec, approval):
     target = date.fromisoformat(identity["game_date_pacific"])
     through = date.fromisoformat(approved["evidence_through_date"])
     historical = target <= through
+    reuse_accepted = bool(execution.get("reuse_accepted_model"))
+    if reuse_accepted:
+        from nba_lineup_model.orchestration.forecast_partition import latest_completed_model
+        if not config.forecast_date or date.fromisoformat(config.forecast_date) <= through:
+            raise ValueError("Forecast-only work must follow completed evidence")
+        expected = verify_daily_model_artifact(latest_completed_model(
+            config.live_pointer, date.fromisoformat(config.forecast_date)))
+        selected = validate_existing_target(spec)
+        if (selected["bundle_sha256"] != expected["bundle_sha256"]
+                or selected["identity"]["input_data_sha256"] != expected["identity"]["input_data_sha256"]
+                or not config.forecast_date or target >= date.fromisoformat(config.forecast_date)
+                or execution.get("historical_data_selection") or execution.get("causal_replay")):
+            raise ValueError("Forecast-only run must reuse the exact accepted model and data")
     plan = execution.get("impact_plan")
-    if historical or execution.get("historical_data_selection") or execution.get("causal_replay"):
+    if (historical and not reuse_accepted) or execution.get("historical_data_selection") or execution.get("causal_replay"):
         if not plan or plan["identity"]["base_release_id"] != base_id:
             raise PermissionError("Repair must cite the exact selected base release")
         if target.isoformat() not in plan["identity"]["affected_games"]:

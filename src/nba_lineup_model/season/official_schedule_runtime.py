@@ -197,6 +197,7 @@ def reproject_captured_schedule_window(
     state_dir: Path | str,
     projection_url: str,
     now: datetime | None = None,
+    forecast_response: dict | None = None,
 ) -> dict[str, object]:
     """Recompute only forward projections from already captured source state.
 
@@ -208,7 +209,7 @@ def reproject_captured_schedule_window(
         raise ValueError("Schedule days ahead must be non-negative")
     state_root = Path(state_dir)
     first_date = date.fromisoformat(start_date)
-    forecast_response = _fetch_json(projection_url)
+    forecast_response = forecast_response if forecast_response is not None else _fetch_json(projection_url)
     collected_at = (now or datetime.now(UTC)).astimezone(UTC)
     reprojected_games = 0
     reprojected_days = 0
@@ -231,6 +232,12 @@ def reproject_captured_schedule_window(
             if str(game.get("status", {}).get("state", "pre")) != "pre":
                 continue
             game_id = str(game.get("game_id", ""))
+            cutoff = datetime.fromisoformat(str(game["start_time"]).replace("Z", "+00:00"))
+            if cutoff.tzinfo is None:
+                raise ValueError(f"Forecast cutoff has no timezone: {game_id}")
+            if (cutoff <= collected_at or game.get("pregame") or game.get("final_audit")
+                    or (state_root / "frozen" / f"{game_id}.json").is_file()):
+                continue
             away_team = str(game.get("away_team", ""))
             home_team = str(game.get("home_team", ""))
             injury = game.get("injury_report")

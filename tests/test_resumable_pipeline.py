@@ -90,7 +90,7 @@ sys.modules['nba_lineup_model.orchestration.definitions']=None
 from dagster import Definitions
 from nba_lineup_model.orchestration.partition_definitions import defs
 Definitions.validate_loadable(defs)
-assert {j.name for j in defs.jobs} == {'prepare_daily_partition'}
+assert {j.name for j in defs.jobs} == {'prepare_daily_partition', 'prepare_forecast_date'}
 assert len(defs.sensors) == 1
 assert not defs.schedules
 """

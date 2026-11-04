@@ -69,6 +69,7 @@ class DailyPipelineConfig:
     historical_runtime_root: Path | None = None
     observation_root: Path | None = None
     preserve_schedule_selections: bool = False
+    forecast_date: str | None = None
 
     @classmethod
     def read(cls, path: Path | str) -> "DailyPipelineConfig":
@@ -452,20 +453,44 @@ class CanonicalPipelineSteps:
         from nba_lineup_model.season.dev_site_release import collect_api_validation, publish_dev_site_release
         from nba_lineup_model.season.production_site_release import stage_production_site_release
         from nba_lineup_model.season.schedule_artifact_contract import validate_schedule_artifacts
-        from nba_lineup_model.season.official_schedule_runtime import reproject_captured_schedule_window
+        from nba_lineup_model.season.official_schedule_runtime import reproject_captured_schedule_window, _fetch_json
+        from nba_lineup_model.season.serving_selection import INDEX_FILENAME, read_object
+        from nba_lineup_model.season.sealed_code_package import materialize_sealed_code_package, verify_sealed_code_package
+        from nba_lineup_model.season.upcoming_forecasts import refresh_open_selection
         c, out = self.config, self.candidate
-        before = _frozen_hashes(out / "schedule")
+        schedule = out / "schedule"
+        before = _frozen_hashes(schedule)
+        first_forecast = date.fromisoformat(c.forecast_date) if c.forecast_date else target + timedelta(days=1)
+        days_ahead = 0 if c.forecast_date else 7
         with self.api() as api:
-            # Only forward boards use the updated ratings/minutes. No historical
-            # replay, changed frozen pregame, or postgame rating substitution.
-            if not c.preserve_schedule_selections:
-                reproject_captured_schedule_window(start_date=(target + timedelta(days=1)).isoformat(), days_ahead=7, state_dir=out / "schedule", projection_url=api + "/api/win-projections")
-            if any(_frozen_hashes(out / "schedule").get(key) != value for key, value in before.items()):
-                raise ValueError("Nightly refresh changed a frozen forecast")
-            validate_schedule_artifacts(out / "schedule")
+            if (schedule / INDEX_FILENAME).is_file():
+                code_root = out / "forecast-code"
+                code_root.mkdir(exist_ok=True)
+                package = (verify_sealed_code_package(code_root) if (code_root / "code").exists()
+                    else materialize_sealed_code_package(c.code_root, code_root, expected_revision=self.revision))
+                pointer = read_object(c.model_root / "latest.json")
+                source_index = read_object(schedule / INDEX_FILENAME)
+                registry = Path(source_index.get("forecast_registry_root") or c.environment_root / "forecast-registry")
+                refreshed = out / "refreshed-schedule"
+                evidence = refresh_open_selection(source=schedule, target=refreshed,
+                    model_bundle=c.model_root / pointer["bundle_path"],
+                    forecast_response=_fetch_json(api + "/api/win-projections"),
+                    start_date=first_forecast, days_ahead=days_ahead, registry_root=registry,
+                    catalog=c.catalog_path, code=package["identity"],
+                    environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
+                (out / "forecast-refresh.json").write_text(json.dumps(evidence, indent=2) + "\n")
+                schedule = refreshed
+            else:
+                reproject_captured_schedule_window(start_date=first_forecast.isoformat(),
+                    days_ahead=days_ahead, state_dir=schedule, projection_url=api + "/api/win-projections")
+        if any(_frozen_hashes(schedule).get(key) != value for key, value in before.items()):
+            raise ValueError("Nightly refresh changed a frozen forecast")
+        self.env["GESTALT_SCHEDULE_STATE_DIR"] = str(schedule)
+        with self.api() as api:
+            validate_schedule_artifacts(schedule)
             validation = collect_api_validation(api, evidence_date=target.isoformat(), daily_model_root=c.model_root)
-            publish_dev_site_release(daily_data_root=c.data_root, daily_model_root=c.model_root, serving_root=out / "serving", lineups_root=out / "lineups", schedule_state_dir=out / "schedule", catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_revision=self.revision, api_validation=validation, output_root=out / "site-releases")
-        return stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=out / "schedule", schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
+            publish_dev_site_release(daily_data_root=c.data_root, daily_model_root=c.model_root, serving_root=out / "serving", lineups_root=out / "lineups", schedule_state_dir=schedule, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_revision=self.revision, api_validation=validation, output_root=out / "site-releases")
+        return stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=schedule, schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
 
 
 def prepare_daily_release(

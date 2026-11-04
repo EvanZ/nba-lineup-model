@@ -71,4 +71,23 @@ def resumable_daily_partition_sensor(context):
     return SkipReason("All explicitly requested partitions are validated; activation remains separate")
 
 
-defs = Definitions(jobs=[prepare_daily_partition_job], sensors=[resumable_daily_partition_sensor])
+@op(config_schema={"config_path": str, "forecast_date": str})
+def prepare_forecast_date_op(context):
+    from datetime import date
+    from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
+    from nba_lineup_model.orchestration.forecast_partition import prepare_forecast_date
+    result = prepare_forecast_date(DailyPipelineConfig.read(context.op_config["config_path"]),
+                                  date.fromisoformat(context.op_config["forecast_date"]))
+    context.add_output_metadata({key: result[key] for key in (
+        "forecast_date", "model_date", "model_sha256", "work_id", "runtime_release")})
+    return result
+
+
+@job(name="prepare_forecast_date", executor_def=in_process_executor,
+     tags={"gestalt/workload": "daily_site_release"})
+def prepare_forecast_date_job():
+    prepare_forecast_date_op()
+
+
+defs = Definitions(jobs=[prepare_daily_partition_job, prepare_forecast_date_job],
+                   sensors=[resumable_daily_partition_sensor])
