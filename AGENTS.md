@@ -132,4 +132,9 @@ These instructions apply to every task in this repository.
 - Surface actual findings and failures to the user; do not bury them in files.
 - Ask for input before making a new modeling assumption, changing a defined
   metric, or introducing a fallback that alters product behavior.
+- If a task starts becoming materially more complex than the requested outcome
+  requires, stop before adding a workaround, new architecture, extra tooling,
+  or speculative optimization. Explain the concrete source of complexity,
+  present the simplest viable choices, and ask the user to decide before
+  proceeding.
 - When the user stops or redirects work, stop immediately.

@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from nba_lineup_model.season.current_serving import (
@@ -31,6 +31,7 @@ from nba_lineup_model.season.release_publisher import (
     load_process_activation_identity,
 )
 from nba_lineup_model.season.serving_selection import observation_context
+from nba_lineup_model.web_api.data_quality_reports import compose_data_quality_report
 from nba_lineup_model.web_api.inference import (
     MODEL_ARTIFACT,
     MODEL_DISPLAY_NAME,
@@ -296,8 +297,8 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         return FileResponse(latest, media_type="text/html")
 
     @app.get("/api/reports/current-season")
-    def current_season_report() -> FileResponse:
-        """Serve the latest immutable daily updater audit as a browser report."""
+    def current_season_report() -> Response:
+        """Serve one unified operational and current-season browser audit."""
 
         root = Path(
             os.environ.get(
@@ -313,7 +314,26 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(error)) from error
         if not report_path.is_file():
             raise HTTPException(status_code=404, detail="Current-season report is missing")
-        return FileResponse(report_path, media_type="text/html")
+        quality_root = os.environ.get("GESTALT_DATA_QUALITY_ROOT")
+        if not quality_root:
+            return FileResponse(report_path, media_type="text/html")
+        quality_path = Path(quality_root) / "current" / "report.html"
+        if not quality_path.is_file():
+            raise HTTPException(
+                status_code=503,
+                detail="The operational data-quality report is not available",
+            )
+        try:
+            combined = compose_data_quality_report(
+                quality_path.read_text(encoding="utf-8"),
+                report_path.read_text(encoding="utf-8"),
+            )
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+        return HTMLResponse(
+            combined,
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/api/reports/dev-release")
     @app.get("/api/reports/site-release")

@@ -295,6 +295,7 @@ nba-build-gestalt-win-projections = "nba_lineup_model.web_api.win_projections:ma
 nba-build-gestalt-team-strength-preview = "nba_lineup_model.web_api.team_strength_preview:main"
 nba-build-gestalt-team-strength-win-projections = "nba_lineup_model.web_api.team_strength_preview:main_release"
 nba-build-gestalt-team-win-history = "nba_lineup_model.web_api.team_win_history:main"
+nba-build-data-quality-report = "nba_lineup_model.orchestration.data_quality_probe:main"
 nba-validate-gestalt-release = "nba_lineup_model.web_api.release_validation:main"
 nba-build-win-total-benchmark = "nba_lineup_model.rotation.win_total_benchmark:main"
 nba-evaluate-forward-conditional-role-gate-roster-squash = "nba_lineup_model.rotation.forward_conditional_role_gate_roster_squash:main"

@@ -18,6 +18,7 @@ Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt-dev/live-release/sch
 Environment=GESTALT_LIVE_SCORE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
 Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt-dev/live-release/catalog/games.parquet
 Environment=GESTALT_SITE_RELEASE_ROOT=/var/lib/nba-gestalt-dev/live-release/site-releases
+Environment=GESTALT_DATA_QUALITY_ROOT=/var/lib/nba-gestalt-dev/data-quality
 EnvironmentFile=/var/lib/nba-gestalt-dev/live-release/site-release.env
 ExecStart=/opt/nba-gestalt-web-dev/current/bin/uvicorn nba_lineup_model.web_api.app:app --host 127.0.0.1 --port 8011 --workers 1
 Restart=on-failure
