@@ -389,7 +389,15 @@ def record_verified_release_forecasts(
     if not registry_root:
         return  # Existing history is not retroactively given live receipts.
     registry = ForecastRegistry(registry_root)
+    # A corrected selection may retain older version IDs for audit. Only
+    # versions actually selected by this release received a live publication.
+    selected_versions = {
+        selection["version_reference"] for selection in index["games"].values()
+        if selection.get("provenance") == "original_live" and selection.get("version_reference")
+    }
     for forecast_id in index.get("publication_forecast_ids", []):
+        if forecast_id not in selected_versions:
+            continue
         receipt_id = digest(
             {"operation": operation_id, "forecast": forecast_id, "environment": environment}
         )

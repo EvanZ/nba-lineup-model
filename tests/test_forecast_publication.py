@@ -280,6 +280,21 @@ def test_receipt_requires_verified_forecast_and_valid_chronology(tmp_path):
         )
 
 
+def test_replay_does_not_create_live_receipts_for_replaced_forecasts(tmp_path):
+    registry = ForecastRegistry(tmp_path / "registry")
+    candidate(registry, "old")
+    release = tmp_path / "release"
+    (release / "selected-schedule").mkdir(parents=True)
+    (release / "selected-schedule/forecast-selections.json").write_text(json.dumps({
+        "forecast_registry_root": str(registry.root),
+        "publication_forecast_ids": ["old"],
+        "games": {"one": {"provenance": "retrospective_replay", "forecast_id": "corrected"}},
+    }))
+    record_verified_release_forecasts(release, environment="dev", generation=3,
+        operation_id="corrected-activation", published_at=TIP + timedelta(hours=3))
+    assert not list((registry.root / "receipts").glob("*.json"))
+
+
 def test_verified_activation_receipts_are_idempotent_and_never_backdated(tmp_path):
     registry = ForecastRegistry(tmp_path / "registry")
     candidate(registry, "first")
@@ -290,6 +305,7 @@ def test_verified_activation_receipts_are_idempotent_and_never_backdated(tmp_pat
             {
                 "forecast_registry_root": str(registry.root),
                 "publication_forecast_ids": ["first"],
+                "games": {"one": {"provenance": "original_live", "version_reference": "first"}},
             }
         )
     )
