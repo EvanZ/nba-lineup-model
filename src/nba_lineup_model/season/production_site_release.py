@@ -255,6 +255,13 @@ def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path
             shutil.copytree(base / "selected-schedule", staging / "selected-schedule")
             shutil.copy2(base / "serving-bindings.json", staging / "serving-bindings.json")
         shutil.copy2(base / "site-release.env", staging / "site-release.env")
+        # Source artifacts may be 0600 and owned by the service account. A root
+        # deployment changes ownership when copying; retain content, not that
+        # owner-only restriction. These are non-secret website data components.
+        for path in staging.rglob("*"):
+            if path.is_symlink():
+                raise ValueError("Immutable data component contains a symlink")
+            path.chmod(0o755 if path.is_dir() else 0o644)
         (staging / "schedule").symlink_to(
             Path(identity["schedule_overlay_path"]), target_is_directory=True)
         sealed = materialize_sealed_code_package(

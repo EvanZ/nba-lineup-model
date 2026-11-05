@@ -32,6 +32,7 @@ def test_receipts_readable_even_with_restrictive_publisher_umask(tmp_path):
 def test_code_release_preserves_data_and_does_not_rebuild(tmp_path, monkeypatch):
     fixture = _fixture(tmp_path, monkeypatch)
     base = _stage(tmp_path, fixture)
+    (base / "catalog/games.parquet").chmod(0o600)
     original = subject.verify_production_site_release(base)
     source = fixture["code_root"]
     (source / "module.py").write_text("VERSION = 2\n")
@@ -44,6 +45,7 @@ def test_code_release_preserves_data_and_does_not_rebuild(tmp_path, monkeypatch)
     updated = subject.stage_code_release(base_release=base, code_root=source,
                                         output_root=tmp_path / "code-releases")
     current = subject.verify_production_site_release(updated)
+    assert (updated / "catalog/games.parquet").stat().st_mode & 0o777 == 0o644
     assert current["approved_manifest"] == original["approved_manifest"]
     changed = {k for k in current["identity"]
                if current["identity"][k] != original["identity"][k]}
