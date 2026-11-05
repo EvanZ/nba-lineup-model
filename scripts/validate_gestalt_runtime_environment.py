@@ -55,6 +55,7 @@ REQUIRED = {
         "pyarrow",
         "pydantic",
         "pypdf",
+        "pytest",
         "scikit-learn",
         "scipy",
         "uvicorn",

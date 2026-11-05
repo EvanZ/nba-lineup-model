@@ -7,3 +7,4 @@ dagster==1.13.26
 dagster-webserver==1.13.26
 duckdb==1.5.6
 pypdf==6.18.0
+pytest==8.4.2

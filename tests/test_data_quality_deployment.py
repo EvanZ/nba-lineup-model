@@ -97,6 +97,54 @@ def test_watchdog_release_is_sealed_and_independent_of_site(tmp_path):
     assert "--watchdog-package-sha256 @WATCHDOG_SHA256@" in unit
 
 
+def test_verified_sealed_package_can_be_copied_without_git(tmp_path):
+    import subprocess
+    from nba_lineup_model.season.sealed_code_package import (
+        materialize_sealed_code_package,
+        verify_sealed_code_package,
+    )
+
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    (source / "uv.lock").write_text("version = 1\n")
+    (source / "module.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "sealed",
+        ],
+        check=True,
+    )
+    revision = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    first = tmp_path / "first"
+    first.mkdir()
+    first_manifest = materialize_sealed_code_package(
+        source, first, expected_revision=revision
+    )
+    second = tmp_path / "second"
+    second.mkdir()
+    second_manifest = materialize_sealed_code_package(
+        first / "code", second, expected_revision=revision
+    )
+    assert second_manifest["identity"] == first_manifest["identity"]
+    assert verify_sealed_code_package(second)["files"] == first_manifest["files"]
+
+
 def test_wrong_watchdog_checksum_publishes_urgent_failure(tmp_path, monkeypatch):
     from nba_lineup_model.orchestration import data_quality_probe as probe
     from nba_lineup_model.season import sealed_code_package

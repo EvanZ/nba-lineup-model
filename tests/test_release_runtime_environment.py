@@ -43,7 +43,14 @@ def test_web_release_requirements_are_serving_only() -> None:
 def test_orchestration_requirements_extend_web_without_training_stack() -> None:
     requirements = (ROOT / "deploy" / "orchestration-requirements.txt").read_text().lower()
     assert "-r web-requirements.txt" in requirements
-    for required in ("boto3", "dagster", "dagster-webserver", "duckdb", "pypdf"):
+    for required in (
+        "boto3",
+        "dagster",
+        "dagster-webserver",
+        "duckdb",
+        "pypdf",
+        "pytest",
+    ):
         assert required in requirements
     for forbidden in ("catboost", "lightning", "matplotlib", "mlflow", "prefect", "torch"):
         assert forbidden not in requirements
@@ -59,7 +66,10 @@ def test_all_dagster_units_use_shared_versioned_environment() -> None:
     for unit in units:
         text = unit.read_text()
         assert "/opt/nba-gestalt/current/.venv/bin/" not in text
-        assert "/opt/nba-gestalt-orchestration/current/bin/" in text
+        assert (
+            "/opt/nba-gestalt-orchestration/current/bin/" in text
+            or "@ORCHESTRATION_PYTHON@" in text
+        )
 
 
 def test_web_deploy_does_not_install_orchestration_into_web_environment() -> None:

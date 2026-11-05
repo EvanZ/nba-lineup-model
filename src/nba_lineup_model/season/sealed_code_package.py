@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 import tarfile
 from pathlib import Path
@@ -92,31 +93,48 @@ def materialize_sealed_code_package(
 
     source = Path(code_root).resolve()
     release = Path(release_root)
-    package = inspect_source_code(source)
+    sealed_source = (
+        source.parent
+        if source.name == "code" and (source.parent / MANIFEST_FILENAME).is_file()
+        else None
+    )
+    if sealed_source is not None:
+        source_manifest = verify_sealed_code_package(sealed_source)
+        package = {key: source_manifest[key] for key in ("identity", "files")}
+    else:
+        package = inspect_source_code(source)
     if package["identity"]["git_revision"] != expected_revision:
         raise ValueError("Code checkout differs from the approved dev release")
     destination = release / "code"
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("Release code destination already exists")
     destination.mkdir()
-    # Stream the committed tree, never the editable working files.
-    with subprocess.Popen(
-        ["git", "-C", str(source), "archive", "--format=tar", expected_revision],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    ) as process:
-        try:
-            with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
-                for member in archive:
-                    if not member.isdir() and not member.isfile():
-                        raise ValueError("Release code archive contains a non-regular entry")
-                    archive.extract(member, destination, filter="data")
-            if process.wait() != 0:
-                raise ValueError("Git could not export the selected code revision")
-        finally:
-            if process.poll() is None:
-                process.terminate()
-            process.wait()
+    if sealed_source is not None:
+        # The source has already been detached from Git. Its manifest is the
+        # authority, so copy only the files that were verified above.
+        for relative in sorted(package["files"]):
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / relative, target)
+    else:
+        # Stream the committed tree, never the editable working files.
+        with subprocess.Popen(
+            ["git", "-C", str(source), "archive", "--format=tar", expected_revision],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ) as process:
+            try:
+                with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+                    for member in archive:
+                        if not member.isdir() and not member.isfile():
+                            raise ValueError("Release code archive contains a non-regular entry")
+                        archive.extract(member, destination, filter="data")
+                if process.wait() != 0:
+                    raise ValueError("Git could not export the selected code revision")
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                process.wait()
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "artifact_kind": ARTIFACT_KIND,
