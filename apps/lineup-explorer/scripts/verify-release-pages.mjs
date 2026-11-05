@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 
 const [frontendArg, api, output, playwrightPath, baselinePath] = process.argv.slice(2);
 assert.equal(process.env.GESTALT_QA_RESOURCE_LIMITED, "1", "Run this check in the documented resource-limited systemd unit.");
+const scheduleDate = process.env.GESTALT_QA_GAME_DATE || "2026-11-02";
+assert.match(scheduleDate, /^\d{4}-\d{2}-\d{2}$/);
 const baseline = baselinePath ? JSON.parse(await readFile(baselinePath, "utf8")) : null;
 const frontend = await realpath(frontendArg);
 const { chromium } = await import(pathToFileURL(playwrightPath).href);
@@ -39,7 +41,7 @@ const report = { frontend, api, baselinePath, views: [], errors, failedRequests,
 try {
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     for (const [name, route, selector] of [
-      ["schedule", "#schedule/2026-11-02", ".schedule-result-badges"],
+      ["schedule", `#schedule/${scheduleDate}`, ".schedule-game-card"],
       ["player", "#player/201939", ".current-season-game-log-table tbody tr, .current-season-game-log-card"],
       ["rankings", "#rankings", ".rankings-table tbody tr, .mobile-player-rankings li"],
       ["team", "#team/GSW?season=2026-27", ".team-roster-table tbody tr, .team-roster-mobile-list li"],
@@ -64,6 +66,12 @@ try {
       }
       if (name === "schedule") {
         await page.locator("details.schedule-assumptions").first().evaluate((el) => { el.open = true; });
+        const links = await page.locator('a[href*="/referee/injury/"]').evaluateAll(nodes => nodes.map(n => n.href));
+        report.injuryReportLinks = links;
+        if (process.env.GESTALT_QA_EXPECT_REPORT_DATE) {
+          assert.ok(links.length > 0, "No rendered official injury report links");
+          assert.ok(links.every(link => link.includes(`Injury-Report_${process.env.GESTALT_QA_EXPECT_REPORT_DATE}_`)), "Rendered injury links use another report date");
+        }
       }
       await page.evaluate(() => Promise.race([document.fonts.ready, new Promise((resolve) => setTimeout(resolve, 10000))]));
       await page.addStyleTag({ content: "html, body, * { scroll-behavior: auto !important; }" });

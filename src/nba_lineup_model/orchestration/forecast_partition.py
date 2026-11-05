@@ -121,7 +121,9 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
         cfg = replace(template, model_root=model_path.parents[2])
         prior_path = cfg.pipeline_root / "forecast-publication" / replay["request_id"] / "report.json"
         prior = read_object(prior_path) if prior_path.is_file() else None
-        if prior and prior.get("status") == "activated" and Path(prior["runtime_release"]).resolve() == live:
+        from nba_lineup_model.season.production_site_release import verify_production_site_release
+        if (prior and prior.get("status") == "activated"
+            and prior.get("runtime_sha256") == verify_production_site_release(live)["runtime_sha256"]):
             publication = prior
         else:
             publication = publish_forecast_schedule(cfg, schedule=prepared_schedule, base=live,

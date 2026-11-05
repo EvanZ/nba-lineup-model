@@ -63,7 +63,8 @@ def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: st
     if config.observation_root is None:
         raise ValueError("Forecast publication requires the canonical observation source")
     active = read_active_activation(config.live_pointer)
-    if active is None or Path(active["release_path"]).resolve() != base:
+    base_identity = verify_production_site_release(base)
+    if active is None or active["runtime_sha256"] != base_identity["runtime_sha256"]:
         raise ValueError("Active release changed before forecast publication")
     changed = validate_forecast_handoff(base, schedule)
     candidate = stage_schedule_release(base_release=base, schedule_root=schedule,
@@ -73,6 +74,7 @@ def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: st
     report_root = config.pipeline_root / "forecast-publication" / work_id
     report_root.mkdir(parents=True, exist_ok=True)
     report = {"status": "validating", "work_id": work_id, "runtime_release": str(candidate),
+        "runtime_sha256": manifest["runtime_sha256"],
         "base_runtime": active["runtime_sha256"], "base_generation": active["generation"],
         "code_changed": False, "model_changed": False, "changed_game_ids": changed}
     environment = "dev" if config.environment_root.name == "nba-gestalt-dev" else "prod"

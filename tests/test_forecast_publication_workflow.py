@@ -21,7 +21,8 @@ def workflow(tmp_path, monkeypatch):
     config = SimpleNamespace(environment_root=tmp_path / "nba-gestalt-dev",
         pipeline_root=tmp_path / "pipeline", live_pointer=tmp_path / "live",
         observation_root=tmp_path / "observations", model_root=tmp_path / "model")
-    manifest = {"identity": {"evidence_through_date": "2026-11-02", "game_count": 107,
+    manifest = {"runtime_sha256": "old",
+        "identity": {"evidence_through_date": "2026-11-02", "game_count": 107,
         "serving_bundle_sha256": "serving", "lineup_bundle_sha256": "lineup"},
         "approved_manifest": {"identity": {"schedule": {"final_game_count": 107}}}}
     calls = []
@@ -85,3 +86,13 @@ def test_changed_base_is_rejected_before_staging(workflow, monkeypatch):
         subject.publish_forecast_schedule(config, schedule=schedule, base=base,
                                            work_id="request", activate=True)
     assert not calls
+
+
+def test_active_generation_wrapper_and_release_use_same_verified_identity(workflow, monkeypatch):
+    config, base, schedule, calls = workflow
+    monkeypatch.setattr(subject, "read_active_activation", lambda _: {
+        "release_path": str(base.parent / "different-release-path"),
+        "runtime_sha256": "old", "generation": 10})
+    result = subject.publish_forecast_schedule(config, schedule=schedule, base=base,
+                                               work_id="wrapper", activate=True)
+    assert result["status"] == "activated"
