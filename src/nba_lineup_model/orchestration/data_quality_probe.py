@@ -331,19 +331,27 @@ def odds_artifact_observed_at(schedule_root: Path) -> str:
 
 def current_surface_snapshot(api_root: str, evidence_date: str) -> dict[str, object]:
     encoded_date = urllib.parse.quote(evidence_date)
-    health = get_json(api_root, "/api/health")
-    serving = get_json(api_root, "/api/serving-view")
-    rankings = get_json(api_root, "/api/rankings?season=2026-27")
-    teams = get_json(api_root, "/api/teams?season=2026-27")
-    lineups = get_json(
-        api_root,
-        "/api/lineups?season=2026-27&minimum_possessions=0",
-    )
-    wins = get_json(api_root, "/api/win-projections")
-    records = get_json(api_root, "/api/current-season-records")
-    performance = get_json(api_root, "/api/schedule-performance")
+    failures = []
+
+    def fetch(name, path):
+        try:
+            return get_json(api_root, path)
+        except Exception as error:
+            failures.append({"stage": "api:" + name, "status": "failed",
+                             "message": f"{path}: {type(error).__name__}: {error}"})
+            # This is unavailable evidence, never a successful empty response.
+            return {}
+
+    health = fetch("health", "/api/health")
+    serving = fetch("serving", "/api/serving-view")
+    rankings = fetch("rankings", "/api/rankings?season=2026-27")
+    teams = fetch("teams", "/api/teams?season=2026-27")
+    lineups = fetch("lineups", "/api/lineups?season=2026-27&minimum_possessions=0")
+    wins = fetch("wins", "/api/win-projections")
+    records = fetch("records", "/api/current-season-records")
+    performance = fetch("performance", "/api/schedule-performance")
     schedule = (
-        get_json(api_root, f"/api/schedule?date={encoded_date}") if evidence_date else {"games": []}
+        fetch("schedule", f"/api/schedule?date={encoded_date}") if evidence_date else {"games": []}
     )
     season_window = next(
         (window for window in performance.get("windows", []) if window.get("key") == "season"),
@@ -352,6 +360,7 @@ def current_surface_snapshot(api_root: str, evidence_date: str) -> dict[str, obj
     win_projection = wins.get("win_projection") or {}
     win_teams = win_projection.get("teams") or []
     return {
+        "probe_failures": failures,
         "health": health,
         "serving": serving,
         "ranking_count": len(rankings.get("players") or []),
@@ -966,6 +975,24 @@ def collect_environment_report(
             details={"code_revision": identity.get("code_revision")},
         ),
     ]
+    failed_surfaces = {row["stage"].removeprefix("api:")
+                       for row in surfaces.get("probe_failures", [])}
+    dependencies = {
+        "player_pages": {"health", "serving"}, "rankings": {"rankings", "serving"},
+        "teams": {"teams", "serving"}, "lineups": {"lineups", "serving"},
+        "wins": {"wins", "serving"}, "grades_and_records": {"records", "serving"},
+        "aggregate_performance": {"performance", "serving"},
+        "schedule_ledgers": {"schedule", "serving"}, "frontend": {"serving"},
+    }
+    for artifact in artifacts:
+        unavailable = dependencies.get(artifact["name"], set()) & failed_surfaces
+        if unavailable:
+            artifact["states"]["served"] = False
+            artifact["details"]["failed_api_checks"] = sorted(unavailable)
+            # Do not report zero/missing games when the API could not be checked.
+            # Materialized artifact identity and prior validation remain visible.
+            for count in artifact["coverage"].values():
+                count["observed"] = None
     transition = activation_transition(active, bindings)
     activation = {
         **dict(active),
@@ -1012,6 +1039,7 @@ def collect_environment_report(
                 thresholds=thresholds,
             )
         ],
+        pipeline_failures=surfaces.get("probe_failures", []),
         generated_at=generated,
         notes=notes,
     )
