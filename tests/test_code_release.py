@@ -6,6 +6,29 @@ from nba_lineup_model.season import production_site_release as subject
 from test_production_site_release import _fixture, _stage
 
 
+def test_receipts_readable_even_with_restrictive_publisher_umask(tmp_path):
+    import os
+    from datetime import timedelta
+    from test_forecast_publication import candidate, receipt, TIP
+    from nba_lineup_model.season.forecast_publication import ForecastRegistry
+    registry = ForecastRegistry(tmp_path)
+    previous = os.umask(0o077)
+    try:
+        candidate(registry, "first")
+        receipt(registry, "first", TIP - timedelta(minutes=5))
+    finally:
+        os.umask(previous)
+    path = next((tmp_path / "receipts").glob("*.json"))
+    assert path.parent.stat().st_mode & 0o777 == 0o755
+    assert path.stat().st_mode & 0o777 == 0o644
+    before = path.read_bytes()
+    path.chmod(0o600)
+    assert registry.ensure_receipts_readable() == 1
+    assert path.stat().st_mode & 0o777 == 0o644
+    assert path.read_bytes() == before
+    assert registry.ensure_receipts_readable() == 0
+
+
 def test_code_release_preserves_data_and_does_not_rebuild(tmp_path, monkeypatch):
     fixture = _fixture(tmp_path, monkeypatch)
     base = _stage(tmp_path, fixture)

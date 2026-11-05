@@ -36,7 +36,9 @@ class ForecastRegistry:
         if not identity or Path(identity).name != identity or identity in {".", ".."}:
             raise ValueError("Invalid registry identity")
         path = self.root / category / f"{identity}.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.parent.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.parent.chmod(0o755)
         data = canonical_json(value) + b"\n"
         temporary = None
         try:
@@ -44,6 +46,9 @@ class ForecastRegistry:
                 temporary = Path(handle.name)
                 handle.write(data)
                 handle.flush()
+                # The privileged publisher and unprivileged API share these
+                # non-secret immutable records. NamedTemporaryFile defaults to 0600.
+                os.fchmod(handle.fileno(), 0o644)
                 os.fsync(handle.fileno())
             try:
                 os.link(temporary, path)
@@ -99,6 +104,25 @@ class ForecastRegistry:
         with publisher_lock(self.root):
             self._put("versions", forecast.forecast_id, record)
         return forecast.forecast_id
+
+    def ensure_receipts_readable(self) -> int:
+        """Migrate old root-only receipts without changing a single content byte."""
+        changed = 0
+        with publisher_lock(self.root):
+            for path in sorted((self.root / "receipts").glob("*.json")):
+                if path.is_symlink():
+                    raise ValueError("Publication receipt must not be a symlink")
+                before = path.read_bytes()
+                receipt = PublicationReceipt.model_validate_json(before)
+                if receipt.receipt_id != path.stem:
+                    raise ValueError("Publication receipt filename differs from identity")
+                self.version(receipt.forecast_id)
+                if path.stat().st_mode & 0o777 != 0o644:
+                    path.chmod(0o644)
+                    changed += 1
+                if path.read_bytes() != before:
+                    raise ValueError("Publication receipt changed during permission migration")
+        return changed
 
     def record_publication(
         self,

@@ -110,6 +110,14 @@ def main():
               "base_runtime": active["runtime_sha256"], "runtime": manifest["runtime_sha256"],
               "code_revision": identity["code_revision"], "data_changed": False}
     try:
+        from nba_lineup_model.season.forecast_publication import ForecastRegistry
+        selection = json.loads((candidate / "selected-schedule/forecast-selections.json").read_text())
+        registry_path = selection.get("forecast_registry_root")
+        if registry_path:
+            registry_path = Path(registry_path).resolve(strict=True)
+            if not registry_path.is_relative_to(config.environment_root):
+                raise ValueError("Forecast registry escapes this environment")
+            report["receipt_permissions_repaired"] = ForecastRegistry(registry_path).ensure_receipts_readable()
         with candidate_api(candidate, report_root) as api:
             print("Candidate API started; validating unchanged data and all schedule dates", flush=True)
             evidence = collect_api_validation(api, evidence_date=identity["evidence_through_date"],
