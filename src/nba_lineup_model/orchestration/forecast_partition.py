@@ -108,7 +108,7 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
         if not prepared_schedule.is_relative_to(template.environment_root.resolve()):
             raise ValueError("Prepared forecasts must belong to the job's environment")
         index = verify_schedule_selection(prepared_schedule)
-        replay = index.get("injury_replay", {})
+        replay = index.get("market_repair") or index.get("injury_replay", {})
         request = replay.get("request", {})
         if not approval_reference or approval_reference != request.get("approval_reference"):
             raise ValueError("Prepared historical correction requires its explicit approval")
@@ -140,6 +140,9 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
     schedule = live / "selected-schedule"
     from nba_lineup_model.season.official_schedule_runtime import select_captured_injuries
     captures = select_captured_injuries(schedule_root=schedule, observation_root=observation_root,
+        start_date=forecast_date.isoformat(), days_ahead=0, now=datetime.now(UTC))
+    from nba_lineup_model.season.market_selection import select_captured_markets
+    markets = select_captured_markets(schedule_root=schedule, observation_root=observation_root,
         start_date=forecast_date.isoformat(), days_ahead=0, now=datetime.now(UTC))
     selected = latest_completed_model(live, forecast_date)
     model = verify_daily_model_artifact(selected)
@@ -179,11 +182,14 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
             "code": revision,
             "model": model["bundle_sha256"],
             "injury_captures": captures,
+            "market_captures": markets,
         }
     )
     output = template.pipeline_root / "forecasts" / str(forecast_date) / run_identity
     injury_inputs = output / "inputs" / "injury-captures.json"
     atomic_json(injury_inputs, captures, immutable=True)
+    market_inputs = output / "inputs" / "market-captures.json"
+    atomic_json(market_inputs, markets, immutable=True)
     config = replace(
         template,
         pipeline_root=output / "pipeline",
@@ -197,6 +203,7 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
         preseason_rankings_path=live / "preseason/rankings.parquet",
         preseason_profiles_path=live / "preseason/profiles.parquet",
         forecast_date=str(forecast_date),
+        forecast_market_inputs_path=market_inputs,
         activate_after_validation=False,
     )
     files = {

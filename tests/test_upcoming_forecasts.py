@@ -114,6 +114,12 @@ def test_open_forecast_refresh_preserves_history_and_uses_registry(tmp_path, mon
     (raw / "latest" / f"{GAME_DATE}.json").write_text(json.dumps(board))
     source = tmp_path / "source"
     build_schedule_selection(raw, source, edition_id="approved")
+    # Odds can arrive after the first forecast. The next ordinary refresh must
+    # consume the independent market capture, not preserve the earlier null.
+    board["games"][0]["market"] = {"source": "The Odds API", "captured_at": now.isoformat(),
+        "home_spread": -3.5, "away_spread": 3.5}
+    _publish_pregame_candidate(board["games"][0], state_root=raw, captured_at=now)
+    (raw / "latest" / f"{GAME_DATE}.json").write_text(json.dumps(board))
     original_files = {
         str(p.relative_to(source)): p.read_bytes() for p in source.rglob("*") if p.is_file()
     }
@@ -144,6 +150,8 @@ def test_open_forecast_refresh_preserves_history_and_uses_registry(tmp_path, mon
     new = read_object(target / "latest" / f"{GAME_DATE}.json")["games"]
     old = read_object(source / "latest" / f"{GAME_DATE}.json")["games"]
     assert new[1] == old[1]
+    assert new[0]["market"]["home_spread"] == -3.5
+    assert new[0]["market_selection"]["captured_at"] == now.isoformat()
     assert new[0]["projection"]["ledger"]["home_court_adjustment"] == 1.6
     assert new[0]["projection"]["input_provenance"]["rating_as_of"] == "2026-10-30"
     assert index["games"][new[0]["game_id"]]["provenance"] == "original_live"

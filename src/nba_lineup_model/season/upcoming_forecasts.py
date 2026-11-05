@@ -67,6 +67,13 @@ def refresh_open_selection(**kwargs) -> dict:
             schedule_root=source, observation_root=kwargs["observation_root"].resolve(strict=True),
             start_date=kwargs["start_date"].isoformat(), days_ahead=kwargs["days_ahead"], now=now,
         )
+    from nba_lineup_model.season.market_selection import select_captured_markets
+    markets = kwargs.get("market_captures")
+    if markets is None:
+        markets = select_captured_markets(schedule_root=source,
+            observation_root=kwargs["observation_root"].resolve(strict=True),
+            start_date=kwargs["start_date"].isoformat(), days_ahead=kwargs["days_ahead"], now=now)
+    kwargs["market_captures"] = markets
     kwargs = {k: v for k, v in kwargs.items() if k != "observation_root"}
     kwargs.update(now=now, injury_captures=captures)
     model = require_forecast_model(
@@ -77,6 +84,7 @@ def refresh_open_selection(**kwargs) -> dict:
             "source": verify_schedule_selection(source)["selection_map_sha256"],
             "injury_captures": captures,
             "model": model["bundle_sha256"],
+            "market_captures": markets,
             "response": kwargs["forecast_response"],
             "start_date": str(kwargs["start_date"]),
             "days_ahead": kwargs["days_ahead"],
@@ -118,6 +126,7 @@ def _refresh_open_selection(
     environment: str,
     injury_captures: dict[str, dict],
     now: datetime | None = None,
+    market_captures: dict[str, dict],
 ) -> dict:
     """Publish a new selection bundle, preserving every locked selection exactly.
 
@@ -170,7 +179,11 @@ def _refresh_open_selection(
         for game in board["games"]:
             gid = str(game["game_id"])
             old = old_games[gid]
-            if forecast_inputs(game) == forecast_inputs(old):
+            market_capture = market_captures.get(gid)
+            if market_capture:
+                game["market"] = copy.deepcopy(market_capture["market"])
+                game["market_selection"] = copy.deepcopy(market_capture["capture"])
+            if forecast_inputs(game) == forecast_inputs(old) and game.get("market") == old.get("market"):
                 protected.append(gid)
                 continue
             cutoff = datetime.fromisoformat(str(old["start_time"]).replace("Z", "+00:00"))
@@ -209,6 +222,7 @@ def _refresh_open_selection(
             version_id = digest(
                 {
                     "forecast": forecast_inputs(game),
+                    "market": {field:game.get(field) for field in MARKET_FIELDS},
                     "computed_at": now.isoformat(),
                     "code": code,
                     "edition": index["edition_id"],
@@ -264,6 +278,7 @@ def _refresh_open_selection(
             }
             selected.update(
                 forecast_id=digest(forecast_inputs(game)),
+                market_selection_id=digest({field:game.get(field) for field in MARKET_FIELDS}),
                 provenance="original_live",
                 registry_selection=open_selection,
                 version_reference=version_id,
@@ -272,9 +287,10 @@ def _refresh_open_selection(
             selected["selection_id"] = digest(selected)
             game["forecast_selection"] = selected
             index["games"][gid] = {**selected, "game_date": day}
-            for field in MARKET_FIELDS:
-                if game.get(field) != old.get(field):
-                    raise ValueError(f"Model refresh changed captured market: {gid}")
+            if game.get("prediction_market") != old.get("prediction_market"):
+                raise ValueError(f"Model refresh changed Polymarket selection: {gid}")
+            if game.get("market") != (market_capture["market"] if market_capture else old.get("market")):
+                raise ValueError(f"Forecast did not select its captured market: {gid}")
             versions.append(version_id)
             refreshed.append(gid)
             changed = True

@@ -8,7 +8,7 @@ from nba_lineup_model.season.dev_site_release import collect_api_validation, _no
 from nba_lineup_model.season.production_site_release import stage_schedule_release, verify_production_site_release
 from nba_lineup_model.season.release_publisher import activate_release, read_active_activation
 from nba_lineup_model.season.serving_selection import (
-    FORECAST_FIELDS, INDEX_FILENAME, forecast_inputs, read_object, verify_schedule_selection,
+    FORECAST_FIELDS, MARKET_FIELDS, INDEX_FILENAME, forecast_inputs, read_object, verify_schedule_selection,
 )
 
 
@@ -32,6 +32,19 @@ def validate_forecast_handoff(base: Path, schedule: Path) -> list[str]:
             gid = str(game["game_id"])
             before = originals[gid].get("pregame", originals[gid])
             after = game.get("pregame", game)
+            if before.get("market") != after.get("market"):
+                repair = new.get("market_repair", {}).get("request", {})
+                if new["games"][gid].get("provenance") != "original_live":
+                    if (not repair or repair.get("source_selection") != old["selection_map_sha256"]
+                        or repair.get("game_date") != day or not repair.get("approval_reference")
+                        or repair.get("market_captures", {}).get(gid, {}).get("market") != after.get("market")
+                        or forecast_inputs(before) != forecast_inputs(after)):
+                        raise ValueError(f"Market-only correction violates its approval: {gid}")
+                if not game.get("market_selection"):
+                    raise ValueError(f"Market selection has no capture provenance: {gid}")
+                if forecast_inputs(before) == forecast_inputs(after):
+                    changed.append(gid)
+                    continue
             if forecast_inputs(before) == forecast_inputs(after):
                 continue
             selection = new["games"][gid]
@@ -99,7 +112,7 @@ def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: st
                 for gid in set(changed) & set(expected_games):
                     expected_game = expected_games[gid].get("pregame", expected_games[gid])
                     actual_game = actual_games[gid].get("pregame", actual_games[gid])
-                    for field in FORECAST_FIELDS:
+                    for field in (*FORECAST_FIELDS, *MARKET_FIELDS):
                         if expected_game.get(field) != actual_game.get(field):
                             raise ValueError(f"API does not serve selected {field}: {gid}")
                     if actual_games[gid].get("data_quality_errors"):

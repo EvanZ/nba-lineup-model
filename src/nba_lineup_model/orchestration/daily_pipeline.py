@@ -71,6 +71,7 @@ class DailyPipelineConfig:
     preserve_schedule_selections: bool = False
     forecast_date: str | None = None
     forecast_injury_inputs_path: Path | None = None
+    forecast_market_inputs_path: Path | None = None
 
     @classmethod
     def read(cls, path: Path | str) -> "DailyPipelineConfig":
@@ -486,6 +487,8 @@ class CanonicalPipelineSteps:
                     observation_root=c.observation_root,
                     injury_captures=(read_object(c.forecast_injury_inputs_path)
                                      if c.forecast_injury_inputs_path else None),
+                    market_captures=(read_object(c.forecast_market_inputs_path)
+                                     if c.forecast_market_inputs_path else None),
                     catalog=c.catalog_path, code=code_identity,
                     environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
                 (out / "forecast-refresh.json").write_text(json.dumps(evidence, indent=2) + "\n")
