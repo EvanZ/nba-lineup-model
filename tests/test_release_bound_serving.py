@@ -80,7 +80,12 @@ def test_live_scores_and_final_grades_ignore_collector_predictions(tmp_path, mon
     assert audit["grading"]["projected_home_margin"] == selected["projection"]["home_margin"]
     assert audit["grading"]["model_favorite_won"] is True
     assert "missing_official_box_score" in selected["data_quality_errors"]
-    assert selected["retrospective"] == {}
+    # Finals arrive before box scores. Do not send an invalid result object
+    # that makes the browser dereference missing actual_minutes.away/home.
+    assert "retrospective" not in selected
+    assert selected["status"]["state"] == "post"
+    assert selected["projected_minutes"] == board["games"][0]["projected_minutes"]
+    assert audit["grading"]["model_favorite_won"] is True
     from nba_lineup_model.season.serving_selection import observation_context
 
     token = observation_context.set(snapshot)

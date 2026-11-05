@@ -427,7 +427,13 @@ def read_selected_day(
         audit["forecast_selection"] = game["forecast_selection"]
         audit["observation_id"] = observations.observation_id
         game["final_audit"] = audit
-        game["retrospective"] = retrospective
+        # A final score can arrive before its official box score. An empty
+        # object is not a valid retrospective: consumers require actual_minutes.
+        # Keep the final score, grading and explicit data-quality error visible.
+        if retrospective:
+            game["retrospective"] = retrospective
+        else:
+            game.pop("retrospective", None)
     board["serving_selection"] = {
         "edition_id": index["edition_id"],
         "selection_map_sha256": index["selection_map_sha256"],
