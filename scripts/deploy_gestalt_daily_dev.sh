@@ -57,11 +57,13 @@ import sys
 from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
 from nba_lineup_model.orchestration.daily_work import atomic_json
 from nba_lineup_model.orchestration.resumable_pipeline import config_identity
+from nba_lineup_model.orchestration.lifecycle import bind_accepted_configuration
 package = Path(sys.argv[1])
 enabled = sys.argv[2] == "true"
 config = DailyPipelineConfig.read("/var/lib/nba-gestalt-dev/daily-pipeline/config.json")
 if config.environment_root != Path("/var/lib/nba-gestalt-dev"):
     raise ValueError("Dev deployment cannot configure production jobs")
+config = bind_accepted_configuration(config)
 config = replace(config, code_root=package / "code",
     observation_root=Path("/var/lib/nba-gestalt/schedule-serving/current"),
     activate_after_validation=enabled, forecast_injury_inputs_path=None)

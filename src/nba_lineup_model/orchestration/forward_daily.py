@@ -109,6 +109,11 @@ class ForwardPartitionSteps(PartitionSteps):
 
 
 def advance_daily_environment(template, day: date):
+    from nba_lineup_model.orchestration.daily_pipeline import require_model_implementation_compatible
+    if not template.model_code_revision:
+        raise ValueError("Nightly processing requires the accepted model implementation revision")
+    # Check before collecting or building anything, including empty carry days.
+    require_model_implementation_compatible(template.code_root, template.model_code_revision)
     from nba_lineup_model.orchestration.daily_activation import activation_report_from_work, activate_daily_release
     live = template.live_pointer.resolve(strict=True)
     base = read_object(live / "runtime-manifest.json")

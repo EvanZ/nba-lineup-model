@@ -8,6 +8,44 @@ from nba_lineup_model.orchestration.daily_work import digest, read_object
 from nba_lineup_model.season.slate_time import PACIFIC
 
 
+def bind_accepted_configuration(template):
+    """Recover settings from the accepted model's verified producing work, never defaults."""
+    from dataclasses import replace
+    from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig, causal_hca_replay_config
+    from nba_lineup_model.orchestration.daily_work import verify_reference
+    from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
+    live = template.live_pointer.resolve(strict=True)
+    accepted = read_object(live / "runtime-manifest.json")["approved_manifest"]["identity"]
+    model_path = Path(accepted["model"]["bundle_path"])
+    model = verify_daily_model_artifact(model_path)
+    if model["bundle_sha256"] != accepted["model"]["bundle_sha256"]:
+        raise ValueError("Accepted model does not match its release")
+    provenance = model["identity"]["model_provenance"]
+    for parent in model_path.parents:
+        if not (parent / "work.json").is_file():
+            continue
+        work = read_object(parent / "work.json")
+        if digest(work["identity"]) != work["work_id"]:
+            raise ValueError("Model producing-work identity is invalid")
+        config_path = parent.parents[3] / "config.json"
+        producer = DailyPipelineConfig.read(config_path)
+        if digest(read_object(config_path)) != work["identity"]["configuration_digest"]:
+            raise ValueError("Model producing configuration changed")
+        files = work["identity"]["execution"]["files"]
+        selected = replace(template, model_track=provenance["model_version"],
+            model_code_revision=provenance["code_revision"],
+            model_configuration_sha256=provenance["configuration_sha256"],
+            model_configuration_path=verify_reference(files["model-configuration.json"]),
+            model_provenance_matchup_url=producer.model_provenance_matchup_url,
+            preseason_minutes_path=verify_reference(files["minutes.json"]))
+        selected.validate()
+        causal_hca_replay_config(selected)
+        return selected
+    # An untraceable producing configuration is not permission to use a legacy
+    # coefficient or infer settings from a filename.
+    raise ValueError("Accepted model has no verified producing-work configuration")
+
+
 def next_nightly_date(*, evidence: date, slates: dict[str, list[str]],
                       final_ids: set[str], now: datetime) -> date | None:
     """Advance chronologically only toward a fully completed nonempty slate.
