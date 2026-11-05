@@ -59,6 +59,7 @@ from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
 from nba_lineup_model.orchestration.daily_work import atomic_json
 from nba_lineup_model.orchestration.resumable_pipeline import config_identity
 from nba_lineup_model.orchestration.lifecycle import bind_accepted_configuration
+from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
 package = Path(sys.argv[1])
 enabled = sys.argv[2] == "true"
 config = DailyPipelineConfig.read("/var/lib/nba-gestalt-dev/daily-pipeline/config.json")
@@ -67,7 +68,9 @@ if config.environment_root != Path("/var/lib/nba-gestalt-dev"):
 config = bind_accepted_configuration(config)
 config = replace(config, code_root=package / "code",
     observation_root=Path("/var/lib/nba-gestalt/schedule-serving/current"),
-    activate_after_validation=enabled, forecast_injury_inputs_path=None)
+    activate_after_validation=enabled, forecast_injury_inputs_path=None,
+    artifact_lake_uri=DEFAULT_LAKE_URI,
+    artifact_cache_root=Path("/var/lib/nba-gestalt-dev/artifact-cache"))
 path = package / ("forecast-config-enabled.json" if enabled else "forecast-config-preview.json")
 atomic_json(path, config_identity(config), immutable=True)
 print(f"Forecast job configuration: {path}")

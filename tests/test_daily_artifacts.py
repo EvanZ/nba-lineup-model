@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
+import threading
 from datetime import date
 from pathlib import Path
 
 import pytest
+from botocore.exceptions import ClientError
 
 from nba_lineup_model.season.daily_data_artifact import (
     DEFAULT_REQUIRED_COMPONENTS as DATA_COMPONENTS,
@@ -26,8 +30,57 @@ from nba_lineup_model.season.daily_model_artifact import (
     publish_daily_model_artifact,
     verify_daily_model_artifact,
 )
+from nba_lineup_model.season.durable_artifact_storage import (
+    publish_daily_data_bundle,
+    publish_daily_model_bundle,
+)
+from nba_lineup_model.storage.artifact_store import resolve_storage_manifest
 
 SEASON = "2026-27"
+LAKE = "s3://test-bucket/lake"
+
+
+class DurableFakeS3:
+    def __init__(self):
+        self.objects = {}
+        self.puts = []
+        self.gets = []
+        self.lock = threading.Lock()
+
+    def head_object(self, *, Bucket, Key, ChecksumMode):
+        with self.lock:
+            value = self.objects.get((Bucket, Key))
+        if value is None:
+            raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
+        data, metadata, checksum = value
+        return {
+            "ContentLength": len(data),
+            "Metadata": metadata,
+            "ChecksumSHA256": checksum,
+        }
+
+    def put_object(self, **kwargs):
+        identity = (kwargs["Bucket"], kwargs["Key"])
+        data = kwargs["Body"].read()
+        checksum = kwargs["ChecksumSHA256"]
+        assert checksum == base64.b64encode(hashlib.sha256(data).digest()).decode()
+        with self.lock:
+            if identity in self.objects:
+                raise ClientError(
+                    {"Error": {"Code": "PreconditionFailed"}}, "PutObject"
+                )
+            self.objects[identity] = data, kwargs["Metadata"], checksum
+            self.puts.append(kwargs["Key"])
+        return {"ChecksumSHA256": checksum}
+
+    def get_object(self, *, Bucket, Key, ChecksumMode):
+        with self.lock:
+            value = self.objects.get((Bucket, Key))
+            self.gets.append(Key)
+        if value is None:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        data = value[0]
+        return {"Body": io.BytesIO(data), "ContentLength": len(data)}
 
 
 def _sha(value: str) -> str:
@@ -175,6 +228,109 @@ def test_data_artifacts_are_independent_while_model_artifacts_are_causal(tmp_pat
         "0022600001",
         "0022600002",
         "0022600003",
+    ]
+
+
+def test_durable_daily_bundle_preserves_identity_and_is_idempotent(tmp_path: Path) -> None:
+    data = _publish_data(
+        tmp_path, game_date=date(2026, 10, 20), game_ids=["0022600001"]
+    )
+    model = _publish_model(tmp_path, data_bundle=data.path)
+    client = DurableFakeS3()
+    cache = tmp_path / "artifact-cache"
+
+    with pytest.raises(FileNotFoundError, match="storage manifest is missing"):
+        publish_daily_model_bundle(
+            model.path, cache_root=cache, client=client, lake_uri=LAKE
+        )
+
+    durable_data = publish_daily_data_bundle(
+        data.path, cache_root=cache, client=client, lake_uri=LAKE
+    )
+    durable_model = publish_daily_model_bundle(
+        model.path, cache_root=cache, client=client, lake_uri=LAKE
+    )
+    assert durable_data.reference.content_id == (
+        "data_sha256=" + data.manifest["bundle_sha256"]
+    )
+    assert durable_model.reference.content_id == (
+        "model_sha256=" + model.manifest["bundle_sha256"]
+    )
+    stored_model = resolve_storage_manifest(
+        reference=durable_model.reference,
+        cache_root=cache,
+        client=client,
+        lake_uri=LAKE,
+    )
+    assert stored_model["dependencies"] == [durable_data.reference.as_dict()]
+    assert verify_daily_data_artifact(data.path) == data.manifest
+    assert verify_daily_model_artifact(model.path) == model.manifest
+
+    puts = list(client.puts)
+    repeated = publish_daily_model_bundle(
+        model.path, cache_root=cache, client=client, lake_uri=LAKE
+    )
+    assert repeated.objects.uploaded == 0
+    assert client.puts == puts
+
+
+def test_durable_model_requires_its_parent_model_manifest(tmp_path: Path) -> None:
+    day_one_data = _publish_data(
+        tmp_path,
+        game_date=date(2026, 10, 20),
+        game_ids=["0022600001"],
+        suffix="-durable-one",
+    )
+    day_one_model = _publish_model(
+        tmp_path, data_bundle=day_one_data.path, suffix="-durable-one"
+    )
+    day_two_data = _publish_data(
+        tmp_path,
+        game_date=date(2026, 10, 21),
+        game_ids=["0022600002"],
+        suffix="-durable-two",
+    )
+    day_two_model = _publish_model(
+        tmp_path,
+        data_bundle=day_two_data.path,
+        parent=day_one_model.path,
+        suffix="-durable-two",
+    )
+    client = DurableFakeS3()
+    cache = tmp_path / "artifact-cache"
+    day_one_data_stored = publish_daily_data_bundle(
+        day_one_data.path, cache_root=cache, client=client, lake_uri=LAKE
+    )
+    day_two_data_stored = publish_daily_data_bundle(
+        day_two_data.path, cache_root=cache, client=client, lake_uri=LAKE
+    )
+    with pytest.raises(FileNotFoundError, match="storage manifest is missing"):
+        publish_daily_model_bundle(
+            day_two_model.path, cache_root=cache, client=client, lake_uri=LAKE
+        )
+
+    day_one_model_stored = publish_daily_model_bundle(
+        day_one_model.path, cache_root=cache, client=client, lake_uri=LAKE
+    )
+    day_two_model_stored = publish_daily_model_bundle(
+        day_two_model.path, cache_root=cache, client=client, lake_uri=LAKE
+    )
+    stored_parent = resolve_storage_manifest(
+        reference=day_one_model_stored.reference,
+        cache_root=cache,
+        client=client,
+        lake_uri=LAKE,
+    )
+    assert stored_parent["dependencies"] == [day_one_data_stored.reference.as_dict()]
+    stored_child = resolve_storage_manifest(
+        reference=day_two_model_stored.reference,
+        cache_root=cache,
+        client=client,
+        lake_uri=LAKE,
+    )
+    assert stored_child["dependencies"] == [
+        day_two_data_stored.reference.as_dict(),
+        day_one_model_stored.reference.as_dict(),
     ]
 
 

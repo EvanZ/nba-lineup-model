@@ -31,6 +31,54 @@ from nba_lineup_model.season.release_publisher import (
 from nba_lineup_model.season.source_policy import require_clean_artifact_sources
 
 
+def _select_durable_release(
+    config: DailyPipelineConfig,
+    manifest: dict,
+    *,
+    operation_id: str,
+    approval_reference: str | None,
+):
+    """Record a verified API activation in append-only S3 history."""
+    if config.artifact_lake_uri is None:
+        return None
+    from nba_lineup_model.season.durable_release_storage import (
+        production_release_reference,
+    )
+    from nba_lineup_model.storage.artifact_store import resolve_storage_manifest
+    from nba_lineup_model.storage.environment_selection import (
+        activate_environment_selection,
+        read_environment_selection,
+    )
+
+    assert config.artifact_cache_root is not None
+    environment = _environment(config)
+    release = production_release_reference(manifest)
+    resolve_storage_manifest(
+        reference=release,
+        cache_root=config.artifact_cache_root,
+        lake_uri=config.artifact_lake_uri,
+    )
+    selected = read_environment_selection(
+        environment,
+        lake_uri=config.artifact_lake_uri,
+    )
+    previous_generation = (
+        int(selected["current"]["generation"]) if selected is not None else 0
+    )
+    return activate_environment_selection(
+        environment=environment,
+        release=release,
+        operation_id=operation_id,
+        reason=(
+            "EC2/API activation verified for daily release through "
+            f"{manifest['identity']['evidence_through_date']}"
+        ),
+        expected_previous_generation=previous_generation,
+        approval_reference=approval_reference,
+        lake_uri=config.artifact_lake_uri,
+    )
+
+
 def _environment(config: DailyPipelineConfig) -> str:
     return "dev" if config.environment_root.name == "nba-gestalt-dev" else "prod"
 
@@ -124,6 +172,7 @@ def activate_daily_release(
     reload_api = reload_api or reload_environment_api
     verify_api = verify_api or verify_environment_api
     report_root = config.pipeline_root / "reports" / report["game_date"]
+    durable_selection = None
 
     # Validate the mutable observation overlay under its own short lock. The
     # restart and verification happen after release so collectors keep writing.
@@ -157,6 +206,18 @@ def activate_daily_release(
                 )
                 report["legacy_code_migration"] = migration
                 _report(report_root, report)
+        def verify_and_select(record: dict) -> None:
+            nonlocal durable_selection
+            activated_release = Path(str(record["release_path"])).resolve()
+            verify_api(config, activated_release, record)
+            if activated_release == release:
+                durable_selection = _select_durable_release(
+                    config,
+                    manifest,
+                    operation_id=operation_id,
+                    approval_reference=report.get("approval_reference"),
+                )
+
         result = activate_release(
             release=release,
             live_pointer=config.live_pointer,
@@ -168,11 +229,7 @@ def activate_daily_release(
             approval_reference=report.get("approval_reference"),
             legacy_code_migration=migration,
             reload_api=lambda record: reload_api(config, record),
-            verify_api=lambda record: verify_api(
-                config,
-                Path(str(record["release_path"])).resolve(),
-                record,
-            ),
+            verify_api=verify_and_select,
         )
     except Exception as error:
         status = "rollback_failed" if isinstance(error, ExceptionGroup) else "activation_failed"
@@ -194,6 +251,12 @@ def activate_daily_release(
         activation_result=result.status,
         previous_release=previous.get("release_path") if previous else None,
     )
+    if durable_selection is not None:
+        report.update(
+            durable_selection_generation=durable_selection.generation,
+            durable_selection_uri=durable_selection.selection_uri,
+            durable_selection_activated=durable_selection.activated,
+        )
     _report(report_root, report)
 
 

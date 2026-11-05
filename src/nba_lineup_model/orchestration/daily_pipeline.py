@@ -27,6 +27,7 @@ import pandas as pd
 from nba_lineup_model.season.release_publisher import read_active_generation
 from nba_lineup_model.season.slate_time import PACIFIC
 from nba_lineup_model.season.source_policy import require_clean_artifact_sources
+from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
 
 CAUSAL_HCA_MODEL_TRACK = "causal_hca_replacement_candidate_v2"
 
@@ -64,6 +65,8 @@ class DailyPipelineConfig:
     forecast_date: str | None = None
     forecast_injury_inputs_path: Path | None = None
     forecast_market_inputs_path: Path | None = None
+    artifact_lake_uri: str | None = None
+    artifact_cache_root: Path | None = None
 
     @classmethod
     def read(cls, path: Path | str) -> "DailyPipelineConfig":
@@ -88,6 +91,17 @@ class DailyPipelineConfig:
                 raise ValueError(f"Pipeline output symlink escapes its environment: {path}")
         if not self.schedule_root.resolve().is_relative_to(boundary):
             raise ValueError("Dev and production cannot share a mutable schedule")
+        if (self.artifact_lake_uri is None) != (self.artifact_cache_root is None):
+            raise ValueError("Durable artifact lake and cache must be configured together")
+        if self.artifact_lake_uri is not None:
+            if self.artifact_lake_uri.rstrip("/") != DEFAULT_LAKE_URI:
+                raise ValueError("Daily pipeline must use the canonical S3 artifact lake")
+            assert self.artifact_cache_root is not None
+            cache = self.artifact_cache_root.absolute()
+            if not cache.is_relative_to(boundary):
+                raise ValueError("Artifact cache escapes its environment")
+            if cache.exists() and not cache.resolve().is_relative_to(boundary):
+                raise ValueError("Artifact cache symlink escapes its environment")
         if self.model_track == CAUSAL_HCA_MODEL_TRACK:
             if not all(
                 (
@@ -279,6 +293,7 @@ class CanonicalPipelineSteps:
         self.runtime_root = config.release_root.resolve(strict=True)
         self.data_replay_dates: tuple[date, ...] = ()
         self.approved_historical_model_replay_from: date | None = None
+        self.durable_dependencies = []
         self.env = {**os.environ, "PYTHONPATH": str(config.code_root / "src"),
             "GESTALT_CURRENT_SEASON_SERVING_ROOT": str(candidate / "serving"),
             "GESTALT_CURRENT_SEASON_LINEUPS_ROOT": str(candidate / "lineups"),
@@ -317,6 +332,20 @@ class CanonicalPipelineSteps:
             replay_daily_data_chain(start_date=start, end_date=target, coverage_path=config.coverage_path, output_root=config.data_root, game_catalog_path=config.catalog_path, season=config.season)
         elif start != target + timedelta(days=1):
             raise ValueError("Daily data tip is ahead of the requested release")
+        if config.artifact_lake_uri is not None:
+            from nba_lineup_model.season.durable_artifact_storage import (
+                publish_selected_data_chain,
+            )
+
+            assert config.artifact_cache_root is not None
+            published = publish_selected_data_chain(
+                config.data_root,
+                through_date=target,
+                cache_root=config.artifact_cache_root,
+                lake_uri=config.artifact_lake_uri,
+            )
+            self.durable_dependencies.extend(item.reference for item in published)
+            print(f"Durable data artifacts verified: {len(published)}")
 
     def model(self, target: date) -> None:
         from nba_lineup_model.season.daily_model_replay import DailyModelReplayConfig, _http_context_provider, replay_daily_model_chain
@@ -375,6 +404,20 @@ class CanonicalPipelineSteps:
                 context_provider=strict_context,
                 approved_historical_replay_from=self.approved_historical_model_replay_from,
             )
+        if config.artifact_lake_uri is not None:
+            from nba_lineup_model.season.durable_artifact_storage import (
+                publish_selected_model_chain,
+            )
+
+            assert config.artifact_cache_root is not None
+            published = publish_selected_model_chain(
+                config.model_root,
+                through_date=target,
+                cache_root=config.artifact_cache_root,
+                lake_uri=config.artifact_lake_uri,
+            )
+            self.durable_dependencies.extend(item.reference for item in published)
+            print(f"Durable model artifacts verified: {len(published)}")
 
     def serving(self) -> None:
         c = self.config
@@ -459,6 +502,30 @@ class CanonicalPipelineSteps:
         self.env["GESTALT_SCHEDULE_STATE_DIR"] = str(schedule)
         validate_schedule_artifacts(schedule)
         return schedule
+    def archive_release(self, release: Path) -> None:
+        c = self.config
+        if c.artifact_lake_uri is None:
+            return
+        from nba_lineup_model.season.durable_release_storage import (
+            publish_production_release,
+        )
+
+        assert c.artifact_cache_root is not None
+        if not self.durable_dependencies:
+            raise RuntimeError(
+                "Durable release has no verified daily artifact dependencies"
+            )
+        publication = publish_production_release(
+            release,
+            cache_root=c.artifact_cache_root,
+            dependencies=self.durable_dependencies,
+            lake_uri=c.artifact_lake_uri,
+        )
+        print(
+            "Durable site release verified: "
+            f"{publication.reference.content_id}"
+        )
+
 
     def validate_and_stage(self, target: date) -> Path:
         from nba_lineup_model.season.dev_site_release import collect_api_validation, publish_dev_site_release
@@ -473,7 +540,9 @@ class CanonicalPipelineSteps:
         with self.api() as api:
             validation = collect_api_validation(api, evidence_date=target.isoformat(), daily_model_root=c.model_root)
             publish_dev_site_release(daily_data_root=c.data_root, daily_model_root=c.model_root, serving_root=out / "serving", lineups_root=out / "lineups", schedule_state_dir=schedule, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_revision=self.revision, api_validation=validation, output_root=out / "site-releases")
-        return stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=schedule, schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
+        release = stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=schedule, schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
+        self.archive_release(release)
+        return release
 
 
 def prepare_daily_release(
