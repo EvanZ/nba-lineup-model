@@ -581,3 +581,26 @@ def test_legacy_migration_rejects_unsafe_inputs_without_pointer_changes(
                 legacy_code_migration=receipt,
             )
     assert live.resolve() == before
+
+
+@pytest.mark.parametrize("tamper", [False, True])
+def test_data_release_reuses_verified_deployed_code_without_git(tmp_path, monkeypatch, tamper):
+    from nba_lineup_model.season import sealed_code_package as sealed
+    fixture = _fixture(tmp_path, monkeypatch)
+    deployed = _stage(tmp_path, fixture)
+    original = sealed.verify_sealed_code_package(deployed)
+    fixture["code_root"] = deployed / "code"
+    assert not (fixture["code_root"] / ".git").exists()
+    def no_git(*args, **kwargs):
+        raise AssertionError("Deployed sealed code must not require Git")
+    monkeypatch.setattr(sealed, "_git_output", no_git)
+    if tamper:
+        tracked = next(iter(original["files"]))
+        path = deployed / "code" / tracked
+        path.chmod(0o644)
+        path.write_bytes(path.read_bytes() + b"\nchanged")
+        with pytest.raises(ValueError):
+            _stage(tmp_path / "restaged", fixture)
+    else:
+        candidate = _stage(tmp_path / "restaged", fixture)
+        assert sealed.verify_sealed_code_package(candidate)["identity"] == original["identity"]

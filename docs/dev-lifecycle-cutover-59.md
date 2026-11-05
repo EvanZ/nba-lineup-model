@@ -115,3 +115,18 @@ forecast change is used. Empty/missing/substituted/duplicate-game regression
 cases and empty-date publication are covered: 95 passed, 10 optional tests
 skipped. Real automatic publication remains to be verified; this is not a claim
 that ticket 59 is complete or that production has been changed.
+
+
+The automatic retry 89442a88-68a5-4e1d-98ce-657c1abace70 passed API coverage
+validation, then failed because runtime staging inspected deployed sealed code
+as a Git checkout. The canonical code inspector now verifies and reuses an
+existing package identity/inventory; source checkouts still require clean Git.
+Staging tests exercise a Git-free deployed package and reject tampered content.
+Regression suite: 126 passed, 1 optional artifact comparison skipped (previously
+run explicitly). No published release or historical forecast was modified.
+
+Explicit recorded-source lifecycle tests against the current dev runtime found
+four failures (5 passed): three assertions expect a retrospective field even
+when a damaged/missing box is correctly reported, and the suspended-game path
+fails on missing scheduling_instance_id. These remain unresolved; ticket 59 is
+not complete. Real nightly publication and browser review also remain required.

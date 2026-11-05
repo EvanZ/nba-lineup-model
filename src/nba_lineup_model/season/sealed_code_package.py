@@ -47,9 +47,12 @@ def _tracked_paths(code_root: Path) -> tuple[str, ...]:
 
 
 def inspect_source_code(code_root: Path | str) -> dict[str, Any]:
-    """Return the sealed identity and file inventory for a clean checkout."""
+    """Verify a sealed package or inspect a clean source checkout."""
 
     root = Path(code_root).resolve()
+    if root.name == "code" and (root.parent / MANIFEST_FILENAME).is_file():
+        verified = verify_sealed_code_package(root.parent)
+        return {key: verified[key] for key in ("identity", "files")}
     if _git_output(root, "status", "--porcelain", "--untracked-files=no"):
         raise ValueError("Release code checkout has modified tracked files")
     untracked_runtime = _git_output(
