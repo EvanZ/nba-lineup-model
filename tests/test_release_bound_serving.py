@@ -204,7 +204,7 @@ def test_original_live_selection_feeds_same_reader_and_excludes_missing_forecast
 
     registry = ForecastRegistry(tmp_path / "registry")
     first, payload = candidate(registry, "original")
-    registry.record_scheduling(first.scheduling)
+    registry.validate_scheduling_transition(first.scheduling)
     board = _board(collected_at=BEFORE)
     source = tmp_path / "source"
     write(source / "latest" / f"{GAME_DATE}.json", board)

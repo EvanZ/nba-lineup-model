@@ -222,7 +222,7 @@ def test_full_recorded_slate_through_cutoff_scores_boxes_and_metrics(recorded, m
     versions, payloads = [], []
     for game in r.board["games"]:
         v, p = stage(r, game, name=f"initial-{game['game_id']}", computed_at=before)
-        r.registry.record_scheduling(v.scheduling)
+        r.registry.validate_scheduling_transition(v.scheduling)
         versions.append(v)
         payloads.append(p)
         for offset, suffix, spread in ((-10, "closing", -2.5), (1, "live", -20.5)):
@@ -317,7 +317,7 @@ def prepared(recorded, monkeypatch, *, omit_publication=False):
     versions, payloads = [], []
     for game in r.board["games"]:
         version, payload = stage(r, game, name=f"first-{game['game_id']}", computed_at=before)
-        r.registry.record_scheduling(version.scheduling)
+        r.registry.validate_scheduling_transition(version.scheduling)
         versions.append(version)
         payloads.append(payload)
     board = {"games": payloads, "game_date": r.day, "collected_at": before.isoformat()}
@@ -417,15 +417,15 @@ def test_late_start_cannot_reopen_cutoff_but_official_reschedule_can(recorded, m
         "cutoff_at": first.scheduling.cutoff_at + timedelta(days=1),
     })
     with pytest.raises(ValueError, match="late starts"):
-        r.registry.record_scheduling(moved, previous=first.scheduling)
+        r.registry.validate_scheduling_transition(moved, previous=first.scheduling)
     moved = moved.model_copy(update={
         "event": "rescheduled",
         "supersedes_scheduling_instance_id": first.scheduling.scheduling_instance_id,
         "official_schedule_revision": ref("nba_schedule", "controlled reschedule fixture"),
     })
     with pytest.raises(ValueError, match="started"):
-        r.registry.record_scheduling(moved, previous=first.scheduling, play_has_started=True)
-    r.registry.record_scheduling(moved, previous=first.scheduling)
+        r.registry.validate_scheduling_transition(moved, previous=first.scheduling, play_has_started=True)
+    r.registry.validate_scheduling_transition(moved, previous=first.scheduling)
     new, payload = stage(
         r, r.board["games"][0], name="rescheduled-version",
         computed_at=Clock.current, scheduling=moved,
@@ -461,7 +461,7 @@ def test_suspension_retains_original_forecast_and_market(recorded, monkeypatch):
         "scheduled_tipoff_at": first.scheduling.cutoff_at + timedelta(days=1),
         "cutoff_at": first.scheduling.cutoff_at + timedelta(days=1),
     })
-    r.registry.record_scheduling(suspended, previous=first.scheduling, play_has_started=True)
+    r.registry.validate_scheduling_transition(suspended, previous=first.scheduling, play_has_started=True)
     new, payload = stage(
         r, r.board["games"][0], name="resume-candidate",
         computed_at=Clock.current, scheduling=suspended,

@@ -107,12 +107,13 @@ def receipt(registry, name, at, *, outcome="successful"):
 def test_latest_successful_publication_not_latest_computation_and_independent_market(tmp_path):
     registry = ForecastRegistry(tmp_path)
     first, _ = candidate(registry, "first")
+    assert not (tmp_path / "scheduling").exists()
     candidate(registry, "last-good", rating=3.0)
     candidate(registry, "unpublished", rating=4.0)
     candidate(registry, "failed", rating=5.0)
     candidate(registry, "late", rating=6.0)
     candidate(registry, "other-edition", edition="other", rating=7.0)
-    registry.record_scheduling(first.scheduling)
+    registry.validate_scheduling_transition(first.scheduling)
     receipt(registry, "first", TIP - timedelta(minutes=20))
     receipt(registry, "last-good", TIP - timedelta(minutes=5))
     receipt(registry, "failed", TIP - timedelta(minutes=4), outcome="failed")
@@ -161,7 +162,7 @@ def test_latest_successful_publication_not_latest_computation_and_independent_ma
 def test_unpublished_missing_original_is_durable_and_no_replacement(tmp_path):
     registry = ForecastRegistry(tmp_path)
     first, _ = candidate(registry, "only")
-    registry.record_scheduling(first.scheduling)
+    registry.validate_scheduling_transition(first.scheduling)
     selection = registry.lock(
         edition_id="edition", scheduling=first.scheduling, environment="dev", now=TIP
     )
@@ -179,7 +180,7 @@ def test_open_forecasts_change_but_cannot_lock_before_tip(tmp_path):
     registry = ForecastRegistry(tmp_path)
     first, first_payload = candidate(registry, "first")
     _, second_payload = candidate(registry, "second", rating=3.0)
-    registry.record_scheduling(first.scheduling)
+    registry.validate_scheduling_transition(first.scheduling)
     assert (
         registry.resolve(edition_id="edition", forecast_id="first", environment="dev", now=BEFORE)[
             0
@@ -201,7 +202,7 @@ def test_open_forecasts_change_but_cannot_lock_before_tip(tmp_path):
 def test_official_reschedule_and_suspension_have_separate_rules(tmp_path):
     registry = ForecastRegistry(tmp_path)
     first, _ = candidate(registry, "first")
-    registry.record_scheduling(first.scheduling)
+    registry.validate_scheduling_transition(first.scheduling)
     receipt(registry, "first", BEFORE)
     selected = registry.lock(
         edition_id="edition", scheduling=first.scheduling, environment="dev", now=TIP
@@ -217,8 +218,8 @@ def test_official_reschedule_and_suspension_have_separate_rules(tmp_path):
         }
     )
     with pytest.raises(ValueError, match="started"):
-        registry.record_scheduling(later, previous=first.scheduling, play_has_started=True)
-    registry.record_scheduling(later, previous=first.scheduling)
+        registry.validate_scheduling_transition(later, previous=first.scheduling, play_has_started=True)
+    registry.validate_scheduling_transition(later, previous=first.scheduling)
     candidate(registry, "new-instance", scheduling=later)
     receipt(registry, "new-instance", TIP + timedelta(hours=1))
     rescheduled = registry.lock(
@@ -233,14 +234,14 @@ def test_official_reschedule_and_suspension_have_separate_rules(tmp_path):
             "retains_original_selection_id": selected["forecast"]["selection_id"],
         }
     )
-    registry.record_scheduling(suspended, previous=first.scheduling, play_has_started=True)
+    registry.validate_scheduling_transition(suspended, previous=first.scheduling, play_has_started=True)
     retained = registry.lock(
         edition_id="edition", scheduling=suspended, environment="dev", now=suspended.cutoff_at
     )
     assert retained["forecast"] == selected["forecast"]
     delayed = later.model_copy(update={"event": "original"})
     with pytest.raises(ValueError, match="late starts"):
-        registry.record_scheduling(delayed, previous=first.scheduling)
+        registry.validate_scheduling_transition(delayed, previous=first.scheduling)
 
 
 def test_immutable_versions_and_component_integrity(tmp_path):
@@ -317,7 +318,7 @@ def test_verified_activation_receipts_are_idempotent_and_never_backdated(tmp_pat
 def test_selected_market_integrity_is_checked_without_substituting_another_line(tmp_path, source):
     registry = ForecastRegistry(tmp_path)
     forecast, _ = candidate(registry, "first")
-    registry.record_scheduling(forecast.scheduling)
+    registry.validate_scheduling_transition(forecast.scheduling)
     receipt(registry, "first", BEFORE)
     registry.record_market(
         MarketSnapshotManifest(

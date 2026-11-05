@@ -121,13 +121,14 @@ class ForecastRegistry:
             record["record_sha256"] = digest(record)
             self._put("markets", snapshot.snapshot_id, record)
 
-    def record_scheduling(
-        self,
+    @staticmethod
+    def validate_scheduling_transition(
         scheduling: SchedulingInstance,
         *,
         previous: SchedulingInstance | None = None,
         play_has_started: bool = False,
     ) -> None:
+        """Validate schedule changes without creating a second source of truth."""
         if previous is not None:
             if previous.game_id != scheduling.game_id:
                 raise ValueError("Rescheduling cannot change NBA game identity")
@@ -145,10 +146,6 @@ class ForecastRegistry:
                 raise ValueError("Ordinary late starts cannot move the cutoff")
         elif scheduling.event != "original":
             raise ValueError("Rescheduling or suspension requires the previous instance")
-        with publisher_lock(self.root):
-            self._put(
-                "scheduling", scheduling.scheduling_instance_id, scheduling.model_dump(mode="json")
-            )
 
     def lock(
         self,
@@ -173,11 +170,6 @@ class ForecastRegistry:
             existing = self.root / "selections" / f"{key}.json"
             if existing.is_file():
                 return read_object(existing)
-            declared = read_object(
-                self.root / "scheduling" / f"{scheduling.scheduling_instance_id}.json"
-            )
-            if declared != scheduling.model_dump(mode="json"):
-                raise ValueError("Scheduling record changed")
             if scheduling.event == "suspended":
                 matches = [read_object(p) for p in (self.root / "selections").glob("*.json")]
                 prior = next(

@@ -143,6 +143,10 @@ def build_schedule_selection(
                 "original_publication_receipt": None,
             }
             if original_selection is not None:
+                selection["scheduling_instance_id"] = original_selection[
+                    "scheduling_instance_id"
+                ]
+                selection["cutoff_at"] = original_selection["cutoff_at"]
                 selection["provenance"] = "original_live"
                 selection["registry_selection"] = original_selection
                 selection["version_reference"] = version_id
