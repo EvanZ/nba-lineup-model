@@ -283,7 +283,8 @@ def bind_execution(spec, config, execution):
     return {"work_id": digest(identity), "identity": identity}
 
 
-def prepare_partition(config, spec, *, approval=None, steps_class=PartitionSteps):
+def prepare_partition(config, spec, *, approval=None, steps_class=PartitionSteps,
+                      result_key="runtime_release"):
     config.validate()
     verify_spec(spec)
     identity = spec["identity"]
@@ -326,7 +327,10 @@ def prepare_partition(config, spec, *, approval=None, steps_class=PartitionSteps
                 return steps.stage_receipt(name, result)
             callbacks[stage] = execute
         result = work.run(callbacks)
-    result["runtime_release"] = result["checkpoints"][-1]["result"]["runtime_release"]
+    final_result = result["checkpoints"][-1]["result"]
+    if result_key not in final_result:
+        raise ValueError(f"Final checkpoint has no {result_key}")
+    result[result_key] = final_result[result_key]
     return result
 
 

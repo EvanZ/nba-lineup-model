@@ -459,13 +459,11 @@ class CanonicalPipelineSteps:
                     process.kill()
                     process.wait()
 
-    def validate_and_stage(self, target: date) -> Path:
-        from nba_lineup_model.season.dev_site_release import collect_api_validation, publish_dev_site_release
-        from nba_lineup_model.season.production_site_release import stage_production_site_release
+    def refresh_forecast_schedule(self, target: date, *, code_identity: dict) -> Path:
+        """Build and validate schedule forecasts without staging application code."""
         from nba_lineup_model.season.schedule_artifact_contract import validate_schedule_artifacts
         from nba_lineup_model.season.official_schedule_runtime import reproject_captured_schedule_window, _fetch_json
         from nba_lineup_model.season.serving_selection import INDEX_FILENAME, read_object
-        from nba_lineup_model.season.sealed_code_package import materialize_sealed_code_package, verify_sealed_code_package
         from nba_lineup_model.season.upcoming_forecasts import refresh_open_selection
         c, out = self.config, self.candidate
         schedule = out / "schedule"
@@ -474,10 +472,6 @@ class CanonicalPipelineSteps:
         days_ahead = 0 if c.forecast_date else 7
         with self.api() as api:
             if (schedule / INDEX_FILENAME).is_file():
-                code_root = out / "forecast-code"
-                code_root.mkdir(exist_ok=True)
-                package = (verify_sealed_code_package(code_root) if (code_root / "code").exists()
-                    else materialize_sealed_code_package(c.code_root, code_root, expected_revision=self.revision))
                 pointer = read_object(c.model_root / "latest.json")
                 source_index = read_object(schedule / INDEX_FILENAME)
                 registry = Path(source_index.get("forecast_registry_root") or c.environment_root / "forecast-registry")
@@ -486,7 +480,7 @@ class CanonicalPipelineSteps:
                     model_bundle=c.model_root / pointer["bundle_path"],
                     forecast_response=_fetch_json(api + "/api/win-projections"),
                     start_date=first_forecast, days_ahead=days_ahead, registry_root=registry,
-                    catalog=c.catalog_path, code=package["identity"],
+                    catalog=c.catalog_path, code=code_identity,
                     environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
                 (out / "forecast-refresh.json").write_text(json.dumps(evidence, indent=2) + "\n")
                 schedule = refreshed
@@ -496,8 +490,20 @@ class CanonicalPipelineSteps:
         if any(_frozen_hashes(schedule).get(key) != value for key, value in before.items()):
             raise ValueError("Nightly refresh changed a frozen forecast")
         self.env["GESTALT_SCHEDULE_STATE_DIR"] = str(schedule)
+        validate_schedule_artifacts(schedule)
+        return schedule
+
+    def validate_and_stage(self, target: date) -> Path:
+        from nba_lineup_model.season.dev_site_release import collect_api_validation, publish_dev_site_release
+        from nba_lineup_model.season.production_site_release import stage_production_site_release
+        from nba_lineup_model.season.sealed_code_package import materialize_sealed_code_package, verify_sealed_code_package
+        c, out = self.config, self.candidate
+        code_root = out / "forecast-code"
+        code_root.mkdir(exist_ok=True)
+        package = (verify_sealed_code_package(code_root) if (code_root / "code").exists()
+            else materialize_sealed_code_package(c.code_root, code_root, expected_revision=self.revision))
+        schedule = self.refresh_forecast_schedule(target, code_identity=package["identity"])
         with self.api() as api:
-            validate_schedule_artifacts(schedule)
             validation = collect_api_validation(api, evidence_date=target.isoformat(), daily_model_root=c.model_root)
             publish_dev_site_release(daily_data_root=c.data_root, daily_model_root=c.model_root, serving_root=out / "serving", lineups_root=out / "lineups", schedule_state_dir=schedule, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_revision=self.revision, api_validation=validation, output_root=out / "site-releases")
         return stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=schedule, schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")

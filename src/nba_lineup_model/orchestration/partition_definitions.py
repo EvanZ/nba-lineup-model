@@ -86,7 +86,7 @@ def prepare_forecast_date_op(context):
         result = prepare_forecast_date(DailyPipelineConfig.read(context.op_config["config_path"]),
                                       date.fromisoformat(context.op_config["forecast_date"]))
     context.add_output_metadata({key: result[key] for key in (
-        "forecast_date", "model_date", "model_sha256", "work_id", "runtime_release")})
+        "forecast_date", "model_date", "model_sha256", "work_id", "schedule_artifact")})
     return result
 
 

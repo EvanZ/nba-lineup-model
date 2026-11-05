@@ -113,7 +113,7 @@ def test_other_environment_other_work_and_forecast_do_not_clear_failure(tmp_path
     assert execute_manual(prod.home, "prepare_daily_partition", request(prod)).success
     assert execute_manual(dev.home, "prepare_daily_partition", request(dev, "2026-10-31")).success
     monkeypatch.setattr("nba_lineup_model.orchestration.forecast_partition.prepare_forecast_date",
-        lambda *a: {k: "test" for k in ["forecast_date", "model_date", "model_sha256", "work_id", "runtime_release"]})
+        lambda *a: {k: "test" for k in ["forecast_date", "model_date", "model_sha256", "work_id", "schedule_artifact"]})
     assert execute_manual(dev.home, "prepare_forecast_date", {
         "config_path": request(dev)["config_path"], "forecast_date": "2026-11-01"}).success
     status = read_daily_runs(dev.home, "dev", dev.root)

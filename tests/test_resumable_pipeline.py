@@ -137,3 +137,61 @@ def test_existing_model_reuse_rejects_different_causal_inputs(tmp_path, field, v
     spec["identity"][field] = value
     with pytest.raises(ValueError, match="pinned causal identity"):
         validate_existing_target(spec)
+
+
+def test_forecast_partition_stages_data_artifact_without_site_release(tmp_path, monkeypatch):
+    from nba_lineup_model.orchestration.forecast_partition import ForecastPartitionSteps
+    from nba_lineup_model.orchestration.daily_pipeline import require_clean_code_revision
+    from nba_lineup_model.season.serving_selection import digest
+
+    cfg = config_fixture(tmp_path)
+    cfg = replace(cfg, forecast_date="2026-10-22")
+    steps = object.__new__(ForecastPartitionSteps)
+    steps.config = cfg
+    steps.candidate = tmp_path / "candidate"
+    steps.candidate.mkdir()
+    steps.revision = require_clean_code_revision(cfg.code_root)
+
+    def refresh(_target, *, code_identity):
+        schedule = steps.candidate / "refreshed-schedule"
+        schedule.mkdir()
+        index = {
+            "schema_version": 1,
+            "edition_id": "original",
+            "games": {},
+            "dates": {},
+            "files": {},
+        }
+        index["selection_map_sha256"] = digest(index)
+        (schedule / "forecast-selections.json").write_text(json.dumps(index))
+        (steps.candidate / "forecast-refresh.json").write_text(
+            json.dumps({"refreshed_game_ids": []})
+        )
+        return schedule
+
+    monkeypatch.setattr(steps, "refresh_forecast_schedule", refresh)
+    monkeypatch.setattr(
+        "nba_lineup_model.season.sealed_code_package.inspect_source_code",
+        lambda _root: {
+            "identity": {
+                "package_sha256": "a" * 64,
+                "dependency_lock_sha256": "b" * 64,
+                "git_revision": steps.revision,
+                "sealed": True,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.season.dev_site_release.publish_dev_site_release",
+        lambda *a, **k: pytest.fail("forecast job must not publish a site release"),
+    )
+    monkeypatch.setattr(
+        "nba_lineup_model.season.production_site_release.stage_production_site_release",
+        lambda *a, **k: pytest.fail("forecast job must not stage application code"),
+    )
+
+    schedule = steps.validate_and_stage(date(2026, 10, 21))
+    receipt = steps.stage_receipt("validate_and_stage", schedule)
+    assert receipt["result"]["schedule_artifact"] == str(schedule)
+    assert "runtime_release" not in receipt["result"]
+    assert not (steps.candidate / "forecast-artifact.json").exists()

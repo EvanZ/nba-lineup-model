@@ -18,6 +18,7 @@ from nba_lineup_model.orchestration.daily_work import (
     work_spec,
 )
 from nba_lineup_model.orchestration.resumable_pipeline import (
+    PartitionSteps,
     artifact_files,
     bind_execution,
     config_identity,
@@ -26,6 +27,42 @@ from nba_lineup_model.orchestration.resumable_pipeline import (
 )
 from nba_lineup_model.season.daily_data_artifact import verify_daily_data_artifact
 from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
+
+
+class ForecastPartitionSteps(PartitionSteps):
+    """Forecast-data publication; application code releases are out of scope."""
+
+    def validate_and_stage(self, target: date) -> Path:
+        from nba_lineup_model.season.sealed_code_package import (
+            inspect_source_code,
+            verify_sealed_code_package,
+        )
+
+        code_root = self.config.code_root.resolve()
+        package_root = code_root.parent
+        code_identity = (
+            verify_sealed_code_package(package_root)["identity"]
+            if code_root.name == "code" and (package_root / "code-package.json").is_file()
+            else inspect_source_code(code_root)["identity"]
+        )
+        if code_identity["git_revision"] != self.revision:
+            raise ValueError("Forecast code identity differs from the pinned revision")
+        return self.refresh_forecast_schedule(target, code_identity=code_identity)
+
+    def stage_receipt(self, stage, result):
+        if stage == "validate_and_stage":
+            from nba_lineup_model.season.serving_selection import INDEX_FILENAME
+
+            schedule = Path(result)
+            evidence = self.candidate / "forecast-refresh.json"
+            return {
+                "artifacts": [
+                    file_reference(schedule / INDEX_FILENAME),
+                    file_reference(evidence),
+                ],
+                "result": {"schedule_artifact": str(schedule)},
+            }
+        return super().stage_receipt(stage, result)
 
 
 def latest_completed_model(live: Path, forecast_date: date) -> Path:
@@ -162,7 +199,12 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date) ->
     validate_execution(config, spec, None)
     atomic_json(output / "config.json", config_identity(config), immutable=True)
     atomic_json(output / "spec.json", spec, immutable=True)
-    result = prepare_partition(config, spec)
+    result = prepare_partition(
+        config,
+        spec,
+        steps_class=ForecastPartitionSteps,
+        result_key="schedule_artifact",
+    )
     return {
         **result,
         "forecast_date": str(forecast_date),
