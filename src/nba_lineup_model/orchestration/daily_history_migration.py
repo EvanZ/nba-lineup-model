@@ -50,12 +50,19 @@ def migrated_tags(binding: DailyInstance, record: dict, archive: Path) -> dict:
     config = read_object(Path(request["config_path"]))
     if Path(config["environment_root"]).resolve() != binding.root:
         raise ValueError(f"Run {record['run_id']} belongs to another environment")
-    if config.get("live_pointer") and Path(config["live_pointer"]).absolute().parent.resolve() != binding.root:
+    destination = Path(config.get("live_pointer") or binding.root / "live-release").absolute()
+    parent = destination.parent.resolve()
+    if not parent.is_relative_to(binding.root):
         raise ValueError("Historical run has a conflicting live environment")
     work, day, key = request_identity(record["pipeline_name"], request)
     tags = {"gestalt/environment": binding.environment,
             "gestalt/environment_root": str(binding.root), "gestalt/work_id": work,
             "gestalt/game_date": day, "gestalt/recovery_key": key}
+    if parent != binding.root or destination.name != "live-release":
+        # Preserve rehearsal history, but never count it as live recovery.
+        tags["gestalt/history_only"] = "true"
+        tags["gestalt/original_live_pointer"] = str(destination)
+        tags["gestalt/recovery_key"] += ":rehearsal:" + digest(str(destination))
     existing = body.get("tags") or {}
     for field in ("gestalt/environment", "gestalt/environment_root", "gestalt/work_id"):
         if field in existing and existing[field] != tags[field]:

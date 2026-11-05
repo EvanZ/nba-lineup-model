@@ -52,6 +52,9 @@ def read_daily_runs(home: Path, environment: str, environment_root: Path) -> dic
         key = tags.get("gestalt/recovery_key")
         if not key or not key.startswith(job + ":"):
             raise ValueError(f"Run {run_id} has no valid work identity")
+        if tags.get("gestalt/history_only") == "true":
+            # Retained and integrity-checked above; not a run against the live site.
+            continue
         row = {"run_id": run_id, "job_name": job, "status": status,
                "recovery_key": key, "created_at": stamp(created),
                "started_at": stamp(started), "finished_at": stamp(ended),
