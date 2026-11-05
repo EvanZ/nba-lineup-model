@@ -67,3 +67,14 @@ worker. User approval is pending for a precise calculation/input check with
 equivalence tests for loading/storage changes. Do not bypass the existing gate.
 The detailed GitHub progress comment was blocked by the permission reviewer;
 approval to disclose that summary publicly is pending.
+
+### Automatic activation result
+
+Run 7c5c0eb6-a93c-4deb-8b69-1f195f88e0a8 passed artifact and temporary-API
+validation, then failed live activation because forecast-registry/receipts was
+root-owned and unwritable by the normal ubuntu worker. The publisher restored
+the previous release automatically (generation 16); this run is a failure, not
+acceptance. Commit b08179a adds that exact directory to repeatable deployment
+permission setup. Installation verified ubuntu write access. The retry has not
+yet been verified successful. Dev health returned HTTP 200 after rollback.
+Do not remove the failed-run history or manually clear its alert.
