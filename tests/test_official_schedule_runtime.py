@@ -751,6 +751,7 @@ def test_candidate_reprojection_consumes_captured_sources_only(
         start_date=GAME_DATE,
         days_ahead=0,
         state_dir=tmp_path,
+        injury_captures={GAME_ID: {"injury_report": captured_injury, "capture": {"candidate_sha256": "a" * 64}}},
         projection_url="http://candidate/api/win-projections",
         now=datetime.fromisoformat(START.replace("Z", "+00:00")) - timedelta(minutes=30),
     )
@@ -760,7 +761,10 @@ def test_candidate_reprojection_consumes_captured_sources_only(
     updated = json.loads(latest.read_text())["games"][0]
     assert updated["projection"]["home_margin"] != 99.0
     assert updated["projected_minutes"] != {"old": True}
-    assert updated["injury_report"] == captured_injury
+    assert updated["injury_report"]["source_url"] == captured_injury["source_url"]
+    assert updated["injury_report"]["published_at"] == captured_injury["published_at"]
+    assert updated["injury_report"]["team_reports"] == captured_injury["team_reports"]
+    assert updated["injury_report"]["capture_reference"]["candidate_sha256"] == "a" * 64
     assert updated["market"] == {"source": "captured-market"}
     assert updated["prediction_market"] == {"source": "captured-polymarket"}
     home_star = next(
@@ -789,6 +793,7 @@ def test_candidate_reprojection_treats_uncaptured_zero_game_date_as_noop(
         start_date=GAME_DATE,
         days_ahead=0,
         state_dir=tmp_path,
+        injury_captures={},
         projection_url="http://candidate/api/win-projections",
         now=datetime.fromisoformat(START.replace("Z", "+00:00")) - timedelta(minutes=30),
     )

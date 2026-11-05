@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from nba_lineup_model.orchestration.daily_pipeline import (
@@ -102,6 +102,13 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date) ->
     base_ref = file_reference(live / "runtime-manifest.json")
     base = read_object(live / "runtime-manifest.json")["approved_manifest"]["identity"]
     bindings = read_object(live / "serving-bindings.json")
+    if template.observation_root is None:
+        raise ValueError("Forecast job requires the canonical collector observation root")
+    observation_root = template.observation_root.resolve(strict=True)
+    schedule = live / "selected-schedule"
+    from nba_lineup_model.season.official_schedule_runtime import select_captured_injuries
+    captures = select_captured_injuries(schedule_root=schedule, observation_root=observation_root,
+        start_date=forecast_date.isoformat(), days_ahead=0, now=datetime.now(UTC))
     selected = latest_completed_model(live, forecast_date)
     model = verify_daily_model_artifact(selected)
     evidence_date = date.fromisoformat(model["identity"]["game_date_pacific"])
@@ -139,16 +146,20 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date) ->
             "forecast_date": str(forecast_date),
             "code": revision,
             "model": model["bundle_sha256"],
+            "injury_captures": captures,
         }
     )
     output = template.pipeline_root / "forecasts" / str(forecast_date) / run_identity
-    schedule = (live / "schedule").resolve()
+    injury_inputs = output / "inputs" / "injury-captures.json"
+    atomic_json(injury_inputs, captures, immutable=True)
     config = replace(
         template,
         pipeline_root=output / "pipeline",
         data_root=output / "data",
         model_root=output / "model",
         schedule_root=schedule,
+        observation_root=observation_root,
+        forecast_injury_inputs_path=injury_inputs,
         catalog_path=live / "catalog/games.parquet",
         frontend_root=live / "web",
         preseason_rankings_path=live / "preseason/rankings.parquet",
@@ -170,6 +181,7 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date) ->
         if p.is_file()
     }
     refs = [base_ref, *files.values(), *schedule_files.values()]
+    refs.append(file_reference(injury_inputs))
     for bundle in [*models, *data]:
         refs.extend(artifact_files(bundle))
     spec = work_spec(

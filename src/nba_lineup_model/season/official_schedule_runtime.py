@@ -190,6 +190,87 @@ def refresh_official_schedule_window(
     }
 
 
+def select_captured_injuries(
+    *, schedule_root: Path, observation_root: Path, start_date: str,
+    days_ahead: int, now: datetime, include_started: bool = False,
+) -> dict[str, dict]:
+    """Select verified collector captures, never injury inputs from old forecasts.
+
+    Retrospective callers use the same rule: captured strictly before tipoff,
+    published no later than capture time. No clock or publication is backdated.
+    """
+    selected = {}
+    for offset in range(days_ahead + 1):
+        day = date.fromisoformat(start_date) + timedelta(days=offset)
+        path = schedule_root / "latest" / f"{day}.json"
+        if not path.is_file():
+            continue
+        for game in _read_object(path)["games"]:
+            gid = str(game["game_id"])
+            cutoff = datetime.fromisoformat(game["start_time"].replace("Z", "+00:00"))
+            if cutoff.tzinfo is None or now.tzinfo is None:
+                raise ValueError(f"Injury selection requires timezone-aware times: {gid}")
+            if not include_started and (
+                cutoff <= now or game.get("pregame") or game.get("final_audit")
+                or game.get("status", {}).get("state", "pre") != "pre"
+                or (schedule_root / "frozen" / f"{gid}.json").exists()
+            ):
+                continue
+            eligible = []
+            for capture_path in sorted((observation_root / "pregame-candidates" / gid).glob("*.json")):
+                capture = _read_object(capture_path)
+                unsigned = {k: v for k, v in capture.items() if k != "candidate_sha256"}
+                if capture.get("candidate_sha256") != _object_sha256(unsigned):
+                    raise ValueError(f"Injury capture checksum changed: {capture_path}")
+                source = capture["game"]
+                if str(capture["game_id"]) != gid or str(source["game_id"]) != gid:
+                    raise ValueError(f"Injury capture game mismatch: {capture_path}")
+                captured = datetime.fromisoformat(capture["captured_at"].replace("Z", "+00:00"))
+                scheduled = datetime.fromisoformat(capture["scheduled_start_time"].replace("Z", "+00:00"))
+                if captured.tzinfo is None or scheduled.tzinfo is None:
+                    raise ValueError(f"Injury capture has no timezone: {capture_path}")
+                if scheduled != cutoff or captured >= cutoff or captured > now:
+                    continue
+                if any(source.get(k) != game.get(k) for k in ("away_team", "home_team")):
+                    raise ValueError(f"Injury capture matchup mismatch: {capture_path}")
+                injury = source.get("injury_report", {})
+                published = datetime.fromisoformat(str(injury.get("published_at", "")).replace("Z", "+00:00"))
+                if published.tzinfo is None or published > captured:
+                    raise ValueError(f"Injury report was not available at capture time: {capture_path}")
+                if not injury.get("artifact_sha256") or not injury.get("source_url"):
+                    raise ValueError(f"Injury capture has no source identity: {capture_path}")
+                eligible.append((captured, capture["candidate_sha256"], capture_path, injury, "pregame_candidate"))
+            # Open forecasts also consume the current collector board before
+            # per-game archiving begins. Historical replay cannot use this feed.
+            latest = observation_root / "latest" / f"{day}.json"
+            if not include_started and latest.is_file():
+                raw = latest.read_bytes()
+                board = json.loads(raw)
+                stamp = datetime.fromisoformat(str(board["collected_at"]).replace("Z", "+00:00"))
+                if stamp.tzinfo is None:
+                    raise ValueError(f"Collector snapshot has no timezone: {latest}")
+                for observed in board["games"]:
+                    if str(observed["game_id"]) != gid or not stamp <= now or not stamp < cutoff:
+                        continue
+                    if (datetime.fromisoformat(observed["start_time"].replace("Z", "+00:00")) != cutoff
+                            or any(observed.get(k) != game.get(k) for k in ("home_team", "away_team"))):
+                        raise ValueError(f"Collector snapshot matchup differs: {gid}")
+                    injury = observed["injury_report"]
+                    published = datetime.fromisoformat(str(injury["published_at"]).replace("Z", "+00:00"))
+                    if published.tzinfo is None or published > stamp or not injury.get("artifact_sha256"):
+                        raise ValueError(f"Invalid collector injury snapshot: {gid}")
+                    eligible.append((stamp, hashlib.sha256(raw).hexdigest(), latest, injury, "collector_snapshot"))
+            if not eligible:
+                raise ValueError(f"No verified pre-tip injury capture for {gid} on {day}")
+            captured, checksum, capture_path, injury, kind = max(eligible, key=lambda row: row[:2])
+            selected[gid] = {
+                "injury_report": copy.deepcopy(injury),
+                "capture": {"kind": kind, "source_sha256": checksum, "uri": capture_path.resolve().as_uri(),
+                            "captured_at": captured.isoformat(), "cutoff_at": cutoff.isoformat()},
+            }
+    return selected
+
+
 def reproject_captured_schedule_window(
     *,
     start_date: str,
@@ -198,6 +279,8 @@ def reproject_captured_schedule_window(
     projection_url: str,
     now: datetime | None = None,
     forecast_response: dict | None = None,
+    injury_captures: dict[str, dict],
+    approved_replay_dates: tuple[str, ...] = (),
 ) -> dict[str, object]:
     """Recompute only forward projections from already captured source state.
 
@@ -209,6 +292,9 @@ def reproject_captured_schedule_window(
         raise ValueError("Schedule days ahead must be non-negative")
     state_root = Path(state_dir)
     first_date = date.fromisoformat(start_date)
+    if any(not first_date <= date.fromisoformat(day) <= first_date + timedelta(days=days_ahead)
+           for day in approved_replay_dates):
+        raise ValueError("Approved replay dates must be inside the requested window")
     forecast_response = forecast_response if forecast_response is not None else _fetch_json(projection_url)
     collected_at = (now or datetime.now(UTC)).astimezone(UTC)
     reprojected_games = 0
@@ -229,18 +315,22 @@ def reproject_captured_schedule_window(
         for game in games:
             if not isinstance(game, dict):
                 raise ValueError(f"Captured schedule day has an invalid game: {latest_path}")
-            if str(game.get("status", {}).get("state", "pre")) != "pre":
+            replay = game_date.isoformat() in approved_replay_dates
+            if not replay and str(game.get("status", {}).get("state", "pre")) != "pre":
                 continue
             game_id = str(game.get("game_id", ""))
             cutoff = datetime.fromisoformat(str(game["start_time"]).replace("Z", "+00:00"))
             if cutoff.tzinfo is None:
                 raise ValueError(f"Forecast cutoff has no timezone: {game_id}")
-            if (cutoff <= collected_at or game.get("pregame") or game.get("final_audit")
+            if not replay and (cutoff <= collected_at or game.get("pregame") or game.get("final_audit")
                     or (state_root / "frozen" / f"{game_id}.json").is_file()):
                 continue
             away_team = str(game.get("away_team", ""))
             home_team = str(game.get("home_team", ""))
-            injury = game.get("injury_report")
+            if game_id not in injury_captures:
+                raise ValueError(f"Missing selected collector injury capture: {game_id}")
+            captured_injury = injury_captures[game_id]
+            injury = captured_injury["injury_report"]
             if not isinstance(injury, dict):
                 raise ValueError(f"Captured injury assumptions are missing: {game_id}")
             assumptions = injury.get("assumptions")
@@ -303,6 +393,8 @@ def reproject_captured_schedule_window(
             replacement = normalized["games"][0]
             game["projection"] = replacement["projection"]
             game["projected_minutes"] = replacement["projected_minutes"]
+            game["injury_report"] = replacement["injury_report"]
+            game["injury_report"]["capture_reference"] = copy.deepcopy(captured_injury["capture"])
             projection_state = dict(normalized["projection_state"])
             reprojected_games += 1
             changed = True

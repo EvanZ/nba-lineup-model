@@ -59,12 +59,23 @@ def require_forecast_model(response: dict, model_bundle: Path, forecast_date: da
 def refresh_open_selection(**kwargs) -> dict:
     """Atomic and retryable: a failed run cannot leave a partial selection."""
     source, target = kwargs["source"], kwargs["target"]
+    from nba_lineup_model.season.official_schedule_runtime import select_captured_injuries
+    now = (kwargs.get("now") or datetime.now(UTC)).astimezone(UTC)
+    captures = kwargs.get("injury_captures")
+    if captures is None:
+        captures = select_captured_injuries(
+            schedule_root=source, observation_root=kwargs["observation_root"].resolve(strict=True),
+            start_date=kwargs["start_date"].isoformat(), days_ahead=kwargs["days_ahead"], now=now,
+        )
+    kwargs = {k: v for k, v in kwargs.items() if k != "observation_root"}
+    kwargs.update(now=now, injury_captures=captures)
     model = require_forecast_model(
         kwargs["forecast_response"], kwargs["model_bundle"], kwargs["start_date"]
     )
     request_id = digest(
         {
             "source": verify_schedule_selection(source)["selection_map_sha256"],
+            "injury_captures": captures,
             "model": model["bundle_sha256"],
             "response": kwargs["forecast_response"],
             "start_date": str(kwargs["start_date"]),
@@ -105,6 +116,7 @@ def _refresh_open_selection(
     catalog: Path,
     code: dict,
     environment: str,
+    injury_captures: dict[str, dict],
     now: datetime | None = None,
 ) -> dict:
     """Publish a new selection bundle, preserving every locked selection exactly.
@@ -126,6 +138,7 @@ def _refresh_open_selection(
         state_dir=target,
         projection_url="captured://selected-model",
         forecast_response=forecast_response,
+        injury_captures=injury_captures,
         now=now,
     )
     index = copy.deepcopy(original)

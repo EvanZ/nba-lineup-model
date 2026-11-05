@@ -70,6 +70,7 @@ class DailyPipelineConfig:
     observation_root: Path | None = None
     preserve_schedule_selections: bool = False
     forecast_date: str | None = None
+    forecast_injury_inputs_path: Path | None = None
 
     @classmethod
     def read(cls, path: Path | str) -> "DailyPipelineConfig":
@@ -462,11 +463,13 @@ class CanonicalPipelineSteps:
     def refresh_forecast_schedule(self, target: date, *, code_identity: dict) -> Path:
         """Build and validate schedule forecasts without staging application code."""
         from nba_lineup_model.season.schedule_artifact_contract import validate_schedule_artifacts
-        from nba_lineup_model.season.official_schedule_runtime import reproject_captured_schedule_window, _fetch_json
+        from nba_lineup_model.season.official_schedule_runtime import reproject_captured_schedule_window, select_captured_injuries, _fetch_json
         from nba_lineup_model.season.serving_selection import INDEX_FILENAME, read_object
         from nba_lineup_model.season.upcoming_forecasts import refresh_open_selection
         c, out = self.config, self.candidate
         schedule = out / "schedule"
+        if c.observation_root is None:
+            raise ValueError("Forecast refresh requires the canonical collector observation root")
         before = _frozen_hashes(schedule)
         first_forecast = date.fromisoformat(c.forecast_date) if c.forecast_date else target + timedelta(days=1)
         days_ahead = 0 if c.forecast_date else 7
@@ -480,13 +483,21 @@ class CanonicalPipelineSteps:
                     model_bundle=c.model_root / pointer["bundle_path"],
                     forecast_response=_fetch_json(api + "/api/win-projections"),
                     start_date=first_forecast, days_ahead=days_ahead, registry_root=registry,
+                    observation_root=c.observation_root,
+                    injury_captures=(read_object(c.forecast_injury_inputs_path)
+                                     if c.forecast_injury_inputs_path else None),
                     catalog=c.catalog_path, code=code_identity,
                     environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
                 (out / "forecast-refresh.json").write_text(json.dumps(evidence, indent=2) + "\n")
                 schedule = refreshed
             else:
+                captures = select_captured_injuries(
+                    schedule_root=schedule, observation_root=c.observation_root.resolve(strict=True),
+                    start_date=first_forecast.isoformat(), days_ahead=days_ahead,
+                    now=datetime.now(UTC),
+                )
                 reproject_captured_schedule_window(start_date=first_forecast.isoformat(),
-                    days_ahead=days_ahead, state_dir=schedule, projection_url=api + "/api/win-projections")
+                    days_ahead=days_ahead, state_dir=schedule, projection_url=api + "/api/win-projections", injury_captures=captures)
         if any(_frozen_hashes(schedule).get(key) != value for key, value in before.items()):
             raise ValueError("Nightly refresh changed a frozen forecast")
         self.env["GESTALT_SCHEDULE_STATE_DIR"] = str(schedule)

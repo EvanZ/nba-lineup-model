@@ -102,6 +102,9 @@ def test_open_forecast_refresh_preserves_history_and_uses_registry(tmp_path, mon
     raw = tmp_path / "raw"
     (raw / "latest").mkdir(parents=True)
     board = _board(collected_at=now)
+    from nba_lineup_model.season.official_schedule_runtime import _publish_pregame_candidate
+    board["games"][0]["injury_report"]["published_at"] = now.isoformat()
+    _publish_pregame_candidate(board["games"][0], state_root=raw, captured_at=now)
     locked = copy.deepcopy(board["games"][0])
     locked["game_id"] = "0022600002"
     locked["start_time"] = (now - timedelta(minutes=1)).isoformat()
@@ -120,6 +123,7 @@ def test_open_forecast_refresh_preserves_history_and_uses_registry(tmp_path, mon
     result = upcoming.refresh_open_selection(
         source=source,
         target=target,
+        observation_root=raw,
         model_bundle=bundle,
         forecast_response=response,
         start_date=date.fromisoformat(GAME_DATE),
