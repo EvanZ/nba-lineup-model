@@ -18,7 +18,7 @@ def main():
     p.add_argument("--component", choices=("code", "daemon", "web", "manual"), required=True)
     p.add_argument("--grpc-port", type=int, required=True)
     p.add_argument("--web-port", type=int, required=True)
-    p.add_argument("--job", choices=("prepare_daily_partition", "prepare_forecast_date"))
+    p.add_argument("--job", choices=("prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment"))
     p.add_argument("--request", type=Path)
     args = p.parse_args()
     manifest = verify_sealed_code_package(args.package)

@@ -27,6 +27,10 @@ def request_identity(job_name: str, request: dict) -> tuple[str, str, str]:
         day = date.fromisoformat(request["forecast_date"]).isoformat()
         track = read_object(Path(request["config_path"])).get("model_track", "legacy")
         return f"forecast:{day}", day, f"{job_name}:{day}:{track}"
+    if job_name == "advance_daily_environment":
+        day = date.fromisoformat(request["game_date"]).isoformat()
+        track = read_object(Path(request["config_path"]))["model_track"]
+        return f"nightly:{day}", day, f"{job_name}:{day}:{track}"
     if job_name == "prepare_daily_site_release":
         day = date.fromisoformat(request["game_date"]).isoformat()
         return f"legacy:{day}", day, f"{job_name}:legacy:{day}"
@@ -65,7 +69,7 @@ class DailyInstance:
             raise ValueError("Pipeline configuration belongs to a different environment")
         if Path(config["live_pointer"]).absolute().parent.resolve() != self.root:
             raise ValueError("Pipeline live pointer belongs to a different environment")
-        if job_name not in {"prepare_daily_partition", "prepare_forecast_date"}:
+        if job_name not in {"prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment"}:
             raise ValueError(f"Unsupported daily job: {job_name}")
         work, day, recovery_key = request_identity(job_name, request)
         return {"gestalt/environment": self.environment,
@@ -133,12 +137,13 @@ def execute_manual(home: Path, job_name: str, request: dict):
     """Manual runs use exactly the same jobs, checks and storage as the sensor."""
     from dagster import DagsterInstance
     from nba_lineup_model.orchestration.partition_definitions import (
-        prepare_daily_partition_job, prepare_forecast_date_job,
+        prepare_daily_partition_job, prepare_forecast_date_job, advance_daily_environment_job,
     )
     binding = DailyInstance.read(home)
     tags = binding.tags(job_name, request)
     jobs = {"prepare_daily_partition": prepare_daily_partition_job,
-            "prepare_forecast_date": prepare_forecast_date_job}
+            "prepare_forecast_date": prepare_forecast_date_job,
+            "advance_daily_environment": advance_daily_environment_job}
     with DagsterInstance.from_config(str(binding.home)) as instance:
         from dagster import RunsFilter, DagsterRunStatus
         active = instance.get_runs(filters=RunsFilter(statuses=[
@@ -162,7 +167,7 @@ def main():
     init.add_argument("--template", type=Path, required=True)
     run = commands.add_parser("run")
     run.add_argument("--home", type=Path, required=True)
-    run.add_argument("--job", choices=("prepare_daily_partition", "prepare_forecast_date"), required=True)
+    run.add_argument("--job", choices=("prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment"), required=True)
     run.add_argument("--request", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "initialize":

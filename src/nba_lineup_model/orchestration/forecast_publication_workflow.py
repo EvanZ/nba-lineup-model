@@ -12,10 +12,10 @@ from nba_lineup_model.season.serving_selection import (
 )
 
 
-def validate_forecast_handoff(base: Path, schedule: Path) -> list[str]:
+def validate_forecast_handoff(base: Path, schedule: Path, *, model_release: Path | None = None) -> list[str]:
     old = verify_schedule_selection(base / "selected-schedule")
     new = verify_schedule_selection(schedule)
-    manifest = verify_production_site_release(base)
+    manifest = verify_production_site_release(model_release or base)
     model_sha = manifest["approved_manifest"]["identity"]["model"]["bundle_sha256"]
     from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
     from nba_lineup_model.season.game_prediction_artifact import require_projection_reconciliation

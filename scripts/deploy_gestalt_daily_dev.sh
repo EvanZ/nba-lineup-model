@@ -4,7 +4,11 @@ set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 publish_forecasts=false
-if [[ "${1:-}" == "--enable-forecast-publication" ]]; then
+automatic=false
+if [[ "${1:-}" == "--enable-automatic-lifecycle" ]]; then
+  automatic=true
+  publish_forecasts=true
+elif [[ "${1:-}" == "--enable-forecast-publication" ]]; then
   publish_forecasts=true
 elif [[ $# -ne 0 ]]; then exit 2; fi
 test -z "$(git -C "$REPO_ROOT" status --porcelain)" || {
@@ -21,6 +25,9 @@ test -x "$runtime/bin/python"
   "$REPO_ROOT/deploy/orchestration-requirements.txt" >/dev/null
 sudo -n install -d -o ubuntu -g ubuntu -m 0755 /var/lib/nba-gestalt-dev/daily-releases
 if $publish_forecasts; then
+  sudo -n install -d -m 0755 /etc/polkit-1/rules.d
+  sudo -n install -m 0644 "$REPO_ROOT/deploy/49-gestalt-dev-api.rules" \
+    /etc/polkit-1/rules.d/49-gestalt-dev-api.rules
   # Only mutable publication containers need worker write access. Keep existing
   # sealed releases, generations, and journal entries unchanged.
   for path in /var/lib/nba-gestalt-dev \
@@ -78,8 +85,13 @@ PY
 install -m 0644 "$package/code/deploy/gestalt-daily-dev-workspace.yaml" \
   /var/lib/nba-gestalt-dev/daily-dagster/workspace.yaml
 staging="$(mktemp -d /tmp/gestalt-daily-dev.XXXXXX)"
+automation_config=""
+if $automatic; then
+  automation_config="$package/forecast-config-enabled.json"
+fi
 trap 'rm -f -- "$staging/gestalt-daily-dev@.service"; rmdir -- "$staging"' EXIT
 sed -e "s|@ORCHESTRATION_PYTHON@|$runtime/bin/python|g" \
+  -e "s|@AUTOMATION_CONFIG@|$automation_config|g" \
   -e "s|@DAILY_PACKAGE@|$package|g" -e "s|@DAILY_SHA256@|$checksum|g" \
   "$package/code/deploy/gestalt-daily-dev@.service" > "$staging/gestalt-daily-dev@.service"
 systemd-analyze verify "$staging/gestalt-daily-dev@.service"
@@ -93,4 +105,8 @@ for attempt in $(seq 1 30); do
 done
 DAGSTER_HOME=/var/lib/nba-gestalt-dev/daily-dagster "$runtime/bin/dagster" sensor start \
   --workspace /var/lib/nba-gestalt-dev/daily-dagster/workspace.yaml resumable_daily_partition
+if $automatic; then
+  DAGSTER_HOME=/var/lib/nba-gestalt-dev/daily-dagster "$runtime/bin/dagster" sensor start \
+    --workspace /var/lib/nba-gestalt-dev/daily-dagster/workspace.yaml automatic_daily_lifecycle
+fi
 systemctl is-active gestalt-daily-dev@code gestalt-daily-dev@web gestalt-daily-dev@daemon

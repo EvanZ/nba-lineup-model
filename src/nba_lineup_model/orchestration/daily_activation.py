@@ -40,8 +40,11 @@ def reload_environment_api(
     _activation_record: dict,
 ) -> None:
     service = "gestalt-web-dev" if _environment(config) == "dev" else "gestalt-web"
+    # The dev worker retains NoNewPrivileges. Polkit permits only restarting
+    # this dev API unit; no sudo or production-service permission is granted.
+    prefix = [] if _environment(config) == "dev" else ["sudo", "-n"]
     subprocess.run(
-        ["sudo", "-n", "systemctl", "restart", service],
+        [*prefix, "systemctl", "--no-ask-password", "restart", service],
         check=True,
         timeout=60,
     )
@@ -231,7 +234,11 @@ def activation_report_from_work(config: DailyPipelineConfig, work_root: Path) ->
             raise ValueError("Activation work is missing completed stages")
         runtime = Path(receipts[-1]["result"]["runtime_release"]).resolve(strict=True)
         manifest = verify_production_site_release(runtime)
-        if manifest["identity"]["code_revision"] != spec["identity"]["code_identity"]:
+        execution = spec["identity"]["execution"]
+        base = read_object(Path(execution["base_release_manifest"]["path"]))
+        expected_code = (base["identity"]["code_revision"] if execution.get("preserve_application_code")
+                         else spec["identity"]["code_identity"])
+        if manifest["identity"]["code_revision"] != expected_code:
             raise ValueError("Runtime code differs from the validated work")
         day = spec["identity"]["game_date_pacific"]
         report_root = config.pipeline_root / "reports" / day
@@ -249,9 +256,13 @@ def activation_report_from_work(config: DailyPipelineConfig, work_root: Path) ->
         base = read_object(Path(spec["identity"]["execution"]["base_release_manifest"]["path"]))
         if active is None or active["runtime_sha256"] != base["runtime_sha256"]:
             raise ValueError("Active release changed since work was prepared")
-        if causal_schedule_sha256(runtime / "schedule-snapshot") != causal_schedule_sha256(
-            config.schedule_root
-        ):
+        if execution.get("preserve_application_code"):
+            if manifest["identity"]["code_identity"] != base["identity"]["code_identity"]:
+                raise ValueError("Nightly publication changed application code")
+            from nba_lineup_model.orchestration.forecast_publication_workflow import validate_forecast_handoff
+            validate_forecast_handoff(Path(execution["base_release_manifest"]["path"]).parent,
+                                      runtime / "selected-schedule", model_release=runtime)
+        elif causal_schedule_sha256(runtime / "schedule-snapshot") != causal_schedule_sha256(config.schedule_root):
             raise ValueError("Schedule differs from the validated work")
         report = {
             "work_id": spec["work_id"],

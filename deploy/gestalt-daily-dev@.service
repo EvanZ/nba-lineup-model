@@ -12,6 +12,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONPATH=@DAILY_PACKAGE@/code/src
 Environment=DAGSTER_HOME=/var/lib/nba-gestalt-dev/daily-dagster
+Environment=GESTALT_AUTOMATION_CONFIG=@AUTOMATION_CONFIG@
 Environment=AWS_REGION=us-west-1
 ExecStart=@ORCHESTRATION_PYTHON@ -m nba_lineup_model.orchestration.daily_service --package @DAILY_PACKAGE@ --sha256 @DAILY_SHA256@ --home /var/lib/nba-gestalt-dev/daily-dagster --grpc-port 4004 --web-port 3002 --component %i
 Restart=on-failure

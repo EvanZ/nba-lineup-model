@@ -78,6 +78,7 @@ def resumable_daily_partition_sensor(context):
 
 
 @op(config_schema={"config_path": str, "forecast_date": str,
+    "automation_key": Field(str, is_required=False),
     "prepared_schedule": Field(str, is_required=False),
     "approval_reference": Field(str, is_required=False)})
 def prepare_forecast_date_op(context):
@@ -91,6 +92,12 @@ def prepare_forecast_date_op(context):
                       "approval_reference": context.op_config.get("approval_reference")}
         result = prepare_forecast_date(DailyPipelineConfig.read(context.op_config["config_path"]),
                                       date.fromisoformat(context.op_config["forecast_date"]), **kwargs)
+        if context.op_config.get("automation_key"):
+            from nba_lineup_model.orchestration.daily_work import atomic_json
+            config = DailyPipelineConfig.read(context.op_config["config_path"])
+            if result["publication"]["status"] != "activated":
+                raise ValueError("Automatic forecast work did not publish")
+            atomic_json(config.pipeline_root / "automation/forecast-inputs" / (context.op_config["automation_key"] + ".json"), result, immutable=True)
     context.add_output_metadata({key: result[key] for key in (
         "forecast_date", "model_date", "model_sha256", "work_id", "schedule_artifact")})
     return result
@@ -102,5 +109,54 @@ def prepare_forecast_date_job():
     prepare_forecast_date_op()
 
 
-defs = Definitions(jobs=[prepare_daily_partition_job, prepare_forecast_date_job],
-                   sensors=[resumable_daily_partition_sensor])
+@op(config_schema={"config_path": str, "game_date": str})
+def advance_daily_environment_op(context):
+    from datetime import date
+    from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
+    from nba_lineup_model.orchestration.forward_daily import advance_daily_environment
+    with run_guard(context, "advance_daily_environment", context.op_config):
+        return advance_daily_environment(DailyPipelineConfig.read(context.op_config["config_path"]),
+                                         date.fromisoformat(context.op_config["game_date"]))
+
+
+@job(name="advance_daily_environment", executor_def=in_process_executor,
+     tags={"gestalt/workload": "daily_site_release"})
+def advance_daily_environment_job():
+    advance_daily_environment_op()
+
+
+@sensor(name="automatic_daily_lifecycle", jobs=[advance_daily_environment_job, prepare_forecast_date_job],
+        minimum_interval_seconds=300, default_status=DefaultSensorStatus.STOPPED)
+def automatic_daily_lifecycle_sensor(context):
+    return evaluate_automatic_lifecycle(context)
+
+
+def evaluate_automatic_lifecycle(context):
+    from nba_lineup_model.orchestration.lifecycle import automation_request
+    binding = binding_for_instance(context.instance)
+    configured = os.environ.get("GESTALT_AUTOMATION_CONFIG")
+    if not configured:
+        return SkipReason("Automatic lifecycle is not enabled for this environment")
+    if context.instance.get_runs(filters=RunsFilter(statuses=[DagsterRunStatus.QUEUED,
+        DagsterRunStatus.STARTING, DagsterRunStatus.STARTED, DagsterRunStatus.CANCELING]), limit=1):
+        return SkipReason("Environment work is already queued or running")
+    request = automation_request(Path(configured))
+    if request is None:
+        return SkipReason("No completed slate or changed pregame inputs need publication")
+    tags = binding.tags(request["job"], request["config"])
+    runs = context.instance.get_run_records(filters=RunsFilter(job_name=request["job"],
+        tags={"gestalt/automation_key": request["key"]}), limit=3)
+    if any(r.dagster_run.status == DagsterRunStatus.SUCCESS for r in runs):
+        return SkipReason("This input selection was already processed successfully")
+    if len(runs) >= 3:
+        raise RuntimeError("Three failed attempts for the same lifecycle work; inspect Data Quality and rerun after repair")
+    if runs and (datetime.now(UTC) - runs[0].update_timestamp).total_seconds() < 900:
+        return SkipReason("Retry cooling down for 15 minutes")
+    return RunRequest(job_name=request["job"],
+        run_key=f"automatic:{request['key']}:attempt-{len(runs)+1}",
+        run_config={"ops":{request["job"] + "_op":{"config":request["config"]}}},
+        tags={**tags, "gestalt/trigger":"sensor", "gestalt/automation_key":request["key"]})
+
+
+defs = Definitions(jobs=[prepare_daily_partition_job, prepare_forecast_date_job, advance_daily_environment_job],
+                   sensors=[resumable_daily_partition_sensor, automatic_daily_lifecycle_sensor])

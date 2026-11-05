@@ -149,6 +149,9 @@ class PartitionSteps(CanonicalPipelineSteps):
             verify_daily_model_artifact(destination)
             _write_latest_pointer(self.config.model_root, destination)
             return
+        self.build_target_model(target)
+
+    def build_target_model(self, target):
         super().model(target)
 
     def stage_receipt(self, stage, result):

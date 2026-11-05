@@ -9,7 +9,7 @@ from pathlib import Path
 
 from nba_lineup_model.orchestration.daily_instance import DailyInstance
 
-JOBS = ("prepare_daily_partition", "prepare_forecast_date", "prepare_daily_site_release")
+JOBS = ("prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment", "prepare_daily_site_release")
 
 
 def stamp(value) -> str:
@@ -29,7 +29,8 @@ def read_daily_runs(home: Path, environment: str, environment_root: Path) -> dic
     connection.row_factory = sqlite3.Row
     try:
         records = [dict(row) for row in connection.execute(
-            "select * from runs where pipeline_name in (?, ?, ?) order by create_timestamp, id", JOBS)]
+            "select * from runs where pipeline_name in (" + ",".join("?" for _ in JOBS)
+            + ") order by create_timestamp, id", JOBS)]
     finally:
         connection.close()
     from nba_lineup_model.orchestration.daily_history_migration import migration_bindings, record_digest
@@ -60,7 +61,7 @@ def read_daily_runs(home: Path, environment: str, environment_root: Path) -> dic
                "started_at": stamp(started), "finished_at": stamp(ended),
                "updated_at": stamp(updated)}
         groups[key].append(row)
-        if job in {"prepare_daily_partition", "prepare_daily_site_release"}:
+        if job in {"prepare_daily_partition", "advance_daily_environment", "prepare_daily_site_release"}:
             daily.append(row)
     failures = []
     unfinished = []
