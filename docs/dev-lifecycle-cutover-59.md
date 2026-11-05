@@ -130,3 +130,19 @@ four failures (5 passed): three assertions expect a retrospective field even
 when a damaged/missing box is correctly reported, and the suspended-game path
 fails on missing scheduling_instance_id. These remain unresolved; ticket 59 is
 not complete. Real nightly publication and browser review also remain required.
+
+
+The recorded-source lifecycle failures are corrected in the checkout: missing
+retrospectives are asserted as absent/empty; locked selection metadata is read
+from the canonical forecast member rather than the open-candidate envelope.
+An added post-cutoff reassembly test requires exact original forecast, market,
+scheduling ID and cutoff preservation. Explicit recorded-dev suite: 10 passed.
+Related publication/compatibility regression: 28 passed, 1 optional artifact
+comparison skipped. These changes do not affect a worker already executing its
+sealed package; they require the next normal worker deployment.
+
+Automatic run 90b024d8-f62e-4ba8-baa0-b70067df8a5c passed staging and moved dev
+to the verified zero-game carry-forward, with post-activation checks still in
+progress at this checkpoint. Independent comparison: all 121 historical
+forecasts and market payloads equal acceptance-59/before.json. Application code
+remains 4a344334236e5708efab8eda653538c64eafcc15. No production pointer moved.

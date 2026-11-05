@@ -146,10 +146,17 @@ def build_schedule_selection(
                 "original_publication_receipt": None,
             }
             if original_selection is not None:
-                selection["scheduling_instance_id"] = original_selection[
+                # Open resolver metadata describes the candidate directly; a
+                # locked record stores the immutable selection under forecast.
+                # Resumed games retain that original selection and cutoff.
+                selected_forecast = (
+                    original_selection if original_selection.get("state") == "open"
+                    else original_selection["forecast"]
+                )
+                selection["scheduling_instance_id"] = selected_forecast[
                     "scheduling_instance_id"
                 ]
-                selection["cutoff_at"] = original_selection["cutoff_at"]
+                selection["cutoff_at"] = selected_forecast["cutoff_at"]
                 selection["provenance"] = "original_live"
                 selection["registry_selection"] = original_selection
                 selection["version_reference"] = version_id

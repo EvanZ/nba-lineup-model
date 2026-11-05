@@ -369,7 +369,7 @@ def test_one_box_failure_is_visible_without_hiding_other_games(recorded, monkeyp
     for game in games:
         if game["game_id"] == broken:
             assert game.get("data_quality_errors")
-            assert not game["retrospective"]
+            assert not game.get("retrospective")
         else:
             assert not game.get("data_quality_errors")
             assert game["retrospective"]["ledger"]["game_id"] == game["game_id"]
@@ -572,3 +572,20 @@ def test_published_injury_revision_changes_forecast_only_before_cutoff(recorded,
     assert after["projection"] == locked["projection"]
     assert after["injury_report"] == locked["injury_report"]
     assert after["latest_observations"]["injury_report"]["fixture_revision"] == "late"
+
+
+def test_reassembly_after_cutoff_retains_locked_forecast_and_market(recorded, monkeypatch):
+    r = recorded
+    _, client, versions, _, _ = prepared(r, monkeypatch)
+    first = versions[0]
+    Clock.current = max(v.scheduling.cutoff_at for v in versions) + timedelta(minutes=1)
+    initial = next(g for g in response(client, r.day)["games"]
+        if g["game_id"] == first.game_id)["forecast_selection"]["registry_selection"]
+    _, payload = r.registry.version(first.forecast_id)
+    _, rebuilt = release(r, monkeypatch, "after-cutoff", [first],
+        {"games": [payload], "collected_at": Clock.current.isoformat()}, Clock.current)
+    selected = response(rebuilt, r.day)["games"][0]["forecast_selection"]
+    assert selected["registry_selection"]["forecast"] == initial["forecast"]
+    assert selected["registry_selection"]["market"] == initial["market"]
+    assert selected["scheduling_instance_id"] == initial["forecast"]["scheduling_instance_id"]
+    assert selected["cutoff_at"] == initial["forecast"]["cutoff_at"]
