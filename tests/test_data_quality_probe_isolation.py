@@ -40,9 +40,14 @@ def test_report_retains_artifacts_and_job_recovery_when_one_api_fails(tmp_path, 
     monkeypatch.setattr(probe, 'verify_production_site_release', lambda *_: {
         'identity': {}, 'approved_manifest': {'identity': approved}})
     monkeypatch.setattr(probe, 'read_json', lambda *_: {
-        'components': {}, 'edition_id': 'edition', 'evidence_through_date': '2026-11-02'})
+        'components': {}, 'edition_id': 'edition', 'evidence_through_date': '2026-11-02',
+        'dates': {'2026-11-02': {}, '2026-11-04': {}}})
     monkeypatch.setattr(probe, 'official_schedule_snapshot', lambda *a, **k: {
-        'completed_games': 107, 'latest_eligible_completed_date': '2026-11-02'})
+        'completed_games': 114, 'completed_game_ids': [str(i) for i in range(114)],
+        'completed_dates': ['2026-11-02'],
+        'completed_game_ids_by_date': {'2026-11-02': [str(i) for i in range(107)],
+                                     '2026-11-04': [str(i) for i in range(107,114)]},
+        'latest_eligible_completed_date': '2026-11-02'})
     monkeypatch.setattr(probe, 'activation_transition', lambda *a: {
         'changed_components': [], 'forecast_selection_changed': False})
     monkeypatch.setattr(probe, 'collector_rows', lambda **k: [])
@@ -53,7 +58,8 @@ def test_report_retains_artifacts_and_job_recovery_when_one_api_fails(tmp_path, 
     def get(root, path):
         if path == '/api/schedule-performance':
             raise HTTPError(path, 503, 'Unavailable', {}, None)
-        return {'release_id': 'release', 'players': [{'id': 1}], 'components': {}}
+        return {'release_id': 'release', 'players': [{'id': 1}], 'components': {},
+                'rating_state': {'game_count': 107}}
     monkeypatch.setattr(probe, 'get_json', get)
     report = probe.collect_environment_report(
         environment='dev', live_release=tmp_path / 'live-release', schedule_root=tmp_path,
@@ -68,6 +74,13 @@ def test_report_retains_artifacts_and_job_recovery_when_one_api_fails(tmp_path, 
     rankings = next(a for a in report['artifacts'] if a['name'] == 'rankings')
     assert rankings['coverage']['players']['observed'] == 1
     assert rankings['states']['served'] is True
+    assert rankings['coverage']['completed_games'] == {'expected': 107, 'observed': 107}
+    assert report['expected']['required_evidence_through_date'] == '2026-11-02'
+    ledgers = next(a for a in report['artifacts'] if a['name']=='schedule_ledgers')
+    assert ledgers['coverage']['actual_minutes_ledgers'] == {'expected': 114, 'observed': 0}
+    assert any(f['code']=='coverage_mismatch' and f['scope']=='artifact:schedule_ledgers:actual_minutes_ledgers'
+               for f in report['findings'])
+    assert len(ledgers['details']['missing_actual_minutes_game_ids'])==114
     html = render_data_quality_html(report)
     assert 'observed_daily_data' in html and 'daily_publication' in html
     assert 'api:performance' in html

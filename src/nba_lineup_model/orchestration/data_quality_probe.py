@@ -117,6 +117,7 @@ def official_schedule_snapshot(
             tomorrow_game_count = len(games)
 
     final_ids: set[str] = set()
+    final_ids_by_date: dict[str, list[str]] = {}
     for path in sorted((schedule_root / "final").glob("*.summary.json")):
         payload = read_json(path)
         game_id = str(payload.get("game_id") or "").strip()
@@ -125,10 +126,15 @@ def official_schedule_snapshot(
         if game_id in final_ids:
             raise ValueError(f"Duplicate official final game ID: {game_id}")
         final_ids.add(game_id)
+        final_date = str(payload.get("game_date") or "")
+        date.fromisoformat(final_date)
+        final_ids_by_date.setdefault(final_date, []).append(game_id)
 
     latest_completed_date = max(completed_dates) if completed_dates else ""
     return {
         "latest_eligible_completed_date": latest_completed_date,
+        "completed_dates": sorted(completed_dates),
+        "completed_game_ids_by_date": {day: sorted(ids) for day, ids in final_ids_by_date.items()},
         "completed_game_ids": sorted(final_ids),
         "completed_games": len(final_ids),
         "scheduled_games_today": scheduled_game_count,
@@ -329,8 +335,8 @@ def odds_artifact_observed_at(schedule_root: Path) -> str:
     return file_observed_at(path)
 
 
-def current_surface_snapshot(api_root: str, evidence_date: str) -> dict[str, object]:
-    encoded_date = urllib.parse.quote(evidence_date)
+def current_surface_snapshot(api_root: str, evidence_date: str, *,
+                             schedule_dates: Sequence[str] | None = None) -> dict[str, object]:
     failures = []
 
     def fetch(name, path):
@@ -350,9 +356,18 @@ def current_surface_snapshot(api_root: str, evidence_date: str) -> dict[str, obj
     wins = fetch("wins", "/api/win-projections")
     records = fetch("records", "/api/current-season-records")
     performance = fetch("performance", "/api/schedule-performance")
-    schedule = (
-        fetch("schedule", f"/api/schedule?date={encoded_date}") if evidence_date else {"games": []}
-    )
+    dates = list(schedule_dates) if schedule_dates is not None else ([evidence_date] if evidence_date else [])
+    schedule_games = []
+    for day in dates:
+        schedule_games.extend(fetch("schedule", f"/api/schedule?date={urllib.parse.quote(day)}").get("games", []))
+    ids = [str(game["game_id"]) for game in schedule_games]
+    if len(ids) != len(set(ids)):
+        failures.append({"stage": "api:schedule", "status": "failed", "message": "Duplicate served schedule game IDs"})
+    actual_ledger_ids = {
+        str(game["game_id"]) for game in schedule_games
+        if game.get("status", {}).get("completed") or game.get("status", {}).get("state") == "post"
+        if (game.get("retrospective") or (game.get("final_audit") or {}).get("retrospective") or {}).get("ledger")
+    }
     season_window = next(
         (window for window in performance.get("windows", []) if window.get("key") == "season"),
         {},
@@ -375,7 +390,9 @@ def current_surface_snapshot(api_root: str, evidence_date: str) -> dict[str, obj
         "records_as_of": str(records.get("as_of") or records.get("through_date") or ""),
         "performance_game_count": int(season_window.get("games", -1)),
         "performance_as_of": str(performance.get("as_of") or ""),
-        "schedule_game_count": len(schedule.get("games") or []),
+        "schedule_game_count": len(schedule_games),
+        "actual_minutes_ledger_ids": sorted(actual_ledger_ids),
+        "actual_minutes_ledger_count": len(actual_ledger_ids),
     }
 
 
@@ -481,6 +498,21 @@ def nightly_publication_state(
     return {
         "nightly_publication_due": generated_at.astimezone(PACIFIC) >= deadline,
         "nightly_publication_deadline": utc_timestamp(deadline),
+    }
+
+
+def nightly_coverage_target(official: Mapping[str, object], evidence_date: str,
+                            generated: datetime, deadline_hour: int) -> dict[str, object]:
+    due_dates = [day for day in official["completed_dates"]
+                 if nightly_publication_state(day, generated, deadline_hour)["nightly_publication_due"]]
+    required_date = max(evidence_date, max(due_dates, default=""))
+    ids = sorted(gid for day, games in official["completed_game_ids_by_date"].items()
+                 if day <= required_date for gid in games)
+    return {
+        **nightly_publication_state(max(due_dates, default=""), generated, deadline_hour),
+        "required_evidence_through_date": required_date,
+        "required_completed_game_ids": ids,
+        "required_completed_games": len(ids),
     }
 
 
@@ -705,19 +737,11 @@ def collect_environment_report(
         threshold_for(thresholds, "daily_publication", "deadline_hour_pacific") or 5
     )
     official.update(
-        nightly_publication_state(
-            str(official.get("latest_eligible_completed_date") or ""),
-            generated,
-            deadline_hour,
-        )
+        nightly_coverage_target(official, evidence_date, generated, deadline_hour)
     )
     official["active_evidence_through_date"] = evidence_date
-    official["required_evidence_through_date"] = (
-        str(official.get("latest_eligible_completed_date") or "")
-        if official["nightly_publication_due"]
-        else evidence_date
-    )
-    surfaces = current_surface_snapshot(api_root, evidence_date)
+    schedule_dates = sorted(read_json(release_root / "selected-schedule/forecast-selections.json")["dates"])
+    surfaces = current_surface_snapshot(api_root, evidence_date, schedule_dates=schedule_dates)
     release_matches = str(surfaces["serving"].get("release_id") or "") == str(
         active.get("release_id") or ""
     )
@@ -725,12 +749,8 @@ def collect_environment_report(
     component_matches = all(
         surface_components.get(name) == value for name, value in components.items()
     )
-    expected_games = (
-        int(official["completed_games"])
-        if official["nightly_publication_due"]
-        else int(approved["game_count"])
-    )
-    official["required_completed_games"] = expected_games
+    expected_games = int(official["required_completed_games"])
+    live_completed_ids = set(official["completed_game_ids"])
     approved_api = dict(approved.get("api_validation") or {})
     model_quality = dict(surfaces["ranking_state"].get("data_quality") or {})
     source_exclusions = dict(model_quality.get("source_exclusions") or {})
@@ -909,7 +929,7 @@ def collect_environment_report(
             layer="served_surface",
             artifact_id=approved["schedule"]["tree_sha256"],
             checksum=approved["schedule"]["tree_sha256"],
-            evidence_date=evidence_date,
+            evidence_date=max(official["completed_game_ids_by_date"], default=evidence_date),
             revision=revision,
             edition=edition,
             coverage={
@@ -918,12 +938,13 @@ def collect_environment_report(
                     "observed": int(approved["schedule"]["attribution_audit"]["pregame_ledgers"]),
                 },
                 "actual_minutes_ledgers": {
-                    "expected": expected_games,
-                    "observed": int(
-                        approved["schedule"]["attribution_audit"]["actual_minutes_ledgers"]
-                    ),
+                    "expected": len(live_completed_ids),
+                    "observed": len(live_completed_ids & set(surfaces["actual_minutes_ledger_ids"])),
                 },
             },
+            details={"coverage_source": "served_schedule",
+                     "missing_actual_minutes_game_ids": sorted(
+                         live_completed_ids - set(surfaces["actual_minutes_ledger_ids"]))},
             states=full_states,
             required_states=("materialized", "validated", "activated", "served"),
         ),
@@ -937,7 +958,7 @@ def collect_environment_report(
             edition=edition,
             coverage={
                 "completed_games": {
-                    "expected": expected_games,
+                    "expected": len(live_completed_ids),
                     "observed": int(surfaces["record_game_count"]),
                 }
             },
@@ -954,7 +975,7 @@ def collect_environment_report(
             edition=edition,
             coverage={
                 "completed_games": {
-                    "expected": expected_games,
+                    "expected": len(live_completed_ids),
                     "observed": int(surfaces["performance_game_count"]),
                 }
             },
