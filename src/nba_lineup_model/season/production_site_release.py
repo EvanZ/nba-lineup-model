@@ -225,6 +225,57 @@ def stage_production_site_release(
     return target
 
 
+def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path) -> Path:
+    """Replace code only; retain the original data approval and every data byte.
+
+    The runtime identity records new code; the retained approval describes the
+    unchanged data. The code deployment command performs fresh API validation.
+    """
+    base = base_release.resolve(strict=True)
+    original = verify_production_site_release(base)
+    code = inspect_source_code(code_root)["identity"]
+    identity = {**original["identity"], "code_revision": code["git_revision"],
+                "code_identity": code}
+    checksum = hashlib.sha256(canonical_json(identity)).hexdigest()
+    output_root.mkdir(parents=True, exist_ok=True)
+    target = output_root / f"runtime_sha256={checksum}"
+    if target.exists():
+        existing = verify_production_site_release(target)
+        if existing["identity"] != identity:
+            raise ValueError("Code release identity differs from existing release")
+        return target
+    staging = output_root / f".code-release.tmp-{uuid4().hex}"
+    staging.mkdir()
+    try:
+        # No serving builder, model updater, forecast selector or collector runs.
+        for name in ("current-season-serving", "current-season-lineups",
+                     "schedule-snapshot", "site-releases", "web", "catalog", "preseason"):
+            shutil.copytree(base / name, staging / name)
+        if (base / "serving-bindings.json").is_file():
+            shutil.copytree(base / "selected-schedule", staging / "selected-schedule")
+            shutil.copy2(base / "serving-bindings.json", staging / "serving-bindings.json")
+        shutil.copy2(base / "site-release.env", staging / "site-release.env")
+        (staging / "schedule").symlink_to(
+            Path(identity["schedule_overlay_path"]), target_is_directory=True)
+        sealed = materialize_sealed_code_package(
+            code_root, staging, expected_revision=code["git_revision"])
+        if sealed["identity"] != code:
+            raise ValueError("Code changed during packaging")
+        manifest = {**original, "identity": identity, "runtime_sha256": checksum}
+        (staging / MANIFEST_FILENAME).write_bytes(canonical_json(manifest) + b"\n")
+        verify_production_site_release(staging)
+        if verify_production_site_release(base) != original:
+            raise ValueError("Base release changed during code packaging")
+        staging.replace(target)
+    finally:
+        if staging.exists():
+            for directory in (staging / "code", *(staging / "code").rglob("*")):
+                if directory.is_dir() and not directory.is_symlink():
+                    directory.chmod(0o755)
+            shutil.rmtree(staging)
+    return target
+
+
 def verify_production_site_release(path: Path | str) -> dict[str, Any]:
     """Fail closed if any immutable runtime component has changed."""
 

@@ -39,9 +39,12 @@ These instructions apply to every task in this repository.
 - Do not promote or deploy to production without the user's explicit approval.
 - Dev and production must use the same canonical artifact schemas and coverage
   checks; environment-specific pointers may differ.
-- Use the canonical daily release workflow and its validated report for site
-  activation. Do not manually assemble artifacts, invoke lower-level staging or
-  publisher commands, or edit release pointers to bypass that workflow.
+- Use the canonical daily release workflow for data publication. Code-only dev
+  API deployments use scripts/deploy_gestalt_code.py, which preserves all data
+  selections, tests the packaged API, and activates through the same fenced
+  publisher. Code deployment must not require running a forecasting/model job.
+- Do not manually assemble artifacts, invoke lower-level publisher commands, or
+  edit release pointers to bypass either workflow.
 - A small UI/reporting change does not justify a release shortcut. If the
   canonical workflow cannot express the requested change, report the limitation
   and obtain explicit approval for a scoped workflow repair before proceeding.
