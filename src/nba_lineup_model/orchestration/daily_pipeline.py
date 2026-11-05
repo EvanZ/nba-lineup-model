@@ -202,7 +202,17 @@ def _report(root: Path, payload: dict) -> None:
 
 
 def require_clean_code_revision(code_root: Path) -> str:
-    """Return the tested revision or fail quickly on a blocked Git preflight."""
+    """Return the tested revision from a clean checkout or verified sealed package."""
+
+    code_root = Path(code_root).resolve()
+    package_root = code_root.parent
+    if code_root.name == "code" and (package_root / "code-package.json").is_file():
+        from nba_lineup_model.season.sealed_code_package import verify_sealed_code_package
+
+        package = verify_sealed_code_package(package_root)
+        if (package_root / "code").resolve() != code_root:
+            raise ValueError("Sealed package code path mismatch")
+        return str(package["identity"]["git_revision"])
 
     try:
         revision = subprocess.check_output(

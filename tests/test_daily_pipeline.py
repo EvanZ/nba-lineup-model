@@ -20,6 +20,7 @@ from nba_lineup_model.orchestration.daily_pipeline import (
     causal_schedule_sha256,
     prepare_daily_release,
     require_complete_slate,
+    require_clean_code_revision,
 )
 from nba_lineup_model.orchestration.definitions import (
     complete_slate_daily_release_sensor,
@@ -747,3 +748,19 @@ def test_activation_cli_accepts_approved_migration_and_validated_work():
     assert args.legacy_migration_approval == "explicit-user-approval"
     assert args.work == Path("/dev/work")
     assert args.report is None
+
+
+def test_clean_code_revision_accepts_verified_sealed_package(tmp_path, monkeypatch):
+    package = tmp_path / "revision=test"
+    code = package / "code"
+    code.mkdir(parents=True)
+    (package / "code-package.json").write_text("{}")
+    revision = "d" * 40
+    from nba_lineup_model.season import sealed_code_package
+
+    monkeypatch.setattr(
+        sealed_code_package,
+        "verify_sealed_code_package",
+        lambda root: {"identity": {"git_revision": revision}},
+    )
+    assert require_clean_code_revision(code) == revision
