@@ -20,6 +20,24 @@ test -x "$runtime/bin/python"
   --profile orchestration --requirements "$REPO_ROOT/deploy/web-requirements.txt" \
   "$REPO_ROOT/deploy/orchestration-requirements.txt" >/dev/null
 sudo -n install -d -o ubuntu -g ubuntu -m 0755 /var/lib/nba-gestalt-dev/daily-releases
+if $publish_forecasts; then
+  # Only mutable publication containers need worker write access. Keep existing
+  # sealed releases, generations, and journal entries unchanged.
+  for path in /var/lib/nba-gestalt-dev \
+      /var/lib/nba-gestalt-dev/release-publisher \
+      /var/lib/nba-gestalt-dev/release-publisher/generations \
+      /var/lib/nba-gestalt-dev/release-publisher/journal; do
+    sudo -n mkdir -p "$path"
+    sudo -n chgrp ubuntu "$path"
+    sudo -n chmod g+ws "$path"
+    sudo -n -u ubuntu test -w "$path"
+  done
+  lock=/var/lib/nba-gestalt-dev/release-publisher/.publisher.lock
+  sudo -n touch "$lock"
+  sudo -n chgrp ubuntu "$lock"
+  sudo -n chmod g+rw "$lock"
+  sudo -n -u ubuntu test -w "$lock"
+fi
 read -r package checksum < <(
   PYTHONPATH="$REPO_ROOT/src" "$runtime/bin/python" -m nba_lineup_model.orchestration.watchdog_deployment \
     --source "$REPO_ROOT" --output /var/lib/nba-gestalt-dev/daily-releases
