@@ -69,6 +69,20 @@ def validate_forecast_handoff(base: Path, schedule: Path) -> list[str]:
     return sorted(changed)
 
 
+def retained_market_warnings(before: dict, after: dict, existing: list, errors: list) -> list:
+    """Retain existing retrospective warnings only for independent market changes."""
+    if not errors:
+        return []
+    if (forecast_inputs(before) != forecast_inputs(after)
+        or before.get("market") == after.get("market")
+        or before.get("prediction_market") != after.get("prediction_market")
+        or any(error not in existing or not isinstance(error, str)
+               or not error.startswith("retrospective_unavailable:Official minutes player ")
+               or not error.endswith(" has no rating-before state") for error in errors)):
+        raise ValueError("API reported a new or publication-dependent game error")
+    return list(errors)
+
+
 def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: str,
                               activate: bool) -> dict:
     """Called by the successful forecast job; failure propagates to Dagster."""
@@ -102,6 +116,7 @@ def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: st
                 serving_sha=identity["serving_bundle_sha256"], lineup_sha=identity["lineup_bundle_sha256"])
             index = verify_schedule_selection(candidate / "selected-schedule")
             coverage = {}
+            retained_warnings = {}
             for day, ref in index["dates"].items():
                 board = read_object(candidate / "selected-schedule" / ref["path"])
                 actual = fetch(api, f"/api/schedule?date={day}")
@@ -116,9 +131,18 @@ def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: st
                         if expected_game.get(field) != actual_game.get(field):
                             raise ValueError(f"API does not serve selected {field}: {gid}")
                     if actual_games[gid].get("data_quality_errors"):
-                        raise ValueError(f"API reported a game error: {gid}")
+                        base_index = verify_schedule_selection(base / "selected-schedule")
+                        before_board = read_object(base / "selected-schedule" / base_index["dates"][day]["path"])
+                        before = next(g for g in before_board["games"] if str(g["game_id"]) == gid)
+                        port = 8011 if environment == "dev" else 8010
+                        existing_board = fetch(f"http://127.0.0.1:{port}", f"/api/schedule?date={day}")
+                        existing = next(g for g in existing_board["games"] if str(g["game_id"]) == gid)
+                        retained_warnings[gid] = retained_market_warnings(
+                            before.get("pregame", before), expected_game,
+                            existing.get("data_quality_errors", []), actual_games[gid]["data_quality_errors"])
                 coverage[day] = len(actual_games)
-            report.update(status="validated", api_validation=evidence, schedule_coverage=coverage)
+            report.update(status="validated", api_validation=evidence, schedule_coverage=coverage,
+                          retained_game_warnings=retained_warnings)
         if activate:
             result = activate_release(release=candidate, live_pointer=config.live_pointer,
                 publisher_root=config.environment_root / "release-publisher", environment=environment,
