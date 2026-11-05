@@ -8,6 +8,44 @@ from dagster import DagsterRunStatus
 from nba_lineup_model.orchestration.lifecycle import next_nightly_date
 from nba_lineup_model.orchestration import partition_definitions as jobs
 
+def test_complete_prior_is_pinned_and_survives_workspace_copy(tmp_path):
+    import shutil
+    from test_daily_model_replay import _prior_files
+    from nba_lineup_model.season.daily_model_replay import _load_frozen_priors
+    from nba_lineup_model.orchestration.lifecycle import coupled_prior_files
+    rankings, minutes = _prior_files(tmp_path)
+    rankings.with_suffix(".json").write_text('{"source":"original prior"}')
+    config = SimpleNamespace(preseason_rankings_path=rankings,
+        preseason_minutes_path=minutes, season="2026-27")
+    _, _, expected = _load_frozen_priors(rankings, minutes, season=config.season)
+    files = coupled_prior_files(config, {"prior_sha256":expected})
+    assert set(files) == {"rankings.parquet", "rankings.json", "minutes.json"}
+    copied = tmp_path / "private-inputs"
+    copied.mkdir()
+    for name, reference in files.items():
+        shutil.copyfile(reference["path"], copied / name)
+    _, _, actual = _load_frozen_priors(copied / "rankings.parquet",
+        copied / "minutes.json", season=config.season)
+    assert actual == expected
+
+
+@pytest.mark.parametrize("change", ["missing_metadata", "changed_metadata", "changed_minutes"])
+def test_prior_input_changes_are_rejected(tmp_path, change):
+    from test_daily_model_replay import _prior_files
+    from nba_lineup_model.season.daily_model_replay import _load_frozen_priors
+    from nba_lineup_model.orchestration.lifecycle import coupled_prior_files
+    rankings, minutes = _prior_files(tmp_path)
+    metadata = rankings.with_suffix(".json")
+    metadata.write_text('{"source":"original prior"}')
+    _, _, expected = _load_frozen_priors(rankings, minutes, season="2026-27")
+    if change == "missing_metadata": metadata.unlink()
+    elif change == "changed_metadata": metadata.write_text('{"source":"changed"}')
+    else: minutes.write_text(minutes.read_text() + "\n")
+    config = SimpleNamespace(preseason_rankings_path=rankings,
+        preseason_minutes_path=minutes, season="2026-27")
+    with pytest.raises(ValueError, match="accepted coupled prior"):
+        coupled_prior_files(config, {"prior_sha256":expected})
+
 
 @pytest.mark.parametrize("finals,expected", [
     (set(), None), ({"a"}, None), ({"a", "b"}, date(2025, 1, 4)),

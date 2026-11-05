@@ -197,10 +197,11 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
         model_root=output / "model",
         schedule_root=schedule,
         observation_root=observation_root,
+        historical_runtime_root=Path(bindings["historical_runtime"]),
         forecast_injury_inputs_path=injury_inputs,
         catalog_path=live / "catalog/games.parquet",
         frontend_root=live / "web",
-        preseason_rankings_path=live / "preseason/rankings.parquet",
+        preseason_rankings_path=template.preseason_rankings_path,
         preseason_profiles_path=live / "preseason/profiles.parquet",
         forecast_date=str(forecast_date),
         forecast_market_inputs_path=market_inputs,
@@ -214,6 +215,8 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
         "minutes.json": file_reference(config.preseason_minutes_path),
         "model-configuration.json": file_reference(config.model_configuration_path),
     }
+    from nba_lineup_model.orchestration.lifecycle import coupled_prior_files
+    files.update(coupled_prior_files(config, model["identity"]["model_provenance"]))
     schedule_files = {
         str(p.relative_to(schedule)): file_reference(p)
         for p in sorted(schedule.rglob("*"))

@@ -8,6 +8,26 @@ from nba_lineup_model.orchestration.daily_work import digest, read_object
 from nba_lineup_model.season.slate_time import PACIFIC
 
 
+def coupled_prior_files(config, provenance):
+    """Pin the complete original prior; a display-only copy is not a training input."""
+    from nba_lineup_model.orchestration.daily_work import file_reference
+    from nba_lineup_model.season.daily_model_replay import _load_frozen_priors
+    _, _, actual = _load_frozen_priors(config.preseason_rankings_path,
+        config.preseason_minutes_path, season=config.season)
+    if actual != provenance["prior_sha256"]:
+        raise ValueError("Rankings and minutes do not match the accepted coupled prior")
+    files = {
+        "rankings.parquet": file_reference(config.preseason_rankings_path),
+        "minutes.json": file_reference(config.preseason_minutes_path),
+    }
+    metadata = config.preseason_rankings_path.with_suffix(".json")
+    if metadata.is_file():
+        # Keep the basename expected by the existing prior loader in the
+        # private workspace, and include it in the immutable work identity.
+        files["rankings.json"] = file_reference(metadata)
+    return files
+
+
 def bind_accepted_configuration(template):
     """Recover settings from the accepted model's verified producing work, never defaults."""
     from dataclasses import replace
@@ -40,6 +60,7 @@ def bind_accepted_configuration(template):
             preseason_minutes_path=verify_reference(files["minutes.json"]))
         selected.validate()
         causal_hca_replay_config(selected)
+        coupled_prior_files(selected, provenance)
         return selected
     # An untraceable producing configuration is not permission to use a legacy
     # coefficient or infer settings from a filename.

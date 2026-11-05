@@ -129,7 +129,7 @@ def advance_daily_environment(template, day: date):
     config = replace(template, pipeline_root=output / "pipeline", data_root=output / "data",
         model_root=output / "model", schedule_root=live / "selected-schedule",
         catalog_path=live / "catalog/games.parquet", frontend_root=live / "web",
-        preseason_rankings_path=live / "preseason/rankings.parquet",
+        preseason_rankings_path=template.preseason_rankings_path,
         preseason_profiles_path=live / "preseason/profiles.parquet",
         historical_runtime_root=Path(bindings["historical_runtime"]),
         activate_after_validation=False, preserve_schedule_selections=True)
@@ -152,6 +152,8 @@ def advance_daily_environment(template, day: date):
         "profiles.parquet":file_reference(config.preseason_profiles_path),
         "minutes.json":file_reference(config.preseason_minutes_path),
         "model-configuration.json":file_reference(config.model_configuration_path)}
+    from nba_lineup_model.orchestration.lifecycle import coupled_prior_files
+    files.update(coupled_prior_files(config, approved["model"]["model_provenance"]))
     schedule_files = {str(p.relative_to(config.schedule_root)):file_reference(p)
                       for p in sorted(config.schedule_root.rglob("*")) if p.is_file()}
     refs = [file_reference(live / "runtime-manifest.json"), *files.values(), *schedule_files.values()]

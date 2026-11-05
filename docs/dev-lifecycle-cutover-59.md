@@ -44,3 +44,26 @@ collector status after promotion, and present results before closing #59/#52.
 The initial regression run includes optional artifact-backed tests that are
 skipped without their explicit EC2 inputs. Those skips are not end-to-end proof;
 real dev execution and artifact-backed verification are still required.
+
+## Verification checkpoint (2026-11-04 Pacific)
+
+- Initial suites: 188 passed, 9 artifact-backed skips. Follow-up prior and forecast
+  suite: 38 passed (overlaps the initial suites; do not add these totals).
+- Full served-data audit: 528 players, 3,676 player-game rows, 20 dates, 154 games,
+  119 finals and 119 actual ledgers, no mismatches. Generation 14 stayed unchanged.
+- Automatic pregame execution failed before publication: the old template omitted
+  model settings and historical runtime. Resolve those from verified accepted
+  producer configuration / serving bindings, not legacy defaults.
+- A display-only rankings copy lacks the metadata included in the original prior
+  identity. The original coupled bundle reproduces the accepted fingerprint.
+  Pin and copy all prior inputs (including rankings.json) into private work.
+  Never change the accepted prior fingerprint to accept an incomplete copy.
+- Protected collection services remain active; production has not changed.
+
+Outstanding: real automatic publication, recovery/alert clearing, browser review,
+and complete nightly lifecycle acceptance. The existing model-compatibility check
+rejects any modeling-directory change and assumes Git metadata in the deployed
+worker. User approval is pending for a precise calculation/input check with
+equivalence tests for loading/storage changes. Do not bypass the existing gate.
+The detailed GitHub progress comment was blocked by the permission reviewer;
+approval to disclose that summary publicly is pending.
