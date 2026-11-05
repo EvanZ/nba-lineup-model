@@ -33,8 +33,15 @@ def fetch(api, path):
 @contextmanager
 def candidate_api(release, report_root):
     bindings = json.loads((release / "serving-bindings.json").read_text())
+    # Isolated preflight link, never an environment's live pointer. There is no
+    # activation record: only the real publisher can create one after validation.
+    pointer = report_root / "preflight-release"
+    if not pointer.is_symlink():
+        pointer.symlink_to(release, target_is_directory=True)
+    if pointer.resolve() != release.resolve():
+        raise ValueError("Preflight link points at another release")
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(release / "code/src"),
-           "GESTALT_ACTIVE_RELEASE_ROOT": str(release),
+           "GESTALT_ACTIVE_RELEASE_ROOT": str(pointer),
            "GESTALT_LIVE_SCORE_STATE_DIR": "/var/lib/nba-gestalt/schedule-serving/current",
            "GESTALT_DATA_QUALITY_ROOT": "/var/lib/nba-gestalt-dev/data-quality"}
     for variable, relative in {
