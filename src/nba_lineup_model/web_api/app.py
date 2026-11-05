@@ -30,7 +30,7 @@ from nba_lineup_model.season.dev_site_release import (
 from nba_lineup_model.season.release_publisher import (
     load_process_activation_identity,
 )
-from nba_lineup_model.season.serving_selection import observation_context
+from nba_lineup_model.season.serving_selection import observation_context, frozen_rating_context
 from nba_lineup_model.web_api.data_quality_reports import (
     compose_data_quality_report,
     read_data_quality_status,
@@ -150,6 +150,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
 
             snapshot = await run_in_threadpool(serving.observations, observation_root)
             token = observation_context.set(snapshot)
+        rating_token = frozen_rating_context.set(serving.frozen_game_ratings)
         try:
             response = await call_next(request)
             response.headers["X-Gestalt-Release"] = serving.release_id
@@ -162,6 +163,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
                 response.headers["X-Gestalt-Observations"] = snapshot.observation_id
             return response
         finally:
+            frozen_rating_context.reset(rating_token)
             if token is not None:
                 observation_context.reset(token)
 

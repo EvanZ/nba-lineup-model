@@ -136,6 +136,9 @@ def test_api_rejects_stale_page_pin_without_loading_a_substitute(monkeypatch, tm
         release_id = "new-release"
         bindings = {"edition_id": "edition", "components": {"forecast_selection_id": "selection"}}
 
+        def frozen_game_ratings(self, selected):
+            raise AssertionError("This endpoint must not load ratings")
+
         def path(self, name):
             return tmp_path
 
@@ -274,6 +277,9 @@ def test_schedule_view_serializes_like_existing_endpoints_and_shares_snapshot(
     class Bound:
         release_id = "test-release"
         bindings = {"edition_id": "edition", "components": {"forecast_selection_id": "selection"}}
+
+        def frozen_game_ratings(self, selected):
+            return {}
 
         def path(self, name):
             return root

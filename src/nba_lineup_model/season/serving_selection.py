@@ -23,6 +23,9 @@ observation_context: ContextVar[ObservationSnapshot | None] = ContextVar(
     "observation_snapshot", default=None
 )
 
+frozen_rating_context: ContextVar[Any] = ContextVar("frozen_game_rating_loader", default=None)
+
+
 INDEX_FILENAME = "forecast-selections.json"
 FORECAST_FIELDS = (
     "projection",
@@ -475,17 +478,41 @@ def _actual_retrospective(game, selected, box, collected_at) -> dict[str, Any]:
         return {}
     from nba_lineup_model.season.official_schedule_runtime import (
         _build_official_actual_minutes_retrospective,
+        _duration_minutes,
     )
 
     try:
+        # The official box, not the projected rotation, determines participation.
+        actual_ids = {
+            int(player["personId"])
+            for side in ("homeTeam", "awayTeam")
+            for player in box.get("game", {}).get(side, {}).get("players", [])
+            if player.get("personId") is not None
+            and _duration_minutes((player.get("statistics") or {}).get("minutes")) > 0
+        }
+        ledger = selected.get("projection", {}).get("ledger", {})
+        saved_ids = {
+            int(row["player_id"]) for side in ("home", "away")
+            for row in ledger.get(side, {}).get("players", [])
+            if row.get("player_id") is not None
+        }
+        missing = actual_ids - saved_ids
+        payload = {}
+        if missing:
+            loader = frozen_rating_context.get()
+            if loader is None:
+                raise ValueError("Exact frozen model resolver is unavailable")
+            ratings = loader(selected)
+            payload = {"players": [{"player_id": pid, "projected_nail": ratings[pid]}
+                                   for pid in sorted(missing) if pid in ratings]}
         result = _build_official_actual_minutes_retrospective(
             game,
             pregame=selected,
             boxscore=box,
-            projection_payload={},
+            projection_payload=payload,
         )
         result["computed_at"] = collected_at
         return result
-    except (ValueError, KeyError, TypeError) as error:
+    except (ValueError, KeyError, TypeError, OSError) as error:
         game.setdefault("data_quality_errors", []).append(f"retrospective_unavailable:{error}")
         return {}

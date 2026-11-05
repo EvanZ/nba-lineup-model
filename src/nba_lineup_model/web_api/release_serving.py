@@ -226,6 +226,12 @@ class ReleaseServing:
             "current_lineups_bundle": self.path("lineup_bundle"),
         }
 
+    def frozen_game_ratings(self, selected: dict) -> dict[int, float]:
+        from nba_lineup_model.season.frozen_game_ratings import load_frozen_game_ratings
+        model = self.manifest["approved_manifest"]["identity"]["model"]
+        return load_frozen_game_ratings(selected, model_bundle=Path(model["bundle_path"]),
+            model_sha256=model["bundle_sha256"], preseason_rankings=self.path("preseason_rankings"))
+
     def observations(self, root: Path | None) -> ObservationSnapshot:
         index = read_object(self.path("schedule") / INDEX_FILENAME)
         return ObservationSnapshot.capture(root, sorted(index["dates"]))
