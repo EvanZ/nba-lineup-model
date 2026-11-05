@@ -33,7 +33,8 @@ if $publish_forecasts; then
   for path in /var/lib/nba-gestalt-dev \
       /var/lib/nba-gestalt-dev/release-publisher \
       /var/lib/nba-gestalt-dev/release-publisher/generations \
-      /var/lib/nba-gestalt-dev/release-publisher/journal; do
+      /var/lib/nba-gestalt-dev/release-publisher/journal \
+      /var/lib/nba-gestalt-dev/forecast-registry/receipts; do
     sudo -n mkdir -p "$path"
     sudo -n chgrp ubuntu "$path"
     sudo -n chmod g+ws "$path"
