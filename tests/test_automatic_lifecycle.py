@@ -8,6 +8,16 @@ from dagster import DagsterRunStatus
 from nba_lineup_model.orchestration.lifecycle import next_nightly_date
 from nba_lineup_model.orchestration import partition_definitions as jobs
 
+def test_restricted_worker_uses_isolated_native_aws_cli():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    unit = (root / "deploy/gestalt-daily-dev@.service").read_text()
+    assert "NoNewPrivileges=true" in unit
+    assert "Environment=PATH=@AWS_CLI_BIN@:" in unit
+    installer = (root / "scripts/install_gestalt_worker_aws.sh").read_text()
+    assert "--verify" in installer
+    assert "setpriv --no-new-privs" in installer
+
 def test_complete_prior_is_pinned_and_survives_workspace_copy(tmp_path):
     import shutil
     from test_daily_model_replay import _prior_files

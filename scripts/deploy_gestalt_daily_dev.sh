@@ -88,6 +88,7 @@ PY
 install -m 0644 "$package/code/deploy/gestalt-daily-dev-workspace.yaml" \
   /var/lib/nba-gestalt-dev/daily-dagster/workspace.yaml
 staging="$(mktemp -d /tmp/gestalt-daily-dev.XXXXXX)"
+aws_cli_bin=$(bash "$package/code/scripts/install_gestalt_worker_aws.sh")
 automation_config=""
 if $automatic; then
   automation_config="$package/forecast-config-enabled.json"
@@ -95,6 +96,7 @@ fi
 trap 'rm -f -- "$staging/gestalt-daily-dev@.service"; rmdir -- "$staging"' EXIT
 sed -e "s|@ORCHESTRATION_PYTHON@|$runtime/bin/python|g" \
   -e "s|@AUTOMATION_CONFIG@|$automation_config|g" \
+  -e "s|@AWS_CLI_BIN@|$aws_cli_bin|g" \
   -e "s|@DAILY_PACKAGE@|$package|g" -e "s|@DAILY_SHA256@|$checksum|g" \
   "$package/code/deploy/gestalt-daily-dev@.service" > "$staging/gestalt-daily-dev@.service"
 systemd-analyze verify "$staging/gestalt-daily-dev@.service"
