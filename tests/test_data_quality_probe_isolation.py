@@ -71,3 +71,11 @@ def test_report_retains_artifacts_and_job_recovery_when_one_api_fails(tmp_path, 
     html = render_data_quality_html(report)
     assert 'observed_daily_data' in html and 'daily_publication' in html
     assert 'api:performance' in html
+    assert '<div class="status failed">failed</div>' in html
+    assert '<div class="status RUNNING">RUNNING</div>' not in html
+    performance_findings = [f for f in report['findings']
+                            if 'aggregate_performance' in f['scope']]
+    # This fixture has no component ID. Keep that independent failure; only
+    # suppress claims derived from the unavailable API response.
+    assert {f['code'] for f in performance_findings} == {'artifact_identity_missing'}
+    assert any(f['scope'] == 'pipeline:api:performance' for f in report['findings'])

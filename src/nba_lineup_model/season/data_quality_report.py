@@ -255,6 +255,11 @@ def build_data_quality_report(
         if not artifact["required"]:
             continue
         scope = f"artifact:{artifact['name']}"
+        api_unavailable = any(
+            failure.get("stage") == "api:" + check
+            for check in artifact["details"].get("failed_api_checks", [])
+            for failure in pipeline_failures
+        )
         if not artifact["artifact_id"] or not artifact["checksum"]:
             findings.append(
                 _finding(
@@ -283,7 +288,7 @@ def build_data_quality_report(
                     observed=evidence_date,
                 )
             )
-        if expected_date and not evidence_date:
+        if expected_date and not evidence_date and not api_unavailable:
             findings.append(
                 _finding(
                     category="freshness",
@@ -324,6 +329,8 @@ def build_data_quality_report(
         for coverage_name, coverage in artifact["coverage"].items():
             expected_count = coverage["expected"]
             observed_count = coverage["observed"]
+            if api_unavailable and observed_count is None:
+                continue  # The explicit API failure reports unavailable evidence.
             if expected_count is not None and observed_count != expected_count:
                 findings.append(
                     _finding(
@@ -337,6 +344,8 @@ def build_data_quality_report(
                     )
                 )
         for state_name in artifact["required_states"]:
+            if state_name == "served" and api_unavailable:
+                continue  # Do not multiply the same API failure into another incident.
             if artifact["states"].get(state_name) is not True:
                 findings.append(
                     _finding(
@@ -784,13 +793,13 @@ def render_data_quality_html(report: Mapping[str, object]) -> str:
     ]
     collector_rows = []
     for item in report.get("collectors", []):
-        status = str(item.get("automation_status", "UNKNOWN")).upper()
+        automation_status = str(item.get("automation_status", "UNKNOWN")).upper()
         enabled = {
             "RUNNING": "Enabled",
             "ENABLED": "Enabled",
             "STOPPED": "Disabled",
             "DISABLED": "Disabled",
-        }.get(status, "Unknown")
+        }.get(automation_status, "Unknown")
         origin = {"code_default": "code default", "operator_override": "operator override"}.get(
             str(item.get("automation_status_source")), "unverified"
         )
