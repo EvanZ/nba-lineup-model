@@ -410,7 +410,9 @@ def test_post_activation_production_gate_checks_full_player_history(
             "lineup_bundle_sha256": "lineup-sha",
         },
         "approved_manifest": {
-            "identity": {"schedule": {"final_game_count": 2}}
+            "identity": {"schedule": {"final_game_count": 2},
+                "evidence_through_date": "2026-10-20",
+                "data": {"bundle_path": str(release / "bound-daily-data"), "bundle_sha256": "data-sha"}}
         },
     }
     monkeypatch.setattr(
@@ -436,8 +438,16 @@ def test_post_activation_production_gate_checks_full_player_history(
         lambda *_args, **_kwargs: {},
     )
 
-    monkeypatch.setattr(dev_site_release, "_resolved_daily_data_tip",
-        lambda _: (None, {"identity": {"game_ids": []}}))
+    verified_paths = []
+    def verify_bound_data(path):
+        verified_paths.append(path)
+        assert path == release / "bound-daily-data"
+        return {"bundle_sha256": "data-sha", "identity": {
+            "game_date_pacific": "2026-10-20", "game_ids": ["g1", "g2"]}}
+    monkeypatch.setattr(dev_site_release, "verify_daily_data_artifact", verify_bound_data)
+    assert not (config.data_root / "latest.json").exists()
+    bound_model_root = release / "bound-model"
+    monkeypatch.setattr(dev_site_release, "approved_model_root", lambda _: bound_model_root)
     monkeypatch.setattr(
         daily_activation,
         "verify_loaded_identity",
@@ -445,10 +455,11 @@ def test_post_activation_production_gate_checks_full_player_history(
     )
 
     daily_activation.verify_environment_api(config, release, {})
+    assert verified_paths == [release / "bound-daily-data"]
     assert seen == [
         {
             "evidence_date": "2026-10-20",
-            "daily_model_root": config.model_root,
+            "daily_model_root": bound_model_root,
         }
     ]
 

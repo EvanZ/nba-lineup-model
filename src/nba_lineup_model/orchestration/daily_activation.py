@@ -57,6 +57,9 @@ def verify_environment_api(
 ) -> None:
     manifest = verify_production_site_release(release)
     expected = manifest["identity"]
+    from nba_lineup_model.season.dev_site_release import approved_schedule_game_ids, approved_model_root
+    expected_schedule_ids = approved_schedule_game_ids(manifest["approved_manifest"]["identity"])
+    model_root = approved_model_root(manifest["approved_manifest"]["identity"])
     port = 8011 if _environment(config) == "dev" else 8010
     api = f"http://127.0.0.1:{port}"
     verify_loaded_identity(api, activation_record, timeout_seconds=60)
@@ -72,19 +75,18 @@ def verify_environment_api(
             validation = collect_api_validation(
                 api,
                 evidence_date=expected["evidence_through_date"],
-                daily_model_root=config.model_root,
+                daily_model_root=model_root,
             )
             # Same full endpoint contracts as candidate preflight, not HTTP 200 alone.
             from nba_lineup_model.season.dev_site_release import (
                 _normalize_api_validation,
-                _resolved_daily_data_tip,
             )
 
             _normalize_api_validation(
                 validation,
                 evidence_date=expected["evidence_through_date"],
                 expected_game_count=int(expected["game_count"]),
-                expected_schedule_game_ids=_resolved_daily_data_tip(config.data_root)[1]["identity"]["game_ids"],
+                expected_schedule_game_ids=expected_schedule_ids,
                 expected_final_game_count=int(
                     manifest["approved_manifest"]["identity"]["schedule"]["final_game_count"]
                 ),

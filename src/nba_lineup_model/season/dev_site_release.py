@@ -302,7 +302,10 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
     checked_absences = 0
     if daily_model_root is not None:
         from nba_lineup_model.season.daily_model_replay import _read_model_chain, _component_path
-        for day, bundle, manifest in _read_model_chain(Path(daily_model_root)):
+        chain = _read_model_chain(Path(daily_model_root))
+        if not chain:
+            raise ValueError("Required daily model history is missing")
+        for day, bundle, manifest in chain:
             if day.isoformat() > evidence_date:
                 continue
             observations = pd.read_parquet(_component_path(bundle, manifest, "minutes_observations"))
@@ -364,6 +367,33 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
         "verified_player_opportunities": checked_opportunities,
         "verified_missed_game_logs": checked_absences,
     }
+
+
+def approved_model_root(approved_identity: Mapping[str, Any]) -> Path:
+    """Resolve and verify the release's model chain rather than a job directory."""
+    reference = approved_identity["model"]
+    bundle = Path(reference["bundle_path"]).resolve(strict=True)
+    manifest = verify_daily_model_artifact(bundle)
+    if (manifest["bundle_sha256"] != reference["bundle_sha256"]
+        or manifest["identity"]["game_date_pacific"] != approved_identity["evidence_through_date"]):
+        raise ValueError("Approved daily model identity mismatch")
+    root = bundle.parents[2]
+    tip, _ = _resolved_pointer_bundle(root, verify_daily_model_artifact)
+    if tip != bundle:
+        raise ValueError("Approved daily model chain tip differs from release")
+    return root
+
+
+def approved_schedule_game_ids(approved_identity: Mapping[str, Any]) -> list[str]:
+    """Read the exact approved artifact, never an outer job's mutable pointer."""
+    reference = approved_identity["data"]
+    manifest = verify_daily_data_artifact(Path(reference["bundle_path"]))
+    if manifest["bundle_sha256"] != reference["bundle_sha256"]:
+        raise ValueError("Approved daily data checksum mismatch")
+    identity = manifest["identity"]
+    if identity["game_date_pacific"] != approved_identity["evidence_through_date"]:
+        raise ValueError("Approved daily data evidence date mismatch")
+    return list(identity["game_ids"])
 
 
 def _normalize_api_validation(

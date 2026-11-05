@@ -70,8 +70,8 @@ def workflow(tmp_path, monkeypatch):
     monkeypatch.setattr(subject, "candidate_api", api)
     monkeypatch.setattr(subject, "collect_api_validation", lambda *a, **kw: {"status": "clean"})
     monkeypatch.setattr(subject, "_normalize_api_validation", lambda *a, **kw: None)
-    monkeypatch.setattr(subject, "_resolved_daily_data_tip",
-        lambda _: (None, {"identity": {"game_ids": []}}))
+    monkeypatch.setattr(subject, "approved_schedule_game_ids", lambda _: [])
+    monkeypatch.setattr(subject, "approved_model_root", lambda _: tmp_path / "bound-model")
     monkeypatch.setattr(subject, "fetch", lambda *a: {"games": [game]})
     def activate(**kw):
         assert kw["expected_previous_generation"] == 10

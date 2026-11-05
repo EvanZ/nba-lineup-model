@@ -512,3 +512,50 @@ def test_empty_date_release_preserves_cumulative_game_coverage(tmp_path, monkeyp
     manifest = subject.verify_dev_site_release(result)
     assert manifest["identity"]["game_count"] == 1
     assert manifest["identity"]["api_validation"]["schedule_game_count"] == 0
+
+
+@pytest.mark.parametrize("ids", [[], ["g1", "g2"]])
+@pytest.mark.parametrize("damage", [None, "checksum", "date"])
+def test_approved_schedule_uses_exact_verified_artifact(tmp_path, monkeypatch, ids, damage):
+    path = tmp_path / "immutable-daily-data"
+    approved = {"evidence_through_date": "2026-11-03", "data": {
+        "bundle_path": str(path), "bundle_sha256": "data-sha"}}
+    def verify(selected):
+        assert selected == path
+        return {"bundle_sha256": "wrong" if damage == "checksum" else "data-sha",
+            "identity": {"game_date_pacific": "2026-11-02" if damage == "date" else "2026-11-03",
+                         "game_ids": ids}}
+    monkeypatch.setattr(subject, "verify_daily_data_artifact", verify)
+    if damage:
+        with pytest.raises(ValueError, match="Approved daily data"):
+            subject.approved_schedule_game_ids(approved)
+    else:
+        assert subject.approved_schedule_game_ids(approved) == ids
+
+
+def test_api_gate_rejects_missing_model_history(tmp_path, monkeypatch):
+    monkeypatch.setattr(subject, "_get_json", lambda _: {})
+    with pytest.raises(ValueError, match="Required daily model history is missing"):
+        subject.collect_api_validation("http://test", evidence_date="2026-11-03",
+            daily_model_root=tmp_path / "wrong-outer-model")
+
+
+@pytest.mark.parametrize("damage", [None, "checksum", "date", "tip"])
+def test_approved_model_chain_is_bound_to_release(tmp_path, monkeypatch, damage):
+    root = tmp_path / "actual-model"
+    bundle = root / "season=2026-27" / "game_date_pacific=2026-11-03" / "model_sha256=selected"
+    bundle.mkdir(parents=True)
+    approved = {"evidence_through_date": "2026-11-03", "model": {
+        "bundle_path": str(bundle), "bundle_sha256": "selected"}}
+    manifest = {"bundle_sha256": "wrong" if damage == "checksum" else "selected",
+        "identity": {"game_date_pacific": "2026-11-02" if damage == "date" else "2026-11-03"}}
+    monkeypatch.setattr(subject, "verify_daily_model_artifact", lambda _: manifest)
+    def resolve(actual_root, verifier):
+        assert actual_root == root
+        return (root / "wrong-tip" if damage == "tip" else bundle), manifest
+    monkeypatch.setattr(subject, "_resolved_pointer_bundle", resolve)
+    if damage:
+        with pytest.raises(ValueError, match="Approved daily model"):
+            subject.approved_model_root(approved)
+    else:
+        assert subject.approved_model_root(approved) == root

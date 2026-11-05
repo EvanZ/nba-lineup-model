@@ -4,7 +4,7 @@ from pathlib import Path
 from nba_lineup_model.orchestration.daily_activation import reload_environment_api, verify_environment_api
 from nba_lineup_model.orchestration.daily_work import atomic_json
 from nba_lineup_model.orchestration.release_preflight import candidate_api, fetch
-from nba_lineup_model.season.dev_site_release import collect_api_validation, _normalize_api_validation, _resolved_daily_data_tip
+from nba_lineup_model.season.dev_site_release import collect_api_validation, _normalize_api_validation, approved_schedule_game_ids, approved_model_root
 from nba_lineup_model.season.production_site_release import stage_schedule_release, verify_production_site_release
 from nba_lineup_model.season.release_publisher import activate_release, read_active_activation
 from nba_lineup_model.season.serving_selection import (
@@ -109,9 +109,9 @@ def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: st
         with candidate_api(candidate, report_root, observation_root=config.observation_root,
                            quality_root=config.environment_root / "data-quality") as api:
             evidence = collect_api_validation(api, evidence_date=identity["evidence_through_date"],
-                                              daily_model_root=config.model_root)
+                                              daily_model_root=approved_model_root(manifest["approved_manifest"]["identity"]))
             _normalize_api_validation(evidence, evidence_date=identity["evidence_through_date"],
-                expected_schedule_game_ids=_resolved_daily_data_tip(config.data_root)[1]["identity"]["game_ids"],
+                expected_schedule_game_ids=approved_schedule_game_ids(manifest["approved_manifest"]["identity"]),
                 expected_game_count=identity["game_count"],
                 expected_final_game_count=manifest["approved_manifest"]["identity"]["schedule"]["final_game_count"],
                 serving_sha=identity["serving_bundle_sha256"], lineup_sha=identity["lineup_bundle_sha256"])
