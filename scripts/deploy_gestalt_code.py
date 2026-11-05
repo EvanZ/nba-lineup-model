@@ -52,7 +52,9 @@ def candidate_api(release, report_root):
     with (report_root / "api.log").open("w") as log:
         process = subprocess.Popen([sys.executable, "-m", "uvicorn",
             "nba_lineup_model.web_api.app:app", "--host", "127.0.0.1", "--port", str(port)],
-            cwd=bindings["historical_runtime"], env=env, stdout=log, stderr=subprocess.STDOUT)
+            cwd=bindings["historical_runtime"], env=env, stdout=log, stderr=subprocess.STDOUT,
+            user="ubuntu" if os.geteuid() == 0 else None,
+            group="ubuntu" if os.geteuid() == 0 else None)
         try:
             deadline = time.monotonic() + 120
             while time.monotonic() < deadline:
