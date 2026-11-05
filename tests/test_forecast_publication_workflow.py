@@ -48,7 +48,8 @@ def workflow(tmp_path, monkeypatch):
     (candidate / "selected-schedule/latest/day.json").write_text(json.dumps({"games": [game]}))
     config = SimpleNamespace(environment_root=tmp_path / "nba-gestalt-dev",
         pipeline_root=tmp_path / "pipeline", live_pointer=tmp_path / "live",
-        observation_root=tmp_path / "observations", model_root=tmp_path / "model")
+        observation_root=tmp_path / "observations", model_root=tmp_path / "model",
+        data_root=tmp_path / "data")
     manifest = {"runtime_sha256": "old",
         "identity": {"evidence_through_date": "2026-11-02", "game_count": 107,
         "serving_bundle_sha256": "serving", "lineup_bundle_sha256": "lineup"},
@@ -69,6 +70,8 @@ def workflow(tmp_path, monkeypatch):
     monkeypatch.setattr(subject, "candidate_api", api)
     monkeypatch.setattr(subject, "collect_api_validation", lambda *a, **kw: {"status": "clean"})
     monkeypatch.setattr(subject, "_normalize_api_validation", lambda *a, **kw: None)
+    monkeypatch.setattr(subject, "_resolved_daily_data_tip",
+        lambda _: (None, {"identity": {"game_ids": []}}))
     monkeypatch.setattr(subject, "fetch", lambda *a: {"games": [game]})
     def activate(**kw):
         assert kw["expected_previous_generation"] == 10

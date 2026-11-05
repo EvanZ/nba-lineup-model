@@ -52,7 +52,8 @@ def _api_validation() -> dict[str, object]:
         "wins_record_team_games": 2,
         "season_performance_games": 1,
         "canonical_final_game_count": 1,
-        "schedule_game_count": 5,
+        "schedule_game_count": 1,
+        "schedule_game_ids": ["game-1"],
     }
 
 
@@ -131,7 +132,7 @@ def _inputs(tmp_path: Path, monkeypatch):
     pd.DataFrame({"player_id": [1]}).to_parquet(preseason_profiles, index=False)
     data_manifest = {
         "bundle_sha256": "d" * 64,
-        "identity": {"game_date_pacific": "2026-10-31"},
+        "identity": {"game_date_pacific": "2026-10-31", "game_ids": ["game-1"]},
     }
     model_manifest = {
         "bundle_sha256": "m" * 64,
@@ -433,6 +434,7 @@ def test_api_gate_rejects_stale_wins_page_state():
             evidence_date="2026-10-31",
             expected_game_count=1,
             expected_final_game_count=1,
+            expected_schedule_game_ids=["game-1"],
             serving_sha="s" * 64,
             lineup_sha="l" * 64,
         )
@@ -440,6 +442,7 @@ def test_api_gate_rejects_stale_wins_page_state():
 def test_schedule_audit_grandfathers_only_immutable_available_zero_rows():
     displayed = {
         "player_id": 1,
+
         "player_name": "Player",
         "projected_nail": 1.0,
         "projected_minutes": 240.0,
@@ -469,3 +472,43 @@ def test_schedule_audit_grandfathers_only_immutable_available_zero_rows():
         subject._require_schedule_projected_minutes(
             game, game_id="immutable-game"
         )
+
+
+@pytest.mark.parametrize("expected,actual,count,valid", [
+    ([], [], 0, True),
+    (["game-1"], ["game-1"], 1, True),
+    (["game-1"], [], 0, False),
+    (["game-1"], ["wrong-game"], 1, False),
+    (["game-1"], ["game-1", "game-1"], 2, False),
+    ([], ["game-1"], 1, False),
+    ([], None, 0, False),
+    ([], [], None, False),
+])
+def test_api_schedule_coverage_matches_verified_daily_slate(expected, actual, count, valid):
+    payload = _api_validation()
+    payload.update(schedule_game_ids=actual, schedule_game_count=count)
+    kwargs = dict(evidence_date="2026-10-31", expected_game_count=1,
+        expected_final_game_count=1, expected_schedule_game_ids=expected,
+        serving_sha="s" * 64, lineup_sha="l" * 64)
+    if valid:
+        assert subject._normalize_api_validation(payload, **kwargs)["schedule_game_count"] == count
+    else:
+        with pytest.raises(ValueError, match="schedule coverage mismatch"):
+            subject._normalize_api_validation(payload, **kwargs)
+
+
+def test_empty_date_release_preserves_cumulative_game_coverage(tmp_path, monkeypatch):
+    inputs = _inputs(tmp_path, monkeypatch)
+    original = subject.verify_daily_data_artifact(inputs[0] / "data-bundle")
+    original["identity"]["game_ids"] = []
+    payload = _api_validation()
+    payload.update(schedule_game_ids=[], schedule_game_count=0)
+    result = subject.publish_dev_site_release(
+        daily_data_root=inputs[0], daily_model_root=inputs[1],
+        serving_root=inputs[2], lineups_root=inputs[3], schedule_state_dir=inputs[4],
+        catalog_path=inputs[5], preseason_rankings_path=inputs[6],
+        preseason_profiles_path=inputs[7], code_revision="a" * 40,
+        api_validation=payload, output_root=tmp_path / "releases")
+    manifest = subject.verify_dev_site_release(result)
+    assert manifest["identity"]["game_count"] == 1
+    assert manifest["identity"]["api_validation"]["schedule_game_count"] == 0

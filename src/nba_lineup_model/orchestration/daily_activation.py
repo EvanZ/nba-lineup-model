@@ -77,12 +77,14 @@ def verify_environment_api(
             # Same full endpoint contracts as candidate preflight, not HTTP 200 alone.
             from nba_lineup_model.season.dev_site_release import (
                 _normalize_api_validation,
+                _resolved_daily_data_tip,
             )
 
             _normalize_api_validation(
                 validation,
                 evidence_date=expected["evidence_through_date"],
                 expected_game_count=int(expected["game_count"]),
+                expected_schedule_game_ids=_resolved_daily_data_tip(config.data_root)[1]["identity"]["game_ids"],
                 expected_final_game_count=int(
                     manifest["approved_manifest"]["identity"]["schedule"]["final_game_count"]
                 ),

@@ -436,6 +436,8 @@ def test_post_activation_production_gate_checks_full_player_history(
         lambda *_args, **_kwargs: {},
     )
 
+    monkeypatch.setattr(dev_site_release, "_resolved_daily_data_tip",
+        lambda _: (None, {"identity": {"game_ids": []}}))
     monkeypatch.setattr(
         daily_activation,
         "verify_loaded_identity",

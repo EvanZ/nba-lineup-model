@@ -96,3 +96,22 @@ after removing only the relocated matplotlib import. Suite: 47 passed, including
 the real-artifact comparison. Expanded regression: 103 passed, 1 optional artifact
 test skipped in that second invocation (it passed explicitly in the first).
 Nightly automatic publication and all affected served outputs still need proof.
+
+
+### Restricted-worker and empty-date publication fixes (Nov 5)
+
+The native AWS CLI installer verifies the official signature and installs a
+version-pinned, unprivileged binary. The worker retains NoNewPrivileges. Its
+restricted read-only AWS authentication check passed. Protected collectors were
+not changed.
+
+Automatic run d49ad66e-ecc5-415e-aebf-1f1cbd01edd7 then completed data, model,
+serving and lineup stages for the zero-game carry-forward date, but publication
+failed because the API gate incorrectly required a positive daily schedule count.
+The canonical gate now compares exact API game IDs and their count against the
+verified daily NBA data artifact in initial staging, forecast publication and
+post-activation verification. No date exception, fabricated count or historical
+forecast change is used. Empty/missing/substituted/duplicate-game regression
+cases and empty-date publication are covered: 95 passed, 10 optional tests
+skipped. Real automatic publication remains to be verified; this is not a claim
+that ticket 59 is complete or that production has been changed.

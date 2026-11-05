@@ -123,6 +123,7 @@ def publish_dev_site_release(
         evidence_date=str(model_identity["game_date_pacific"]),
         expected_game_count=len(expected_game_ids),
         expected_final_game_count=len(final_game_ids),
+        expected_schedule_game_ids=data_identity["game_ids"],
         serving_sha=str(serving_manifest["bundle_sha256"]),
         lineup_sha=str(lineup_manifest["bundle_sha256"]),
     )
@@ -358,6 +359,7 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
         "season_performance_games": int(season_window.get("games", -1)),
         "canonical_final_game_count": len(records.get("completed_game_ids", [])),
         "schedule_game_count": len(schedule.get("games", [])),
+        "schedule_game_ids": [str(game["game_id"]) for game in schedule.get("games", [])],
         "verified_player_game_logs": checked_logs,
         "verified_player_opportunities": checked_opportunities,
         "verified_missed_game_logs": checked_absences,
@@ -370,6 +372,7 @@ def _normalize_api_validation(
     evidence_date: str,
     expected_game_count: int,
     expected_final_game_count: int,
+    expected_schedule_game_ids: list[str],
     serving_sha: str,
     lineup_sha: str,
 ) -> dict[str, object]:
@@ -405,7 +408,18 @@ def _normalize_api_validation(
             "Joined schedule performance differs from canonical NBA final coverage: "
             f"performance={performance_count} canonical={canonical_final_count}"
         )
-    for key in ("ranking_player_count", "team_player_count", "lineup_count", "schedule_game_count"):
+    # Empty dates are valid only when the verified daily NBA artifact is empty.
+    # Compare identities as well as counts so missing/replaced/duplicate games fail.
+    schedule_ids = output.get("schedule_game_ids")
+    if (not isinstance(schedule_ids, list)
+        or sorted(schedule_ids) != sorted(expected_schedule_game_ids)
+        or output.get("schedule_game_count") != len(expected_schedule_game_ids)):
+        raise ValueError(
+            f"Dev schedule coverage mismatch on {evidence_date}: "
+            f"expected={sorted(expected_schedule_game_ids)!r}, "
+            f"found={schedule_ids!r}, count={output.get('schedule_game_count')!r}"
+        )
+    for key in ("ranking_player_count", "team_player_count", "lineup_count"):
         if int(output.get(key, 0)) <= 0:
             raise ValueError(f"Dev API validation has no {key.replace('_', ' ')}")
     if int(output.get("scheduled_game_count", 0)) < expected_game_count:
