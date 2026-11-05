@@ -283,9 +283,79 @@ def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path
     return target
 
 
+def stage_schedule_release(*, base_release: Path, schedule_root: Path, output_root: Path) -> Path:
+    """Stage a new schedule pin with the deployed code/model/frontend unchanged.
+
+    The retained daily approval describes the accepted model/serving evidence.
+    The new forecast selection has its own identity and is API-validated by the
+    forecast publisher before activation. No model or application build runs.
+    """
+    from nba_lineup_model.season.serving_selection import verify_schedule_selection
+    from nba_lineup_model.season.source_policy import require_clean_artifact_sources
+    from nba_lineup_model.web_api.release_serving import build_serving_bindings
+
+    base = base_release.resolve(strict=True)
+    original = verify_production_site_release(base)
+    selection = verify_schedule_selection(schedule_root)
+    previous = verify_schedule_selection(base / "selected-schedule")
+    if selection["edition_id"] != previous["edition_id"]:
+        raise ValueError("Forecast publication cannot change the accepted model edition")
+    if set(selection["games"]) != set(previous["games"]) or set(selection["dates"]) != set(previous["dates"]):
+        raise ValueError("Forecast publication must preserve complete schedule coverage")
+    require_clean_artifact_sources(schedule_root)
+    identity = {**original["identity"], "schedule_snapshot_sha256": _tree_sha256(schedule_root)}
+    identity.pop("serving_bindings_sha256", None)
+    output_root.mkdir(parents=True, exist_ok=True)
+    staging = output_root / f".schedule-release.tmp-{uuid4().hex}"
+    staging.mkdir()
+    try:
+        for name in ("current-season-serving", "current-season-lineups", "site-releases",
+                     "web", "catalog", "preseason"):
+            shutil.copytree(base / name, staging / name)
+        shutil.copytree(schedule_root, staging / "schedule-snapshot")
+        shutil.copy2(base / "site-release.env", staging / "site-release.env")
+        (staging / "schedule").symlink_to(Path(identity["schedule_overlay_path"]), target_is_directory=True)
+        sealed = materialize_sealed_code_package(base / "code", staging,
+            expected_revision=identity["code_revision"])
+        if sealed["identity"] != identity["code_identity"]:
+            raise ValueError("Forecast publication changed deployed application code")
+        bindings = _read_json(base / "serving-bindings.json")
+        rebound = build_serving_bindings(staging, runtime_identity=identity,
+            approved=original["approved_manifest"]["identity"],
+            historical_runtime=Path(bindings["historical_runtime"]))
+        identity["serving_bindings_sha256"] = rebound["bindings_sha256"]
+        # All page pins except their forecast-selection dependency must match.
+        for component, checksum in bindings["components"].items():
+            if component != "forecast_selection_id" and rebound["components"].get(component) != checksum:
+                raise ValueError(f"Forecast publication changed another component: {component}")
+        checksum = hashlib.sha256(canonical_json(identity)).hexdigest()
+        target = output_root / f"runtime_sha256={checksum}"
+        manifest = {**original, "identity": identity, "runtime_sha256": checksum}
+        (staging / MANIFEST_FILENAME).write_bytes(canonical_json(manifest) + b"\n")
+        # These components contain no secrets; the API service must read them.
+        for path in staging.rglob("*"):
+            if path.is_symlink() or path.is_relative_to(staging / "code"):
+                continue
+            path.chmod(0o755 if path.is_dir() else 0o644)
+        verify_production_site_release(staging)
+        if verify_production_site_release(base) != original:
+            raise ValueError("Active source changed while packaging forecast data")
+        if target.exists():
+            if verify_production_site_release(target) != manifest:
+                raise ValueError("Existing forecast release differs from requested inputs")
+        else:
+            staging.replace(target)
+        return target
+    finally:
+        if staging.exists():
+            for directory in (staging / "code", *(staging / "code").rglob("*")):
+                if directory.is_dir() and not directory.is_symlink():
+                    directory.chmod(0o755)
+            shutil.rmtree(staging)
+
+
 def verify_production_site_release(path: Path | str) -> dict[str, Any]:
     """Fail closed if any immutable runtime component has changed."""
-
     release = Path(path).resolve()
     manifest = _read_json(release / MANIFEST_FILENAME)
     identity = manifest.get("identity")

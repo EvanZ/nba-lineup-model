@@ -77,14 +77,20 @@ def resumable_daily_partition_sensor(context):
     return SkipReason("All explicitly requested partitions are validated; activation remains separate")
 
 
-@op(config_schema={"config_path": str, "forecast_date": str})
+@op(config_schema={"config_path": str, "forecast_date": str,
+    "prepared_schedule": Field(str, is_required=False),
+    "approval_reference": Field(str, is_required=False)})
 def prepare_forecast_date_op(context):
     from datetime import date
     from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
     from nba_lineup_model.orchestration.forecast_partition import prepare_forecast_date
     with run_guard(context, "prepare_forecast_date", context.op_config):
+        kwargs = {}
+        if context.op_config.get("prepared_schedule"):
+            kwargs = {"prepared_schedule": Path(context.op_config["prepared_schedule"]),
+                      "approval_reference": context.op_config.get("approval_reference")}
         result = prepare_forecast_date(DailyPipelineConfig.read(context.op_config["config_path"]),
-                                      date.fromisoformat(context.op_config["forecast_date"]))
+                                      date.fromisoformat(context.op_config["forecast_date"]), **kwargs)
     context.add_output_metadata({key: result[key] for key in (
         "forecast_date", "model_date", "model_sha256", "work_id", "schedule_artifact")})
     return result

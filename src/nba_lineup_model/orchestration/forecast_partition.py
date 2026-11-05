@@ -96,9 +96,39 @@ def latest_completed_model(live: Path, forecast_date: date) -> Path:
         )
 
 
-def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date) -> dict:
+def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
+                          prepared_schedule: Path | None = None,
+                          approval_reference: str | None = None) -> dict:
     """The Dagster boundary: date in, verified selected model and release out."""
+    from nba_lineup_model.orchestration.forecast_publication_workflow import publish_forecast_schedule
     live = template.live_pointer.resolve(strict=True)
+    if prepared_schedule is not None:
+        from nba_lineup_model.season.serving_selection import verify_schedule_selection
+        prepared_schedule = prepared_schedule.resolve(strict=True)
+        if not prepared_schedule.is_relative_to(template.environment_root.resolve()):
+            raise ValueError("Prepared forecasts must belong to the job's environment")
+        index = verify_schedule_selection(prepared_schedule)
+        replay = index.get("injury_replay", {})
+        request = replay.get("request", {})
+        if not approval_reference or approval_reference != request.get("approval_reference"):
+            raise ValueError("Prepared historical correction requires its explicit approval")
+        if request.get("game_date") != str(forecast_date):
+            raise ValueError("Prepared correction belongs to another forecast date")
+        model_path = latest_completed_model(live, forecast_date)
+        model = verify_daily_model_artifact(model_path)
+        if model["bundle_sha256"] != request.get("model"):
+            raise ValueError("Prepared forecasts no longer use the accepted model")
+        cfg = replace(template, model_root=model_path.parents[2])
+        prior_path = cfg.pipeline_root / "forecast-publication" / replay["request_id"] / "report.json"
+        prior = read_object(prior_path) if prior_path.is_file() else None
+        if prior and prior.get("status") == "activated" and Path(prior["runtime_release"]).resolve() == live:
+            publication = prior
+        else:
+            publication = publish_forecast_schedule(cfg, schedule=prepared_schedule, base=live,
+                work_id=replay["request_id"], activate=template.activate_after_validation)
+        return {"forecast_date": str(forecast_date), "model_date": model["identity"]["game_date_pacific"],
+                "model_sha256": model["bundle_sha256"], "work_id": replay["request_id"],
+                "schedule_artifact": str(prepared_schedule), "publication": publication}
     base_ref = file_reference(live / "runtime-manifest.json")
     base = read_object(live / "runtime-manifest.json")["approved_manifest"]["identity"]
     bindings = read_object(live / "serving-bindings.json")
@@ -217,8 +247,12 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date) ->
         steps_class=ForecastPartitionSteps,
         result_key="schedule_artifact",
     )
+    publication = publish_forecast_schedule(
+        replace(template, model_root=config.model_root), schedule=Path(result["schedule_artifact"]),
+        base=live, work_id=spec["work_id"], activate=template.activate_after_validation)
     return {
         **result,
+        "publication": publication,
         "forecast_date": str(forecast_date),
         "model_date": str(evidence_date),
         "model_sha256": model["bundle_sha256"],

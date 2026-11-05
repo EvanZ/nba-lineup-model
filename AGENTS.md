@@ -43,6 +43,10 @@ These instructions apply to every task in this repository.
   API deployments use scripts/deploy_gestalt_code.py, which preserves all data
   selections, tests the packaged API, and activates through the same fenced
   publisher. Code deployment must not require running a forecasting/model job.
+  Forecast-only data publication is the final step of `prepare_forecast_date`:
+  it reuses deployed code and accepted model artifacts, validates all schedule
+  coverage and the served forecasts, and uses the fenced publisher. An approved
+  prepared correction may enter that same job without recomputation.
 - Do not manually assemble artifacts, invoke lower-level publisher commands, or
   edit release pointers to bypass either workflow.
 - A small UI/reporting change does not justify a release shortcut. If the

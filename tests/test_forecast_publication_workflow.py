@@ -1,0 +1,87 @@
+import json
+from contextlib import contextmanager
+from types import SimpleNamespace
+
+import pytest
+
+from nba_lineup_model.orchestration import forecast_publication_workflow as subject
+
+
+@pytest.fixture
+def workflow(tmp_path, monkeypatch):
+    base = tmp_path / "base"
+    base.mkdir()
+    schedule = tmp_path / "schedule"
+    schedule.mkdir()
+    candidate = tmp_path / "candidate"
+    (candidate / "selected-schedule/latest").mkdir(parents=True)
+    game = {"game_id": "one", "projection": {"home_margin": 2},
+            "injury_report": {"source_url": "official"}, "projected_minutes": {"home": []}}
+    (candidate / "selected-schedule/latest/day.json").write_text(json.dumps({"games": [game]}))
+    config = SimpleNamespace(environment_root=tmp_path / "nba-gestalt-dev",
+        pipeline_root=tmp_path / "pipeline", live_pointer=tmp_path / "live",
+        observation_root=tmp_path / "observations", model_root=tmp_path / "model")
+    manifest = {"identity": {"evidence_through_date": "2026-11-02", "game_count": 107,
+        "serving_bundle_sha256": "serving", "lineup_bundle_sha256": "lineup"},
+        "approved_manifest": {"identity": {"schedule": {"final_game_count": 107}}}}
+    calls = []
+    monkeypatch.setattr(subject, "read_active_activation", lambda _: {
+        "release_path": str(base), "runtime_sha256": "old", "generation": 10})
+    monkeypatch.setattr(subject, "validate_forecast_handoff", lambda *a: ["one"])
+    monkeypatch.setattr(subject, "stage_schedule_release", lambda **kw: (calls.append("stage") or candidate))
+    monkeypatch.setattr(subject, "verify_production_site_release", lambda _: manifest)
+    monkeypatch.setattr(subject, "verify_schedule_selection", lambda _: {
+        "dates": {"day": {"path": "latest/day.json"}}})
+    @contextmanager
+    def api(*a, **kw):
+        calls.append("preflight")
+        yield "test://candidate"
+        calls.append("preflight-stopped")
+    monkeypatch.setattr(subject, "candidate_api", api)
+    monkeypatch.setattr(subject, "collect_api_validation", lambda *a, **kw: {"status": "clean"})
+    monkeypatch.setattr(subject, "_normalize_api_validation", lambda *a, **kw: None)
+    monkeypatch.setattr(subject, "fetch", lambda *a: {"games": [game]})
+    def activate(**kw):
+        assert kw["expected_previous_generation"] == 10
+        assert kw["release"] == candidate
+        calls.append("activate")
+        return SimpleNamespace(generation=11)
+    monkeypatch.setattr(subject, "activate_release", activate)
+    return config, base, schedule, calls
+
+
+def test_job_publishes_only_after_full_preflight(workflow):
+    config, base, schedule, calls = workflow
+    result = subject.publish_forecast_schedule(config, schedule=schedule, base=base,
+                                               work_id="request", activate=True)
+    assert calls == ["stage", "preflight", "preflight-stopped", "activate"]
+    assert result["status"] == "activated"
+    assert result["code_changed"] is False and result["model_changed"] is False
+
+
+def test_failed_api_check_is_a_failed_job_and_does_not_publish(workflow, monkeypatch):
+    config, base, schedule, calls = workflow
+    monkeypatch.setattr(subject, "fetch", lambda *a: {"games": []})
+    with pytest.raises(ValueError, match="coverage differs"):
+        subject.publish_forecast_schedule(config, schedule=schedule, base=base,
+                                           work_id="request", activate=True)
+    assert "activate" not in calls
+    report = json.loads((config.pipeline_root / "forecast-publication/request/report.json").read_text())
+    assert report["status"] == "failed"
+
+
+def test_validation_only_does_not_activate(workflow):
+    config, base, schedule, calls = workflow
+    result = subject.publish_forecast_schedule(config, schedule=schedule, base=base,
+                                               work_id="request", activate=False)
+    assert result["status"] == "validated"
+    assert "activate" not in calls
+
+
+def test_changed_base_is_rejected_before_staging(workflow, monkeypatch):
+    config, base, schedule, calls = workflow
+    monkeypatch.setattr(subject, "read_active_activation", lambda _: None)
+    with pytest.raises(ValueError, match="Active release changed"):
+        subject.publish_forecast_schedule(config, schedule=schedule, base=base,
+                                           work_id="request", activate=True)
+    assert not calls

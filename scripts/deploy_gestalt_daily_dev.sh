@@ -3,6 +3,10 @@
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+publish_forecasts=false
+if [[ "${1:-}" == "--enable-forecast-publication" ]]; then
+  publish_forecasts=true
+elif [[ $# -ne 0 ]]; then exit 2; fi
 test -z "$(git -C "$REPO_ROOT" status --porcelain)" || {
   printf 'Commit tested code before installing the daily worker\n' >&2
   exit 1
@@ -21,6 +25,25 @@ read -r package checksum < <(
     --source "$REPO_ROOT" --output /var/lib/nba-gestalt-dev/daily-releases
 )
 test -n "$package" && test -n "$checksum"
+PYTHONPATH="$package/code/src" "$runtime/bin/python" - "$package" "$publish_forecasts" <<'PY'
+from dataclasses import replace
+from pathlib import Path
+import sys
+from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
+from nba_lineup_model.orchestration.daily_work import atomic_json
+from nba_lineup_model.orchestration.resumable_pipeline import config_identity
+package = Path(sys.argv[1])
+enabled = sys.argv[2] == "true"
+config = DailyPipelineConfig.read("/var/lib/nba-gestalt-dev/daily-pipeline/config.json")
+if config.environment_root != Path("/var/lib/nba-gestalt-dev"):
+    raise ValueError("Dev deployment cannot configure production jobs")
+config = replace(config, code_root=package / "code",
+    observation_root=Path("/var/lib/nba-gestalt/schedule-serving/current"),
+    activate_after_validation=enabled, forecast_injury_inputs_path=None)
+path = package / ("forecast-config-enabled.json" if enabled else "forecast-config-preview.json")
+atomic_json(path, config_identity(config), immutable=True)
+print(f"Forecast job configuration: {path}")
+PY
 PYTHONPATH="$package/code/src" "$runtime/bin/python" -m nba_lineup_model.orchestration.daily_instance \
   initialize --environment dev --environment-root /var/lib/nba-gestalt-dev \
   --template "$package/code/deploy/dagster-daily.yaml"
