@@ -78,3 +78,21 @@ acceptance. Commit b08179a adds that exact directory to repeatable deployment
 permission setup. Installation verified ubuntu write access. The retry has not
 yet been verified successful. Dev health returned HTTP 200 after rollback.
 Do not remove the failed-run history or manually clear its alert.
+
+### Approved compatibility repair (2026-11-05)
+
+The user approved precise calculation/input verification and equivalence tests.
+The portable gate follows internal imports from daily_model_replay and inference,
+including package initializers and dependency definitions. It checks the exact
+reviewed fingerprints stored in committed code. Deployment does not regenerate
+or relax that policy. Unknown revisions and later dependency/calculation edits
+fail closed. The worker records the verified policy checksum in its work spec.
+
+Read-only EC2 equivalence test: old and current loaders produced identical values
+for every loaded evaluator field; all 14 accepted data dates / 107 games verified
+identically. Updater, minutes, HCA, context and signed-matrix implementation files
+were byte-identical to accepted code. Plot import changes were AST-equivalent
+after removing only the relocated matplotlib import. Suite: 47 passed, including
+the real-artifact comparison. Expanded regression: 103 passed, 1 optional artifact
+test skipped in that second invocation (it passed explicitly in the first).
+Nightly automatic publication and all affected served outputs still need proof.

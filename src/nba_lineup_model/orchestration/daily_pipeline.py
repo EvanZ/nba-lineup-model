@@ -29,14 +29,6 @@ from nba_lineup_model.season.slate_time import PACIFIC
 from nba_lineup_model.season.source_policy import require_clean_artifact_sources
 
 CAUSAL_HCA_MODEL_TRACK = "causal_hca_replacement_candidate_v2"
-MODEL_IMPLEMENTATION_PATHS = (
-    "src/nba_lineup_model/modeling",
-    "src/nba_lineup_model/season/daily_artifact_common.py",
-    "src/nba_lineup_model/season/daily_data_artifact.py",
-    "src/nba_lineup_model/season/daily_model_artifact.py",
-    "src/nba_lineup_model/season/daily_model_replay.py",
-    "src/nba_lineup_model/web_api/inference.py",
-)
 
 GIT_PREFLIGHT_TIMEOUT_SECONDS = 30
 
@@ -238,49 +230,10 @@ def require_clean_code_revision(code_root: Path) -> str:
 
 
 
-def require_model_implementation_compatible(
-    code_root: Path, accepted_revision: str
-) -> None:
-    """Refuse to extend a causal chain with changed model implementation code."""
-
-    try:
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(code_root),
-                "merge-base",
-                "--is-ancestor",
-                accepted_revision,
-                "HEAD",
-            ],
-            check=True,
-            timeout=GIT_PREFLIGHT_TIMEOUT_SECONDS,
-        )
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(code_root),
-                "diff",
-                "--quiet",
-                f"{accepted_revision}..HEAD",
-                "--",
-                *MODEL_IMPLEMENTATION_PATHS,
-            ],
-            timeout=GIT_PREFLIGHT_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError("Model implementation compatibility check timed out") from error
-    except subprocess.CalledProcessError as error:
-        raise ValueError(
-            "Accepted model revision is not an ancestor of the tested code"
-        ) from error
-    if result.returncode != 0:
-        raise ValueError(
-            "Model implementation changed after the accepted revision; "
-            "an explicitly approved causal replay is required"
-        )
+def require_model_implementation_compatible(code_root: Path, accepted_revision: str) -> dict:
+    """Verify reviewed calculation dependencies in checkouts and sealed packages."""
+    from nba_lineup_model.orchestration.model_compatibility import require_compatible_calculations
+    return require_compatible_calculations(code_root, accepted_revision)
 
 
 def causal_hca_replay_config(config: DailyPipelineConfig):

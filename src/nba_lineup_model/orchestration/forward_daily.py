@@ -113,7 +113,7 @@ def advance_daily_environment(template, day: date):
     if not template.model_code_revision:
         raise ValueError("Nightly processing requires the accepted model implementation revision")
     # Check before collecting or building anything, including empty carry days.
-    require_model_implementation_compatible(template.code_root, template.model_code_revision)
+    compatibility = require_model_implementation_compatible(template.code_root, template.model_code_revision)
     from nba_lineup_model.orchestration.daily_activation import activation_report_from_work, activate_daily_release
     live = template.live_pointer.resolve(strict=True)
     base = read_object(live / "runtime-manifest.json")
@@ -169,7 +169,7 @@ def advance_daily_environment(template, day: date):
         "base_release_manifest":refs[0], "data_manifests":[file_reference(p / "manifest.json") for p in data],
         "model_manifests":[file_reference(p / "manifest.json") for p in models],
         "historical_data_selection":False, "causal_replay":False, "forecast_replacement":False,
-        "preserve_application_code":True})
+        "preserve_application_code":True, "model_compatibility":compatibility})
     atomic_json(output / "config.json", config_identity(config), immutable=True)
     atomic_json(output / "spec.json", spec, immutable=True)
     result = prepare_partition(config, spec, steps_class=ForwardPartitionSteps)

@@ -594,9 +594,12 @@ def test_model_implementation_compatibility_rejects_model_code_change(tmp_path):
     )
 
     repo = tmp_path / "repo"
-    model_file = repo / "src/nba_lineup_model/modeling/example.py"
+    model_file = repo / "src/nba_lineup_model/season/daily_model_replay.py"
     model_file.parent.mkdir(parents=True)
     model_file.write_text("VALUE = 1\n")
+    inference = repo / "src/nba_lineup_model/web_api/inference.py"
+    inference.parent.mkdir(parents=True)
+    inference.write_text("VALUE = 1\n")
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
     subprocess.run(
@@ -617,6 +620,16 @@ def test_model_implementation_compatibility_rejects_model_code_change(tmp_path):
     accepted = subprocess.check_output(
         ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
     ).strip()
+    from nba_lineup_model.orchestration.model_compatibility import calculation_inventory
+    policy = repo / "src/nba_lineup_model/orchestration/model_compatibility" / (accepted + ".json")
+    policy.parent.mkdir(parents=True)
+    for relative in ["pyproject.toml", "uv.lock", "deploy/orchestration-requirements.txt",
+                     "deploy/web-requirements.txt"]:
+        dependency = repo / relative
+        dependency.parent.mkdir(parents=True, exist_ok=True)
+        dependency.write_text("fixed dependencies\n")
+    policy.write_text(json.dumps({"schema_version":1, "accepted_revision":accepted,
+        "compatible_files":calculation_inventory(repo)}))
     (repo / "README").write_text("orchestration-only\n")
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
     subprocess.run(
