@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import time
 import urllib.request
@@ -88,9 +89,10 @@ def reload_environment_api(
     _activation_record: dict,
 ) -> None:
     service = "gestalt-web-dev" if _environment(config) == "dev" else "gestalt-web"
-    # The dev worker retains NoNewPrivileges. Polkit permits only restarting
-    # this dev API unit; no sudo or production-service permission is granted.
-    prefix = [] if _environment(config) == "dev" else ["sudo", "-n"]
+    # Shared workers retain NoNewPrivileges. Each service account is granted
+    # only its own API restart through Polkit. Legacy production remains unchanged.
+    shared_prod = (_environment(config) == "prod" and os.environ.get("GESTALT_DAILY_ENVIRONMENT") == "prod")
+    prefix = [] if _environment(config) == "dev" or shared_prod else ["sudo", "-n"]
     subprocess.run(
         [*prefix, "systemctl", "--no-ask-password", "restart", service],
         check=True,
@@ -160,9 +162,21 @@ def activate_daily_release(
     if report.get("status") != "validated_candidate":
         raise ValueError("Only a fully validated candidate can be activated")
     release = Path(report["runtime_release"]).resolve()
-    if not release.is_relative_to(config.pipeline_root.resolve() / "releases"):
-        raise ValueError("Candidate is outside this environment's pipeline")
+    local_candidate = release.is_relative_to(config.pipeline_root.resolve() / "releases")
+    cache_parent = (
+        config.artifact_cache_root.absolute() / "releases"
+        if config.artifact_lake_uri is not None and config.artifact_cache_root is not None
+        else None
+    )
+    if not local_candidate and (cache_parent is None or release.parent != cache_parent):
+        raise ValueError("Candidate is outside this environment's pipeline or release cache")
     manifest = verify_production_site_release(release)
+    if not local_candidate:
+        from nba_lineup_model.season.durable_release_storage import production_release_reference
+
+        expected = cache_parent / production_release_reference(manifest).content_id
+        if release != expected or not manifest["identity"].get("durable_serving_sha256"):
+            raise ValueError("Candidate cache path differs from its verified durable release identity")
     if Path(manifest["identity"]["live_pointer"]) != config.live_pointer.absolute():
         raise ValueError("Candidate was staged for a different live pointer")
     if manifest["identity"]["evidence_through_date"] != report["game_date"]:

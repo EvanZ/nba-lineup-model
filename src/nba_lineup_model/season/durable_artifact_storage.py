@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from nba_lineup_model.season.daily_data_artifact import verify_daily_data_artifact
@@ -19,10 +19,13 @@ from nba_lineup_model.storage.artifact_store import (
     publish_artifact,
     publish_storage_manifest,
     resolve_storage_manifest,
+    resolve_object,
     storage_manifest_uri,
 )
 from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
-from nba_lineup_model.storage.s3_lake import UploadSummary
+from nba_lineup_model.storage.s3_lake import (
+    UploadSummary, _head_object, _new_s3_client, _validate_remote_object,
+)
 
 
 @dataclass(frozen=True)
@@ -109,6 +112,60 @@ def _manifest_bytes(payload: dict[str, object]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode() + b"\n"
 
 
+def _verify_creation_time_retry(*, bundle: Path, reference: ArtifactReference,
+                                expected: dict, existing: dict, cache_root: Path,
+                                client: ArtifactClient | None, lake_uri: str) -> None:
+    """Reuse the first durable daily artifact; only creation time may differ.
+
+    Daily artifact identities deliberately exclude generated_at, just as their
+    local publishers reuse an existing content-addressed directory. S3 retains
+    the first manifest's exact bytes. No local artifact or remote object is edited.
+    Other artifact types retain byte-for-byte transport identity.
+    """
+    verifiers = {'daily_data': verify_daily_data_artifact,
+                 'daily_model': verify_daily_model_artifact}
+    error = f'Durable storage already contains a different object inventory for {reference.content_id}'
+    if reference.artifact_kind not in verifiers or expected.get('manifest_path', 'manifest.json') != 'manifest.json':
+        raise RuntimeError(error)
+    original_entry = existing['objects'].get('manifest.json')
+    adjusted = {**expected, 'objects': {**expected['objects'], 'manifest.json': original_entry}}
+    if adjusted != existing or original_entry is None:
+        raise RuntimeError(error)
+    current = verifiers[reference.artifact_kind](bundle)
+    identity = current['identity']
+    prefix = 'data' if reference.artifact_kind == 'daily_data' else 'model'
+    if (reference.content_id != f"{prefix}_sha256={current['bundle_sha256']}"
+            or reference.season != identity['season']
+            or reference.game_date_pacific.isoformat() != identity['game_date_pacific']):
+        raise RuntimeError('Daily artifact differs from its durable reference')
+    local_bytes = (bundle / 'manifest.json').read_bytes()
+    if hashlib.sha256(local_bytes).hexdigest() != expected['objects']['manifest.json']['sha256']:
+        raise RuntimeError('Daily manifest changed during publication')
+    original_path = resolve_object(uri=original_entry['s3_uri'],
+        digest=ObjectDigest(original_entry['sha256'], original_entry['size_bytes']),
+        cache_root=cache_root / 'objects', client=client, lake_uri=lake_uri)
+    original = json.loads(original_path.read_text())
+    for manifest in (original, current):
+        stamp = manifest.get('generated_at')
+        if not isinstance(stamp, str) or datetime.fromisoformat(stamp.replace('Z', '+00:00')).tzinfo is None:
+            raise RuntimeError('Daily artifact has no valid creation timestamp')
+    if ({k:v for k,v in original.items() if k != 'generated_at'} !=
+            {k:v for k,v in current.items() if k != 'generated_at'}):
+        raise RuntimeError(error)
+    # Verify the complete original artifact, including all payload bytes, before
+    # reporting reuse. Cache reads are checksum verified by the standard resolver.
+    active_client = client if client is not None else _new_s3_client(1)
+    for entry in existing['objects'].values():
+        head = _head_object(entry['s3_uri'], client=active_client)
+        if head is None:
+            raise FileNotFoundError(f"Original durable artifact object is missing: {entry['s3_uri']}")
+        _validate_remote_object(uri=entry['s3_uri'], head=head,
+            size_bytes=entry['size_bytes'], sha256=entry['sha256'])
+        resolve_object(uri=entry['s3_uri'],
+            digest=ObjectDigest(entry['sha256'], entry['size_bytes']),
+            cache_root=cache_root / 'objects', client=active_client, lake_uri=lake_uri)
+
+
 def publish_verified_bundle(
     *,
     bundle: Path,
@@ -142,10 +199,12 @@ def publish_verified_bundle(
         existing = None
     if existing is not None:
         if existing != expected:
-            raise RuntimeError(
-                "Durable storage already contains a different object inventory for "
-                f"{reference.content_id}"
-            )
+            _verify_creation_time_retry(bundle=bundle, reference=reference,
+                expected=expected, existing=existing, cache_root=cache_root,
+                client=client, lake_uri=lake_uri)
+        # The durable result always identifies the original stored manifest,
+        # including its original timestamp and byte inventory.
+        manifest_sha = hashlib.sha256(_manifest_bytes(existing)).hexdigest()
         return DurableArtifactPublication(
             reference=reference,
             objects=UploadSummary(
@@ -153,7 +212,7 @@ def publish_verified_bundle(
                 uploaded=0,
                 existing=len(inventory),
                 verified=len(inventory),
-                total_bytes=sum(item.size_bytes for item in inventory.values()),
+                total_bytes=sum(item["size_bytes"] for item in existing["objects"].values()),
                 executed=True,
             ),
             storage_manifest_uri=manifest_uri,

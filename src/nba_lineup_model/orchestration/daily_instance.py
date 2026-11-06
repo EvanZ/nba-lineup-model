@@ -1,4 +1,4 @@
-"""One durable Dagster instance per environment, shared by every entry point."""
+"""Durable daily history with explicit environment boundaries for each code location."""
 from __future__ import annotations
 
 import argparse
@@ -41,23 +41,42 @@ def request_identity(job_name: str, request: dict) -> tuple[str, str, str]:
 class DailyInstance:
     environment: str
     root: Path
+    instance_home: Path | None = None
 
     @property
     def home(self) -> Path:
-        return self.root / "daily-dagster"
+        return self.instance_home or self.root / "daily-dagster"
 
     @property
     def requests(self) -> Path:
         return self.root / "daily-requests"
 
     @classmethod
-    def read(cls, home: Path) -> "DailyInstance":
+    def read(cls, home: Path, environment: str | None = None) -> "DailyInstance":
         home = home.absolute()
+        if home != home.resolve():
+            raise ValueError("Dagster history cannot be a link to another instance")
         value = read_object(home / "environment.json")
+        if value.get("schema_version") == 2:
+            selected = environment or os.environ.get("GESTALT_DAILY_ENVIRONMENT")
+            roots = value.get("environments", {})
+            if not roots or set(roots) - {"dev", "prod"} or selected not in roots:
+                raise ValueError("Shared daily history requires an explicit registered environment")
+            resolved = {name: Path(root).resolve(strict=True) for name, root in roots.items()}
+            if any(str(resolved[name]) != root for name, root in roots.items()):
+                raise ValueError("Shared environment roots must be canonical")
+            if len(set(resolved.values())) != len(resolved) or any(
+                left != right and (left.is_relative_to(right) or right.is_relative_to(left))
+                for left in resolved.values() for right in resolved.values()
+            ):
+                raise ValueError("Shared environment roots must be distinct and disjoint")
+            return cls(selected, resolved[selected], home)
         if value.get("schema_version") != 1 or value.get("environment") not in {"dev", "prod"}:
             raise ValueError("Invalid daily Dagster environment binding")
         binding = cls(value["environment"], Path(value["environment_root"]))
-        if binding.root != binding.root.resolve() or home != binding.home or home != home.resolve():
+        if environment and environment != binding.environment:
+            raise ValueError("Requested worker and history belong to different environments")
+        if binding.root != binding.root.resolve() or home != binding.home:
             raise ValueError("Daily Dagster history must be inside its own environment")
         return binding
 
@@ -103,6 +122,9 @@ def initialize(environment: str, root: Path, template: Path) -> DailyInstance:
 
 def binding_for_instance(instance) -> DailyInstance:
     binding = DailyInstance.read(Path(instance.root_directory))
+    selected_environment = os.environ.get("GESTALT_DAILY_ENVIRONMENT")
+    if selected_environment and selected_environment != binding.environment:
+        raise ValueError("Code location belongs to a different environment")
     selected = os.environ.get("DAGSTER_HOME")
     if selected and Path(selected).absolute() != binding.home:
         raise ValueError("Worker DAGSTER_HOME differs from its actual Dagster instance")
@@ -122,11 +144,15 @@ def bind_run(context, job_name: str, request: dict) -> None:
 def run_guard(context, job_name: str, request: dict):
     binding = binding_for_instance(context.instance)
     bind_run(context, job_name, request)
+    from nba_lineup_model.orchestration.shared_daily_control import automation_enabled
+    recorded = context.instance.get_run_by_id(context.run_id).tags
+    if recorded.get("gestalt/trigger") == "sensor" and not automation_enabled(binding):
+        raise RuntimeError("Dev automation window closed before this run started")
     with (binding.home / ".daily-execution.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
-            raise RuntimeError("Another daily job is executing in this environment") from error
+            raise RuntimeError("Another daily job is executing in this Dagster instance") from error
         try:
             yield
         finally:

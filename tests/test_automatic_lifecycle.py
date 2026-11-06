@@ -87,7 +87,7 @@ def test_future_final_cannot_trigger_nightly():
 
 def sensor_context(monkeypatch, *, running=False, records=()):
     monkeypatch.setenv("GESTALT_AUTOMATION_CONFIG", "/dev/worker/config.json")
-    binding = SimpleNamespace(tags=lambda job, config: {"gestalt/environment":"dev"})
+    binding = SimpleNamespace(environment="dev", instance_home=None, tags=lambda job, config: {"gestalt/environment":"dev"})
     monkeypatch.setattr(jobs, "binding_for_instance", lambda instance: binding)
     import nba_lineup_model.orchestration.lifecycle as lifecycle
     monkeypatch.setattr(lifecycle, "automation_request", lambda path: {
@@ -103,7 +103,7 @@ def test_sensor_submits_existing_environment_job(monkeypatch):
     result = jobs.evaluate_automatic_lifecycle(context)
     assert result.job_name == "advance_daily_environment"
     assert result.tags["gestalt/environment"] == "dev"
-    assert result.run_key == "automatic:same-inputs:attempt-1"
+    assert result.run_key == "dev:automatic:same-inputs:attempt-1"
 
 
 def test_sensor_never_queues_behind_active_environment_work(monkeypatch):
