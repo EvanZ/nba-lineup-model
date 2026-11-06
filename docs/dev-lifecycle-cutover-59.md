@@ -207,3 +207,13 @@ directories, corrupt/missing inputs, cache reuse, and existing publication/retry
 paths. The source-policy audit passed for all 80 historical files, the registry,
 and the active selected schedule. Real dev activation and daily recovery are
 still pending; this checkpoint is not a production-readiness claim.
+
+Real preflight exposed validator memory growth: it retained every full player
+profile while checking only current-season trajectories. This exhausted the
+700 MiB test cgroup on the 3.7 GiB EC2 host. The validator now retains only the
+trajectories needed by the same complete coverage checks. The regression fails
+against the preceding commit; 93 relevant tests pass after the repair. This is
+validation-memory behavior only, with no model, forecast, or coverage change.
+All further real validation runs are serial, memory-capped, and assigned a high
+OOM kill priority to protect the running services. The earlier overlapping test
+attempt caused a dev API OOM/restart; issue #62 records that incident explicitly.
