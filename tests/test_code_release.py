@@ -135,3 +135,29 @@ def test_code_deploy_requires_service_to_preserve_sealed_code(monkeypatch, setti
     else:
         with pytest.raises(ValueError, match="preserve the sealed code package"):
             deploy.verify_dev_service_configuration()
+
+
+
+def test_candidate_api_uses_live_dev_python_environment(tmp_path, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace
+    from nba_lineup_model.season import serving_recovery
+    spec = importlib.util.spec_from_file_location("code_deployment", Path(__file__).parents[1] / "scripts/deploy_gestalt_code.py")
+    deploy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(deploy)
+    candidate = tmp_path / "candidate"
+    report = tmp_path / "report"
+    candidate.mkdir()
+    report.mkdir()
+    (candidate / "serving-bindings.json").write_text("{}")
+    monkeypatch.setattr(serving_recovery, "historical_path", lambda _: candidate)
+    commands = []
+    def launch(command, **kwargs):
+        commands.append(command)
+        assert kwargs["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
+        return SimpleNamespace(poll=lambda: None, terminate=lambda: None, wait=lambda **kwargs: None)
+    monkeypatch.setattr(deploy.subprocess, "Popen", launch)
+    monkeypatch.setattr(deploy, "fetch", lambda *args: {})
+    with deploy.candidate_api(candidate, report):
+        assert commands[0][0] == "/opt/nba-gestalt-web-dev/current/bin/python"

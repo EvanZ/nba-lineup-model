@@ -13,7 +13,6 @@ import shlex
 from pathlib import Path
 import socket
 import subprocess
-import sys
 import time
 import urllib.request
 
@@ -60,7 +59,7 @@ def candidate_api(release, report_root):
         port = sock.getsockname()[1]
     api = f"http://127.0.0.1:{port}"
     with (report_root / "api.log").open("w") as log:
-        process = subprocess.Popen([sys.executable, "-m", "uvicorn",
+        process = subprocess.Popen(["/opt/nba-gestalt-web-dev/current/bin/python", "-m", "uvicorn",
             "nba_lineup_model.web_api.app:app", "--host", "127.0.0.1", "--port", str(port)],
             cwd=history, env=env, stdout=log, stderr=subprocess.STDOUT,
             user="ubuntu" if os.geteuid() == 0 else None,
