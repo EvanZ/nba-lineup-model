@@ -60,6 +60,8 @@ def stage_production_site_release(
     forecast_registry_root: Path | None = None,
     version_references: dict[str, str] | None = None,
     environment: str = "dev",
+    artifact_lake_uri: str | None = None,
+    artifact_cache_root: Path | None = None,
 ) -> Path:
     """Copy a reviewed dev release into an immutable production candidate."""
 
@@ -203,6 +205,13 @@ def stage_production_site_release(
             json.dumps(runtime_manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        if artifact_lake_uri is not None:
+            if artifact_cache_root is None:
+                raise ValueError("S3-backed release requires a cache root")
+            from nba_lineup_model.season.serving_recovery import attach_inventory
+            runtime_manifest = attach_inventory(staging, lake_uri=artifact_lake_uri, cache=artifact_cache_root)
+            runtime_sha = runtime_manifest["runtime_sha256"]
+            target = output / f"runtime_sha256={runtime_sha}"
         if target.exists():
             existing = verify_production_site_release(target)
             if existing["runtime_sha256"] != runtime_sha:
@@ -225,7 +234,8 @@ def stage_production_site_release(
     return target
 
 
-def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path) -> Path:
+def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path,
+                       artifact_lake_uri: str | None = None, artifact_cache_root: Path | None = None) -> Path:
     """Replace code only; retain the original data approval and every data byte.
 
     The runtime identity records new code; the retained approval describes the
@@ -239,7 +249,7 @@ def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path
     checksum = hashlib.sha256(canonical_json(identity)).hexdigest()
     output_root.mkdir(parents=True, exist_ok=True)
     target = output_root / f"runtime_sha256={checksum}"
-    if target.exists():
+    if target.exists() and artifact_lake_uri is None:
         existing = verify_production_site_release(target)
         if existing["identity"] != identity:
             raise ValueError("Code release identity differs from existing release")
@@ -270,10 +280,22 @@ def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path
             raise ValueError("Code changed during packaging")
         manifest = {**original, "identity": identity, "runtime_sha256": checksum}
         (staging / MANIFEST_FILENAME).write_bytes(canonical_json(manifest) + b"\n")
+        if artifact_lake_uri is not None:
+            if artifact_cache_root is None:
+                raise ValueError("S3-backed code release requires a cache root")
+            from nba_lineup_model.season.serving_recovery import attach_inventory
+            manifest = attach_inventory(staging, lake_uri=artifact_lake_uri, cache=artifact_cache_root)
+            target = output_root / f"runtime_sha256={manifest['runtime_sha256']}"
+        elif (base / "durable-serving.json").exists():
+            shutil.copy2(base / "durable-serving.json", staging / "durable-serving.json")
         verify_production_site_release(staging)
         if verify_production_site_release(base) != original:
             raise ValueError("Base release changed during code packaging")
-        staging.replace(target)
+        if target.exists():
+            if verify_production_site_release(target) != manifest:
+                raise ValueError("Existing code release differs")
+        else:
+            staging.replace(target)
     finally:
         if staging.exists():
             for directory in (staging / "code", *(staging / "code").rglob("*")):
@@ -332,6 +354,11 @@ def stage_schedule_release(*, base_release: Path, schedule_root: Path, output_ro
         target = output_root / f"runtime_sha256={checksum}"
         manifest = {**original, "identity": identity, "runtime_sha256": checksum}
         (staging / MANIFEST_FILENAME).write_bytes(canonical_json(manifest) + b"\n")
+        if (base / "durable-serving.json").exists():
+            from nba_lineup_model.season.serving_recovery import attach_inventory, inventory, cache_root
+            storage = inventory(base)
+            manifest = attach_inventory(staging, lake_uri=storage["lake_uri"], cache=cache_root(base))
+            target = output_root / f"runtime_sha256={manifest['runtime_sha256']}"
         # These components contain no secrets; the API service must read them.
         for path in staging.rglob("*"):
             if path.is_symlink() or path.is_relative_to(staging / "code"):

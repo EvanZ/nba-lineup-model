@@ -186,3 +186,24 @@ bytes and the existing cutoff authority. That work is pending approval, not
 implemented. Do not deploy these partial changes or mark #62 complete from
 these test results. No production activation, historical replay, data rewrite,
 collector change, or incident-state edit has occurred.
+
+### #62 durable recovery implementation checkpoint
+
+The S3 audit supersedes the earlier assumption that historical dependencies were
+missing: all 80 pinned historical files already exist in the versioned
+`gestalt-web-d739c28` S3 release and match the exact EC2 bytes. No historical
+re-upload or model replay is needed. The agreed scope is recorded in issue #62.
+
+The canonical producers now pin a durable serving dependency inventory, reuse
+those historical S3 objects, archive immutable forecast registry records with
+write-through publication, and restore release/data/model/history/registry
+components into verified EC2 caches. Original manifests and forecast contents
+remain unchanged. Code-only, daily, and forecast publication use the same
+recovery contract; production remains separately gated.
+
+Validation at this checkpoint: 160 focused tests passed, including interrupted
+registry publication, unchanged/changed identities, cold restore without source
+directories, corrupt/missing inputs, cache reuse, and existing publication/retry
+paths. The source-policy audit passed for all 80 historical files, the registry,
+and the active selected schedule. Real dev activation and daily recovery are
+still pending; this checkpoint is not a production-readiness claim.

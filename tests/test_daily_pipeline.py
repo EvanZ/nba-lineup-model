@@ -477,6 +477,7 @@ def test_post_activation_production_gate_checks_full_player_history(
     config = config_fixture(tmp_path)
     release = config.pipeline_root / "release"
     release.mkdir(parents=True)
+    (release / "runtime-manifest.json").write_text(json.dumps({"identity": {}}))
     manifest = {
         "identity": {
             "approved_release_sha256": "release-sha",
@@ -523,7 +524,7 @@ def test_post_activation_production_gate_checks_full_player_history(
     monkeypatch.setattr(dev_site_release, "verify_daily_data_artifact", verify_bound_data)
     assert not (config.data_root / "latest.json").exists()
     bound_model_root = release / "bound-model"
-    monkeypatch.setattr(dev_site_release, "approved_model_root", lambda _: bound_model_root)
+    monkeypatch.setattr(dev_site_release, "approved_model_root", lambda _, **kwargs: bound_model_root)
     monkeypatch.setattr(
         daily_activation,
         "verify_loaded_identity",

@@ -502,6 +502,25 @@ class CanonicalPipelineSteps:
         self.env["GESTALT_SCHEDULE_STATE_DIR"] = str(schedule)
         validate_schedule_artifacts(schedule)
         return schedule
+    def archive_daily_inputs(self, through: date) -> None:
+        c = self.config
+        if c.artifact_lake_uri is None:
+            return
+        # Staging is also reached after checkpoint reuse and zero-game/model
+        # reuse paths. Re-resolve the exact selected chains here; never rely
+        # on side effects in stages that a resumed job may legitimately skip.
+        from nba_lineup_model.season.durable_artifact_storage import (
+            publish_selected_data_chain, publish_selected_model_chain,
+        )
+        publications = []
+        for publish, root in ((publish_selected_data_chain, c.data_root),
+                              (publish_selected_model_chain, c.model_root)):
+            publications.extend(publish(root, through_date=through,
+                cache_root=c.artifact_cache_root, lake_uri=c.artifact_lake_uri))
+        self.durable_dependencies = sorted({item.reference for item in publications})
+        if not self.durable_dependencies:
+            raise RuntimeError("Durable release has no verified daily artifact dependencies")
+
     def archive_release(self, release: Path) -> None:
         c = self.config
         if c.artifact_lake_uri is None:
@@ -511,23 +530,9 @@ class CanonicalPipelineSteps:
         )
 
         assert c.artifact_cache_root is not None
-        # Staging is also reached after checkpoint reuse and zero-game/model
-        # reuse paths. Re-resolve the exact selected chains here; never rely
-        # on side effects in stages that a resumed job may legitimately skip.
-        from nba_lineup_model.season.durable_artifact_storage import (
-            publish_selected_data_chain, publish_selected_model_chain,
-        )
         from nba_lineup_model.season.production_site_release import verify_production_site_release
         manifest = verify_production_site_release(release)
-        through = date.fromisoformat(manifest["identity"]["evidence_through_date"])
-        publications = []
-        for publish, root in ((publish_selected_data_chain, c.data_root),
-                              (publish_selected_model_chain, c.model_root)):
-            publications.extend(publish(root, through_date=through,
-                cache_root=c.artifact_cache_root, lake_uri=c.artifact_lake_uri))
-        self.durable_dependencies = sorted({item.reference for item in publications})
-        if not self.durable_dependencies:
-            raise RuntimeError("Durable release has no verified daily artifact dependencies")
+        self.archive_daily_inputs(date.fromisoformat(manifest["identity"]["evidence_through_date"]))
         publication = publish_production_release(
             release,
             cache_root=c.artifact_cache_root,
@@ -553,8 +558,14 @@ class CanonicalPipelineSteps:
         with self.api() as api:
             validation = collect_api_validation(api, evidence_date=target.isoformat(), daily_model_root=c.model_root)
             publish_dev_site_release(daily_data_root=c.data_root, daily_model_root=c.model_root, serving_root=out / "serving", lineups_root=out / "lineups", schedule_state_dir=schedule, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_revision=self.revision, api_validation=validation, output_root=out / "site-releases")
-        release = stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=schedule, schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
+        self.archive_daily_inputs(target)
+        release = stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=schedule, schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod", artifact_lake_uri=c.artifact_lake_uri, artifact_cache_root=c.artifact_cache_root)
         self.archive_release(release)
+        if c.artifact_lake_uri is not None:
+            from nba_lineup_model.season.durable_release_storage import production_release_reference, restore_production_release
+            from nba_lineup_model.season.production_site_release import verify_production_site_release
+            release = restore_production_release(reference=production_release_reference(verify_production_site_release(release)),
+                cache_root=c.artifact_cache_root, lake_uri=c.artifact_lake_uri)
         return release
 
 

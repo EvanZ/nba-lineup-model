@@ -49,7 +49,7 @@ def workflow(tmp_path, monkeypatch):
     config = SimpleNamespace(environment_root=tmp_path / "nba-gestalt-dev",
         pipeline_root=tmp_path / "pipeline", live_pointer=tmp_path / "live",
         observation_root=tmp_path / "observations", model_root=tmp_path / "model",
-        data_root=tmp_path / "data")
+        data_root=tmp_path / "data", artifact_lake_uri=None)
     manifest = {"runtime_sha256": "old",
         "identity": {"evidence_through_date": "2026-11-02", "game_count": 107,
         "serving_bundle_sha256": "serving", "lineup_bundle_sha256": "lineup"},
@@ -70,8 +70,8 @@ def workflow(tmp_path, monkeypatch):
     monkeypatch.setattr(subject, "candidate_api", api)
     monkeypatch.setattr(subject, "collect_api_validation", lambda *a, **kw: {"status": "clean"})
     monkeypatch.setattr(subject, "_normalize_api_validation", lambda *a, **kw: None)
-    monkeypatch.setattr(subject, "approved_schedule_game_ids", lambda _: [])
-    monkeypatch.setattr(subject, "approved_model_root", lambda _: tmp_path / "bound-model")
+    monkeypatch.setattr(subject, "approved_schedule_game_ids", lambda _, **kwargs: [])
+    monkeypatch.setattr(subject, "approved_model_root", lambda _, **kwargs: tmp_path / "bound-model")
     monkeypatch.setattr(subject, "fetch", lambda *a: {"games": [game]})
     def activate(**kw):
         assert kw["expected_previous_generation"] == 10

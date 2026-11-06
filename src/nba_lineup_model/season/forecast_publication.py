@@ -30,7 +30,8 @@ class ForecastRegistry:
     """Immutable inputs/receipts/selections, serialized by the publisher lock."""
 
     def __init__(self, root: Path | str):
-        self.root = Path(root)
+        from nba_lineup_model.season.serving_recovery import registry_path
+        self.root = registry_path(Path(root))
 
     def _put(self, category: str, identity: str, value: dict[str, Any]) -> Path:
         if not identity or Path(identity).name != identity or identity in {".", ".."}:
@@ -50,6 +51,12 @@ class ForecastRegistry:
                 # non-secret immutable records. NamedTemporaryFile defaults to 0600.
                 os.fchmod(handle.fileno(), 0o644)
                 os.fsync(handle.fileno())
+            # A durable registry must publish before a record becomes locally
+            # eligible. A failed S3 write cannot create a successful receipt.
+            if path.exists() and path.read_bytes() != data:
+                raise ValueError(f"Immutable registry entry changed: {category}:{identity}")
+            from nba_lineup_model.season.durable_forecast_registry import publish_record
+            publish_record(self.root, f"{category}/{identity}.json", temporary)
             try:
                 os.link(temporary, path)
             except FileExistsError:
@@ -388,7 +395,8 @@ def record_verified_release_forecasts(
     registry_root = index.get("forecast_registry_root")
     if not registry_root:
         return  # Existing history is not retroactively given live receipts.
-    registry = ForecastRegistry(registry_root)
+    from nba_lineup_model.season.serving_recovery import registry_path
+    registry = ForecastRegistry(registry_path(Path(registry_root), release=release))
     # A corrected selection may retain older version IDs for audit. Only
     # versions actually selected by this release received a live publication.
     selected_versions = {

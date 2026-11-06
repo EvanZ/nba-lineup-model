@@ -369,10 +369,11 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
     }
 
 
-def approved_model_root(approved_identity: Mapping[str, Any]) -> Path:
+def approved_model_root(approved_identity: Mapping[str, Any], *, release: Path | None = None) -> Path:
     """Resolve and verify the release's model chain rather than a job directory."""
     reference = approved_identity["model"]
-    bundle = Path(reference["bundle_path"]).resolve(strict=True)
+    from nba_lineup_model.season.serving_recovery import daily_path
+    bundle = daily_path(Path(reference["bundle_path"]), release=release).resolve(strict=True)
     manifest = verify_daily_model_artifact(bundle)
     if (manifest["bundle_sha256"] != reference["bundle_sha256"]
         or manifest["identity"]["game_date_pacific"] != approved_identity["evidence_through_date"]):
@@ -384,10 +385,11 @@ def approved_model_root(approved_identity: Mapping[str, Any]) -> Path:
     return root
 
 
-def approved_schedule_game_ids(approved_identity: Mapping[str, Any]) -> list[str]:
+def approved_schedule_game_ids(approved_identity: Mapping[str, Any], *, release: Path | None = None) -> list[str]:
     """Read the exact approved artifact, never an outer job's mutable pointer."""
     reference = approved_identity["data"]
-    manifest = verify_daily_data_artifact(Path(reference["bundle_path"]))
+    from nba_lineup_model.season.serving_recovery import daily_path
+    manifest = verify_daily_data_artifact(daily_path(Path(reference["bundle_path"]), release=release))
     if manifest["bundle_sha256"] != reference["bundle_sha256"]:
         raise ValueError("Approved daily data checksum mismatch")
     identity = manifest["identity"]
