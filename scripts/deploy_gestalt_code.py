@@ -20,7 +20,7 @@ from nba_lineup_model.orchestration.daily_activation import (
     reload_environment_api, verify_environment_api,
 )
 from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
-from nba_lineup_model.season.dev_site_release import collect_api_validation, _normalize_api_validation, approved_model_root
+from nba_lineup_model.season.dev_site_release import collect_api_validation, _normalize_api_validation, approved_model_root, approved_schedule_game_ids
 from nba_lineup_model.season.production_site_release import stage_code_release, verify_production_site_release
 from nba_lineup_model.season.release_publisher import activate_release, read_active_activation
 
@@ -136,6 +136,7 @@ def main():
             _normalize_api_validation(evidence, evidence_date=identity["evidence_through_date"],
                 expected_game_count=int(identity["game_count"]),
                 expected_final_game_count=int(manifest["approved_manifest"]["identity"]["schedule"]["final_game_count"]),
+                expected_schedule_game_ids=approved_schedule_game_ids(manifest["approved_manifest"]["identity"], release=candidate),
                 serving_sha=identity["serving_bundle_sha256"], lineup_sha=identity["lineup_bundle_sha256"])
             report["api_validation"] = evidence
             days = sorted((candidate / "selected-schedule/latest").glob("*.json"))
