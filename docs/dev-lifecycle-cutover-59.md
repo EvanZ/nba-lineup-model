@@ -217,3 +217,31 @@ validation-memory behavior only, with no model, forecast, or coverage change.
 All further real validation runs are serial, memory-capped, and assigned a high
 OOM kill priority to protect the running services. The earlier overlapping test
 attempt caused a dev API OOM/restart; issue #62 records that incident explicitly.
+
+
+### #62 live recovery checkpoint: resource blocker
+
+The candidate at `f8e765c` passed complete canonical API validation and a second
+fresh-cache S3 recovery with the old historical release, daily-pipeline root,
+forecast registry, and previous cache hidden in a private mount namespace.
+Both runs checked all 20 selected dates / 154 games and 3,676 player opportunities.
+All 236 selected-schedule JSON files match the pre-change baseline.
+
+Live activation at generation 26 failed because the installed dev service lacked
+the canonical unit's `PYTHONDONTWRITEBYTECODE=1` setting. Python added 46 `.pyc`
+files, correctly violating the code seal. The publisher restored and verified
+the prior runtime at generation 27. The rejected release was left untouched.
+The canonical service unit is now installed/reloaded; `5f3a482` adds a deployment
+guard for that setting (8 targeted tests passed).
+
+The next candidate, runtime
+`378d7a942587014b123473f606160d7998aabe72ddea2c68b444c710633659af`,
+was archived/restored but its preflight API was killed by a host-wide OOM.
+The test's elevated OOM score protected the live services; no pointer moved.
+The host is a t4g.medium (4 GiB, about 3.7 GiB usable, no swap), with roughly
+3 GiB already occupied by services. Further deployment attempts are paused
+pending a capacity decision. Dev remains on the prior runtime at generation 27;
+production pointers are unchanged. Collector services have zero restarts and
+latest capture jobs succeeded. No new daily worker or catch-up run was installed.
+Rendered dev verification, real daily recovery, and ticket completion remain
+pending. This checkpoint is not a deployment-readiness claim.
