@@ -160,7 +160,8 @@ def verify_serving_bindings(release: Path) -> dict[str, Any]:
         or selection["selection_map_sha256"] != result["components"]["forecast_selection_id"]
     ):
         raise ValueError("Schedule does not match the selected edition")
-    history = Path(result["historical_runtime"])
+    from nba_lineup_model.season.serving_recovery import historical_path
+    history = historical_path(release)
     for relative, checksum in result["historical_files"].items():
         path = (history / relative).resolve()
         if not path.is_relative_to(history) or file_sha256(path) != checksum:
@@ -216,7 +217,12 @@ class ReleaseServing:
     def evaluator_kwargs(self) -> dict[str, Any]:
         # Historical loaders have relative cache paths. Their process working
         # directory is an immutable release directory and must match this pin.
-        if Path.cwd().resolve() != Path(self.bindings["historical_runtime"]):
+        from nba_lineup_model.season.serving_recovery import historical_path, inventory
+        history = historical_path(self.root)
+        if inventory(self.root) is not None:
+            import os
+            os.chdir(history)
+        if Path.cwd().resolve() != history:
             raise ValueError("API working directory differs from bound historical runtime")
         return {
             "run_id": self.bindings["historical_run_id"],
@@ -229,7 +235,8 @@ class ReleaseServing:
     def frozen_game_ratings(self, selected: dict) -> dict[int, float]:
         from nba_lineup_model.season.frozen_game_ratings import load_frozen_game_ratings
         model = self.manifest["approved_manifest"]["identity"]["model"]
-        return load_frozen_game_ratings(selected, model_bundle=Path(model["bundle_path"]),
+        from nba_lineup_model.season.serving_recovery import daily_path
+        return load_frozen_game_ratings(selected, model_bundle=daily_path(Path(model["bundle_path"]), release=self.root),
             model_sha256=model["bundle_sha256"], preseason_rankings=self.path("preseason_rankings"))
 
     def observations(self, root: Path | None) -> ObservationSnapshot:

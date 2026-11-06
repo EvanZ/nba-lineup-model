@@ -106,8 +106,8 @@ def verify_environment_api(
     manifest = verify_production_site_release(release)
     expected = manifest["identity"]
     from nba_lineup_model.season.dev_site_release import approved_schedule_game_ids, approved_model_root
-    expected_schedule_ids = approved_schedule_game_ids(manifest["approved_manifest"]["identity"])
-    model_root = approved_model_root(manifest["approved_manifest"]["identity"])
+    expected_schedule_ids = approved_schedule_game_ids(manifest["approved_manifest"]["identity"], release=release)
+    model_root = approved_model_root(manifest["approved_manifest"]["identity"], release=release)
     port = 8011 if _environment(config) == "dev" else 8010
     api = f"http://127.0.0.1:{port}"
     verify_loaded_identity(api, activation_record, timeout_seconds=60)

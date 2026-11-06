@@ -285,6 +285,7 @@ def test_replay_does_not_create_live_receipts_for_replaced_forecasts(tmp_path):
     candidate(registry, "old")
     release = tmp_path / "release"
     (release / "selected-schedule").mkdir(parents=True)
+    (release / "runtime-manifest.json").write_text(json.dumps({"identity": {}}))
     (release / "selected-schedule/forecast-selections.json").write_text(json.dumps({
         "forecast_registry_root": str(registry.root),
         "publication_forecast_ids": ["old"],
@@ -300,6 +301,7 @@ def test_verified_activation_receipts_are_idempotent_and_never_backdated(tmp_pat
     candidate(registry, "first")
     release = tmp_path / "release"
     (release / "selected-schedule").mkdir(parents=True)
+    (release / "runtime-manifest.json").write_text(json.dumps({"identity": {}}))
     (release / "selected-schedule/forecast-selections.json").write_text(
         json.dumps(
             {

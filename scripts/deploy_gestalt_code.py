@@ -9,10 +9,10 @@ import argparse
 from contextlib import contextmanager
 import json
 import os
+import shlex
 from pathlib import Path
 import socket
 import subprocess
-import sys
 import time
 import urllib.request
 
@@ -20,7 +20,7 @@ from nba_lineup_model.orchestration.daily_activation import (
     reload_environment_api, verify_environment_api,
 )
 from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
-from nba_lineup_model.season.dev_site_release import collect_api_validation, _normalize_api_validation
+from nba_lineup_model.season.dev_site_release import collect_api_validation, _normalize_api_validation, approved_model_root, approved_schedule_game_ids
 from nba_lineup_model.season.production_site_release import stage_code_release, verify_production_site_release
 from nba_lineup_model.season.release_publisher import activate_release, read_active_activation
 
@@ -33,6 +33,8 @@ def fetch(api, path):
 @contextmanager
 def candidate_api(release, report_root):
     bindings = json.loads((release / "serving-bindings.json").read_text())
+    from nba_lineup_model.season.serving_recovery import historical_path
+    history = historical_path(release)
     # Isolated preflight link, never an environment's live pointer. There is no
     # activation record: only the real publisher can create one after validation.
     pointer = report_root / "preflight-release"
@@ -57,9 +59,9 @@ def candidate_api(release, report_root):
         port = sock.getsockname()[1]
     api = f"http://127.0.0.1:{port}"
     with (report_root / "api.log").open("w") as log:
-        process = subprocess.Popen([sys.executable, "-m", "uvicorn",
+        process = subprocess.Popen(["/opt/nba-gestalt-web-dev/current/bin/python", "-m", "uvicorn",
             "nba_lineup_model.web_api.app:app", "--host", "127.0.0.1", "--port", str(port)],
-            cwd=bindings["historical_runtime"], env=env, stdout=log, stderr=subprocess.STDOUT,
+            cwd=history, env=env, stdout=log, stderr=subprocess.STDOUT,
             user="ubuntu" if os.geteuid() == 0 else None,
             group="ubuntu" if os.geteuid() == 0 else None)
         try:
@@ -84,6 +86,17 @@ def candidate_api(release, report_root):
                 process.wait()
 
 
+def verify_dev_service_configuration():
+    environment = subprocess.run(
+        ["systemctl", "show", "gestalt-web-dev.service", "--property=Environment", "--value"],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    settings = dict(item.split("=", 1) for item in shlex.split(environment) if "=" in item)
+    if settings.get("PYTHONDONTWRITEBYTECODE") != "1":
+        raise ValueError("Install the canonical deploy/gestalt-web-dev.service before activation: "
+                         "PYTHONDONTWRITEBYTECODE=1 is required to preserve the sealed code package")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -96,13 +109,24 @@ def main():
         raise ValueError("This command is dev-only; production requires separate approval")
     if config.live_pointer != config.environment_root / "live-release":
         raise ValueError("Unexpected dev live pointer")
+    if args.activate:
+        verify_dev_service_configuration()
     active = read_active_activation(config.live_pointer)
     if active is None:
         raise ValueError("Code deployment requires an existing validated release")
     base = Path(active["release_path"])
     candidate = stage_code_release(base_release=base, code_root=args.code,
-                                  output_root=config.environment_root / "code-releases")
+                                  output_root=config.environment_root / "code-releases",
+                                  artifact_lake_uri=config.artifact_lake_uri,
+                                  artifact_cache_root=config.artifact_cache_root)
     manifest = verify_production_site_release(candidate)
+    if config.artifact_lake_uri is not None:
+        from nba_lineup_model.season.durable_release_storage import publish_production_release, restore_production_release
+        publication = publish_production_release(candidate, cache_root=config.artifact_cache_root,
+                                                 lake_uri=config.artifact_lake_uri)
+        candidate = restore_production_release(reference=publication.reference,
+                    cache_root=config.artifact_cache_root, lake_uri=config.artifact_lake_uri)
+        manifest = verify_production_site_release(candidate)
     identity = manifest["identity"]
     report_root = config.environment_root / "code-release-validation" / manifest["runtime_sha256"]
     report_root.mkdir(parents=True, exist_ok=True)
@@ -121,10 +145,11 @@ def main():
         with candidate_api(candidate, report_root) as api:
             print("Candidate API started; validating unchanged data and all schedule dates", flush=True)
             evidence = collect_api_validation(api, evidence_date=identity["evidence_through_date"],
-                                              daily_model_root=config.model_root)
+                                              daily_model_root=approved_model_root(manifest["approved_manifest"]["identity"], release=candidate))
             _normalize_api_validation(evidence, evidence_date=identity["evidence_through_date"],
                 expected_game_count=int(identity["game_count"]),
                 expected_final_game_count=int(manifest["approved_manifest"]["identity"]["schedule"]["final_game_count"]),
+                expected_schedule_game_ids=approved_schedule_game_ids(manifest["approved_manifest"]["identity"], release=candidate),
                 serving_sha=identity["serving_bundle_sha256"], lineup_sha=identity["lineup_bundle_sha256"])
             report["api_validation"] = evidence
             days = sorted((candidate / "selected-schedule/latest").glob("*.json"))

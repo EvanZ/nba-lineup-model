@@ -277,7 +277,9 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
     # Every actual participant on the release date must be visible in their
     # player-page API, not just the representative Curry profile above.
     checked_logs = 0
-    profiles = {201939: player}
+    # Full profiles include large multi-season charts and caches. Coverage uses
+    # only current-season trajectories; retain those rather than every payload.
+    profiles = {201939: player.get("current_season_trajectory", [])}
     for game in schedule.get("games", []):
         if not game.get("status", {}).get("completed"):
             continue
@@ -290,8 +292,8 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
                     continue
                 player_id = int(row["player_id"])
                 if player_id not in profiles:
-                    profiles[player_id] = _get_json(f"{root}/api/players/{player_id}")
-                matches = [point for point in profiles[player_id].get("current_season_trajectory", []) if str(point.get("game_id")) == game_id]
+                    profiles[player_id] = _get_json(f"{root}/api/players/{player_id}").get("current_season_trajectory", [])
+                matches = [point for point in profiles[player_id] if str(point.get("game_id")) == game_id]
                 if len(matches) != 1 or abs(float(matches[0].get("actual_minutes", -1)) - minutes) > 1e-6:
                     raise ValueError(f"Player game-log coverage mismatch: NBA game {game_id}, player {player_id}")
                 checked_logs += 1
@@ -312,8 +314,8 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
             for row in observations.itertuples(index=False):
                 player_id, game_id = int(row.player_id), str(row.game_id)
                 if player_id not in profiles:
-                    profiles[player_id] = _get_json(f"{root}/api/players/{player_id}")
-                matches = [p for p in profiles[player_id].get("current_season_trajectory", []) if str(p.get("game_id")) == game_id]
+                    profiles[player_id] = _get_json(f"{root}/api/players/{player_id}").get("current_season_trajectory", [])
+                matches = [p for p in profiles[player_id] if str(p.get("game_id")) == game_id]
                 if (len(matches) != 1
                     or matches[0].get("played") is not bool(row.played)
                     or str(matches[0].get("team")) != str(row.team)
@@ -369,10 +371,11 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
     }
 
 
-def approved_model_root(approved_identity: Mapping[str, Any]) -> Path:
+def approved_model_root(approved_identity: Mapping[str, Any], *, release: Path | None = None) -> Path:
     """Resolve and verify the release's model chain rather than a job directory."""
     reference = approved_identity["model"]
-    bundle = Path(reference["bundle_path"]).resolve(strict=True)
+    from nba_lineup_model.season.serving_recovery import daily_path
+    bundle = daily_path(Path(reference["bundle_path"]), release=release).resolve(strict=True)
     manifest = verify_daily_model_artifact(bundle)
     if (manifest["bundle_sha256"] != reference["bundle_sha256"]
         or manifest["identity"]["game_date_pacific"] != approved_identity["evidence_through_date"]):
@@ -384,10 +387,11 @@ def approved_model_root(approved_identity: Mapping[str, Any]) -> Path:
     return root
 
 
-def approved_schedule_game_ids(approved_identity: Mapping[str, Any]) -> list[str]:
+def approved_schedule_game_ids(approved_identity: Mapping[str, Any], *, release: Path | None = None) -> list[str]:
     """Read the exact approved artifact, never an outer job's mutable pointer."""
     reference = approved_identity["data"]
-    manifest = verify_daily_data_artifact(Path(reference["bundle_path"]))
+    from nba_lineup_model.season.serving_recovery import daily_path
+    manifest = verify_daily_data_artifact(daily_path(Path(reference["bundle_path"]), release=release))
     if manifest["bundle_sha256"] != reference["bundle_sha256"]:
         raise ValueError("Approved daily data checksum mismatch")
     identity = manifest["identity"]

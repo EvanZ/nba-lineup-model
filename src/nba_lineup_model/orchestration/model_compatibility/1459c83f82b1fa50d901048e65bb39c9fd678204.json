@@ -77,10 +77,10 @@
     "uv.lock": "81e019911c305bf847f995b23c87e9077905e379f0dd5f95c001a91ccf26a298"
   },
   "accepted_revision": "1459c83f82b1fa50d901048e65bb39c9fd678204",
-  "approval": "User approved precise compatibility checks and loader/storage equivalence testing on 2026-11-05; no model mathematics or historical replay change.",
+  "approval": "User approved precise compatibility checks and loader/storage equivalence testing on 2026-11-05; no model mathematics or historical replay change. On 2026-11-06 the user explicitly approved the two requirements-file equivalence review and resuming catch-up with existing model dependency versions.",
   "compatible_files": {
-    "deploy/orchestration-requirements.txt": "04f495cfe2d6fa7e4505e732ee95a9e991af49fbcf21ab0287403f614a94beb9",
-    "deploy/web-requirements.txt": "b0d32dae1ad52ce399a61b6432651ed2898c375c138a62534c70546c9cd3dfe3",
+    "deploy/orchestration-requirements.txt": "e6989240d881881609953d327a8156afc378c35d6841ab876932d8f095119cc1",
+    "deploy/web-requirements.txt": "b3ccfcc8e4861cb25e78275f7fd211d3522d8e8d4d1bb17c66364f6e5d9204f1",
     "pyproject.toml": "49af9835e207336d13c504b6ba1bbf93e73a447c9c852c549ad0d999d71ff41c",
     "src/nba_lineup_model/__init__.py": "56f6cf7436b27f4ccf18981ad3c2ef4e7cb80a5fbdfc309acdd89115b671c88b",
     "src/nba_lineup_model/audit/__init__.py": "5783aa02e43c4ccb69524750f747437e67f3140db4eae5c210cc7479547d7b76",
@@ -158,13 +158,13 @@
   "reviewed_changes": {
     "deploy/orchestration-requirements.txt": {
       "accepted_sha256": "90fcbaaf9829f23dde3d04204b5b2fa26a6ac4e519618053bec287ab17a09592",
-      "compatible_sha256": "04f495cfe2d6fa7e4505e732ee95a9e991af49fbcf21ab0287403f614a94beb9",
-      "reason": "Previously approved split CPU-only runtimes; pinned here to reject future dependency drift."
+      "compatible_sha256": "e6989240d881881609953d327a8156afc378c35d6841ab876932d8f095119cc1",
+      "reason": "Previously approved split CPU-only runtimes; pinned here to reject future dependency drift. User approved the narrow S3 dependency equivalence review on 2026-11-06: boto3 is available to web serving; botocore 1.43.124 and threadpoolctl 3.7.0 preserve all 89 accepted orchestration package versions and the Python version. Calculation source files are unchanged; no historical replay or forecast replacement."
     },
     "deploy/web-requirements.txt": {
       "accepted_sha256": "17542ab9897b36323317e10ae91b16a5e8603e5e16851cbde63e8414d4a3a2b1",
-      "compatible_sha256": "b0d32dae1ad52ce399a61b6432651ed2898c375c138a62534c70546c9cd3dfe3",
-      "reason": "Previously approved split CPU-only runtimes; pinned here to reject future dependency drift."
+      "compatible_sha256": "b3ccfcc8e4861cb25e78275f7fd211d3522d8e8d4d1bb17c66364f6e5d9204f1",
+      "reason": "Previously approved split CPU-only runtimes; pinned here to reject future dependency drift. User approved the narrow S3 dependency equivalence review on 2026-11-06: boto3 is available to web serving; botocore 1.43.124 and threadpoolctl 3.7.0 preserve all 89 accepted orchestration package versions and the Python version. Calculation source files are unchanged; no historical replay or forecast replacement."
     },
     "pyproject.toml": {
       "accepted_sha256": "0bdd4c3da08f51b4e102394c47bd551a187062967af8b299dd5dd3aecffe3f21",

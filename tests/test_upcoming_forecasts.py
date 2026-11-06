@@ -171,3 +171,45 @@ def test_pipeline_cannot_skip_forecast_refresh_by_preserving_all_selections():
     assert "if not c.preserve_schedule_selections" not in inspect.getsource(
         CanonicalPipelineSteps.validate_and_stage
     )
+
+
+def test_refresh_retries_are_addressed_by_complete_inputs(tmp_path, monkeypatch):
+    from pathlib import Path
+    from nba_lineup_model.season import serving_selection
+    bundle, response = fixture_model(tmp_path, monkeypatch)
+    source = tmp_path / "source"
+    source.mkdir()
+    catalog = tmp_path / "catalog"
+    catalog.write_bytes(b"official fixture")
+    index = {"selection_map_sha256": "a" * 64}
+    calls = []
+    def verify(path):
+        p = path / serving_selection.INDEX_FILENAME
+        return json.loads(p.read_text()) if p.exists() else dict(index)
+    def refresh(**kwargs):
+        calls.append(kwargs)
+        kwargs["target"].mkdir()
+        return {"reprojected_game_count": 1}
+    monkeypatch.setattr(upcoming, "verify_schedule_selection", verify)
+    monkeypatch.setattr(upcoming, "_refresh_open_selection", refresh)
+    args = dict(source=source, target=tmp_path / "refreshes", identity_directory=True,
+        model_bundle=bundle, forecast_response=response,
+        start_date=date.fromisoformat(GAME_DATE), days_ahead=0,
+        injury_captures={}, market_captures={}, catalog=catalog,
+        code={"git_revision": "f" * 40}, environment="dev")
+    first = upcoming.refresh_open_selection(**args)
+    originals = {p: p.read_bytes() for p in args["target"].rglob("*.json")}
+    assert upcoming.refresh_open_selection(**args) == first
+    assert len(calls) == 1
+    changed = upcoming.refresh_open_selection(**{**args,
+        "market_captures": {"fixture": {"sha256": "b" * 64}}})
+    assert changed["selection_path"] != first["selection_path"]
+    assert len(calls) == 2
+    assert all(p.read_bytes() == data for p, data in originals.items())
+    path = Path(first["selection_path"])
+    recorded = json.loads((path / serving_selection.INDEX_FILENAME).read_bytes())
+    assert recorded["refresh_request"]["market_captures"] == {}
+    # The original explicit-target contract still rejects conflicting inputs.
+    with pytest.raises(ValueError, match="different inputs"):
+        upcoming.refresh_open_selection(**{**args, "target": path,
+            "identity_directory": False, "days_ahead": 1})

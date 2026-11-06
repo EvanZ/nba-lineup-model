@@ -559,3 +559,33 @@ def test_approved_model_chain_is_bound_to_release(tmp_path, monkeypatch, damage)
             subject.approved_model_root(approved)
     else:
         assert subject.approved_model_root(approved) == root
+
+
+def test_api_gate_does_not_retain_full_player_profiles(monkeypatch):
+    """Keep full coverage while releasing each unrelated multi-season payload."""
+    import weakref
+    from nba_lineup_model.season import dev_site_release as release
+
+    class Profile(dict):
+        pass
+
+    prior = []
+
+    def fetch(url):
+        if "/api/schedule?" in url:
+            return {"games": [{"game_id": "g1", "status": {"completed": True},
+                "retrospective": {"actual_minutes": {"home": [
+                    {"player_id": 1, "actual_minutes": 10},
+                    {"player_id": 2, "actual_minutes": 10}]}}}]}
+        if "/api/players/" in url and not url.endswith("201939"):
+            assert all(reference() is None for reference in prior), "Full profiles retained across players"
+            profile = Profile(current_season_trajectory=[{"game_id": "g1", "actual_minutes": 10}],
+                              historical_charts={"unrelated": "large historical payload"})
+            prior.append(weakref.ref(profile))
+            return profile
+        return {}
+
+    monkeypatch.setattr(release, "_get_json", fetch)
+    evidence = release.collect_api_validation("http://test", evidence_date="2026-11-02")
+    assert evidence["verified_player_game_logs"] == 2
+    assert len(prior) == 2 and all(reference() is None for reference in prior)

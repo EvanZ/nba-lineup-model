@@ -8,3 +8,6 @@ dagster-webserver==1.13.26
 duckdb==1.5.6
 pypdf==6.18.0
 pytest==8.4.2
+
+# Preserve the accepted model runtime when building the S3-enabled web environment.
+threadpoolctl==3.7.0

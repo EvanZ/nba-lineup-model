@@ -146,3 +146,117 @@ to the verified zero-game carry-forward, with post-activation checks still in
 progress at this checkpoint. Independent comparison: all 121 historical
 forecasts and market payloads equal acceptance-59/before.json. Application code
 remains 4a344334236e5708efab8eda653538c64eafcc15. No production pointer moved.
+
+
+## Issue 62 implementation checkpoint (2026-11-05 Pacific)
+
+Classification: pipeline/storage reliability. Work is on EC2 in
+`codex/fix-s3-daily-recovery-62`; no service or release has been changed.
+
+Implemented in the checkout:
+- Release archival re-verifies and registers both exact selected daily chains
+  at staging, including zero-game, existing-model and checkpoint-resume paths.
+  It does not depend on an in-memory list populated by prior callbacks.
+- Forecast refresh outputs use their complete request identity as a directory
+  name. Unchanged retries reuse their output; changed inputs get a distinct
+  directory. Conflicting explicit targets remain errors. The complete request
+  identity is now stored with the selection to make differences auditable.
+- Regression coverage exercises a real zero-game carry-forward and durable
+  data/model publication with an in-memory S3 implementation, then repeats
+  archival after clearing process state and verifies no additional uploads.
+
+Verification: 93 tests passed across daily pipeline, forecast refresh,
+ automatic lifecycle, durable release, daily artifact and active migration
+ suites. The two reproductions run against the original code fail with the
+ original missing-dependency and conflicting-forecast-input errors. These
+ are regression results, not dev acceptance or evidence of live recovery.
+
+Remaining gate: complete S3-backed serving. Existing releases depend on bound
+historical inputs (80 files, approximately 111 MB at inspection), the canonical
+forecast registry (approximately 5.7 MB), and original daily-artifact paths.
+The registry is an active authority: resolving a game after cutoff can write
+its immutable lock selection, and successful publisher activation writes
+publication receipts. Copying it into a frozen release without addressing
+that authority is not a correct recovery implementation.
+
+A contract decision was presented to the user before adding a new dependency
+mapping/registry durability schema: include those missing dependencies and
+resolve legacy references into verified EC2 cache while preserving original
+bytes and the existing cutoff authority. That work is pending approval, not
+implemented. Do not deploy these partial changes or mark #62 complete from
+these test results. No production activation, historical replay, data rewrite,
+collector change, or incident-state edit has occurred.
+
+### #62 durable recovery implementation checkpoint
+
+The S3 audit supersedes the earlier assumption that historical dependencies were
+missing: all 80 pinned historical files already exist in the versioned
+`gestalt-web-d739c28` S3 release and match the exact EC2 bytes. No historical
+re-upload or model replay is needed. The agreed scope is recorded in issue #62.
+
+The canonical producers now pin a durable serving dependency inventory, reuse
+those historical S3 objects, archive immutable forecast registry records with
+write-through publication, and restore release/data/model/history/registry
+components into verified EC2 caches. Original manifests and forecast contents
+remain unchanged. Code-only, daily, and forecast publication use the same
+recovery contract; production remains separately gated.
+
+Validation at this checkpoint: 160 focused tests passed, including interrupted
+registry publication, unchanged/changed identities, cold restore without source
+directories, corrupt/missing inputs, cache reuse, and existing publication/retry
+paths. The source-policy audit passed for all 80 historical files, the registry,
+and the active selected schedule. Real dev activation and daily recovery are
+still pending; this checkpoint is not a production-readiness claim.
+
+Real preflight exposed validator memory growth: it retained every full player
+profile while checking only current-season trajectories. This exhausted the
+700 MiB test cgroup on the 3.7 GiB EC2 host. The validator now retains only the
+trajectories needed by the same complete coverage checks. The regression fails
+against the preceding commit; 93 relevant tests pass after the repair. This is
+validation-memory behavior only, with no model, forecast, or coverage change.
+All further real validation runs are serial, memory-capped, and assigned a high
+OOM kill priority to protect the running services. The earlier overlapping test
+attempt caused a dev API OOM/restart; issue #62 records that incident explicitly.
+
+
+### #62 live recovery checkpoint: resource blocker
+
+The candidate at `f8e765c` passed complete canonical API validation and a second
+fresh-cache S3 recovery with the old historical release, daily-pipeline root,
+forecast registry, and previous cache hidden in a private mount namespace.
+Both runs checked all 20 selected dates / 154 games and 3,676 player opportunities.
+All 236 selected-schedule JSON files match the pre-change baseline.
+
+Live activation at generation 26 failed because the installed dev service lacked
+the canonical unit's `PYTHONDONTWRITEBYTECODE=1` setting. Python added 46 `.pyc`
+files, correctly violating the code seal. The publisher restored and verified
+the prior runtime at generation 27. The rejected release was left untouched.
+The canonical service unit is now installed/reloaded; `5f3a482` adds a deployment
+guard for that setting (8 targeted tests passed).
+
+The next candidate, runtime
+`378d7a942587014b123473f606160d7998aabe72ddea2c68b444c710633659af`,
+was archived/restored but its preflight API was killed by a host-wide OOM.
+The test's elevated OOM score protected the live services; no pointer moved.
+The host is a t4g.medium (4 GiB, about 3.7 GiB usable, no swap), with roughly
+3 GiB already occupied by services. Further deployment attempts are paused
+pending a capacity decision. Dev remains on the prior runtime at generation 27;
+production pointers are unchanged. Collector services have zero restarts and
+latest capture jobs succeeded. No new daily worker or catch-up run was installed.
+Rendered dev verification, real daily recovery, and ticket completion remain
+pending. This checkpoint is not a deployment-readiness claim.
+
+
+### Issue 62: verified serving recovery and approved compatibility review
+
+On November 6 UTC, code `0f0fd7e` activated dev generation 30 through the canonical publisher, runtime `042869e115b05d0895f14db3f85568dabb72b0788ae97425e7a1f5df21688e3f`. Full API coverage passed for all 20 selected dates / 154 games, with all 236 selected-schedule JSON hashes unchanged. The live API uses the S3 recovery cache. Restart retained the same loaded identity and the sizes/mtimes of all 40,173 existing cache files. Model evidence remains November 2 / 107 games; this is not completed catch-up.
+
+EC2 Chromium rendered six main pages at desktop and phone widths without JS/API errors, using the deployed static files and live API through a temporary local streaming test server. Authenticated public-proxy browser acceptance is not established. Wins overflowed horizontally at both widths, and the narrow team page also overflowed; layout fixes are outside #62.
+
+The new automatic worker submitted permanent dev run `119a41e3-67ec-427b-9068-54b65779b015`; it failed before data processing because the reviewed model-compatibility inventory includes the changed web requirements file. Automatic daily lifecycle is paused to avoid repeating this known failure. All dev services and independent collectors remain running. A runtime-only 900 MiB/no-swap cap bounds the dev code service and job descendants. Production is unchanged.
+
+The first rebuilt orchestration environment unintentionally resolved botocore 1.43.125 instead of 1.43.124 and threadpoolctl 3.8.0 instead of 3.7.0. The proposed requirements pins retain the accepted versions. A freshly built candidate environment (`requirements_sha256=f766104c7fd0dc21423d0cc088900f31c605d93d33c2452de675a3f3e94c962a`) has the same Python version and all 89 package versions as the accepted environment (`requirements_sha256=be07cd04e2ee64a9589a66d4e7ade0f6885535aa2a2e89b0e69f4dfb4d83e5a5`). Of 75 calculation-inventory entries, only the two requirements files differ; calculation source files match the reviewed policy. Twenty-three focused runtime/deployment/storage tests pass. This environment is prepared but not activated.
+
+The user explicitly approved a narrowly scoped equivalence review of these two requirements changes for accepted model revision `1459c83f82b1fa50d901048e65bb39c9fd678204`, including updating its reviewed compatibility inventory, deployment, and normal forward catch-up. The policy update changes only the two approved requirements hashes; all calculation-source checks remain enforced. Do not bypass the guard, replay accepted model history, or rewrite frozen forecasts. Evidence is retained on EC2 at `/tmp/gestalt-62-compatibility-review.json` and `/tmp/gestalt-62-pinned-runtime-tests.log`.
+
+The user approved deletion of exactly two unused serving recovery caches (`10f656c6...` and `378d7a94...`). Their S3 storage manifests were verified and their archives preserved; only those two cache directories were removed. The audit is `/tmp/gestalt-62-approved-cache-cleanup.json`. No other NBA artifact/cache deletion is authorized by that approval.

@@ -41,3 +41,25 @@ def test_s3_parquet_count_uses_parameterized_duckdb_query() -> None:
     assert s3_parquet_row_count(uri, connection=connection) == 31
     assert connection.query == "SELECT count(*) FROM read_parquet(?)"
     assert connection.parameters == [uri]
+
+
+def test_artifact_recovery_does_not_require_duckdb():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    code = """
+import builtins
+original = builtins.__import__
+def without_duckdb(name, *args, **kwargs):
+    if name == 'duckdb' or name.startswith('duckdb.'):
+        raise ModuleNotFoundError('DuckDB intentionally absent from web environment')
+    return original(name, *args, **kwargs)
+builtins.__import__ = without_duckdb
+from nba_lineup_model.storage.artifact_store import ArtifactReference
+from nba_lineup_model.season.serving_recovery import historical_path
+from nba_lineup_model.storage.duckdb_lake import validate_lake_uri
+assert validate_lake_uri('s3://nba-gestalt-data/lake/example')
+"""
+    subprocess.run([sys.executable, "-c", code], check=True,
+                   env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")})

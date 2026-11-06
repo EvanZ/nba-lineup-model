@@ -477,6 +477,7 @@ def test_post_activation_production_gate_checks_full_player_history(
     config = config_fixture(tmp_path)
     release = config.pipeline_root / "release"
     release.mkdir(parents=True)
+    (release / "runtime-manifest.json").write_text(json.dumps({"identity": {}}))
     manifest = {
         "identity": {
             "approved_release_sha256": "release-sha",
@@ -523,7 +524,7 @@ def test_post_activation_production_gate_checks_full_player_history(
     monkeypatch.setattr(dev_site_release, "verify_daily_data_artifact", verify_bound_data)
     assert not (config.data_root / "latest.json").exists()
     bound_model_root = release / "bound-model"
-    monkeypatch.setattr(dev_site_release, "approved_model_root", lambda _: bound_model_root)
+    monkeypatch.setattr(dev_site_release, "approved_model_root", lambda _, **kwargs: bound_model_root)
     monkeypatch.setattr(
         daily_activation,
         "verify_loaded_identity",
@@ -1000,7 +1001,7 @@ def test_release_archive_uses_verified_dependencies_and_fails_closed(
     from types import SimpleNamespace
 
     from nba_lineup_model.orchestration.daily_pipeline import CanonicalPipelineSteps
-    from nba_lineup_model.season import durable_release_storage
+    from nba_lineup_model.season import durable_release_storage, durable_artifact_storage, production_site_release
     from nba_lineup_model.storage.artifact_store import ArtifactReference
     from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
 
@@ -1015,16 +1016,23 @@ def test_release_archive_uses_verified_dependencies_and_fails_closed(
     steps = CanonicalPipelineSteps(config, candidate, "revision")
     release = config.pipeline_root / "release"
 
-    with pytest.raises(RuntimeError, match="no verified daily artifact"):
-        steps.archive_release(release)
-
     dependency = ArtifactReference(
         artifact_kind="daily_data",
         season="2026-27",
         game_date_pacific=date(2026, 10, 20),
         content_id="data_sha256=" + "a" * 64,
     )
-    steps.durable_dependencies.append(dependency)
+    # Fresh/restarted steps have no in-memory dependencies. Staging must
+    # recover them even when data/model checkpoint callbacks are skipped.
+    assert steps.durable_dependencies == []
+    calls = []
+    monkeypatch.setattr(production_site_release, "verify_production_site_release",
+        lambda _: {"identity": {"evidence_through_date": "2026-10-20"}})
+    def chain(root, **kwargs):
+        calls.append((root, kwargs["through_date"]))
+        return [SimpleNamespace(reference=dependency)]
+    monkeypatch.setattr(durable_artifact_storage, "publish_selected_data_chain", chain)
+    monkeypatch.setattr(durable_artifact_storage, "publish_selected_model_chain", chain)
     seen = []
 
     def publish(path, *, cache_root, dependencies, lake_uri):
@@ -1037,6 +1045,8 @@ def test_release_archive_uses_verified_dependencies_and_fails_closed(
         publish,
     )
     steps.archive_release(release)
+    assert calls == [(config.data_root, date(2026, 10, 20)),
+                     (config.model_root, date(2026, 10, 20))]
     assert seen == [(
         release,
         config.artifact_cache_root,
