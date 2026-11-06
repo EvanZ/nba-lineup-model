@@ -260,3 +260,39 @@ The first rebuilt orchestration environment unintentionally resolved botocore 1.
 The user explicitly approved a narrowly scoped equivalence review of these two requirements changes for accepted model revision `1459c83f82b1fa50d901048e65bb39c9fd678204`, including updating its reviewed compatibility inventory, deployment, and normal forward catch-up. The policy update changes only the two approved requirements hashes; all calculation-source checks remain enforced. Do not bypass the guard, replay accepted model history, or rewrite frozen forecasts. Evidence is retained on EC2 at `/tmp/gestalt-62-compatibility-review.json` and `/tmp/gestalt-62-pinned-runtime-tests.log`.
 
 The user approved deletion of exactly two unused serving recovery caches (`10f656c6...` and `378d7a94...`). Their S3 storage manifests were verified and their archives preserved; only those two cache directories were removed. The audit is `/tmp/gestalt-62-approved-cache-cleanup.json`. No other NBA artifact/cache deletion is authorized by that approval.
+
+
+### Memory review and shared daily orchestration (#59)
+
+The dashboard-only installer and 1,050 MiB worker proposal were prepared but never installed. The user superseded that workaround with one shared daily Dagster deployment, separate dev/production code locations, and dev automation enabled only for deliberate test windows. Implementation is tracked in #59, separate from #62's S3 recovery work. Production cutover still requires explicit approval after dev evidence. The proposed changes were preserved on EC2 in `/tmp/gestalt-59-superseded-dashboard.patch` before restoring the canonical installer.
+
+Measured idle service memory before this change: production API 524 MiB; dev API 555 MiB; production daily-job services 623 MiB; dev daily-job services 525 MiB (dashboard about 123 MiB); isolated collection services 433 MiB. The failed catch-up also launched a candidate API using about 440 MiB, plus its run process. This is multiple Python services and copies of serving data; boto3 is not the dominant consumer. Current dev remains generation 30; the next catch-up attempt must still demonstrate success within the revised budget.
+
+The user additionally approved removing exactly the two unused serving caches for runtimes `4719fd66...` and `ee96b046...`. Their S3 manifests were verified and S3 archives/release packages retained. Both removals are recorded in `/tmp/gestalt-62-second-cache-cleanup-review.json`. The briefly frozen dev worker was thawed; no protected collector was paused.
+
+### Shared daily Dagster implementation checkpoint (2026-11-06)
+
+The implementation is on `codex/shared-daily-dagster-59`, stacked on the #62
+recovery branch. It supports a shared, registered environment binding; scoped
+retry queries and watchdog automation lookups; a global execution lock; dev
+validation windows off by default; and isolated service plan preparation from
+independently sealed code packages. The production code service uses the dedicated
+`gestalt-daily-prod` account and a policy permitting only its API restart. The
+controller cannot write either environment's data roots, and each code location
+mounts the other environment's root read-only. Live deployment is not yet performed.
+
+An isolated rehearsal at `/tmp/gestalt-59-actual-history-rehearsal` preserved all
+61 actual dev/production run records, their event records, and archived source
+files. Manifest checksum: `d2cd61fd745c9c5f8d21c3137e3307907a157c66d5ea84083e78325bdbdd9841`.
+The original histories were unchanged. This is migration evidence, not a real
+job run or a substitute permanent instance. Legacy production backfill failures
+remain failures and cannot be cleared by a different job's success.
+
+The focused suite passed 80 tests, with one opt-in model loader comparison
+skipped; actual shared service validation remains required. The user expanded
+root EBS volume `vol-057082397c4de7463` (gp3) from 30 to 60 GiB. After verifying
+the AWS modification was optimizing and Linux saw the new disk size, this task
+ran a growpart dry run, expanded partition 1, and grew its ext4 filesystem online.
+The filesystem now reports 58 GiB total, 30 GiB available, and 49% usage.
+Both websites and all collection services remained active with unchanged restart counts. Shared orchestration, data catch-up, full coverage/UI
+acceptance, and the separately approved production cutover are still outstanding.

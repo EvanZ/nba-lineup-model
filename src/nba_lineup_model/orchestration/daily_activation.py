@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import time
 import urllib.request
@@ -88,9 +89,10 @@ def reload_environment_api(
     _activation_record: dict,
 ) -> None:
     service = "gestalt-web-dev" if _environment(config) == "dev" else "gestalt-web"
-    # The dev worker retains NoNewPrivileges. Polkit permits only restarting
-    # this dev API unit; no sudo or production-service permission is granted.
-    prefix = [] if _environment(config) == "dev" else ["sudo", "-n"]
+    # Shared workers retain NoNewPrivileges. Each service account is granted
+    # only its own API restart through Polkit. Legacy production remains unchanged.
+    shared_prod = (_environment(config) == "prod" and os.environ.get("GESTALT_DAILY_ENVIRONMENT") == "prod")
+    prefix = [] if _environment(config) == "dev" or shared_prod else ["sudo", "-n"]
     subprocess.run(
         [*prefix, "systemctl", "--no-ask-password", "restart", service],
         check=True,

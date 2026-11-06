@@ -148,7 +148,7 @@ def official_schedule_snapshot(
     }
 
 
-def dagster_automation_states(schedules_db: Path) -> dict[str, str]:
+def dagster_automation_states(schedules_db: Path, code_location: str | None = None) -> dict[str, str]:
     if not schedules_db.is_file():
         return {}
     connection = sqlite3.connect(f"file:{schedules_db}?mode=ro", uri=True)
@@ -160,7 +160,11 @@ def dagster_automation_states(schedules_db: Path) -> dict[str, str]:
     for status, raw_body in rows:
         try:
             body = json.loads(raw_body)
-            name = str((body.get("origin") or {}).get("job_name") or "")
+            origin = body.get("origin") or {}
+            location = (origin.get("repository_origin") or {}).get("code_location_origin") or {}
+            if code_location and location.get("location_name") != code_location:
+                continue
+            name = str(origin.get("job_name") or "")
         except (TypeError, ValueError, json.JSONDecodeError):
             continue
         if name:
@@ -168,11 +172,11 @@ def dagster_automation_states(schedules_db: Path) -> dict[str, str]:
     return result
 
 
-def effective_automation_states(schedules_db: Path, api_root: str) -> dict[str, dict[str, str]]:
+def effective_automation_states(schedules_db: Path, api_root: str, code_location: str | None = None) -> dict[str, dict[str, str]]:
     """Resolve defaults/overrides through Dagster's currently loaded workspace."""
-    stored = dagster_automation_states(schedules_db)
+    stored = dagster_automation_states(schedules_db, code_location)
     query = """{ repositoriesOrError { __typename ... on RepositoryConnection {
-      nodes { schedules { name scheduleState { status } }
+      nodes { location { name } schedules { name scheduleState { status } }
               sensors { name sensorState { status } } }
     } } }"""
     try:
@@ -188,6 +192,8 @@ def effective_automation_states(schedules_db: Path, api_root: str) -> dict[str, 
             raise ValueError("Dagster could not resolve its loaded automation definitions")
         result = {}
         for repository in connection["nodes"]:
+            if code_location and (repository.get("location") or {}).get("name") != code_location:
+                continue
             for kind, field in (("schedules", "scheduleState"), ("sensors", "sensorState")):
                 for item in repository[kind]:
                     name, status = item["name"], item[field]["status"]
@@ -526,8 +532,11 @@ def collector_rows(
     generated_at: datetime,
     dagster_api_root: str = "http://127.0.0.1:3000",
 ) -> list[dict[str, object]]:
+    from nba_lineup_model.orchestration.daily_instance import DailyInstance
+    binding = DailyInstance.read(dagster_home, environment)
+    arguments = (f"nba_gestalt_{environment}_daily_pipeline",) if binding.instance_home else ()
     automation = effective_automation_states(
-        dagster_home / "schedules" / "schedules.db", dagster_api_root
+        dagster_home / "schedules" / "schedules.db", dagster_api_root, *arguments
     )
     jobs = dagster_run_states(
         dagster_home / "history" / "runs.db",
@@ -623,12 +632,17 @@ def daily_publication_row(
 
     automation_name = "resumable_daily_partition"
     run = read_daily_runs(dagster_home, environment, environment_root)
+    from nba_lineup_model.orchestration.daily_instance import DailyInstance
+    binding = DailyInstance.read(dagster_home, environment)
+    arguments = (f"nba_gestalt_{environment}_daily_pipeline",) if binding.instance_home else ()
     automation = effective_automation_states(
-        dagster_home / "schedules" / "schedules.db", dagster_api_root
+        dagster_home / "schedules" / "schedules.db", dagster_api_root, *arguments
     )
+    from nba_lineup_model.orchestration.shared_daily_control import automation_enabled
+    enabled = automation_enabled(binding)
     latest = str(expected.get("latest_eligible_completed_date") or "")
     active = str(expected.get("active_evidence_through_date") or "")
-    overdue = bool(expected.get("nightly_publication_due")) and active < latest
+    overdue = enabled and bool(expected.get("nightly_publication_due")) and active < latest
     return {
         "name": "daily_publication",
         "job_name": run.get("job_name", ""),
@@ -662,7 +676,7 @@ def daily_publication_row(
             "run_history": run["history_path"],
             "run_count": run["run_count"],
             "last_success_run_id": run["last_success_run_id"],
-            "execution_policy": "Only explicitly requested work; manual and sensor runs share this history.",
+            "execution_policy": "Automatic validation window enabled" if enabled else "Dev automation off; manual work remains available",
             "active_evidence_through_date": active,
             "latest_eligible_completed_date": latest,
         },

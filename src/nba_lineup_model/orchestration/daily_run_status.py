@@ -9,7 +9,7 @@ from pathlib import Path
 
 from nba_lineup_model.orchestration.daily_instance import DailyInstance
 
-JOBS = ("prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment", "prepare_daily_site_release")
+JOBS = ("prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment", "prepare_daily_site_release", "backfill_official_history")
 
 
 def stamp(value) -> str:
@@ -21,7 +21,7 @@ def stamp(value) -> str:
 
 
 def read_daily_runs(home: Path, environment: str, environment_root: Path) -> dict:
-    binding = DailyInstance.read(home)
+    binding = DailyInstance.read(home, environment)
     if binding.environment != environment or binding.root != environment_root.resolve():
         raise ValueError("Watchdog and daily Dagster instance belong to different environments")
     database = binding.home / "history" / "runs.db"
@@ -37,6 +37,7 @@ def read_daily_runs(home: Path, environment: str, environment_root: Path) -> dic
     migrated = migration_bindings(binding.home)
     groups = defaultdict(list)
     daily = []
+    scoped_count = 0
     for record in records:
         run_id, job, status, created, started, ended, updated, serialized = (
             record[key] for key in ("run_id", "pipeline_name", "status", "create_timestamp",
@@ -47,9 +48,16 @@ def read_daily_runs(home: Path, environment: str, environment_root: Path) -> dic
             if record_digest(record) != original["record_sha256"]:
                 raise ValueError(f"Migrated run record changed: {run_id}")
             tags = {**tags, **original["tags"]}
-        if (tags.get("gestalt/environment") != environment or
+        recorded_environment = tags.get("gestalt/environment")
+        if binding.instance_home and recorded_environment != environment:
+            other = DailyInstance.read(home, recorded_environment) if recorded_environment else None
+            if other is None or tags.get("gestalt/environment_root") != str(other.root):
+                raise ValueError(f"Run {run_id} has a missing or conflicting environment binding")
+            continue
+        if (recorded_environment != environment or
                 tags.get("gestalt/environment_root") != str(binding.root)):
             raise ValueError(f"Run {run_id} has a missing or conflicting environment binding")
+        scoped_count += 1
         key = tags.get("gestalt/recovery_key")
         if not key or not key.startswith(job + ":"):
             raise ValueError(f"Run {run_id} has no valid work identity")
@@ -80,6 +88,6 @@ def read_daily_runs(home: Path, environment: str, environment_root: Path) -> dic
     return {**latest, "last_success_at": last_success.get("finished_at", "") or last_success.get("updated_at", ""),
             "last_success_run_id": last_success.get("run_id", ""),
             "unresolved_failures": failures, "unfinished_runs": unfinished,
-            "run_count": len(daily), "total_run_count": len(records),
+            "run_count": len(daily), "total_run_count": scoped_count,
             "history_path": str(database),
             "environment": environment, "environment_root": str(binding.root)}

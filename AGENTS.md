@@ -67,11 +67,17 @@ These instructions apply to every task in this repository.
 
 ## Daily job history and alert recovery
 
-- Real dev/production daily runs use their environment's permanent Dagster home.
-  Manual reruns and sensors must use the same bound instance; never create a new
-  release-local or temporary instance for real work. Temporary instances are for tests.
-- Watchdogs read that same environment's history. A success in another environment,
-  another job, or different work must not clear its failure.
+- Real dev/production daily runs use the permanent bound Dagster instance. Under
+  the approved #59 shared deployment, each code location must explicitly bind its
+  registered environment, code, configuration, outputs, and tagged run history.
+  Manual reruns and sensors use that same instance; never create a release-local
+  or temporary instance for real work. Temporary instances are for tests only.
+- Watchdogs scope shared history and automation state to the exact environment
+  and code location. A success in another environment, another job, or different
+  work must not clear its failure.
+- Dev automation is off outside explicit validation windows. Production remains
+  scheduled. Enforce one heavy daily run across the shared instance, including
+  manual runs; keep protected collection in its independent service.
 - Recovery comes from actual successful runs, never edited alert state or fabricated
   run records. Any initial history migration requires approval and preserves originals.
 
