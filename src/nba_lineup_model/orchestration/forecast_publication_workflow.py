@@ -84,7 +84,7 @@ def retained_market_warnings(before: dict, after: dict, existing: list, errors: 
 
 
 def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: str,
-                              activate: bool) -> dict:
+                              activate: bool, initialization: dict | None = None) -> dict:
     """Called by the successful forecast job; failure propagates to Dagster."""
     base = base.resolve(strict=True)
     if config.observation_root is None:
@@ -95,7 +95,7 @@ def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: st
         raise ValueError("Active release changed before forecast publication")
     changed = validate_forecast_handoff(base, schedule)
     candidate = stage_schedule_release(base_release=base, schedule_root=schedule,
-        output_root=config.pipeline_root / "forecast-releases")
+        output_root=config.pipeline_root / "forecast-releases", initialization=initialization)
     manifest = verify_production_site_release(candidate)
     if config.artifact_lake_uri is not None:
         from nba_lineup_model.season.durable_release_storage import publish_production_release, restore_production_release

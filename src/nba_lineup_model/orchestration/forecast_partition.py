@@ -32,12 +32,45 @@ from nba_lineup_model.season.daily_model_artifact import verify_daily_model_arti
 class ForecastPartitionSteps(PartitionSteps):
     """Forecast-data publication; application code releases are out of scope."""
 
+    def serving(self) -> None:
+        c = self.config
+        if c.reconciliation_root is None:
+            return super().serving()
+        from datetime import datetime
+        from nba_lineup_model.season.reconciliation_inputs import introductions
+        from nba_lineup_model.season.daily_model_replay import _load_frozen_priors, _read_model_chain, DailyModelReplayConfig
+        from nba_lineup_model.orchestration.daily_pipeline import causal_hca_replay_config, CAUSAL_HCA_MODEL_TRACK
+        from nba_lineup_model.modeling.current_season_serving_materialization import materialize_daily_model_serving
+        through = date.fromisoformat(c.forecast_date)
+        events = introductions(c.reconciliation_root, through)
+        if not events:
+            return super().serving()
+        self.select_reconciled_catalog(through)
+        ranks, minutes, sha = _load_frozen_priors(c.preseason_rankings_path, c.preseason_minutes_path, season=c.season)
+        _, model_path, model = _read_model_chain(c.model_root)[-1]
+        from nba_lineup_model.season.reconciliation_inputs import checkpoint_digest, marker
+        boundary = date.fromisoformat(model['identity']['game_date_pacific'])
+        if checkpoint_digest(model_path, model) != marker(c.reconciliation_root, boundary)['introductions_sha256']:
+            raise ValueError('Selected introductions correct accepted history; approved causal replay must complete before forecasting')
+        from datetime import timedelta
+        from nba_lineup_model.season.slate_time import PACIFIC
+        cutoff = datetime.fromisoformat(model['identity']['game_date_pacific']).replace(tzinfo=PACIFIC) + timedelta(days=1)
+        available = max([cutoff] + [datetime.fromisoformat(e['discovered_at'].replace('Z', '+00:00')) for e in events])
+        replay = causal_hca_replay_config(c) if c.model_track == CAUSAL_HCA_MODEL_TRACK else DailyModelReplayConfig(season=c.season)
+        materialize_daily_model_serving(daily_model_root=c.model_root, daily_data_root=c.data_root,
+            release_root=c.release_root, output_root=self.candidate / 'serving',
+            forecast_initialization=dict(reconciliation_root=c.reconciliation_root, through=through,
+                available_at=available, base_rankings=ranks, base_minutes=minutes,
+                base_prior_sha256=sha, replay_config=replay))
+
     def validate_and_stage(self, target: date) -> Path:
         from nba_lineup_model.season.sealed_code_package import (
             inspect_source_code,
             verify_sealed_code_package,
         )
 
+        if self.config.reconciliation_root is not None:
+            self.select_reconciled_catalog(date.fromisoformat(self.config.forecast_date))
         code_root = self.config.code_root.resolve()
         package_root = code_root.parent
         code_identity = (
@@ -175,6 +208,12 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
     data.reverse()
     observed = verify_daily_data_artifact(data[-1])
     revision = require_clean_code_revision(template.code_root)
+    from nba_lineup_model.orchestration.roster_reconciliation import selected_inputs, pin_files
+    reconciliation = selected_inputs(template)
+    reconciliation_ref = None
+    if reconciliation is not None:
+        from nba_lineup_model.players.reconciliation_artifact import reference, verify
+        reconciliation_ref = reference(verify(reconciliation)).as_dict()
     run_identity = digest(
         {
             "base": base_ref["sha256"],
@@ -183,6 +222,7 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
             "model": model["bundle_sha256"],
             "injury_captures": captures,
             "market_captures": markets,
+            "reconciliation": reconciliation_ref,
         }
     )
     output = template.pipeline_root / "forecasts" / str(forecast_date) / run_identity
@@ -207,6 +247,8 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
         forecast_market_inputs_path=market_inputs,
         activate_after_validation=False,
     )
+    from nba_lineup_model.orchestration.roster_reconciliation import selected_inputs, pin_files
+    config = replace(config, reconciliation_root=reconciliation)
     files = {
         "coverage.json": file_reference(config.coverage_path),
         "catalog.parquet": file_reference(config.catalog_path),
@@ -217,6 +259,8 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
     }
     from nba_lineup_model.orchestration.lifecycle import coupled_prior_files
     files.update(coupled_prior_files(config, model["identity"]["model_provenance"]))
+    if reconciliation is not None:
+        files.update(pin_files(reconciliation))
     schedule_files = {
         str(p.relative_to(schedule)): file_reference(p)
         for p in sorted(schedule.rglob("*"))
@@ -259,9 +303,17 @@ def prepare_forecast_date(template: DailyPipelineConfig, forecast_date: date, *,
         steps_class=ForecastPartitionSteps,
         result_key="schedule_artifact",
     )
+    candidate = config.pipeline_root / 'partitions' / str(evidence_date) / spec['work_id'] / 'working'
+    initialization = None
+    if (candidate / 'serving/forecast-initialization.json').is_file():
+        initialization = dict(serving_root=candidate / 'serving',
+            rankings_path=candidate / 'reconciled-serving-inputs/rankings.parquet',
+            profiles_path=candidate / 'reconciled-serving-inputs/profiles.parquet',
+            reconciliation_root=reconciliation)
     publication = publish_forecast_schedule(
         replace(template, model_root=config.model_root), schedule=Path(result["schedule_artifact"]),
-        base=live, work_id=spec["work_id"], activate=template.activate_after_validation)
+        base=live, work_id=spec["work_id"], activate=template.activate_after_validation,
+        initialization=initialization)
     return {
         **result,
         "publication": publication,

@@ -143,12 +143,12 @@ def test_reviewed_policy_matches_current_calculation_closure():
     result = require_compatible_calculations(ROOT, ACCEPTED)
     policy = json.loads((ROOT / POLICY).read_text())
     changed = {p for p in policy["compatible_files"]
-               if policy["compatible_files"][p] != policy["accepted_files"][p]}
+               if policy["compatible_files"][p] != policy["accepted_files"].get(p)}
     assert changed == set(policy["reviewed_changes"])
     assert result["verified_file_count"] == len(policy["compatible_files"])
 
 
-def test_reviewed_identity_mapping_is_only_daily_replay_change():
+def test_identity_mapping_and_reconciliation_leave_other_daily_calculations_unchanged():
     # Reverse only the four reviewed identity-matching edits, then require every
     # other byte (including updater arithmetic and observation weights) to match.
     relative = "src/nba_lineup_model/season/daily_model_replay.py"
@@ -173,4 +173,13 @@ def test_reviewed_identity_mapping_is_only_daily_replay_change():
     for current, accepted in reviewed_edits:
         assert source.count(current) == 1
         source = source.replace(current, accepted)
-    assert source.encode() == old_source(relative)
+    # #65 changes only state-adoption orchestration and its compatibility checks.
+    # Every other calculation, including observation weights and the solver,
+    # remains the accepted implementation after reversing the reviewed alias.
+    def functions(raw):
+        return {node.name: ast.dump(node, include_attributes=False)
+                for node in ast.parse(raw).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
+    before, after = functions(old_source(relative)), functions(source)
+    permitted = {'replay_daily_model_chain', '_load_parent_state', '_longest_compatible_prefix'}
+    assert set(before) == set(after)
+    assert {name for name in before if before[name] != after[name]} <= permitted

@@ -953,7 +953,8 @@ def test_data_step_publishes_selected_chain_and_fails_closed(tmp_path, monkeypat
         steps.data(date(2026, 10, 20))
 
 
-def test_model_step_publishes_selected_chain(tmp_path, monkeypatch):
+@pytest.mark.parametrize("data_failure", [False, True])
+def test_model_step_publishes_selected_chain(tmp_path, monkeypatch, data_failure):
     from contextlib import contextmanager
 
     from nba_lineup_model.orchestration.daily_pipeline import CanonicalPipelineSteps
@@ -990,6 +991,8 @@ def test_model_step_publishes_selected_chain(tmp_path, monkeypatch):
 
     def publish(root, *, through_date, cache_root, lake_uri):
         seen.append((root, through_date, cache_root, lake_uri))
+        if root == config.data_root and data_failure:
+            raise RuntimeError("official input archive failed")
         return []
 
     monkeypatch.setattr(
@@ -997,13 +1000,14 @@ def test_model_step_publishes_selected_chain(tmp_path, monkeypatch):
         "publish_selected_model_chain",
         publish,
     )
-    steps.model(date(2026, 10, 20))
-    assert seen == [(
-        config.model_root,
-        date(2026, 10, 20),
-        config.artifact_cache_root,
-        DEFAULT_LAKE_URI,
-    )]
+    monkeypatch.setattr(durable_artifact_storage, "publish_selected_data_chain", publish)
+    if data_failure:
+        with pytest.raises(RuntimeError, match="official input archive failed"):
+            steps.model(date(2026, 10, 20))
+    else:
+        steps.model(date(2026, 10, 20))
+    roots = [config.data_root] if data_failure else [config.data_root, config.model_root]
+    assert seen == [(root, date(2026, 10, 20), config.artifact_cache_root, DEFAULT_LAKE_URI) for root in roots]
 
 
 def test_release_archive_uses_verified_dependencies_and_fails_closed(

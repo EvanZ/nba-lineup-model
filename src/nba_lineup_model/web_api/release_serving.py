@@ -83,6 +83,9 @@ def build_serving_bindings(
         "forecast_selection_id": selection["selection_map_sha256"],
         "historical_inputs_id": digest(historical_files),
     }
+    reconciliation = runtime_identity.get('forecast_initialization', {}).get('reference') or runtime_identity.get('reconciliation_reference')
+    if reconciliation:
+        components['reconciliation_id'] = reconciliation['content_id']
     bindings = {
         "player_pages": [
             "model_state_id",
@@ -114,6 +117,9 @@ def build_serving_bindings(
         ],
         "schedule": ["model_state_id", "forecast_selection_id", "catalog_id"],
     }
+    if reconciliation:
+        for keys in bindings.values():
+            keys.append('reconciliation_id')
     result = {
         "schema_version": 1,
         "release_id": runtime_identity["approved_release_sha256"],

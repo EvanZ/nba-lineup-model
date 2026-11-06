@@ -67,6 +67,8 @@ class DailyPipelineConfig:
     forecast_market_inputs_path: Path | None = None
     artifact_lake_uri: str | None = None
     artifact_cache_root: Path | None = None
+    reconciliation_root: Path | None = None
+    reconciliation_approval_reference: str | None = None
 
     @classmethod
     def read(cls, path: Path | str) -> "DailyPipelineConfig":
@@ -303,6 +305,26 @@ class CanonicalPipelineSteps:
             "GESTALT_PRESEASON_RANKINGS_PATH": str(config.preseason_rankings_path),
             "GESTALT_PRESEASON_PROFILES_PATH": str(config.preseason_profiles_path)}
 
+    def select_reconciled_catalog(self, target: date) -> tuple[Path, Path]:
+        c=self.config
+        if c.reconciliation_root is None:
+            return c.preseason_rankings_path,c.preseason_profiles_path
+        from nba_lineup_model.season.reconciliation_inputs import catalog
+        from nba_lineup_model.season.daily_model_replay import _load_frozen_priors
+        import pandas as pd
+        ranks,minutes,sha=_load_frozen_priors(c.preseason_rankings_path,c.preseason_minutes_path,season=c.season)
+        ranks,_=catalog(c.reconciliation_root,target,ranks,minutes,base_prior_sha256=sha)
+        profiles=pd.read_parquet(c.reconciliation_root/'profiles.parquet')
+        profiles=profiles.loc[profiles.player_id.astype(int).isin(ranks.player_id.astype(int))]
+        if set(profiles.player_id.astype(int))!=set(ranks.player_id.astype(int)):
+            raise ValueError('Reconciliation profiles do not cover the selected player catalog')
+        directory=self.candidate/'reconciled-serving-inputs';directory.mkdir(exist_ok=True)
+        ranking_path,profile_path=directory/'rankings.parquet',directory/'profiles.parquet'
+        ranks.to_parquet(ranking_path,index=False);profiles.to_parquet(profile_path,index=False)
+        self.env['GESTALT_PRESEASON_RANKINGS_PATH']=str(ranking_path)
+        self.env['GESTALT_PRESEASON_PROFILES_PATH']=str(profile_path)
+        return ranking_path,profile_path
+
     def command(self, module: str, *arguments: object) -> None:
         subprocess.run([sys.executable, "-m", module, *map(str, arguments)], cwd=self.runtime_root, env=self.env, check=True, timeout=1800)
 
@@ -381,6 +403,7 @@ class CanonicalPipelineSteps:
                 context_model_version=json.dumps(context_identity, sort_keys=True),
             )
         )
+        self.select_reconciled_catalog(target)
         with self.api(log_name="context-api.log") as api:
             provider = (
                 _http_context_provider(api + "/api/matchups", court=context_court)
@@ -403,13 +426,20 @@ class CanonicalPipelineSteps:
                 code_revision=provenance_revision,
                 context_provider=strict_context,
                 approved_historical_replay_from=self.approved_historical_model_replay_from,
+                reconciliation_root=config.reconciliation_root,
             )
         if config.artifact_lake_uri is not None:
             from nba_lineup_model.season.durable_artifact_storage import (
-                publish_selected_model_chain,
+                publish_selected_data_chain, publish_selected_model_chain,
             )
 
             assert config.artifact_cache_root is not None
+            # Resumed partitions restore data directly from pinned inputs, so
+            # their data callback may not run the normal archive operation.
+            # Verify/publish every selected data dependency before its model.
+            observed = publish_selected_data_chain(config.data_root, through_date=target,
+                cache_root=config.artifact_cache_root, lake_uri=config.artifact_lake_uri)
+            self.durable_dependencies.extend(item.reference for item in observed)
             published = publish_selected_model_chain(
                 config.model_root,
                 through_date=target,
@@ -421,6 +451,10 @@ class CanonicalPipelineSteps:
 
     def serving(self) -> None:
         c = self.config
+        from nba_lineup_model.season.daily_model_replay import _read_model_chain
+        chain = _read_model_chain(c.model_root)
+        if chain:
+            self.select_reconciled_catalog(chain[-1][0])
         self.command("nba_lineup_model.modeling.current_season_serving_materialization", "--daily-model-root", c.model_root, "--daily-data-root", c.data_root, "--release-root", c.release_root, "--output-root", self.candidate / "serving")
 
     def lineups(self) -> None:
@@ -485,6 +519,8 @@ class CanonicalPipelineSteps:
                                      if c.forecast_injury_inputs_path else None),
                     market_captures=(read_object(c.forecast_market_inputs_path)
                                      if c.forecast_market_inputs_path else None),
+                    initialization=({'serving_root': out / 'serving', 'reconciliation_root': c.reconciliation_root}
+                                    if (out / 'serving/forecast-initialization.json').is_file() else None),
                     catalog=c.catalog_path, code=code_identity,
                     environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
                 (out / "forecast-refresh.json").write_text(json.dumps(evidence, indent=2) + "\n")
@@ -550,6 +586,9 @@ class CanonicalPipelineSteps:
         from nba_lineup_model.season.production_site_release import stage_production_site_release
         from nba_lineup_model.season.sealed_code_package import materialize_sealed_code_package, verify_sealed_code_package
         c, out = self.config, self.candidate
+        from dataclasses import replace
+        ranking_path, profile_path = self.select_reconciled_catalog(target)
+        c = replace(c, preseason_rankings_path=ranking_path, preseason_profiles_path=profile_path)
         code_root = out / "forecast-code"
         code_root.mkdir(exist_ok=True)
         package = (verify_sealed_code_package(code_root) if (code_root / "code").exists()
@@ -559,7 +598,7 @@ class CanonicalPipelineSteps:
             validation = collect_api_validation(api, evidence_date=target.isoformat(), daily_model_root=c.model_root)
             publish_dev_site_release(daily_data_root=c.data_root, daily_model_root=c.model_root, serving_root=out / "serving", lineups_root=out / "lineups", schedule_state_dir=schedule, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_revision=self.revision, api_validation=validation, output_root=out / "site-releases")
         self.archive_daily_inputs(target)
-        release = stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=schedule, schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod", artifact_lake_uri=c.artifact_lake_uri, artifact_cache_root=c.artifact_cache_root)
+        release = stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=schedule, schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod", artifact_lake_uri=c.artifact_lake_uri, artifact_cache_root=c.artifact_cache_root, reconciliation_root=c.reconciliation_root)
         self.archive_release(release)
         if c.artifact_lake_uri is not None:
             from nba_lineup_model.season.durable_release_storage import production_release_reference, restore_production_release

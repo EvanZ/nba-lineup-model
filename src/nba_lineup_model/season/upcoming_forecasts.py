@@ -29,7 +29,7 @@ from nba_lineup_model.season.serving_selection import (
 )
 
 
-def require_forecast_model(response: dict, model_bundle: Path, forecast_date: date) -> dict:
+def require_forecast_model(response: dict, model_bundle: Path, forecast_date: date, initialization: dict | None = None) -> dict:
     """The API and the forecast must use exactly the selected model, not a label."""
     manifest = verify_daily_model_artifact(model_bundle)
     identity = manifest["identity"]
@@ -39,14 +39,32 @@ def require_forecast_model(response: dict, model_bundle: Path, forecast_date: da
     forecast = response.get("win_projection", response)
     provenance = minutes.get("projection_provenance", {})
     model_id = manifest["bundle_sha256"]
+    suffix = ''
+    expected_rating_sha = identity['components']['player_ratings']['sha256']
+    if initialization:
+        from nba_lineup_model.season.current_serving import resolve_latest_bundle, verify_serving_bundle
+        from nba_lineup_model.players.reconciliation_artifact import reference, verify
+        root = Path(initialization['serving_root'])
+        receipt = read_object(root / 'forecast-initialization.json')
+        selected = reference(verify(Path(initialization['reconciliation_root']))).as_dict()
+        if receipt['reference'] != selected or date.fromisoformat(receipt['through_date']) != forecast_date:
+            raise ValueError('Forecast initialization selection/date mismatch')
+        serving = verify_serving_bundle(resolve_latest_bundle(root))
+        suffix = '#reconciliation=' + selected['content_id']
+        sources = serving['identity']['sources']
+        if (sources['rating_state']['uri'] != f'artifact://daily-model/{model_id}/player_ratings' + suffix
+            or sources['minutes_state']['uri'] != f'artifact://daily-model/{model_id}/minutes_state#serving-v1' + suffix):
+            raise ValueError('Forecast serving does not bind the selected model and introduction history')
+        expected_rating_sha = sources['rating_state']['sha256']
+
     if (
         provenance.get("rating_as_of") != identity["game_date_pacific"]
         or provenance.get("rating_source_uri")
-        != f"artifact://daily-model/{model_id}/player_ratings"
+        != f"artifact://daily-model/{model_id}/player_ratings" + suffix
         or provenance.get("minutes_source_uri")
-        != f"artifact://daily-model/{model_id}/minutes_state#serving-v1"
+        != f"artifact://daily-model/{model_id}/minutes_state#serving-v1" + suffix
         or provenance.get("rating_state_sha256")
-        != identity["components"]["player_ratings"]["sha256"]
+        != expected_rating_sha
     ):
         raise ValueError("Forecast ratings/minutes do not use the selected completed model")
     hca_ref = identity["components"]["home_court_state"]
@@ -78,7 +96,7 @@ def refresh_open_selection(**kwargs) -> dict:
     kwargs = {k: v for k, v in kwargs.items() if k != "observation_root"}
     kwargs.update(now=now, injury_captures=captures)
     model = require_forecast_model(
-        kwargs["forecast_response"], kwargs["model_bundle"], kwargs["start_date"]
+        kwargs["forecast_response"], kwargs["model_bundle"], kwargs["start_date"], kwargs.get("initialization")
     )
     request_identity = {
             "source": verify_schedule_selection(source)["selection_map_sha256"],
@@ -132,6 +150,7 @@ def _refresh_open_selection(
     injury_captures: dict[str, dict],
     now: datetime | None = None,
     market_captures: dict[str, dict],
+    initialization: dict | None = None,
 ) -> dict:
     """Publish a new selection bundle, preserving every locked selection exactly.
 
@@ -141,7 +160,7 @@ def _refresh_open_selection(
     from nba_lineup_model.season.official_schedule_runtime import reproject_captured_schedule_window
 
     now = (now or datetime.now(UTC)).astimezone(UTC)
-    model = require_forecast_model(forecast_response, model_bundle, start_date)
+    model = require_forecast_model(forecast_response, model_bundle, start_date, initialization)
     original = verify_schedule_selection(source)
     if target.exists():
         raise ValueError("Upcoming forecast output must be a new bundle")
@@ -213,6 +232,8 @@ def _refresh_open_selection(
                     "home_court_state_sha256": hca_ref["sha256"],
                 }
             )
+            if initialization:
+                provenance['player_introductions'] = read_object(Path(initialization['serving_root']) / 'forecast-initialization.json')
             ledger["provenance"].update(provenance)
             components = {
                 "projected_minutes": game["projected_minutes"],
