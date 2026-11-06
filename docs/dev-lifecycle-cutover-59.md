@@ -431,3 +431,74 @@ The compatibility review verified all 75 reviewed calculation files unchanged
 against accepted model revision `1459c83f82b1fa50d901048e65bb39c9fd678204`.
 The existing compatibility policy remains unchanged; no new exception, dependency
 version, schema, model calculation, or historical forecast is introduced.
+
+
+### Final shared-service rehearsal and memory incident (2026-11-06 UTC)
+
+The approved S3 creation-time retry repair succeeded in real automatic run
+`2bf7e7b7-20f6-4c3d-bfb2-19fa5470369b`; dev generation 31 serves runtime
+`d115ef1e9ab7d34aa7af1c3b07dd4483e3921b32c0437295e3ba0b2838805baf`,
+evidence through November 3. The full served comparison covered 20 dates, 154
+games, and all 123 completed games: zero frozen-field differences, no comparison
+errors, and unchanged production code/data pointers. Evidence remains on EC2 at
+`/tmp/gestalt-59-served-comparison-d115ef1e9ab7.json`.
+
+The November 4 run `6c595587-d894-469b-9778-a71474a39edf` failed during model
+preparation because its private context API exceeded the startup timeout. This
+coincided with the hourly data-quality process (approximately 503 MiB) and the
+existing duplicate daily stacks. At 16:02:25 UTC the kernel recorded a **global
+out-of-memory kill of the production API**, PID 1477727. Systemd restarted the
+service at 16:02:30; application startup completed at 16:03:02. Production and
+dev health endpoints subsequently returned HTTP 200. Do not characterize this
+as an uneventful retry or claim there was no production impact. Production's
+release selection did not change. Protected collection services stayed active
+with zero restarts; the 16:00 schedule/injury collection completed successfully.
+
+Both dev sensors were stopped through Dagster's supported CLI after the incident;
+no active/queued dev runs remained. The dev dashboard was restored for monitoring.
+Do not resume heavy catch-up in the duplicate-stack configuration merely because
+the retry cooldown expires. Neither #62 nor #59 is complete.
+
+The final prepared shared package is:
+`/var/lib/nba-gestalt-dev/shared-daily-releases/revision=5a8154c930fbc040440c86a8a58093a86402e922`.
+Package checksum: `c1a13a2c89da02f413604cc72cd75bc374f18211ccb48741fc357ed877da4d66`.
+Plan: `shared-plan/plan.json`, checksum
+`91dcdb5859fcd17dc35dc07a5f72d5cc09f66595cc6aefa2068accd2ef28ed2b`.
+Dev config: `a1ea01a8a298bb9a2f9b0c785ecc8a8e533c79d768042b99e34527b716478f71`.
+Prod config: `f5d265c9e59c86223c2928aa9e8324d05d8d06bf311a818818b3a6aa7e1a8e13`.
+Both use the existing pinned orchestration runtime and reviewed model revision;
+no new model/dependency version is proposed.
+
+Actual systemd rehearsal evidence is under
+`/var/lib/nba-gestalt-daily-preview/5a8154c`. It copied and verified all 66 original
+runs; migration checksum
+`2ef49de1e101893fd1c01e62801363dd77384c968308b579d5d748885297a155`.
+Both locations loaded, all four sensors stayed stopped, opposite-environment
+mounts were read-only, all services had zero restarts, and total idle memory was
+515.3 MiB. No real jobs used that copied instance. This is a rehearsal measurement,
+not a promise about warmed production memory or active-job peaks. The original
+dev services were restored afterward. A live cutover still requires a fresh
+migration after stopping/draining the original daily services.
+
+Proposed revised approval boundary: install only the reviewed shared orchestration
+and migrate its real histories first, with both locations' sensors initially
+stopped. Open a dev-only validation window in the permanent shared instance to
+finish November 4/5 catch-up and final site checks; temporarily leave production
+daily automation paused during that window. Keep both sites on their existing
+selected releases, and leave protected collection running. This temporary pause
+and production orchestration replacement require explicit user approval. Site
+promotion and enabling production publication remain a later approval checkpoint.
+The shared dev worker has the reviewed 1050 MiB limit and OOMScoreAdjust=1000;
+measure active memory and stop on resource failure rather than promising that
+consolidation alone proves adequate capacity.
+
+Production permission preparation must be restricted to mutable containers:
+`/var/lib/nba-gestalt`, `daily-pipeline-v2`, its new `forward` and `partitions`
+containers/runner lock, `daily-requests`, `artifact-cache`, `forecast-registry`
+and `receipts`, and `release-publisher` with `generations`, `journal`, and its
+publisher lock. Record current ownership/modes before changing them, create
+missing containers for the dedicated production user, and grant only the shared
+history and these publication/work containers the required group write access.
+Do not recursively rewrite existing artifact files or grant write access to the
+captured source/prior inputs. Verify these exact paths against the selected
+configuration before installation. The live plan remains uninstalled.
