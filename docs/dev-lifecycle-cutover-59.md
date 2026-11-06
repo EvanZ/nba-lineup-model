@@ -325,3 +325,83 @@ roots, digest mismatches, missing durable inventories, escaped symlinks, and wro
 live pointers are rejected. Tests covering activation, rollback, storage, and the
 new rejection cases passed: 54 tests. The original failure remains in permanent
 Dagster history; only a real successful retry may recover its incident.
+
+### Shared control-service rehearsal and monitoring plan
+
+The real systemd rehearsal used the sealed `68cd5a6` package and a test-only
+copy of the 61 original runs at `/var/lib/nba-gestalt-daily-preview/68cd5a6`.
+Both code locations loaded; all four sensors were STOPPED; no real work ran in
+the copied history. The two code servers, shared dashboard, and shared daemon
+were active with zero restarts, and `/proc` mount checks proved each code
+location saw the opposite data root read-only. Their combined memory was
+515.7 MiB with automatic work stopped; this is not a steady-state production
+measurement. The original dev stack was restored after the rehearsal.
+Production and protected collectors were not switched.
+
+The service plan now includes independent dev/production watchdog services and
+hourly timers using the shared home and dashboard, with environment-scoped run
+and sensor lookup. It retains the existing dev watchdog cadence. Production
+monitor installation is included in the separate production approval gate.
+`verify_plan(path, expected_sha256)` rechecks the reviewed plan hash, every service
+file, each sealed code package, its installed runtime, and configuration identity
+before installation. The focused shared/history/probe suite passed 34 tests.
+
+The apparently different accepted dev and production preseason-prior identities
+were traced to metadata: ratings parquet bytes match at
+`569b36fbcc4dfca51a96620c2c1d1feb2ada0db01186c5e76fed820f9bba9a73`, and minutes
+JSON bytes match at `579d7b5d7852a9b5339e08dd27dccf5cd6b224d43308021317f1bf0cdb194226`.
+Dev additionally retains the ratings metadata sidecar, while the original
+production release does not. Preserve both original provenance identities;
+this observation does not authorize changing either historical model artifact.
+
+### Shared orchestration cutover procedure (pending production approval)
+
+This procedure is prepared for review; none of these production steps has run.
+The final approval record must bind the final plan checksum, code/configuration
+identities, validated site release/edition/data revisions, publisher generation,
+rollback site identity, and the collector verification report. Current rehearsal
+hashes are evidence, not authorization to install a later plan.
+
+1. Verify the reviewed plan with its recorded checksum. Verify both site
+   selections still match the approval record. Record the exact installed unit
+   files, enabled states, code/configuration pointers, and original daily homes.
+   Recheck all deprecated `gestalt-dagster-*` units are disabled and inactive.
+2. Disable only the two old daily stacks' sensors, drain queued/running work,
+   and stop their six daily services. Leave `gestalt-collection-*`, both APIs,
+   and raw collectors running. Reject migration if any run remains active.
+3. Create a **fresh** audited history migration from the two permanent original
+   homes into `/var/lib/nba-gestalt-daily/dagster`, using the recorded approval
+   reference. Do not reuse rehearsal histories after source histories advance.
+   Verify every original run body, event history, recovery identity, and archived
+   source file. Keep both original homes and migration evidence intact.
+4. Install only the reviewed shared service files, workspace, and Dagster config.
+   Use the existing dedicated `gestalt-daily-prod` user for its code location and
+   install the narrowly scoped `49-gestalt-shared-prod-api.rules` policy. Grant
+   it write access only to required production publication/working/cache
+   directories and the shared Dagster history; preserve immutable artifact files.
+   Record permission changes and verify dev cannot write production output.
+5. Start the two code locations, shared dashboard, and shared daemon with all
+   sensors initially stopped. Verify location/config identities, API health,
+   mount isolation, shared history totals, and the global one-run limit. Install
+   the scoped watchdog units/timers and verify real environment reports.
+6. Disable the old daily units only after verification. Explicitly start only
+   the production sensors in the shared home; leave the dev window closed.
+   Verify sensor state by code-location name, not the shared sensor name alone.
+   Run any separately approved site promotion through the canonical publisher;
+   no pointer edits or lower-level publication shortcuts.
+7. Verify actual prod APIs and rendered pages against the approved identity and
+   full coverage, audit both environments' histories, and record each protected
+   collector's state, latest/next capture, and complete applicable coverage.
+   Measure idle/active memory with the actual production schedule enabled.
+8. If startup verification fails **before any real shared run**, stop the new
+   stack and restore the recorded old daily unit/sensor states and watchdog
+   configuration. Keep the failed migration copy for audit. Once a real shared
+   run exists, keep that shared history authoritative: stop affected automation
+   and repair/redeploy compatible sealed code. Never fall back to stale original
+   histories and lose new runs or replay already completed work. Site activation
+   failure uses the publisher's verified API-and-pointer rollback; later site
+   rollback must likewise use the approved canonical workflow and recorded target.
+
+Remaining acceptance work: successful dev catch-up, complete frozen forecast and
+market comparison, automatic lifecycle evidence, rendered dev review, exact final
+promotion/rollback release identities, and explicit user production approval.

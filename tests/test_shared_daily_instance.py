@@ -214,6 +214,8 @@ def test_shared_service_plan_isolated_code_locations_and_shared_controller(tmp_p
     package = tmp_path / 'package'
     (package / 'code/deploy').mkdir(parents=True)
     (package / 'code/deploy/dagster-daily.yaml').write_bytes(TEMPLATE.read_bytes())
+    for name in ('gestalt-data-quality-dev.service', 'gestalt-data-quality-dev.timer'):
+        (package / 'code/deploy' / name).write_bytes((TEMPLATE.parent / name).read_bytes())
     locations = {env: {'environment': env, 'package': str(package), 'python': '/usr/bin/python3',
         'package_sha256': 'test', 'port': port, 'config': f'/var/lib/nba-gestalt-{env}/config.json',
         'location_name': f'nba_gestalt_{env}_daily_pipeline', 'aws_cli_bin': '/opt/test/bin'}
@@ -229,6 +231,16 @@ def test_shared_service_plan_isolated_code_locations_and_shared_controller(tmp_p
     assert 'ReadOnlyPaths=/var/lib/nba-gestalt-dev\n' in prod
     assert 'User=gestalt-daily-prod\n' in prod
     assert 'NoNewPrivileges=true' in prod
+    for env, port in [('dev', 8011), ('prod', 8010)]:
+        watchdog = (output / f'gestalt-data-quality-{env}.service').read_text()
+        assert f'--environment {env}' in watchdog
+        assert '--daily-dagster-home /var/lib/nba-gestalt-daily/dagster' in watchdog
+        assert '--daily-dagster-api-root http://127.0.0.1:3003' in watchdog
+        assert f'--api-root http://127.0.0.1:{port}' in watchdog
+        assert 'ReadOnlyPaths=/var/lib/nba-gestalt-daily/dagster/schedules/schedules.db' in watchdog
+        assert '--watchdog-package-sha256 test' in watchdog
+        assert '@' not in watchdog
+        assert f'Unit=gestalt-data-quality-{env}.service' in (output / f'gestalt-data-quality-{env}.timer').read_text()
     assert plan['identity']['requires_production_cutover_approval']
     assert not any('gestalt-collection' in name for name in plan['identity']['retire_after_verified_cutover'])
     with pytest.raises(FileExistsError):
@@ -273,3 +285,32 @@ def test_explicit_legacy_verification_never_changes_accepted_inputs(tmp_path, mo
         assert evidence['model_sha256'] == 'selected'
         assert evidence['original_producing_job_record'] == 'unavailable'
         assert evidence['historical_model_recomputed'] is False
+
+
+@pytest.mark.parametrize('mutation', ['none', 'identity', 'unit', 'symlink', 'config'])
+def test_reviewed_shared_plan_rechecks_files_and_locations(tmp_path, monkeypatch, mutation):
+    from nba_lineup_model.orchestration import shared_daily_deployment as deployment
+    from nba_lineup_model.orchestration.daily_work import digest
+    unit = tmp_path / 'worker.service'
+    unit.write_text('reviewed service')
+    locations = {env: {'package': '/package', 'python': '/python', 'config': '/config',
+                       'environment': env} for env in ('dev', 'prod')}
+    identity = {'locations': locations, 'files': {unit.name: digest(unit.read_text())}}
+    expected = digest(identity)
+    plan = {'identity': identity, 'sha256': expected}
+    if mutation == 'identity':
+        identity['files'][unit.name] = 'changed'
+    elif mutation == 'unit':
+        unit.write_text('unreviewed service')
+    elif mutation == 'symlink':
+        target = tmp_path / 'target'
+        unit.rename(target)
+        unit.symlink_to(target)
+    atomic_json(tmp_path / 'plan.json', plan)
+    monkeypatch.setattr(deployment, 'validated_location',
+        lambda env, *args: {**locations[env], **({'config_sha256': 'changed'} if mutation == 'config' else {})})
+    if mutation == 'none':
+        assert deployment.verify_plan(tmp_path / 'plan.json', expected) == plan
+    else:
+        with pytest.raises(ValueError, match='differs|changed'):
+            deployment.verify_plan(tmp_path / 'plan.json', expected)

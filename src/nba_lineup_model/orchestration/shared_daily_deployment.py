@@ -118,6 +118,45 @@ def unit(location: dict, component: str, home: Path = HOME) -> str:
     return '\n'.join(lines)
 
 
+def watchdog_unit(location: dict, home: Path = HOME) -> str:
+    """Keep the independent watchdog bound to its environment in shared history."""
+    package = Path(location['package'])
+    text = (package / 'code/deploy/gestalt-data-quality-dev.service').read_text()
+    text = text.replace('/var/lib/nba-gestalt-dev/daily-dagster', str(home))
+    text = text.replace('http://127.0.0.1:3002', 'http://127.0.0.1:3003')
+    if location['environment'] == 'prod':
+        text = text.replace('/var/lib/nba-gestalt-dev', '/var/lib/nba-gestalt')
+        text = text.replace('--environment dev', '--environment prod')
+        text = text.replace('gestalt-web-dev.service', 'gestalt-web.service')
+        text = text.replace('http://127.0.0.1:8011', 'http://127.0.0.1:8010')
+        text = text.replace('independent dev data-quality', 'independent prod data-quality')
+    for token, value in {'@ORCHESTRATION_PYTHON@': location['python'],
+                         '@WATCHDOG_PACKAGE@': location['package'],
+                         '@WATCHDOG_SHA256@': location['package_sha256']}.items():
+        text = text.replace(token, value)
+    return text
+
+
+def verify_plan(path: Path, expected_sha256: str) -> dict:
+    """Revalidate the reviewed plan, runtime, code seals, and config before cutover."""
+    plan = read_object(path)
+    identity = plan['identity']
+    if plan['sha256'] != expected_sha256 or digest(identity) != expected_sha256:
+        raise ValueError('Shared deployment plan differs from the reviewed identity')
+    if set(identity['locations']) != {'dev', 'prod'}:
+        raise ValueError('Shared deployment requires exactly dev and prod')
+    for name, checksum in identity['files'].items():
+        file = path.parent / name
+        if Path(name).name != name or file.is_symlink() or digest(file.read_text()) != checksum:
+            raise ValueError(f'Shared deployment file changed: {name}')
+    for environment, location in identity['locations'].items():
+        current = validated_location(environment, Path(location['package']),
+                                     Path(location['python']), Path(location['config']))
+        if current != location:
+            raise ValueError(f'Shared deployment location changed: {environment}')
+    return plan
+
+
 def prepare(output: Path, locations: dict[str, dict], home: Path = HOME) -> dict:
     if set(locations) != {'dev', 'prod'}:
         raise ValueError('Exactly two explicit code locations are required')
@@ -127,6 +166,9 @@ def prepare(output: Path, locations: dict[str, dict], home: Path = HOME) -> dict
     files = {}
     for name, location in locations.items():
         files[f'gestalt-daily-shared-{name}-code.service'] = unit(location, 'code', home)
+        files[f'gestalt-data-quality-{name}.service'] = watchdog_unit(location, home)
+        timer = (Path(location['package']) / 'code/deploy/gestalt-data-quality-dev.timer').read_text()
+        files[f'gestalt-data-quality-{name}.timer'] = timer.replace('dev', name)
     # The controller is pinned independently from future code-location updates.
     for component in ('daemon', 'web'):
         files[f'gestalt-daily-shared-{component}.service'] = unit(locations['dev'], component, home)
