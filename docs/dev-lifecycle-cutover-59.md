@@ -245,3 +245,18 @@ production pointers are unchanged. Collector services have zero restarts and
 latest capture jobs succeeded. No new daily worker or catch-up run was installed.
 Rendered dev verification, real daily recovery, and ticket completion remain
 pending. This checkpoint is not a deployment-readiness claim.
+
+
+### Issue 62: verified serving recovery and pending compatibility review
+
+On November 6 UTC, code `0f0fd7e` activated dev generation 30 through the canonical publisher, runtime `042869e115b05d0895f14db3f85568dabb72b0788ae97425e7a1f5df21688e3f`. Full API coverage passed for all 20 selected dates / 154 games, with all 236 selected-schedule JSON hashes unchanged. The live API uses the S3 recovery cache. Restart retained the same loaded identity and the sizes/mtimes of all 40,173 existing cache files. Model evidence remains November 2 / 107 games; this is not completed catch-up.
+
+EC2 Chromium rendered six main pages at desktop and phone widths without JS/API errors, using the deployed static files and live API through a temporary local streaming test server. Authenticated public-proxy browser acceptance is not established. Wins overflowed horizontally at both widths, and the narrow team page also overflowed; layout fixes are outside #62.
+
+The new automatic worker submitted permanent dev run `119a41e3-67ec-427b-9068-54b65779b015`; it failed before data processing because the reviewed model-compatibility inventory includes the changed web requirements file. Automatic daily lifecycle is paused to avoid repeating this known failure. All dev services and independent collectors remain running. A runtime-only 900 MiB/no-swap cap bounds the dev code service and job descendants. Production is unchanged.
+
+The first rebuilt orchestration environment unintentionally resolved botocore 1.43.125 instead of 1.43.124 and threadpoolctl 3.8.0 instead of 3.7.0. The proposed requirements pins retain the accepted versions. A freshly built candidate environment (`requirements_sha256=f766104c7fd0dc21423d0cc088900f31c605d93d33c2452de675a3f3e94c962a`) has the same Python version and all 89 package versions as the accepted environment (`requirements_sha256=be07cd04e2ee64a9589a66d4e7ade0f6885535aa2a2e89b0e69f4dfb4d83e5a5`). Of 75 calculation-inventory entries, only the two requirements files differ; calculation source files match the reviewed policy. Twenty-three focused runtime/deployment/storage tests pass. This environment is prepared but not activated.
+
+The next approval is a narrowly scoped equivalence review of these two requirements changes for accepted model revision `1459c83f82b1fa50d901048e65bb39c9fd678204`, followed by updating its reviewed compatibility inventory, deployment, and normal forward catch-up. Do not bypass the guard, replay accepted model history, or rewrite frozen forecasts. Evidence is retained on EC2 at `/tmp/gestalt-62-compatibility-review.json` and `/tmp/gestalt-62-pinned-runtime-tests.log`.
+
+The user approved deletion of exactly two unused serving recovery caches (`10f656c6...` and `378d7a94...`). Their S3 storage manifests were verified and their archives preserved; only those two cache directories were removed. The audit is `/tmp/gestalt-62-approved-cache-cleanup.json`. No other NBA artifact/cache deletion is authorized by that approval.
