@@ -77,7 +77,7 @@
     "uv.lock": "81e019911c305bf847f995b23c87e9077905e379f0dd5f95c001a91ccf26a298"
   },
   "accepted_revision": "1459c83f82b1fa50d901048e65bb39c9fd678204",
-  "approval": "User approved precise compatibility checks and loader/storage equivalence testing on 2026-11-05; no model mathematics or historical replay change. On 2026-11-06 the user explicitly approved the two requirements-file equivalence review and resuming catch-up with existing model dependency versions. On 2026-11-06 the user explicitly approved the exact official NBA Christopher Cenac Jr. alias for player 1643416, its regression test and compatibility review, and rerunning November 4.",
+  "approval": "User approved precise compatibility checks and loader/storage equivalence testing on 2026-11-05; no model mathematics or historical replay change. On 2026-11-06 the user explicitly approved the two requirements-file equivalence review and resuming catch-up with existing model dependency versions. On 2026-11-06 the user explicitly approved the exact official NBA Christopher Cenac Jr. alias for player 1643416, its regression test and compatibility review, and rerunning November 4. User authorized implementation of #65 and approved the forecast publication extension while retaining existing cold-start rules. This review covers durable input history and vocabulary adoption, not a model upgrade or automatic historical replay.",
   "compatible_files": {
     "deploy/orchestration-requirements.txt": "e6989240d881881609953d327a8156afc378c35d6841ab876932d8f095119cc1",
     "deploy/web-requirements.txt": "b3ccfcc8e4861cb25e78275f7fd211d3522d8e8d4d1bb17c66364f6e5d9204f1",
@@ -125,6 +125,7 @@
     "src/nba_lineup_model/players/__init__.py": "46c08923a5cdea6e99c55a41bfbadb51ba3613cc1661e2f741eeee67a6110bbd",
     "src/nba_lineup_model/players/collect.py": "272ebb58fa6dd2c35e4658cb525c7f76fa8ba3c8a73921b1c93f0ee3c5fa1328",
     "src/nba_lineup_model/players/normalize.py": "a187462fdd830bed8fc6008c41e2ad12b59d9762a5759dd9811ded66707d2a23",
+    "src/nba_lineup_model/players/reconciliation_artifact.py": "425268c4206a4f57f541d7c0a23f97613bd2272146e9be8fae25198607fb7c78",
     "src/nba_lineup_model/players/schema.py": "a509bd6672680ba214ee9b9e1a88a1102ca6835f5f99a9ce92441d24319fbc6b",
     "src/nba_lineup_model/players/source.py": "1cbbc2057cd7d7c9e0dd6e05451ed0570bc7f8f9bb7cdbc6bb8eab2543021b02",
     "src/nba_lineup_model/players/storage.py": "fdda32673481ddb0647b819fc1b2ebb9797e748676eed2bc758914e74a772976",
@@ -138,16 +139,23 @@
     "src/nba_lineup_model/season/daily_artifact_common.py": "a35a92fff2251a58c479da92bef74b8f9f9ade3c7a26704166f8c1b3734b238a",
     "src/nba_lineup_model/season/daily_data_artifact.py": "a9bcc310561486330ddaf6cf52962748bb753eb1702bcbc0d8325a01796f0e74",
     "src/nba_lineup_model/season/daily_model_artifact.py": "852eb7bc4651830caf53445f3ecab0b7adef28eaad4e9b19a64512389df77bb8",
-    "src/nba_lineup_model/season/daily_model_replay.py": "3cb771995014ededf19bf34efd34d7e6ba9aafc114870fb81837fb8822bcaa90",
+    "src/nba_lineup_model/season/daily_model_replay.py": "5e70cf660c8c1f7e87f4b7a9181f25b28a940ca7265d6ef7fc504e766661dfce",
+    "src/nba_lineup_model/season/durable_artifact_storage.py": "59c47c1a5dd86b4af1c15e4d716e4d127fec22a2c3f206d6b18b324c32e2d0e6",
     "src/nba_lineup_model/season/fetch.py": "02b7257a29664dbc030352b0421d736988d6b7a631d37bd65bedf532e66e02f1",
     "src/nba_lineup_model/season/layout.py": "14b043483bdc0035ad91fefb8579b2d4619875eab233ce8b29bb210ce48e669a",
     "src/nba_lineup_model/season/process.py": "cdf22dbcbe2cef300d75cece42866c4732283affed94e49251c4b7d9e227c0f9",
+    "src/nba_lineup_model/season/reconciliation_inputs.py": "8bb603562daf542aa251ee501db75a72203a52cb1a36993b9a26672110680ec7",
     "src/nba_lineup_model/season/schedule.py": "d7c1e13bd092623a39831cf037b3bd7c87831830c0333b96279e429799575031",
     "src/nba_lineup_model/season/schema.py": "231188898097a6cfcaaf0f10a1f8aee152ad43acfd16c08e453cf3bbf816e2a5",
     "src/nba_lineup_model/season/slate_time.py": "bab3f53176d30e8ab0f00d12c7d4782dc4f5f85a7ee4378bcbc2e28837499374",
     "src/nba_lineup_model/season/source.py": "599bc0a4d3564bf1f317d7d9b1adbc330ec8184ee79dc04feaca27ea8a412283",
     "src/nba_lineup_model/season/stats.py": "fa07989b140c211d6cfb691a446d6b286388b721ec35c9a708e5ff772ea04d8f",
     "src/nba_lineup_model/season/storage.py": "e89d52afd984e2620370af214fd10f2c06a4096e415baafa3e95516b7c473b0c",
+    "src/nba_lineup_model/storage/__init__.py": "86f4a0609d06e640dd35633b49798444bffe2116794b117503db28c11862c083",
+    "src/nba_lineup_model/storage/artifact_store.py": "3f69615175acbdd995838d7d86b2e82fbd2020782720533f0d6a2fd1d6cf1433",
+    "src/nba_lineup_model/storage/duckdb_lake.py": "48263a33e07c5552261091da28e9e5b458430e50c251de3322cadbc475ba630b",
+    "src/nba_lineup_model/storage/environment_selection.py": "7693cfd189be520471b6b6ab22f5ec86b8e94e6d0c9290ff7c453fae352ddb9c",
+    "src/nba_lineup_model/storage/s3_lake.py": "c53584643ca8b2b915ffd927f84fc40283589bfc886571d69c2aebab2c410281",
     "src/nba_lineup_model/tracking.py": "c3c633b58c8cc144bd54bf608fe5cf6791947ac486053a64e2542aca37aa84b5",
     "src/nba_lineup_model/web_api/__init__.py": "bb74b9aa6454e85645f92cf5d31e00fa452e10752d14e75d84aec11489eb6fd2",
     "src/nba_lineup_model/web_api/current_season_lineups.py": "7e1d5d4ff6b9a9d8a64b3679a7f972f4094eb60ccabaa1cbed1eeaa5add1ba04",
@@ -179,15 +187,54 @@
       "accepted_sha256": "cd13ab61a9a2aa23f70c740ad0374a6ea7179d9d2fd0aed9ab7f82042a43004d",
       "compatible_sha256": "d2e8588d1a1dfdc9d3a76e745101b3454163285c44d6e207b08a80ad3d19397d"
     },
+    "src/nba_lineup_model/players/reconciliation_artifact.py": {
+      "accepted_sha256": null,
+      "compatible_sha256": "425268c4206a4f57f541d7c0a23f97613bd2272146e9be8fae25198607fb7c78",
+      "reason": "Approved #65 durable introduction selection and date-bound state adoption; existing calculation functions and initialization rules retained. Replay/forecast tests cover incumbent preservation, saved input equivalence, and historical replay approval."
+    },
     "src/nba_lineup_model/season/daily_data_artifact.py": {
       "accepted_sha256": "3f7e7bf240d90a0372824436e1ec955f1379957a11c0463e30ba50034c85a06e",
       "compatible_sha256": "a9bcc310561486330ddaf6cf52962748bb753eb1702bcbc0d8325a01796f0e74"
     },
     "src/nba_lineup_model/season/daily_model_replay.py": {
       "accepted_sha256": "17687a28d050266457a38bf3762302bec33613209b60c1af4ec45c3135c9d3c7",
-      "compatible_sha256": "3cb771995014ededf19bf34efd34d7e6ba9aafc114870fb81837fb8822bcaa90",
-      "previous_compatible_sha256": "17687a28d050266457a38bf3762302bec33613209b60c1af4ec45c3135c9d3c7",
-      "reason": "Exact official NBA injury-name alias, conditional on NBA ID 1643416 and canonical Chris Cenac name; resolved observations keyed by team and canonical ID. No fuzzy matching or changed model mathematics. Read-only comparison of all 14 accepted nonempty dates / 107 games / 3676 observations found zero differences. The 14-game November 4 slate / 488 observations matches the old resolver when only the approved spelling is supplied in a private in-memory test copy. Original source names and artifacts are preserved; no historical forecast replacement."
+      "compatible_sha256": "5e70cf660c8c1f7e87f4b7a9181f25b28a940ca7265d6ef7fc504e766661dfce",
+      "reason": "Approved #65 durable introduction selection and date-bound state adoption; existing calculation functions and initialization rules retained. Replay/forecast tests cover incumbent preservation, saved input equivalence, and historical replay approval."
+    },
+    "src/nba_lineup_model/season/durable_artifact_storage.py": {
+      "accepted_sha256": null,
+      "compatible_sha256": "59c47c1a5dd86b4af1c15e4d716e4d127fec22a2c3f206d6b18b324c32e2d0e6",
+      "reason": "Approved #65 durable introduction selection and date-bound state adoption; existing calculation functions and initialization rules retained. Replay/forecast tests cover incumbent preservation, saved input equivalence, and historical replay approval."
+    },
+    "src/nba_lineup_model/season/reconciliation_inputs.py": {
+      "accepted_sha256": null,
+      "compatible_sha256": "8bb603562daf542aa251ee501db75a72203a52cb1a36993b9a26672110680ec7",
+      "reason": "Approved #65 durable introduction selection and date-bound state adoption; existing calculation functions and initialization rules retained. Replay/forecast tests cover incumbent preservation, saved input equivalence, and historical replay approval."
+    },
+    "src/nba_lineup_model/storage/__init__.py": {
+      "accepted_sha256": null,
+      "compatible_sha256": "86f4a0609d06e640dd35633b49798444bffe2116794b117503db28c11862c083",
+      "reason": "Approved #65 durable introduction selection and date-bound state adoption; existing calculation functions and initialization rules retained. Replay/forecast tests cover incumbent preservation, saved input equivalence, and historical replay approval."
+    },
+    "src/nba_lineup_model/storage/artifact_store.py": {
+      "accepted_sha256": null,
+      "compatible_sha256": "3f69615175acbdd995838d7d86b2e82fbd2020782720533f0d6a2fd1d6cf1433",
+      "reason": "Approved #65 durable introduction selection and date-bound state adoption; existing calculation functions and initialization rules retained. Replay/forecast tests cover incumbent preservation, saved input equivalence, and historical replay approval."
+    },
+    "src/nba_lineup_model/storage/duckdb_lake.py": {
+      "accepted_sha256": null,
+      "compatible_sha256": "48263a33e07c5552261091da28e9e5b458430e50c251de3322cadbc475ba630b",
+      "reason": "Approved #65 durable introduction selection and date-bound state adoption; existing calculation functions and initialization rules retained. Replay/forecast tests cover incumbent preservation, saved input equivalence, and historical replay approval."
+    },
+    "src/nba_lineup_model/storage/environment_selection.py": {
+      "accepted_sha256": null,
+      "compatible_sha256": "7693cfd189be520471b6b6ab22f5ec86b8e94e6d0c9290ff7c453fae352ddb9c",
+      "reason": "Approved #65 durable introduction selection and date-bound state adoption; existing calculation functions and initialization rules retained. Replay/forecast tests cover incumbent preservation, saved input equivalence, and historical replay approval."
+    },
+    "src/nba_lineup_model/storage/s3_lake.py": {
+      "accepted_sha256": null,
+      "compatible_sha256": "c53584643ca8b2b915ffd927f84fc40283589bfc886571d69c2aebab2c410281",
+      "reason": "Approved #65 durable introduction selection and date-bound state adoption; existing calculation functions and initialization rules retained. Replay/forecast tests cover incumbent preservation, saved input equivalence, and historical replay approval."
     },
     "src/nba_lineup_model/web_api/current_season_serving.py": {
       "accepted_sha256": "57d1340ce19bcbdcbec8682ba52114046c1b75966b0d90449cfdbcdd45a7eb2c",

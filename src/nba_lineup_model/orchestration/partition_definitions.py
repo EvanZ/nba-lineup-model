@@ -128,7 +128,30 @@ def advance_daily_environment_job():
     advance_daily_environment_op()
 
 
-@sensor(name="automatic_daily_lifecycle", jobs=[advance_daily_environment_job, prepare_forecast_date_job],
+@op(config_schema={"config_path": str, "game_date": str,
+    "capture_slot": Field(str, is_required=False), "request_path": Field(str, is_required=False),
+    "request_sha256": Field(str, is_required=False)})
+def reconcile_in_season_rosters_op(context):
+    from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
+    from nba_lineup_model.orchestration.roster_reconciliation import reconcile_environment
+    cfg=context.op_config
+    with run_guard(context, 'reconcile_in_season_rosters', cfg):
+        result=reconcile_environment(DailyPipelineConfig.read(cfg['config_path']),
+            capture_slot=cfg.get('capture_slot'),request_path=cfg.get('request_path'),
+            request_sha256=cfg.get('request_sha256'))
+    context.add_output_metadata({'status':result['status'],
+        'reconciliation_id':result['reference']['content_id'], 'generation':result['generation']})
+    return result
+
+
+@job(name='reconcile_in_season_rosters',executor_def=in_process_executor,
+     tags={'gestalt/workload':'daily_site_release'})
+def reconcile_in_season_rosters_job():
+    reconcile_in_season_rosters_op()
+
+
+
+@sensor(name="automatic_daily_lifecycle", jobs=[reconcile_in_season_rosters_job, advance_daily_environment_job, prepare_forecast_date_job],
         minimum_interval_seconds=300, default_status=DefaultSensorStatus.STOPPED)
 def automatic_daily_lifecycle_sensor(context):
     return evaluate_automatic_lifecycle(context)
@@ -146,7 +169,7 @@ def evaluate_automatic_lifecycle(context):
     if context.instance.get_runs(filters=RunsFilter(statuses=[DagsterRunStatus.QUEUED,
         DagsterRunStatus.STARTING, DagsterRunStatus.STARTED, DagsterRunStatus.CANCELING]), limit=1):
         return SkipReason("Daily work is already queued or running in this instance")
-    request = automation_request(Path(configured))
+    request = reconciliation_due(context, binding, configured) or automation_request(Path(configured))
     if request is None:
         return SkipReason("No completed slate or changed pregame inputs need publication")
     tags = binding.tags(request["job"], request["config"])
@@ -164,5 +187,19 @@ def evaluate_automatic_lifecycle(context):
         tags={**tags, "gestalt/trigger":"sensor", "gestalt/automation_key":request["key"]})
 
 
-defs = Definitions(jobs=[prepare_daily_partition_job, prepare_forecast_date_job, advance_daily_environment_job],
+def reconciliation_due(context, binding, configured):
+    """A verified scheduled reconciliation is a dependency, not a competing sensor."""
+    from nba_lineup_model.orchestration.roster_reconciliation import scheduled_slot
+    day, slot = scheduled_slot(datetime.now(UTC))
+    request = {'config_path': configured, 'game_date': day, 'capture_slot': slot}
+    tags = binding.tags('reconcile_in_season_rosters', request)
+    successful = context.instance.get_run_records(filters=RunsFilter(
+        job_name='reconcile_in_season_rosters', statuses=[DagsterRunStatus.SUCCESS],
+        tags={'gestalt/environment': binding.environment, 'gestalt/work_id': tags['gestalt/work_id']}), limit=1)
+    if successful:
+        return None
+    return {'job': 'reconcile_in_season_rosters', 'key': tags['gestalt/work_id'], 'config': request}
+
+
+defs = Definitions(jobs=[reconcile_in_season_rosters_job, prepare_daily_partition_job, prepare_forecast_date_job, advance_daily_environment_job],
                    sensors=[resumable_daily_partition_sensor, automatic_daily_lifecycle_sensor])

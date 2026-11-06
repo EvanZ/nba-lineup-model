@@ -43,24 +43,15 @@ def production_release_reference(manifest: dict[str, object]) -> ArtifactReferen
     )
 
 
-def required_release_dependencies(
-    manifest: dict[str, object],
-) -> tuple[ArtifactReference, ...]:
-    approved = manifest["approved_manifest"]["identity"]
-    return tuple(
-        sorted(
-            (
-                parse_legacy_artifact_reference(
-                    approved["data"]["bundle_path"],
-                    artifact_kind="daily_data",
-                ),
-                parse_legacy_artifact_reference(
-                    approved["model"]["bundle_path"],
-                    artifact_kind="daily_model",
-                ),
-            )
-        )
-    )
+def required_release_dependencies(manifest: dict[str, object]) -> tuple[ArtifactReference, ...]:
+    approved = manifest['approved_manifest']['identity']
+    dependencies = [parse_legacy_artifact_reference(approved[key]['bundle_path'], artifact_kind=kind)
+                    for key, kind in [('data', 'daily_data'), ('model', 'daily_model')]]
+    initialized = manifest['identity'].get('forecast_initialization')
+    reference = initialized['reference'] if initialized else manifest['identity'].get('reconciliation_reference')
+    if reference:
+        dependencies.append(ArtifactReference.from_dict(reference))
+    return tuple(sorted(set(dependencies)))
 
 
 def production_release_inventory(

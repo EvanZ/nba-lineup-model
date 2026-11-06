@@ -9,7 +9,7 @@ from pathlib import Path
 
 from nba_lineup_model.orchestration.daily_instance import DailyInstance
 
-JOBS = ("prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment", "prepare_daily_site_release", "backfill_official_history")
+JOBS = ("reconcile_in_season_rosters", "prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment", "prepare_daily_site_release", "backfill_official_history")
 
 
 def stamp(value) -> str:

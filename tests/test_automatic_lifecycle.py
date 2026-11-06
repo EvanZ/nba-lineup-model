@@ -89,6 +89,7 @@ def sensor_context(monkeypatch, *, running=False, records=()):
     monkeypatch.setenv("GESTALT_AUTOMATION_CONFIG", "/dev/worker/config.json")
     binding = SimpleNamespace(environment="dev", instance_home=None, tags=lambda job, config: {"gestalt/environment":"dev"})
     monkeypatch.setattr(jobs, "binding_for_instance", lambda instance: binding)
+    monkeypatch.setattr(jobs, "reconciliation_due", lambda *args: None)
     import nba_lineup_model.orchestration.lifecycle as lifecycle
     monkeypatch.setattr(lifecycle, "automation_request", lambda path: {
         "job":"advance_daily_environment", "key":"same-inputs",
@@ -139,7 +140,7 @@ def test_empty_partition_reuses_every_model_component_without_fitting(tmp_path, 
     steps.spec = {"identity":{"expected_game_ids":[]}}
     steps.model_inputs = [file_reference(parent.path / "manifest.json")]
     steps.data_inputs = [file_reference(empty.path / "manifest.json")]
-    steps.config = SimpleNamespace(data_root=tmp_path / "data-root", model_root=tmp_path / "model-root", season="2026-27")
+    steps.config = SimpleNamespace(data_root=tmp_path / "data-root", model_root=tmp_path / "model-root", season="2026-27", reconciliation_root=None)
     steps.build_target_model(date(2026, 10, 21))
     pointer = read_object(steps.config.model_root / "latest.json")
     result = verify_daily_model_artifact(steps.config.model_root / pointer["bundle_path"])
@@ -192,3 +193,20 @@ def test_dev_reload_has_no_sudo_and_never_targets_prod(monkeypatch):
     monkeypatch.setattr(daily_activation.subprocess, "run", run)
     daily_activation.reload_environment_api(SimpleNamespace(environment_root=Path("/var/lib/nba-gestalt-dev")), {})
     assert run.call_args.args[0] == ["systemctl", "--no-ask-password", "restart", "gestalt-web-dev"]
+
+
+def test_reconciliation_is_required_before_other_scheduled_work(monkeypatch):
+    from unittest.mock import Mock
+    from types import SimpleNamespace
+    binding=SimpleNamespace(environment='dev',tags=lambda job,cfg:{'gestalt/work_id':'roster-slot'})
+    instance=SimpleNamespace(get_run_records=Mock(return_value=[]))
+    context=SimpleNamespace(instance=instance)
+    pending=jobs.reconciliation_due(context,binding,'/registered/config.json')
+    assert pending['job']=='reconcile_in_season_rosters'
+    assert pending['key']=='roster-slot'
+    filters=instance.get_run_records.call_args.kwargs['filters']
+    assert filters.job_name=='reconcile_in_season_rosters'
+    assert filters.statuses==[DagsterRunStatus.SUCCESS]
+    assert filters.tags['gestalt/environment']=='dev'
+    instance.get_run_records.return_value=[object()]
+    assert jobs.reconciliation_due(context,binding,'/registered/config.json') is None

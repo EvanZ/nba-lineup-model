@@ -81,6 +81,8 @@ class PartitionSteps(CanonicalPipelineSteps):
             preseason_rankings_path=candidate / "inputs/rankings.parquet",
             preseason_minutes_path=candidate / "inputs/minutes.json",
             preseason_profiles_path=candidate / "inputs/profiles.parquet",
+            reconciliation_root=(candidate / 'inputs/reconciliation'
+                if 'reconciliation/manifest.json' in execution['files'] else None),
             activate_after_validation=False,
         )
         if config.model_configuration_path is not None:

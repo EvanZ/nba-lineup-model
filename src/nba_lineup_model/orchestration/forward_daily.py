@@ -79,7 +79,7 @@ def capture_daily_inputs(config, day, output):
 
 class ForwardPartitionSteps(PartitionSteps):
     def build_target_model(self, target):
-        if self.spec["identity"]["expected_game_ids"]:
+        if self.spec["identity"]["expected_game_ids"] or self.config.reconciliation_root is not None:
             return super().build_target_model(target)
         from nba_lineup_model.season.daily_model_artifact import publish_daily_model_artifact
         from nba_lineup_model.season.daily_model_replay import _write_latest_pointer
@@ -121,8 +121,14 @@ def advance_daily_environment(template, day: date):
     if day != date.fromisoformat(approved["evidence_through_date"]) + timedelta(days=1):
         raise ValueError("Forward processing must immediately follow the accepted evidence date")
     models, data = accepted_chain(live)
+    from nba_lineup_model.orchestration.roster_reconciliation import selected_inputs, pin_files
+    reconciliation = selected_inputs(template)
+    reconciliation_ref = None
+    if reconciliation is not None:
+        from nba_lineup_model.players.reconciliation_artifact import reference, verify
+        reconciliation_ref = reference(verify(reconciliation)).as_dict()
     identity = digest({"base": base["runtime_sha256"], "day": str(day),
-                       "worker": require_clean_code_revision(template.code_root)})
+                       "worker": require_clean_code_revision(template.code_root), "reconciliation": reconciliation_ref})
     output = template.pipeline_root / "forward" / str(day) / identity
     output.mkdir(parents=True, exist_ok=True)
     bindings = read_object(live / "serving-bindings.json")
@@ -147,6 +153,8 @@ def advance_daily_environment(template, day: date):
     data.append(target)
     observed = verify_daily_data_artifact(target)
     config = replace(config, coverage_path=coverage)
+    from nba_lineup_model.orchestration.roster_reconciliation import selected_inputs, pin_files
+    config = replace(config, reconciliation_root=reconciliation)
     files = {"coverage.json":file_reference(coverage), "catalog.parquet":file_reference(config.catalog_path),
         "rankings.parquet":file_reference(config.preseason_rankings_path),
         "profiles.parquet":file_reference(config.preseason_profiles_path),
@@ -154,6 +162,8 @@ def advance_daily_environment(template, day: date):
         "model-configuration.json":file_reference(config.model_configuration_path)}
     from nba_lineup_model.orchestration.lifecycle import coupled_prior_files
     files.update(coupled_prior_files(config, approved["model"]["model_provenance"]))
+    if reconciliation is not None:
+        files.update(pin_files(reconciliation))
     schedule_files = {str(p.relative_to(config.schedule_root)):file_reference(p)
                       for p in sorted(config.schedule_root.rglob("*")) if p.is_file()}
     refs = [file_reference(live / "runtime-manifest.json"), *files.values(), *schedule_files.values()]

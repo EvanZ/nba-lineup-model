@@ -93,3 +93,27 @@ boundary, chronological replay without discovery, and incumbent-state invariance
 The actual November 4 dev job must succeed with full slate/player coverage, then
 pass artifact, API, rendered-page, and frozen-forecast comparisons. Its original
 failed run remains in history; recovery is proven by success of the affected work.
+
+
+## Approved forecast-publication extension
+
+The user approved extending the existing forecast publication workflow after
+reviewing Terry and the existing cold-start behavior. A forecast release may
+publish saved zero-evidence initialization before the next completed-game update.
+The accepted daily checkpoint, game-evidence date, incumbent numerical state,
+and historical frozen forecasts remain unchanged. The serving information cutoff
+and selected introduction reference are explicit. The release validator requires
+complete catalog/profile/serving coverage and exact incumbent preservation.
+
+The existing automatic lifecycle sensor performs the four daily reconciliation
+checks first (06/09/12/15 Pacific), then considers nightly/forecast work. This
+avoids competing schedulers. Manual historical daily recovery uses the selected
+verified introduction history and complete official game-roster coverage.
+Production captures the official roster once per slot; dev consumes that saved
+capture. Missing shared captures fail explicitly.
+
+An introduction affecting already accepted dates can be archived with a precise
+impact assessment without moving the accepted reconciliation selection. Selecting
+that correction requires a decision bound to the accepted model and affected
+start/end dates. The existing causal replay approval gate remains separate;
+forecasting rejects a corrected history until the corresponding replay completes.

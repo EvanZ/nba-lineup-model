@@ -190,6 +190,7 @@ def replay_daily_model_chain(
     code_revision: str | None = None,
     context_provider: ContextProvider | None = None,
     approved_historical_replay_from: date | None = None,
+    reconciliation_root: Path | None = None,
 ) -> list[PublishedDailyModelArtifact]:
     """Replay verified dates in order and atomically advance only a clean tip.
 
@@ -210,6 +211,8 @@ def replay_daily_model_chain(
     rankings, minutes_priors, prior_sha = _load_frozen_priors(
         rankings_path, minutes_path, season=config.season
     )
+    base_rankings, base_minutes = rankings.copy(), minutes_priors.copy()
+    from nba_lineup_model.season.reconciliation_inputs import catalog, extend_accumulators, marker
     player_ids = tuple(sorted(rankings["player_id"].astype(int)))
     preseason = dict(
         zip(rankings["player_id"].astype(int), rankings["rapm"].astype(float), strict=True)
@@ -236,6 +239,7 @@ def replay_daily_model_chain(
         model_chain=model_chain,
         provenance=provenance,
         through=end_date,
+        reconciliation_root=reconciliation_root,
     )
     _require_historical_replay_approval(
         data_chain=data_chain,
@@ -252,6 +256,11 @@ def replay_daily_model_chain(
     if parent_bundle is None and next_date != first_data_date:
         raise ValueError("A model replay without a compatible parent must begin at data genesis")
 
+    if parent_bundle is not None:
+        rankings, minutes_priors = catalog(reconciliation_root, compatible[-1][0],
+            base_rankings, base_minutes, base_prior_sha256=prior_sha)
+        player_ids = tuple(sorted(rankings.player_id.astype(int)))
+        preseason = dict(zip(rankings.player_id.astype(int), rankings.rapm.astype(float), strict=True))
     state_dimension = len(player_ids) + int(_uses_joint_home_court(config))
     if parent_bundle is None:
         rating_gram = sparse.csr_matrix((state_dimension, state_dimension), dtype=float)
@@ -300,6 +309,24 @@ def replay_daily_model_chain(
         for game_date, data_bundle, data_manifest in process_entries:
             with tempfile.TemporaryDirectory(prefix="daily-model-components-") as directory:
                 component_root = Path(directory)
+                next_rankings, next_minutes = catalog(reconciliation_root, game_date,
+                    base_rankings, base_minutes, base_prior_sha256=prior_sha)
+                next_ids = tuple(sorted(next_rankings.player_id.astype(int)))
+                added = sorted(set(next_ids) - set(player_ids))
+                if next_ids != player_ids:
+                    rating_gram, rating_score, rating_exposure = extend_accumulators(
+                        player_ids, next_ids, rating_gram, rating_score, rating_exposure,
+                        joint_home_court=_uses_joint_home_court(config))
+                    new_minutes = initialize_minutes_state(
+                        next_minutes.loc[next_minutes.player_id.astype(int).isin(added)],
+                        season=config.season, config=config.minutes_config())
+                    teams = next_rankings.set_index('player_id')['team'].astype(str).to_dict()
+                    new_minutes['team'] = new_minutes.player_id.map(teams)
+                    minutes_state = pd.concat([minutes_state, new_minutes], ignore_index=True)
+                    team_by_player.update({p: teams[p] for p in added})
+                    player_ids = next_ids
+                rankings, minutes_priors = next_rankings, next_minutes
+                preseason = dict(zip(rankings.player_id.astype(int), rankings.rapm.astype(float), strict=True))
                 result = _build_one_date(
                     game_date=game_date,
                     data_bundle=data_bundle,
@@ -320,6 +347,10 @@ def replay_daily_model_chain(
                     context_provider=provider,
                     output_dir=component_root,
                 )
+                if reconciliation_root is not None:
+                    introductions_path = component_root / 'player_introductions.json'
+                    introductions_path.write_bytes(canonical_json(marker(reconciliation_root, game_date)))
+                    result['components']['player_introductions'] = introductions_path
                 artifact = publish_daily_model_artifact(
                     root=output_root,
                     data_bundle=data_bundle,
@@ -1354,7 +1385,12 @@ def _load_parent_state(
         exposure = vectors["exposure"].copy()
     if gram.shape != (expected_rating_dimension, expected_rating_dimension):
         raise ValueError("Parent rating vocabulary differs from the frozen prior")
+    ratings = pd.read_parquet(_component_path(bundle, manifest, "player_ratings"))
+    if tuple(ratings['player_id'].astype(int)) != expected_player_ids:
+        raise ValueError('Parent rating order differs from the selected dated player catalog')
     minutes = pd.read_parquet(_component_path(bundle, manifest, "minutes_state"))
+    if set(minutes['player_id'].astype(int)) != set(expected_player_ids) or minutes['player_id'].duplicated().any():
+        raise ValueError('Parent minutes identities differ from the selected dated player catalog')
     trajectory = pd.read_parquet(_component_path(bundle, manifest, "rating_trajectory"))
     state = _read_json(_component_path(bundle, manifest, "replay_state"))
     return (
@@ -1485,7 +1521,9 @@ def _longest_compatible_prefix(
     model_chain: Sequence[tuple[date, Path, Mapping[str, Any]]],
     provenance: Mapping[str, str],
     through: date,
+    reconciliation_root: Path | None = None,
 ) -> list[tuple[date, Path, Mapping[str, Any]]]:
+    from nba_lineup_model.season.reconciliation_inputs import marker, checkpoint_digest
     output: list[tuple[date, Path, Mapping[str, Any]]] = []
     for data_row, model_row in zip(data_chain, model_chain, strict=False):
         data_date, _data_path, data_manifest = data_row
@@ -1497,6 +1535,7 @@ def _longest_compatible_prefix(
             data_date != model_date
             or identity["input_data_sha256"] != data_manifest["bundle_sha256"]
             or identity["model_provenance"] != dict(provenance)
+            or checkpoint_digest(model_path, model_manifest) != marker(reconciliation_root, model_date)['introductions_sha256']
         ):
             break
         output.append((model_date, model_path, model_manifest))

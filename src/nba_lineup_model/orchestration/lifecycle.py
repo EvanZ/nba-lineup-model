@@ -141,6 +141,12 @@ def automation_request(config_path: Path, *, now: datetime | None = None) -> dic
     config = DailyPipelineConfig.read(config_path)
     if not config.activate_after_validation or config.observation_root is None:
         raise ValueError("Automatic processing requires explicit environment publication configuration")
+    from nba_lineup_model.orchestration.roster_reconciliation import selected_inputs
+    reconciliation = selected_inputs(config)
+    reconciliation_id = None
+    if reconciliation is not None:
+        from nba_lineup_model.players.reconciliation_artifact import reference, verify
+        reconciliation_id = reference(verify(reconciliation)).content_id
     live = config.live_pointer.resolve(strict=True)
     runtime = read_object(live / "runtime-manifest.json")
     accepted = runtime["approved_manifest"]["identity"]
@@ -154,7 +160,7 @@ def automation_request(config_path: Path, *, now: datetime | None = None) -> dic
     target = next_nightly_date(evidence=evidence, slates=slates, final_ids=finals, now=now)
     if target:
         key = digest({"kind": "nightly", "model": accepted["model"]["bundle_sha256"],
-                      "date": str(target), "config": str(config_path)})
+                      "date": str(target), "config": str(config_path), "reconciliation": reconciliation_id})
         return {"job": "advance_daily_environment", "key": key,
                 "config": {"config_path": str(config_path), "game_date": str(target)}}
     schedule = live / "selected-schedule"
@@ -179,7 +185,7 @@ def automation_request(config_path: Path, *, now: datetime | None = None) -> dic
             observation_root=config.observation_root, start_date=day, days_ahead=0, now=now)
         ids = {str(g["game_id"]) for g in open_games}
         key = digest({"kind": "forecast", "date": day, "config": str(config_path),
-            "model": accepted["model"]["bundle_sha256"],
+            "model": accepted["model"]["bundle_sha256"], "reconciliation": reconciliation_id,
             "injuries": {k:v for k,v in injuries.items() if k in ids},
             "markets": {k:v for k,v in markets.items() if k in ids}, "open_games": sorted(ids)})
         receipt = receipts / f"{key}.json"

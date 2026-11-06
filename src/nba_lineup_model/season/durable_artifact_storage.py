@@ -105,6 +105,11 @@ def daily_model_dependencies(bundle: Path | str) -> tuple[ArtifactReference, ...
                 content_id=f"model_sha256={parent_sha}",
             )
         )
+    introductions = identity['components'].get('player_introductions')
+    if introductions is not None:
+        selection = json.loads((Path(bundle) / introductions['path']).read_text())
+        if selection.get('reference') is not None:
+            dependencies.append(ArtifactReference.from_dict(selection['reference']))
     return tuple(sorted(dependencies))
 
 
