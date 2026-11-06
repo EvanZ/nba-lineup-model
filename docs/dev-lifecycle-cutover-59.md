@@ -405,3 +405,29 @@ hashes are evidence, not authorization to install a later plan.
 Remaining acceptance work: successful dev catch-up, complete frozen forecast and
 market comparison, automatic lifecycle evidence, rendered dev review, exact final
 promotion/rollback release identities, and explicit user production approval.
+
+### Approved creation-timestamp retry repair
+
+The user approved reusing an existing artifact after reviewing its content-derived
+identity and the complete file comparison. The narrow implementation is in the
+durable daily publisher: when the only manifest metadata difference is
+`generated_at`, canonical identity/provenance, dependencies, and every other
+inventory entry must match. The original S3 objects are checked for presence,
+size, and checksum; their payload bytes are read through the verified cache.
+The result identifies the original storage manifest and original creation time.
+Neither the existing S3 artifact nor the new local candidate is overwritten.
+Other artifact kinds retain strict byte-level inventory matching. A changed
+payload/provenance is a new identity or a validation failure, never an overwrite.
+
+Tests: 37 passed; one pre-existing opt-in model-loader test skipped. They exercise
+independently created data and model artifacts, original-manifest preservation,
+changed source/provenance and payload rejection, and missing/corrupt S3 objects
+with both fresh and populated caches. The real November 3 artifacts were checked
+with an S3 client that forbids writes: 11 data files and 13 model files verified,
+zero uploads, and local manifests unchanged. Evidence is on EC2 at
+`/tmp/gestalt-62-creation-reuse-verification.json`.
+
+The compatibility review verified all 75 reviewed calculation files unchanged
+against accepted model revision `1459c83f82b1fa50d901048e65bb39c9fd678204`.
+The existing compatibility policy remains unchanged; no new exception, dependency
+version, schema, model calculation, or historical forecast is introduced.
