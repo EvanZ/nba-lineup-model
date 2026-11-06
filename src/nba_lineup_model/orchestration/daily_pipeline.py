@@ -430,10 +430,16 @@ class CanonicalPipelineSteps:
             )
         if config.artifact_lake_uri is not None:
             from nba_lineup_model.season.durable_artifact_storage import (
-                publish_selected_model_chain,
+                publish_selected_data_chain, publish_selected_model_chain,
             )
 
             assert config.artifact_cache_root is not None
+            # Resumed partitions restore data directly from pinned inputs, so
+            # their data callback may not run the normal archive operation.
+            # Verify/publish every selected data dependency before its model.
+            observed = publish_selected_data_chain(config.data_root, through_date=target,
+                cache_root=config.artifact_cache_root, lake_uri=config.artifact_lake_uri)
+            self.durable_dependencies.extend(item.reference for item in observed)
             published = publish_selected_model_chain(
                 config.model_root,
                 through_date=target,
