@@ -159,7 +159,7 @@
     "src/nba_lineup_model/tracking.py": "c3c633b58c8cc144bd54bf608fe5cf6791947ac486053a64e2542aca37aa84b5",
     "src/nba_lineup_model/web_api/__init__.py": "bb74b9aa6454e85645f92cf5d31e00fa452e10752d14e75d84aec11489eb6fd2",
     "src/nba_lineup_model/web_api/current_season_lineups.py": "7e1d5d4ff6b9a9d8a64b3679a7f972f4094eb60ccabaa1cbed1eeaa5add1ba04",
-    "src/nba_lineup_model/web_api/current_season_serving.py": "b473054cc7f9df9451a3b855b7816bccd6d2579f19ab6515ad67076725c0dc4d",
+    "src/nba_lineup_model/web_api/current_season_serving.py": "961485ea193a72ec1986f00790c9fc4f026998cd4aeb6c23d1925462ac851770",
     "src/nba_lineup_model/web_api/inference.py": "e3579026e354969a80d557cd9a2ad2e16ef434d495a221199aa940884865ebcb",
     "uv.lock": "7911a3565ee1be06545e26aa5c42837ff5a7cc3b7385c2a3363798b5a21f6282"
   },
@@ -238,7 +238,8 @@
     },
     "src/nba_lineup_model/web_api/current_season_serving.py": {
       "accepted_sha256": "57d1340ce19bcbdcbec8682ba52114046c1b75966b0d90449cfdbcdd45a7eb2c",
-      "compatible_sha256": "b473054cc7f9df9451a3b855b7816bccd6d2579f19ab6515ad67076725c0dc4d"
+      "compatible_sha256": "961485ea193a72ec1986f00790c9fc4f026998cd4aeb6c23d1925462ac851770",
+      "reason": "#65 API acceptance repair: expose the exact stored actual_minutes field, including zero, in player trajectory responses. No rating/minutes arithmetic, observation weights, or historical inputs change; legacy formats without this field remain explicitly unfilled."
     },
     "src/nba_lineup_model/web_api/inference.py": {
       "accepted_sha256": "db6f47f43a56c7902144eb189127a9f382cbc329c220ea6427e9d4e7f3c371b3",

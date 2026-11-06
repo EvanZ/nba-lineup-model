@@ -154,6 +154,7 @@ def _publish_day(
                 "team": ["GSW"] * len(games),
                 "opponent": ["LAL"] * len(games),
                 "played": played,
+                "actual_minutes": [34.0 if did_play else 0.0 for did_play in played],
                 "pregame_status": [
                     "Available" if did_play else "Out" for did_play in played
                 ],
@@ -348,6 +349,8 @@ def test_current_catalog_marks_latest_skipped_team_game_as_current(
         "skipped_game",
     ]
     assert points[-1]["played"] is False
+    assert points[-1]["actual_minutes"] == 0.0
+    assert points[-2]["actual_minutes"] == 34.0
     assert points[-1]["pregame_status"] == "Out"
     assert points[-1]["pregame_reason"] == "Rest"
     assert points[-1]["is_current"] is True

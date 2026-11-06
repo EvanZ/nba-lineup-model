@@ -382,6 +382,11 @@ def _player_game_rating_trajectories(
                     "team": str(row.team),
                     "opponent": str(row.opponent),
                     "played": bool(row.played),
+                    # Preserve recorded zero-minute opportunities as well as
+                    # appearances. Older trajectory formats may lack this field;
+                    # their missing values are never invented by the API.
+                    **({'actual_minutes': float(row.actual_minutes)}
+                       if hasattr(row, 'actual_minutes') else {}),
                     "pregame_status": (
                         str(row.pregame_status)
                         if pd.notna(row.pregame_status)
