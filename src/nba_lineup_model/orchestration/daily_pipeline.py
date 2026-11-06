@@ -475,8 +475,8 @@ class CanonicalPipelineSteps:
                 pointer = read_object(c.model_root / "latest.json")
                 source_index = read_object(schedule / INDEX_FILENAME)
                 registry = Path(source_index.get("forecast_registry_root") or c.environment_root / "forecast-registry")
-                refreshed = out / "refreshed-schedule"
-                evidence = refresh_open_selection(source=schedule, target=refreshed,
+                refreshed = out / "forecast-refreshes"
+                evidence = refresh_open_selection(source=schedule, target=refreshed, identity_directory=True,
                     model_bundle=c.model_root / pointer["bundle_path"],
                     forecast_response=_fetch_json(api + "/api/win-projections"),
                     start_date=first_forecast, days_ahead=days_ahead, registry_root=registry,
@@ -488,7 +488,7 @@ class CanonicalPipelineSteps:
                     catalog=c.catalog_path, code=code_identity,
                     environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod")
                 (out / "forecast-refresh.json").write_text(json.dumps(evidence, indent=2) + "\n")
-                schedule = refreshed
+                schedule = Path(evidence["selection_path"])
             else:
                 captures = select_captured_injuries(
                     schedule_root=schedule, observation_root=c.observation_root.resolve(strict=True),
@@ -511,10 +511,23 @@ class CanonicalPipelineSteps:
         )
 
         assert c.artifact_cache_root is not None
+        # Staging is also reached after checkpoint reuse and zero-game/model
+        # reuse paths. Re-resolve the exact selected chains here; never rely
+        # on side effects in stages that a resumed job may legitimately skip.
+        from nba_lineup_model.season.durable_artifact_storage import (
+            publish_selected_data_chain, publish_selected_model_chain,
+        )
+        from nba_lineup_model.season.production_site_release import verify_production_site_release
+        manifest = verify_production_site_release(release)
+        through = date.fromisoformat(manifest["identity"]["evidence_through_date"])
+        publications = []
+        for publish, root in ((publish_selected_data_chain, c.data_root),
+                              (publish_selected_model_chain, c.model_root)):
+            publications.extend(publish(root, through_date=through,
+                cache_root=c.artifact_cache_root, lake_uri=c.artifact_lake_uri))
+        self.durable_dependencies = sorted({item.reference for item in publications})
         if not self.durable_dependencies:
-            raise RuntimeError(
-                "Durable release has no verified daily artifact dependencies"
-            )
+            raise RuntimeError("Durable release has no verified daily artifact dependencies")
         publication = publish_production_release(
             release,
             cache_root=c.artifact_cache_root,

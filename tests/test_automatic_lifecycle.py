@@ -148,6 +148,42 @@ def test_empty_partition_reuses_every_model_component_without_fitting(tmp_path, 
     assert result["identity"]["daily_game_ids"] == []
     assert result["identity"]["cumulative_game_ids"] == ["0022600001"]
 
+    # Exercise the real empty-date model path followed by durable release
+    # staging, including a restarted worker that skipped previous checkpoints.
+    from test_daily_artifacts import DurableFakeS3, LAKE
+    from nba_lineup_model.season import durable_artifact_storage as storage
+    from nba_lineup_model.season import durable_release_storage, production_site_release
+    from nba_lineup_model.season.daily_data_artifact import promote_daily_data_artifact
+    from nba_lineup_model.storage.artifact_store import resolve_storage_manifest
+    from functools import partial
+    client = DurableFakeS3()
+    promote_daily_data_artifact(first.path, root=steps.config.data_root)
+    promote_daily_data_artifact(empty.path, root=steps.config.data_root)
+    steps.config.artifact_lake_uri = LAKE
+    steps.config.artifact_cache_root = tmp_path / "cache"
+    steps.durable_dependencies = []
+    monkeypatch.setattr(storage, "publish_selected_data_chain",
+        partial(storage.publish_selected_data_chain, client=client))
+    monkeypatch.setattr(storage, "publish_selected_model_chain",
+        partial(storage.publish_selected_model_chain, client=client))
+    monkeypatch.setattr(production_site_release, "verify_production_site_release",
+        lambda _: {"identity": {"evidence_through_date": "2026-10-21"}})
+    seen = []
+    def publish(release, *, cache_root, dependencies, lake_uri):
+        assert len(dependencies) == 4  # both dates, both data and model
+        for reference in dependencies:
+            resolve_storage_manifest(reference=reference, cache_root=cache_root,
+                client=client, lake_uri=lake_uri)
+        seen.append(tuple(dependencies))
+        return SimpleNamespace(reference=dependencies[-1])
+    monkeypatch.setattr(durable_release_storage, "publish_production_release", publish)
+    steps.archive_release(tmp_path / "release")
+    initial_puts = len(client.puts)
+    steps.durable_dependencies = []
+    steps.archive_release(tmp_path / "release")
+    assert seen[0] == seen[1]
+    assert len(client.puts) == initial_puts
+
 
 def test_dev_reload_has_no_sudo_and_never_targets_prod(monkeypatch):
     from pathlib import Path

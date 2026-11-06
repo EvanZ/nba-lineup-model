@@ -59,6 +59,7 @@ def require_forecast_model(response: dict, model_bundle: Path, forecast_date: da
 def refresh_open_selection(**kwargs) -> dict:
     """Atomic and retryable: a failed run cannot leave a partial selection."""
     source, target = kwargs["source"], kwargs["target"]
+    identity_directory = kwargs.pop("identity_directory", False)
     from nba_lineup_model.season.official_schedule_runtime import select_captured_injuries
     now = (kwargs.get("now") or datetime.now(UTC)).astimezone(UTC)
     captures = kwargs.get("injury_captures")
@@ -79,8 +80,7 @@ def refresh_open_selection(**kwargs) -> dict:
     model = require_forecast_model(
         kwargs["forecast_response"], kwargs["model_bundle"], kwargs["start_date"]
     )
-    request_id = digest(
-        {
+    request_identity = {
             "source": verify_schedule_selection(source)["selection_map_sha256"],
             "injury_captures": captures,
             "model": model["bundle_sha256"],
@@ -92,24 +92,29 @@ def refresh_open_selection(**kwargs) -> dict:
             "environment": kwargs["environment"],
             "catalog_sha256": file_sha256(kwargs["catalog"]),
         }
-    )
+    request_id = digest(request_identity)
+    if identity_directory:
+        target = target / request_id
+        kwargs["target"] = target
+    def output(result):
+        return {**result, "selection_path": str(target)} if identity_directory else result
     if target.exists():
         index = verify_schedule_selection(target)
         if index.get("refresh_request_id") != request_id:
             raise ValueError("Existing forecast output has different inputs")
-        return index["refresh_result"]
+        return output(index["refresh_result"])
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".forecast-", dir=target.parent) as temporary:
         staged = Path(temporary) / "selection"
         result = _refresh_open_selection(**{**kwargs, "target": staged})
         index = verify_schedule_selection(staged)
-        index.update(refresh_request_id=request_id, refresh_result=result)
+        index.update(refresh_request_id=request_id, refresh_request=request_identity, refresh_result=result)
         index.pop("selection_map_sha256")
         index["selection_map_sha256"] = digest(index)
         _write(staged / INDEX_FILENAME, index)
         verify_schedule_selection(staged)
         staged.rename(target)
-    return result
+    return output(result)
 
 
 def _refresh_open_selection(

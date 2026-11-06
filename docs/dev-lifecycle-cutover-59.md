@@ -146,3 +146,43 @@ to the verified zero-game carry-forward, with post-activation checks still in
 progress at this checkpoint. Independent comparison: all 121 historical
 forecasts and market payloads equal acceptance-59/before.json. Application code
 remains 4a344334236e5708efab8eda653538c64eafcc15. No production pointer moved.
+
+
+## Issue 62 implementation checkpoint (2026-11-05 Pacific)
+
+Classification: pipeline/storage reliability. Work is on EC2 in
+`codex/fix-s3-daily-recovery-62`; no service or release has been changed.
+
+Implemented in the checkout:
+- Release archival re-verifies and registers both exact selected daily chains
+  at staging, including zero-game, existing-model and checkpoint-resume paths.
+  It does not depend on an in-memory list populated by prior callbacks.
+- Forecast refresh outputs use their complete request identity as a directory
+  name. Unchanged retries reuse their output; changed inputs get a distinct
+  directory. Conflicting explicit targets remain errors. The complete request
+  identity is now stored with the selection to make differences auditable.
+- Regression coverage exercises a real zero-game carry-forward and durable
+  data/model publication with an in-memory S3 implementation, then repeats
+  archival after clearing process state and verifies no additional uploads.
+
+Verification: 93 tests passed across daily pipeline, forecast refresh,
+ automatic lifecycle, durable release, daily artifact and active migration
+ suites. The two reproductions run against the original code fail with the
+ original missing-dependency and conflicting-forecast-input errors. These
+ are regression results, not dev acceptance or evidence of live recovery.
+
+Remaining gate: complete S3-backed serving. Existing releases depend on bound
+historical inputs (80 files, approximately 111 MB at inspection), the canonical
+forecast registry (approximately 5.7 MB), and original daily-artifact paths.
+The registry is an active authority: resolving a game after cutoff can write
+its immutable lock selection, and successful publisher activation writes
+publication receipts. Copying it into a frozen release without addressing
+that authority is not a correct recovery implementation.
+
+A contract decision was presented to the user before adding a new dependency
+mapping/registry durability schema: include those missing dependencies and
+resolve legacy references into verified EC2 cache while preserving original
+bytes and the existing cutoff authority. That work is pending approval, not
+implemented. Do not deploy these partial changes or mark #62 complete from
+these test results. No production activation, historical replay, data rewrite,
+collector change, or incident-state edit has occurred.
