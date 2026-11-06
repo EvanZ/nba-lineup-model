@@ -9,6 +9,7 @@ import argparse
 from contextlib import contextmanager
 import json
 import os
+import shlex
 from pathlib import Path
 import socket
 import subprocess
@@ -86,6 +87,17 @@ def candidate_api(release, report_root):
                 process.wait()
 
 
+def verify_dev_service_configuration():
+    environment = subprocess.run(
+        ["systemctl", "show", "gestalt-web-dev.service", "--property=Environment", "--value"],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    settings = dict(item.split("=", 1) for item in shlex.split(environment) if "=" in item)
+    if settings.get("PYTHONDONTWRITEBYTECODE") != "1":
+        raise ValueError("Install the canonical deploy/gestalt-web-dev.service before activation: "
+                         "PYTHONDONTWRITEBYTECODE=1 is required to preserve the sealed code package")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -98,6 +110,8 @@ def main():
         raise ValueError("This command is dev-only; production requires separate approval")
     if config.live_pointer != config.environment_root / "live-release":
         raise ValueError("Unexpected dev live pointer")
+    if args.activate:
+        verify_dev_service_configuration()
     active = read_active_activation(config.live_pointer)
     if active is None:
         raise ValueError("Code deployment requires an existing validated release")

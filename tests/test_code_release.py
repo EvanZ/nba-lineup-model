@@ -119,3 +119,19 @@ def test_code_deploy_checks_exact_approved_game_ids(tmp_path, monkeypatch, serve
             deploy.main()
     report = json.loads((root / "code-release-validation/new/report.json").read_text())
     assert report["status"] == ("validated" if served_ids == ["game-1"] else "failed")
+
+
+@pytest.mark.parametrize("setting", ["", "PYTHONDONTWRITEBYTECODE=0", "PYTHONDONTWRITEBYTECODE=1"])
+def test_code_deploy_requires_service_to_preserve_sealed_code(monkeypatch, setting):
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace
+    spec = importlib.util.spec_from_file_location("code_deployment", Path(__file__).parents[1] / "scripts/deploy_gestalt_code.py")
+    deploy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(deploy)
+    monkeypatch.setattr(deploy.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout="PYTHONUNBUFFERED=1 " + setting))
+    if setting == "PYTHONDONTWRITEBYTECODE=1":
+        deploy.verify_dev_service_configuration()
+    else:
+        with pytest.raises(ValueError, match="preserve the sealed code package"):
+            deploy.verify_dev_service_configuration()
