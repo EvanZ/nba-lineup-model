@@ -185,6 +185,7 @@ def test_schedule_lock_remains_same_across_release_switches(tmp_path, monkeypatc
     [
         "success",
         "mutable_live",
+        "durable_cache",
         "causal_stale",
         "reload_failure",
         "health_failure",
@@ -198,8 +199,15 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
     # Replace the test marker directory with a normal release pointer.
     old = config.pipeline_root / "releases/old"
     new = config.pipeline_root / "releases/new"
+    if scenario == "durable_cache":
+        from dataclasses import replace
+        from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
+        config = replace(config, artifact_lake_uri=DEFAULT_LAKE_URI,
+                         artifact_cache_root=config.environment_root / "artifact-cache")
+        new = config.artifact_cache_root / "releases" / ("runtime_sha256=" + "d" * 64)
+        monkeypatch.setattr(activation, "_select_durable_release", lambda *a, **k: None)
     old.mkdir(parents=True)
-    new.mkdir()
+    new.mkdir(parents=True)
     config.live_pointer.unlink()
     config.live_pointer.symlink_to(old, target_is_directory=True)
     (new / "schedule").mkdir()
@@ -214,6 +222,9 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
         ),
     }
     manifest = {"identity":{"live_pointer":str(config.live_pointer), "evidence_through_date":"2026-10-20"}}
+    if scenario == "durable_cache":
+        manifest["runtime_sha256"] = "d" * 64
+        manifest["identity"].update(durable_serving_sha256="e" * 64, season="2026-27")
     monkeypatch.setattr(activation, "verify_production_site_release", lambda path: manifest)
     monkeypatch.setattr(
         "nba_lineup_model.season.release_publisher.verify_production_site_release",
@@ -261,7 +272,7 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
                 config, report, reload_api=reload_api, verify_api=verify_api
             )
         assert events == []
-    elif scenario in {"success", "mutable_live"}:
+    elif scenario in {"success", "mutable_live", "durable_cache"}:
         activation.activate_daily_release(
             config, report, reload_api=reload_api, verify_api=verify_api
         )
@@ -269,7 +280,7 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
         assert active["release_path"] == new.as_posix()
         assert active["generation"] == 1
         assert report["status"] == "activated"
-        assert events == [("reload", "new"), ("verify", "new")]
+        assert events == [("reload", new.name), ("verify", new.name)]
         return
     else:
         with pytest.raises(
@@ -1064,3 +1075,38 @@ def test_release_archive_uses_verified_dependencies_and_fails_closed(
     )
     with pytest.raises(RuntimeError, match="release archive failed"):
         steps.archive_release(release)
+
+
+@pytest.mark.parametrize("mismatch", ["other_environment", "digest", "not_durable", "symlink", "pointer"])
+def test_activation_rejects_invalid_durable_cache_candidate(tmp_path, monkeypatch, mismatch):
+    from dataclasses import replace
+    from nba_lineup_model.orchestration import daily_activation as activation
+    from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
+    config = config_fixture(tmp_path)
+    config = replace(config, artifact_lake_uri=DEFAULT_LAKE_URI,
+                     artifact_cache_root=config.environment_root / "artifact-cache")
+    release = config.artifact_cache_root / "releases" / ("runtime_sha256=" + "d" * 64)
+    if mismatch == "other_environment":
+        release = tmp_path / "other-env/artifact-cache/releases" / release.name
+    release.mkdir(parents=True)
+    manifest = {"runtime_sha256": "d" * 64, "identity": {
+        "season": "2026-27", "durable_serving_sha256": "e" * 64,
+        "evidence_through_date": "2026-10-20", "live_pointer": str(config.live_pointer)}}
+    if mismatch == "digest":
+        manifest["runtime_sha256"] = "f" * 64
+    elif mismatch == "not_durable":
+        manifest["identity"].pop("durable_serving_sha256")
+    elif mismatch == "symlink":
+        release.rmdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        release.symlink_to(outside, target_is_directory=True)
+    elif mismatch == "pointer":
+        manifest["identity"]["live_pointer"] = str(tmp_path / "other-env/live-release")
+    monkeypatch.setattr(activation, "verify_production_site_release", lambda p: manifest)
+    previous = config.live_pointer.resolve()
+    with pytest.raises(ValueError, match="outside|cache path|different live pointer"):
+        activation.activate_daily_release(config, {
+            "status": "validated_candidate", "runtime_release": str(release),
+            "game_date": "2026-10-20"})
+    assert config.live_pointer.resolve() == previous

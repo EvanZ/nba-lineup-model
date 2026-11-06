@@ -310,3 +310,18 @@ worker deployment still requires verified producing work; corrupt/mismatched
 producing work cannot take the legacy verification path. The focused follow-up
 suite passed 42 tests, including mismatched legacy-input rejection. EC2 evidence:
 `/tmp/gestalt-59-production-provenance-review.json`.
+
+### S3 candidate activation boundary (2026-11-06)
+
+Automatic run `12d113c5-9225-4e1c-be8c-64b5871a5a26` completed candidate
+validation without an OOM (code-service peak 1,064,415,232 bytes with its
+1,101,004,800-byte cap). Publication correctly stopped before pointer movement:
+the restored S3 release was under the configured artifact cache, while activation
+still accepted only the pre-S3 pipeline releases directory. This is a #62 storage
+integration defect within the #59 prerequisite, not a changed model assumption.
+The canonical activation boundary now accepts only the exact environment cache
+path named by the fully verified durable runtime identity. Other environment
+roots, digest mismatches, missing durable inventories, escaped symlinks, and wrong
+live pointers are rejected. Tests covering activation, rollback, storage, and the
+new rejection cases passed: 54 tests. The original failure remains in permanent
+Dagster history; only a real successful retry may recover its incident.
