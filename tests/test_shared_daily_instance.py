@@ -241,3 +241,35 @@ def test_migration_rejects_a_stale_prepared_copy(tmp_path, pipeline):
     execute_manual(dev.home, 'prepare_daily_partition', request(dev))
     with pytest.raises(ValueError, match='Source history changed since'):
         migrate(dev, prod, home, roots)
+
+
+@pytest.mark.parametrize('mismatch', [None, 'season', 'model_track', 'model_code_revision', 'model_configuration_sha256', 'prior'])
+def test_explicit_legacy_verification_never_changes_accepted_inputs(tmp_path, monkeypatch, mismatch):
+    from nba_lineup_model.orchestration.lifecycle import verify_legacy_accepted_configuration
+    live = tmp_path / 'release'
+    live.mkdir()
+    atomic_json(live / 'runtime-manifest.json', {'approved_manifest': {'identity': {'model': {'bundle_path': str(tmp_path / 'model'), 'bundle_sha256': 'selected'}}}})
+    model = {'bundle_sha256': 'selected', 'identity': {'season': '2026-27', 'model_provenance': {
+        'model_version': 'track', 'code_revision': 'revision', 'configuration_sha256': 'configuration', 'prior_sha256': 'prior'}}}
+    monkeypatch.setattr('nba_lineup_model.season.daily_model_artifact.verify_daily_model_artifact', lambda path: model)
+    config_path = tmp_path / 'config.json'
+    config_path.write_text('{}')
+    config = SimpleNamespace(live_pointer=live, season='2026-27', model_track='track',
+        model_code_revision='revision', model_configuration_sha256='configuration',
+        model_configuration_path=config_path, validate=lambda: None)
+    monkeypatch.setattr('nba_lineup_model.orchestration.daily_pipeline.causal_hca_replay_config', lambda c: None)
+    def prior(c, provenance):
+        if mismatch == 'prior':
+            raise ValueError('coupled prior mismatch')
+        return {'rankings.parquet': {'sha256': 'exact'}}
+    monkeypatch.setattr('nba_lineup_model.orchestration.lifecycle.coupled_prior_files', prior)
+    if mismatch and mismatch != 'prior':
+        setattr(config, mismatch, 'different')
+    if mismatch:
+        with pytest.raises(ValueError):
+            verify_legacy_accepted_configuration(config)
+    else:
+        evidence = verify_legacy_accepted_configuration(config)
+        assert evidence['model_sha256'] == 'selected'
+        assert evidence['original_producing_job_record'] == 'unavailable'
+        assert evidence['historical_model_recomputed'] is False

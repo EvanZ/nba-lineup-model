@@ -21,6 +21,37 @@ PORTS = {'dev': 4014, 'prod': 4016}
 HOME = Path('/var/lib/nba-gestalt-daily/dagster')
 
 
+def prepare_configuration(environment: str, package: Path, source: Path, *, verify_legacy: bool = False) -> Path:
+    from dataclasses import replace
+    from nba_lineup_model.orchestration.daily_pipeline import DailyPipelineConfig
+    from nba_lineup_model.orchestration.lifecycle import (
+        bind_accepted_configuration, MissingProducingConfigurationError,
+        verify_legacy_accepted_configuration,
+    )
+    from nba_lineup_model.orchestration.resumable_pipeline import config_identity
+    from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
+    template = DailyPipelineConfig.read(source)
+    if template.environment_root != ROOTS[environment]:
+        raise ValueError('Source configuration belongs to another environment')
+    try:
+        config = bind_accepted_configuration(template)
+    except MissingProducingConfigurationError:
+        if not verify_legacy:
+            raise
+        evidence = verify_legacy_accepted_configuration(template)
+        evidence['source_configuration'] = str(source)
+        evidence['source_configuration_sha256'] = digest(read_object(source))
+        atomic_json(package / f'{environment}-legacy-configuration-verification.json', evidence, immutable=True)
+        config = template
+    config = replace(config, code_root=package / 'code', activate_after_validation=True,
+        observation_root=Path('/var/lib/nba-gestalt/schedule-serving/current'),
+        forecast_injury_inputs_path=None, artifact_lake_uri=DEFAULT_LAKE_URI,
+        artifact_cache_root=config.environment_root / 'artifact-cache')
+    target = package / f'{environment}-shared-config.json'
+    atomic_json(target, config_identity(config), immutable=True)
+    return target
+
+
 def validated_location(environment: str, package: Path, python: Path, config: Path) -> dict:
     if environment not in ROOTS:
         raise ValueError('Unknown daily environment')
@@ -120,12 +151,17 @@ def prepare(output: Path, locations: dict[str, dict], home: Path = HOME) -> dict
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--verify-legacy-production-config', action='store_true')
     for name in ('dev', 'prod'):
         for option in ('package', 'python', 'config'):
             parser.add_argument(f'--{name}-{option}', type=Path, required=True)
     args = parser.parse_args()
-    locations = {name: validated_location(name, getattr(args, name + '_package'),
-        getattr(args, name + '_python'), getattr(args, name + '_config')) for name in ('dev', 'prod')}
+    locations = {}
+    for name in ('dev', 'prod'):
+        package = getattr(args, name + '_package')
+        config = prepare_configuration(name, package, getattr(args, name + '_config'),
+            verify_legacy=name == 'prod' and args.verify_legacy_production_config)
+        locations[name] = validated_location(name, package, getattr(args, name + '_python'), config)
     plan = prepare(args.output, locations)
     print(json.dumps({'plan': str(args.output / 'plan.json'), 'sha256': plan['sha256'],
                       'installed': False}, indent=2))

@@ -296,3 +296,17 @@ ran a growpart dry run, expanded partition 1, and grew its ext4 filesystem onlin
 The filesystem now reports 58 GiB total, 30 GiB available, and 49% usage.
 Both websites and all collection services remained active with unchanged restart counts. Shared orchestration, data catch-up, full coverage/UI
 acceptance, and the separately approved production cutover are still outstanding.
+
+Production bootstrap provenance: the current production model is the accepted
+November 1 artifact `2fb91ebfcb125162bb35fad27111eaba4b20c8eb95d0505cacf10a2ec231dba0`,
+created before the canonical producing-work records. Its existing pipeline
+configuration verifies against model revision `1459c83f82b1fa50d901048e65bb39c9fd678204`,
+settings checksum `558385560bbb2b2d518bceb847468e2f87900a33964191f54a4ecc2bd07534c3`,
+and complete coupled prior `2d92682a63b485d1e47111a31e42b2e2437d866cb97ba73318822feb057c693e`.
+The shared preparer has an explicit `--verify-legacy-production-config` mode that
+checks those exact accepted inputs and records a new verification document. It
+never fabricates the absent original job record or recomputes the model. Ordinary
+worker deployment still requires verified producing work; corrupt/mismatched
+producing work cannot take the legacy verification path. The focused follow-up
+suite passed 42 tests, including mismatched legacy-input rejection. EC2 evidence:
+`/tmp/gestalt-59-production-provenance-review.json`.
