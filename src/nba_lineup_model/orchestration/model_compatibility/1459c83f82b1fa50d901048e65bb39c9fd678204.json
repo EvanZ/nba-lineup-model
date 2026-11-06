@@ -77,7 +77,7 @@
     "uv.lock": "81e019911c305bf847f995b23c87e9077905e379f0dd5f95c001a91ccf26a298"
   },
   "accepted_revision": "1459c83f82b1fa50d901048e65bb39c9fd678204",
-  "approval": "User approved precise compatibility checks and loader/storage equivalence testing on 2026-11-05; no model mathematics or historical replay change. On 2026-11-06 the user explicitly approved the two requirements-file equivalence review and resuming catch-up with existing model dependency versions.",
+  "approval": "User approved precise compatibility checks and loader/storage equivalence testing on 2026-11-05; no model mathematics or historical replay change. On 2026-11-06 the user explicitly approved the two requirements-file equivalence review and resuming catch-up with existing model dependency versions. On 2026-11-06 the user explicitly approved the exact official NBA Christopher Cenac Jr. alias for player 1643416, its regression test and compatibility review, and rerunning November 4.",
   "compatible_files": {
     "deploy/orchestration-requirements.txt": "e6989240d881881609953d327a8156afc378c35d6841ab876932d8f095119cc1",
     "deploy/web-requirements.txt": "b3ccfcc8e4861cb25e78275f7fd211d3522d8e8d4d1bb17c66364f6e5d9204f1",
@@ -138,7 +138,7 @@
     "src/nba_lineup_model/season/daily_artifact_common.py": "a35a92fff2251a58c479da92bef74b8f9f9ade3c7a26704166f8c1b3734b238a",
     "src/nba_lineup_model/season/daily_data_artifact.py": "a9bcc310561486330ddaf6cf52962748bb753eb1702bcbc0d8325a01796f0e74",
     "src/nba_lineup_model/season/daily_model_artifact.py": "852eb7bc4651830caf53445f3ecab0b7adef28eaad4e9b19a64512389df77bb8",
-    "src/nba_lineup_model/season/daily_model_replay.py": "17687a28d050266457a38bf3762302bec33613209b60c1af4ec45c3135c9d3c7",
+    "src/nba_lineup_model/season/daily_model_replay.py": "3cb771995014ededf19bf34efd34d7e6ba9aafc114870fb81837fb8822bcaa90",
     "src/nba_lineup_model/season/fetch.py": "02b7257a29664dbc030352b0421d736988d6b7a631d37bd65bedf532e66e02f1",
     "src/nba_lineup_model/season/layout.py": "14b043483bdc0035ad91fefb8579b2d4619875eab233ce8b29bb210ce48e669a",
     "src/nba_lineup_model/season/process.py": "cdf22dbcbe2cef300d75cece42866c4732283affed94e49251c4b7d9e227c0f9",
@@ -182,6 +182,12 @@
     "src/nba_lineup_model/season/daily_data_artifact.py": {
       "accepted_sha256": "3f7e7bf240d90a0372824436e1ec955f1379957a11c0463e30ba50034c85a06e",
       "compatible_sha256": "a9bcc310561486330ddaf6cf52962748bb753eb1702bcbc0d8325a01796f0e74"
+    },
+    "src/nba_lineup_model/season/daily_model_replay.py": {
+      "accepted_sha256": "17687a28d050266457a38bf3762302bec33613209b60c1af4ec45c3135c9d3c7",
+      "compatible_sha256": "3cb771995014ededf19bf34efd34d7e6ba9aafc114870fb81837fb8822bcaa90",
+      "previous_compatible_sha256": "17687a28d050266457a38bf3762302bec33613209b60c1af4ec45c3135c9d3c7",
+      "reason": "Exact official NBA injury-name alias, conditional on NBA ID 1643416 and canonical Chris Cenac name; resolved observations keyed by team and canonical ID. No fuzzy matching or changed model mathematics. Read-only comparison of all 14 accepted nonempty dates / 107 games / 3676 observations found zero differences. The 14-game November 4 slate / 488 observations matches the old resolver when only the approved spelling is supplied in a private in-memory test copy. Original source names and artifacts are preserved; no historical forecast replacement."
     },
     "src/nba_lineup_model/web_api/current_season_serving.py": {
       "accepted_sha256": "57d1340ce19bcbdcbec8682ba52114046c1b75966b0d90449cfdbcdd45a7eb2c",

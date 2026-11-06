@@ -793,8 +793,16 @@ def _minutes_observations(
 
     def add_identity(team: str, player_name: object, player_id: int) -> None:
         normalized_name = _normalize_name(player_name)
-        identity.setdefault((team, normalized_name), set()).add(player_id)
-        identity_by_name.setdefault(normalized_name, set()).add((team, player_id))
+        names = {normalized_name}
+        # Official NBA injury PDF (2026-11-04, MIL@BOS) uses Christopher;
+        # official liveData identifies Chris Cenac Jr. as NBA player 1643416.
+        # Bind this reviewed alias to that ID and canonical name, never to a
+        # general Chris/Christopher substitution or a fuzzy name match.
+        if player_id == 1643416 and normalized_name == "chriscenac":
+            names.add("christophercenac")
+        for name in names:
+            identity.setdefault((team, name), set()).add(player_id)
+            identity_by_name.setdefault(name, set()).add((team, player_id))
 
     for row in state.itertuples(index=False):
         add_identity(str(row.team), row.player_name, int(row.player_id))
@@ -826,7 +834,7 @@ def _minutes_observations(
             team: str(team_reports.get(team, {}).get("status", "not_yet_submitted"))
             for team in game_injuries
         }
-        mapped_report: dict[tuple[str, str], dict[str, object]] = {}
+        mapped_report: dict[tuple[str, int], dict[str, object]] = {}
         for report in player_reports:
             team = str(report.get("team", ""))
             normalized_name = _normalize_name(report.get("player_name"))
@@ -847,7 +855,7 @@ def _minutes_observations(
                 normalized = dict(report)
                 normalized["team"] = team
                 normalized["player_id"] = candidates[0]
-                mapped_report[key] = normalized
+                mapped_report[(team, candidates[0])] = normalized
                 game_injuries.setdefault(team, []).append(normalized)
             else:
                 identity_errors.append(
@@ -884,7 +892,7 @@ def _minutes_observations(
             for player, regulated in zip(team_players, equivalent, strict=True):
                 player_id = int(player["player_id"])
                 seen.add(player_id)
-                report = mapped_report.get((team, _normalize_name(player["player_name"])), {})
+                report = mapped_report.get((team, player_id), {})
                 minutes = float(player.get("minutes", 0.0))
                 team_report_status = report_status.get(team, "not_yet_submitted")
                 classification = _classification(
