@@ -64,3 +64,21 @@ def test_website_registry_writes_are_conditional_and_never_touch_disk(monkeypatc
     with pytest.raises(ValueError, match='Conflicting immutable S3 registry publication'):
         reader.put_registry(path, b'{"forecast":"replacement"}\n')
     assert len(store.objects) == 1
+
+
+def test_both_daily_report_producers_publish_their_exact_status(tmp_path, monkeypatch):
+    import json
+    from nba_lineup_model.storage import operational_reports
+    from nba_lineup_model.orchestration.daily_pipeline import _report
+    from nba_lineup_model.orchestration.daily_work import write_work_report
+    calls=[]
+    monkeypatch.setattr(operational_reports, 'publish', lambda uri,kind,files: calls.append((uri,kind,files)))
+    status={'game_date':'2026-11-04','status':'failed','stage':'validation','error':'Actual failure'}
+    _report(tmp_path, status, s3_uri='s3://test/reports/dev')
+    assert json.loads(calls[-1][2]['report.json'])==status
+    assert calls[-1][2]['report.html']==(tmp_path/'report.html').read_text()
+    write_work_report(tmp_path, {'work_id':'immutable-work'}, status, [], s3_uri='s3://test/reports/dev')
+    assert len(calls)==2
+    assert json.loads(calls[-1][2]['report.json'])==status
+    assert calls[-1][2]['report.html']==(tmp_path/'report.html').read_text()
+    assert all(c[:2]==('s3://test/reports/dev','daily-pipeline') for c in calls)
