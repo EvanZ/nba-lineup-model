@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 from pathlib import Path
 
@@ -18,13 +19,25 @@ def _main_body(document: str, *, label: str) -> str:
     return match.group("body").strip()
 
 
-def read_data_quality_status(root: Path) -> dict[str, object]:
+def read_data_quality_status(root: Path, *, files=None) -> dict[str, object]:
     """Return the current incident state used by the report and site indicator."""
 
     pointer_path = root / "latest.json"
     state_path = root / "alert-state.json"
-    pointer = json.loads(pointer_path.read_text()) if pointer_path.is_file() else {}
-    state = json.loads(state_path.read_text()) if state_path.is_file() else {}
+    if files is None:
+        from nba_lineup_model.storage import website_data
+        uri = os.environ.get('GESTALT_OPERATIONAL_REPORTS_S3_URI')
+        if uri:
+            from nba_lineup_model.storage.operational_reports import read
+            files = read(uri, 'data-quality')
+        elif website_data.active():
+            raise ValueError('Durable website reports require an S3 source')
+    if files is not None:
+        pointer = json.loads(files['latest.json'])
+        state = json.loads(files['alert-state.json'])
+    else:
+        pointer = json.loads(pointer_path.read_text()) if pointer_path.is_file() else {}
+        state = json.loads(state_path.read_text()) if state_path.is_file() else {}
     active = [
         dict(value) for value in dict(state.get("active") or {}).values() if isinstance(value, dict)
     ]

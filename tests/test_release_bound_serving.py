@@ -316,6 +316,6 @@ def test_schedule_view_serializes_like_existing_endpoints_and_shares_snapshot(
     assert response.json()["forecast"]["players"][0]["unavailable_stat"] is None
     assert len(response.json()["calendar"]) == 7
     assert response.json()["day"]["games"] == board["games"]
-    assert captured == [snapshot]
+    assert captured == [snapshot, snapshot]  # One consistent observation set per request.
     assert response.headers["X-Gestalt-Observations"] == snapshot.observation_id
     assert client.get("/api/schedule-view?date=2026-02-31").status_code == 422

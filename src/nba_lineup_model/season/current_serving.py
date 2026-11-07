@@ -7,6 +7,8 @@ and advances a tiny local pointer only after the immutable bundle is complete.
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import hashlib
 import html
 import json
@@ -306,15 +308,15 @@ def publish_serving_bundle(
 
     rating_path = Path(rating_state_path)
     minutes_path = Path(minutes_state_path)
-    rating_state = pd.read_parquet(rating_path)
-    minutes_state = pd.read_parquet(minutes_path)
+    rating_state = data_io.parquet(rating_path)
+    minutes_state = data_io.parquet(minutes_path)
     trajectory_path = (
         Path(rating_trajectory_path) if rating_trajectory_path is not None else None
     )
     if (trajectory_path is None) != (rating_trajectory_source_uri is None):
         raise ValueError("Rating trajectory path and source URI must be provided together")
     rating_trajectory = (
-        pd.read_parquet(trajectory_path) if trajectory_path is not None else None
+        data_io.parquet(trajectory_path) if trajectory_path is not None else None
     )
     if rating_trajectory is not None:
         _validate_rating_trajectory(
@@ -439,7 +441,7 @@ def publish_serving_bundle(
             / f"bundle_sha256={bundle_sha}"
         )
         target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
+        if data_io.exists(target):
             shutil.rmtree(staging)
             existing = verify_serving_bundle(target)
             return PublishedServingBundle(target, False, existing)
@@ -455,7 +457,7 @@ def verify_serving_bundle(path: Path | str) -> dict[str, Any]:
     """Validate an immutable serving bundle and return its manifest."""
 
     root = Path(path)
-    manifest = json.loads((root / MANIFEST_FILENAME).read_text(encoding="utf-8"))
+    manifest = json.loads(data_io.read_text(root / MANIFEST_FILENAME, encoding="utf-8"))
     identity = manifest.get("identity")
     if not isinstance(identity, dict):
         raise ValueError("Serving manifest identity is missing")
@@ -476,11 +478,11 @@ def verify_serving_bundle(path: Path | str) -> dict[str, Any]:
         expected = files.get(filename)
         if not isinstance(expected, str) or _file_sha256(root / filename) != expected:
             raise ValueError(f"Serving bundle file checksum changed: {filename}")
-    state = pd.read_parquet(root / SERVING_STATE_FILENAME)
+    state = data_io.parquet(root / SERVING_STATE_FILENAME)
     _validate_serving_frame(state, identity)
     if RATING_TRAJECTORY_FILENAME in files:
         _validate_rating_trajectory(
-            pd.read_parquet(root / RATING_TRAJECTORY_FILENAME),
+            data_io.parquet(root / RATING_TRAJECTORY_FILENAME),
             season=str(identity["season"]),
             rating_state=state,
             allow_legacy=True,
@@ -546,8 +548,8 @@ def promote_serving_bundle(
 ) -> tuple[dict[str, Any], bool]:
     """Atomically advance the local latest pointer after full validation."""
 
-    root_path = Path(root).resolve()
-    bundle = Path(bundle_path).resolve()
+    root_path = data_io.resolve(Path(root))
+    bundle = data_io.resolve(Path(bundle_path))
     try:
         relative = bundle.relative_to(root_path)
     except ValueError as error:
@@ -565,8 +567,8 @@ def promote_serving_bundle(
         "promoted_at": timestamp,
     }
     latest_path = root_path / "latest.json"
-    if latest_path.is_file():
-        current = json.loads(latest_path.read_text(encoding="utf-8"))
+    if data_io.is_file(latest_path):
+        current = json.loads(data_io.read_text(latest_path, encoding="utf-8"))
         if current.get("bundle_sha256") == pointer["bundle_sha256"]:
             resolve_pointer(root_path, current)
             return current, False
@@ -574,7 +576,7 @@ def promote_serving_bundle(
         _atomic_write_json(root_path / "previous.json", current)
     _atomic_write_json(latest_path, pointer)
     history = root_path / "pointer_history" / f"{pointer['bundle_sha256']}.json"
-    if not history.exists():
+    if not data_io.exists(history):
         _atomic_write_json(history, pointer)
     return pointer, True
 
@@ -582,13 +584,13 @@ def promote_serving_bundle(
 def rollback_serving_bundle(*, root: Path | str) -> dict[str, Any]:
     """Swap latest with the previously promoted, still-immutable bundle."""
 
-    root_path = Path(root).resolve()
+    root_path = data_io.resolve(Path(root))
     latest_path = root_path / "latest.json"
     previous_path = root_path / "previous.json"
-    if not latest_path.is_file() or not previous_path.is_file():
+    if not data_io.is_file(latest_path) or not data_io.is_file(previous_path):
         raise ValueError("Both latest and previous serving pointers are required")
-    latest = json.loads(latest_path.read_text(encoding="utf-8"))
-    previous = json.loads(previous_path.read_text(encoding="utf-8"))
+    latest = json.loads(data_io.read_text(latest_path, encoding="utf-8"))
+    previous = json.loads(data_io.read_text(previous_path, encoding="utf-8"))
     resolve_pointer(root_path, latest)
     resolve_pointer(root_path, previous)
     _atomic_write_json(previous_path, latest)
@@ -597,8 +599,8 @@ def rollback_serving_bundle(*, root: Path | str) -> dict[str, Any]:
 
 
 def resolve_latest_bundle(root: Path | str) -> Path:
-    root_path = Path(root).resolve()
-    latest = json.loads((root_path / "latest.json").read_text(encoding="utf-8"))
+    root_path = data_io.resolve(Path(root))
+    latest = json.loads(data_io.read_text(root_path / "latest.json", encoding="utf-8"))
     return resolve_pointer(root_path, latest)
 
 
@@ -608,9 +610,9 @@ def resolve_pointer(root: Path, pointer: dict[str, Any]) -> Path:
     raw_path = pointer.get("bundle_path")
     if not isinstance(raw_path, str) or not raw_path:
         raise ValueError("Serving pointer path is missing")
-    target = (root / raw_path).resolve()
+    target = data_io.resolve(root / raw_path)
     try:
-        target.relative_to(root.resolve())
+        target.relative_to(data_io.resolve(root))
     except ValueError as error:
         raise ValueError("Serving pointer escapes its root") from error
     manifest = verify_serving_bundle(target)
@@ -947,7 +949,7 @@ def _canonical_json(value: object) -> bytes:
 
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    with data_io.open_file(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()

@@ -6,6 +6,8 @@ already captured inputs. It does not poll providers or train player models.
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import json
 import os
 import tempfile
@@ -37,7 +39,9 @@ class ForecastRegistry:
         if not identity or Path(identity).name != identity or identity in {".", ".."}:
             raise ValueError("Invalid registry identity")
         path = self.root / category / f"{identity}.json"
-        if not path.parent.exists():
+        if data_io.active() is not None:
+            return data_io.active().put_registry(path, canonical_json(value) + b"\n")
+        if not data_io.exists(path.parent):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.parent.chmod(0o755)
         data = canonical_json(value) + b"\n"
@@ -53,14 +57,14 @@ class ForecastRegistry:
                 os.fsync(handle.fileno())
             # A durable registry must publish before a record becomes locally
             # eligible. A failed S3 write cannot create a successful receipt.
-            if path.exists() and path.read_bytes() != data:
+            if data_io.exists(path) and data_io.read_bytes(path) != data:
                 raise ValueError(f"Immutable registry entry changed: {category}:{identity}")
             from nba_lineup_model.season.durable_forecast_registry import publish_record
             publish_record(self.root, f"{category}/{identity}.json", temporary)
             try:
                 os.link(temporary, path)
             except FileExistsError:
-                if path.read_bytes() != data:
+                if data_io.read_bytes(path) != data:
                     raise ValueError(
                         f"Immutable registry entry changed: {category}:{identity}"
                     ) from None
@@ -108,18 +112,20 @@ class ForecastRegistry:
                 raise ValueError(f"Forecast component checksum mismatch: {key}")
         record = {"manifest": forecast.model_dump(mode="json"), "payload": payload}
         record["record_sha256"] = digest(record)
-        with publisher_lock(self.root):
+        with (data_io.active().registry_lock if data_io.active() is not None else publisher_lock(self.root)):
             self._put("versions", forecast.forecast_id, record)
         return forecast.forecast_id
 
     def ensure_receipts_readable(self) -> int:
         """Migrate old root-only receipts without changing a single content byte."""
+        if data_io.active() is not None:
+            return 0  # S3 objects have no local file permissions to migrate.
         changed = 0
-        with publisher_lock(self.root):
-            for path in sorted((self.root / "receipts").glob("*.json")):
+        with (data_io.active().registry_lock if data_io.active() is not None else publisher_lock(self.root)):
+            for path in sorted(data_io.glob(self.root / "receipts", "*.json")):
                 if path.is_symlink():
                     raise ValueError("Publication receipt must not be a symlink")
-                before = path.read_bytes()
+                before = data_io.read_bytes(path)
                 receipt = PublicationReceipt.model_validate_json(before)
                 if receipt.receipt_id != path.stem:
                     raise ValueError("Publication receipt filename differs from identity")
@@ -127,7 +133,7 @@ class ForecastRegistry:
                 if path.stat().st_mode & 0o777 != 0o644:
                     path.chmod(0o644)
                     changed += 1
-                if path.read_bytes() != before:
+                if data_io.read_bytes(path) != before:
                     raise ValueError("Publication receipt changed during permission migration")
         return changed
 
@@ -143,11 +149,11 @@ class ForecastRegistry:
             raise ValueError("Publication receipt does not match the verified loaded forecast")
         if receipt.published_at < version.computed_at:
             raise ValueError("Publication receipt cannot precede computation")
-        with publisher_lock(self.root):
+        with (data_io.active().registry_lock if data_io.active() is not None else publisher_lock(self.root)):
             self._put("receipts", receipt.receipt_id, receipt.model_dump(mode="json"))
 
     def record_market(self, snapshot: MarketSnapshotManifest, payload: dict[str, Any]) -> None:
-        with publisher_lock(self.root):
+        with (data_io.active().registry_lock if data_io.active() is not None else publisher_lock(self.root)):
             record = {"manifest": snapshot.model_dump(mode="json"), "payload": payload}
             record["record_sha256"] = digest(record)
             self._put("markets", snapshot.snapshot_id, record)
@@ -197,12 +203,15 @@ class ForecastRegistry:
                 "environment": environment,
             }
         )
-        with publisher_lock(self.root):
+        with (data_io.active().registry_lock if data_io.active() is not None else publisher_lock(self.root)):
             existing = self.root / "selections" / f"{key}.json"
-            if existing.is_file():
+            if data_io.active() is not None and not data_io.is_file(existing):
+                registry = data_io.active().registries[str(self.root)]
+                data_io.active().refresh_registry(registry)
+            if data_io.is_file(existing):
                 return read_object(existing)
             if scheduling.event == "suspended":
-                matches = [read_object(p) for p in (self.root / "selections").glob("*.json")]
+                matches = [read_object(p) for p in data_io.glob(self.root / "selections", "*.json")]
                 prior = next(
                     (
                         v
@@ -228,14 +237,14 @@ class ForecastRegistry:
                     ForecastVersionManifest.model_validate_json(
                         json.dumps(read_object(p)["manifest"])
                     )
-                    for p in (self.root / "versions").glob("*.json")
+                    for p in data_io.glob(self.root / "versions", "*.json")
                 )
                 receipts = tuple(
-                    PublicationReceipt.model_validate_json(p.read_bytes())
-                    for p in (self.root / "receipts").glob("*.json")
+                    PublicationReceipt.model_validate_json(data_io.read_bytes(p))
+                    for p in data_io.glob(self.root / "receipts", "*.json")
                 )
                 snapshots = tuple(
-                    self.market(p.stem)[0] for p in (self.root / "markets").glob("*.json")
+                    self.market(p.stem)[0] for p in data_io.glob(self.root / "markets", "*.json")
                 )
                 forecast = select_authoritative_forecast(
                     selection_id=key,
@@ -389,7 +398,7 @@ def record_verified_release_forecasts(
     through a post-tip recovery.
     """
     index_path = release / "selected-schedule/forecast-selections.json"
-    if not index_path.is_file():
+    if not data_io.is_file(index_path):
         return
     index = read_object(index_path)
     registry_root = index.get("forecast_registry_root")
@@ -410,8 +419,8 @@ def record_verified_release_forecasts(
             {"operation": operation_id, "forecast": forecast_id, "environment": environment}
         )
         existing = registry.root / "receipts" / f"{receipt_id}.json"
-        if existing.is_file():
-            receipt = PublicationReceipt.model_validate_json(existing.read_bytes())
+        if data_io.is_file(existing):
+            receipt = PublicationReceipt.model_validate_json(data_io.read_bytes(existing))
             if (
                 receipt.forecast_id != forecast_id
                 or receipt.publisher_generation != generation

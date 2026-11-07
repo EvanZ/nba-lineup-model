@@ -1163,6 +1163,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         event_path,
         {"events": notifications, "updated_at": state["updated_at"]},
     )
+    import os
+    report_uri = os.environ.get('GESTALT_OPERATIONAL_REPORTS_S3_URI')
+    if report_uri:
+        from nba_lineup_model.storage.operational_reports import publish
+        publish(report_uri, 'data-quality', {
+            'report.html': (bundle / 'report.html').read_text(),
+            'report.json': (bundle / 'report.json').read_text(),
+            'latest.json': (args.output_root / 'latest.json').read_text(),
+            'alert-state.json': state_path.read_text(),
+        })
     print(
         json.dumps(
             {

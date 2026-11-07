@@ -61,6 +61,8 @@ class DailyPipelineConfig:
     activate_after_validation: bool = False
     historical_runtime_root: Path | None = None
     observation_root: Path | None = None
+    observation_s3_uri: str | None = None
+    operational_reports_s3_uri: str | None = None
     preserve_schedule_selections: bool = False
     forecast_date: str | None = None
     forecast_injury_inputs_path: Path | None = None
@@ -199,7 +201,7 @@ def schedule_lock(root: Path):
         yield
 
 
-def _report(root: Path, payload: dict) -> None:
+def _report(root: Path, payload: dict, *, s3_uri=None) -> None:
     root.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, indent=2, default=str)
     temporary = root / ".report.json.tmp"
@@ -209,6 +211,9 @@ def _report(root: Path, payload: dict) -> None:
     temporary = root / ".report.html.tmp"
     temporary.write_text(page)
     temporary.replace(root / "report.html")
+    if s3_uri:
+        from nba_lineup_model.storage.operational_reports import publish
+        publish(s3_uri, 'daily-pipeline', {'report.json': text + '\n', 'report.html': page})
 
 
 def require_clean_code_revision(code_root: Path) -> str:
@@ -304,6 +309,11 @@ class CanonicalPipelineSteps:
             "GESTALT_SITE_RELEASE_ROOT": str(candidate / "site-releases"),
             "GESTALT_PRESEASON_RANKINGS_PATH": str(config.preseason_rankings_path),
             "GESTALT_PRESEASON_PROFILES_PATH": str(config.preseason_profiles_path)}
+        self.env['GESTALT_DAILY_MODEL_ROOT'] = str(config.model_root)
+        if config.observation_s3_uri:
+            self.env['GESTALT_OBSERVATION_S3_URI'] = config.observation_s3_uri
+            self.env['GESTALT_OBSERVATION_SEASON'] = config.season
+            self.env['GESTALT_OBSERVATION_SOURCE_RELEASE'] = str(config.live_pointer)
 
     def select_reconciled_catalog(self, target: date) -> tuple[Path, Path]:
         c=self.config
@@ -594,11 +604,18 @@ class CanonicalPipelineSteps:
         package = (verify_sealed_code_package(code_root) if (code_root / "code").exists()
             else materialize_sealed_code_package(c.code_root, code_root, expected_revision=self.revision))
         schedule = self.refresh_forecast_schedule(target, code_identity=package["identity"])
+        from nba_lineup_model.season.durable_observations import capture, select_sources
+        from nba_lineup_model.season.serving_selection import verify_schedule_selection
+        if not c.observation_s3_uri:
+            raise ValueError('Daily publication requires the configured official observation S3 source')
+        snapshot = capture(None, list(verify_schedule_selection(schedule)['dates']),
+            uri=c.observation_s3_uri, season=c.season,
+            sources=select_sources(verify_schedule_selection(schedule)['dates'], uri=c.observation_s3_uri, season=c.season, release_root=c.live_pointer))
         with self.api() as api:
             validation = collect_api_validation(api, evidence_date=target.isoformat(), daily_model_root=c.model_root)
-            publish_dev_site_release(daily_data_root=c.data_root, daily_model_root=c.model_root, serving_root=out / "serving", lineups_root=out / "lineups", schedule_state_dir=schedule, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_revision=self.revision, api_validation=validation, output_root=out / "site-releases")
+            publish_dev_site_release(daily_data_root=c.data_root, daily_model_root=c.model_root, serving_root=out / "serving", lineups_root=out / "lineups", schedule_state_dir=schedule, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_revision=self.revision, api_validation=validation, output_root=out / "site-releases", observations=snapshot)
         self.archive_daily_inputs(target)
-        release = stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=schedule, schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod", artifact_lake_uri=c.artifact_lake_uri, artifact_cache_root=c.artifact_cache_root, reconciliation_root=c.reconciliation_root)
+        release = stage_production_site_release(dev_site_release_root=out / "site-releases", serving_root=out / "serving", lineups_root=out / "lineups", schedule_snapshot_root=schedule, schedule_overlay_path=c.schedule_root, catalog_path=c.catalog_path, preseason_rankings_path=c.preseason_rankings_path, preseason_profiles_path=c.preseason_profiles_path, code_root=c.code_root, frontend_root=c.frontend_root, output_root=c.pipeline_root / "releases", live_pointer=c.live_pointer, historical_runtime_root=c.historical_runtime_root, observation_root=c.observation_root, environment="dev" if c.environment_root.name == "nba-gestalt-dev" else "prod", artifact_lake_uri=c.artifact_lake_uri, artifact_cache_root=c.artifact_cache_root, reconciliation_root=c.reconciliation_root, observation_s3_uri=c.observation_s3_uri)
         self.archive_release(release)
         if c.artifact_lake_uri is not None:
             from nba_lineup_model.season.durable_release_storage import production_release_reference, restore_production_release
@@ -651,7 +668,7 @@ def prepare_daily_release(
         except BlockingIOError as error:
             raise RuntimeError("Another daily pipeline is already running") from error
         try:
-            _report(report_root, report)
+            _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
             require_complete_slate(config, target)
             revision = require_clean_code_revision(config.code_root)
             candidate = config.pipeline_root / "candidates" / f"{target}-{uuid4().hex}"
@@ -670,11 +687,11 @@ def prepare_daily_release(
             steps.approved_historical_model_replay_from = approved_historical_model_replay_from
             for name in ("data", "model", "serving", "lineups", "validate_and_stage"):
                 report["stage"] = name
-                _report(report_root, report)
+                _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
                 result = getattr(steps, name)(target) if name in {"data", "model", "validate_and_stage"} else getattr(steps, name)()
                 report["completed_stages"].append(name)
             report.update(status="validated_candidate", runtime_release=str(result), stage="awaiting_activation")
-            _report(report_root, report)
+            _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
             if config.activate_after_validation:
                 from nba_lineup_model.orchestration.daily_activation import activate_daily_release
                 activate_daily_release(config, report)
@@ -682,5 +699,5 @@ def prepare_daily_release(
         except BaseException as error:
             if report.get("status") not in {"activation_failed", "rollback_failed"}:
                 report.update(status="failed", error=f"{type(error).__name__}: {error}")
-            _report(report_root, report)
+            _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
             raise

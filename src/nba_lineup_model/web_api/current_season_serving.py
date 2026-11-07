@@ -7,6 +7,8 @@ preseason catalog, while retaining the preseason values for auditability.
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import hashlib
 import json
 import os
@@ -53,26 +55,26 @@ def load_current_season_serving_catalog(
     """
 
     configured_bundle = bundle_path or os.environ.get("GESTALT_CURRENT_SEASON_SERVING_BUNDLE")
-    root_path = Path(
+    root_path = data_io.resolve(Path(
         root
         or os.environ.get(
             "GESTALT_CURRENT_SEASON_SERVING_ROOT",
             DEFAULT_CURRENT_SEASON_SERVING_ROOT,
         )
-    ).resolve()
+    ))
     if configured_bundle:
-        latest_bundle = Path(configured_bundle).resolve()
-        if not latest_bundle.is_dir():
+        latest_bundle = data_io.resolve(Path(configured_bundle))
+        if not data_io.is_dir(latest_bundle):
             raise FileNotFoundError(f"Configured current-season bundle is missing: {latest_bundle}")
     else:
-        if not (root_path / "latest.json").is_file():
+        if not data_io.is_file(root_path / "latest.json"):
             return None
         latest_bundle = resolve_latest_bundle(root_path)
 
     latest_manifest = verify_serving_bundle(latest_bundle)
     identity = latest_manifest["identity"]
     season = str(identity["season"])
-    latest_state = pd.read_parquet(latest_bundle / SERVING_STATE_FILENAME)
+    latest_state = data_io.parquet(latest_bundle / SERVING_STATE_FILENAME)
     rankings = _overlay_current_state(preseason_rankings, latest_state, identity)
     history_paths = _promoted_bundle_history(
         root_path,
@@ -84,12 +86,12 @@ def load_current_season_serving_catalog(
     trajectories = (
         _player_game_rating_trajectories(
             rankings,
-            pd.read_parquet(trajectory_path),
+            data_io.parquet(trajectory_path),
             current_bundle_sha=str(latest_manifest["bundle_sha256"]),
             evidence_through_date=str(identity["evidence_through_date"]),
             as_of_cutoff_time=str(identity["as_of_cutoff_time"]),
         )
-        if trajectory_path.is_file()
+        if data_io.is_file(trajectory_path)
         else _rating_trajectories(
             rankings,
             history_paths,
@@ -240,10 +242,10 @@ def _promoted_bundle_history(
     if explicit_bundle:
         return [latest_bundle]
     candidates: dict[str, tuple[str, Path]] = {}
-    pointer_paths = list((root / "pointer_history").glob("*.json"))
-    pointer_paths.extend(path for path in (root / "latest.json",) if path.is_file())
+    pointer_paths = list(data_io.glob(root / "pointer_history", "*.json"))
+    pointer_paths.extend(path for path in (root / "latest.json",) if data_io.is_file(path))
     for pointer_path in pointer_paths:
-        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+        pointer = json.loads(data_io.read_text(pointer_path, encoding="utf-8"))
         bundle = resolve_pointer(root, pointer)
         manifest = verify_serving_bundle(bundle)
         identity = manifest["identity"]
@@ -304,7 +306,7 @@ def _rating_trajectories(
         if cutoff <= last_cutoff:
             raise ValueError("Promoted serving trajectory is not strictly chronological")
         last_cutoff = cutoff
-        state = pd.read_parquet(bundle / SERVING_STATE_FILENAME)
+        state = data_io.parquet(bundle / SERVING_STATE_FILENAME)
         for row in state.itertuples(index=False):
             player_id = int(row.player_id)
             if player_id not in trajectories:

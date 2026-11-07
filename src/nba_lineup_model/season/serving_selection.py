@@ -7,6 +7,8 @@ coverage by a display label.
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import copy
 import hashlib
 import json
@@ -41,7 +43,7 @@ def digest(value: Any) -> str:
 
 
 def read_object(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_bytes())
+    value = json.loads(data_io.read_bytes(path))
     if not isinstance(value, dict):
         raise ValueError(f"Expected an object: {path}")
     return value
@@ -77,11 +79,11 @@ def build_schedule_selection(
     from nba_lineup_model.web_api.win_projections import read_schedule_day
 
     require_clean_artifact_sources(source)
-    if target.exists():
+    if data_io.exists(target):
         raise ValueError("Selection output must be new; existing history is immutable")
     if bool(forecast_registry_root) != bool(version_references):
         raise ValueError("Original-live assembly requires registry and explicit version references")
-    if (source / INDEX_FILENAME).is_file():
+    if data_io.is_file(source / INDEX_FILENAME):
         existing = verify_schedule_selection(source)
         if existing["edition_id"] != edition_id or version_references:
             raise ValueError("An existing selection map cannot be relabeled or rewritten")
@@ -91,8 +93,8 @@ def build_schedule_selection(
     publication_ids: list[str] = []
     games: dict[str, Any] = {}
     dates: dict[str, Any] = {}
-    manifest = read_object(source / "manifest.json") if (source / "manifest.json").is_file() else {}
-    for path in sorted((source / "latest").glob("*.json")):
+    manifest = read_object(source / "manifest.json") if data_io.is_file(source / "manifest.json") else {}
+    for path in sorted(data_io.glob(source / "latest", "*.json")):
         board = read_schedule_day(
             path.stem, state_dir=source, live_score_state_dir=observation_root
         )
@@ -175,10 +177,10 @@ def build_schedule_selection(
                 if candidate_root is None:
                     continue
                 box = candidate_root / "final" / f"{game_id}.nba.json"
-                if box.is_file():
+                if data_io.is_file(box):
                     destination = target / "final" / box.name
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    destination.write_bytes(box.read_bytes())
+                    destination.write_bytes(data_io.read_bytes(box))
                     break
             games[game_id] = {**selection, "game_date": path.stem}
         destination = target / "latest" / path.name
@@ -188,8 +190,8 @@ def build_schedule_selection(
     require_clean_artifact_sources(target)
     files = {
         str(path.relative_to(target)): file_sha256(path)
-        for path in sorted(target.rglob("*"))
-        if path.is_file()
+        for path in sorted(data_io.rglob(target, "*"))
+        if data_io.is_file(path)
     }
     index = {
         "schema_version": 1,
@@ -201,7 +203,7 @@ def build_schedule_selection(
     if forecast_registry_root is not None:
         if set(version_references or {}) - set(games):
             raise ValueError("Forecast references contain games absent from the official schedule")
-        index["forecast_registry_root"] = str(forecast_registry_root.resolve())
+        index["forecast_registry_root"] = str(data_io.resolve(forecast_registry_root))
         index["publication_forecast_ids"] = sorted(publication_ids)
         index["environment"] = environment
     index["selection_map_sha256"] = digest(index)
@@ -216,8 +218,8 @@ def verify_schedule_selection(root: Path) -> dict[str, Any]:
     if index.get("schema_version") != 1 or digest(unsigned) != index.get("selection_map_sha256"):
         raise ValueError("Invalid forecast selection map")
     for relative, checksum in index["files"].items():
-        path = (root / relative).resolve()
-        if not path.is_relative_to(root.resolve()) or file_sha256(path) != checksum:
+        path = data_io.resolve(root / relative)
+        if not path.is_relative_to(data_io.resolve(root)) or file_sha256(path) != checksum:
             raise ValueError(f"Selected schedule file checksum failed: {relative}")
     found: set[str] = set()
     for day in index["dates"].values():
@@ -254,19 +256,34 @@ class ObservationSnapshot:
 
     @classmethod
     def capture(cls, root: Path | None, dates: list[str]) -> ObservationSnapshot:
+        import os
+        uri = os.environ.get("GESTALT_OBSERVATION_S3_URI")
+        if uri:
+            from nba_lineup_model.season.durable_observations import capture
+            sources = data_io.active().observation_sources if data_io.active() else None
+            if sources is None:
+                configured = os.environ.get('GESTALT_OBSERVATION_SOURCES')
+                if configured:
+                    sources = json.loads(configured)
+                elif data_io.active():
+                    raise ValueError('Release has no pinned official observation sources')
+                else:
+                    from nba_lineup_model.season.durable_observations import select_sources
+                    sources = select_sources(dates, uri=uri, season=os.environ.get('GESTALT_OBSERVATION_SEASON', '2026-27'), release_root=os.environ.get('GESTALT_OBSERVATION_SOURCE_RELEASE'))
+            return capture(root, dates, uri=uri, season=data_io.active().season if data_io.active() else os.environ.get("GESTALT_OBSERVATION_SEASON", "2026-27"), sources=sources)
         boards: dict[str, dict[str, Any]] = {}
         boxes: dict[str, dict[str, Any]] = {}
         hashes: dict[str, str] = {}
         errors: dict[str, list[str]] = {}
         if root is not None:
-            root = root.resolve()
+            root = data_io.resolve(root)
             for game_date in dates:
                 path = root / "latest" / f"{game_date}.json"
-                if not path.is_file():
+                if not data_io.is_file(path):
                     continue
                 # Only observations cross this boundary. Collector predictions,
                 # frozen files, final grades, and retrospective estimates do not.
-                raw = path.read_bytes()
+                raw = data_io.read_bytes(path)
                 try:
                     board = json.loads(raw)
                     if not isinstance(board.get("games"), list):
@@ -294,8 +311,8 @@ class ObservationSnapshot:
                         }
                     )
                     box_path = root / "final" / f"{game['game_id']}.nba.json"
-                    if box_path.is_file():
-                        box_raw = box_path.read_bytes()
+                    if data_io.is_file(box_path):
+                        box_raw = data_io.read_bytes(box_path)
                         try:
                             box = json.loads(box_raw)
                             if str(box.get("game", {}).get("gameId")) != str(game["game_id"]):
