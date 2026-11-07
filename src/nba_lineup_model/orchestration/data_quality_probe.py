@@ -532,11 +532,9 @@ def collector_rows(
     generated_at: datetime,
     dagster_api_root: str = "http://127.0.0.1:3000",
 ) -> list[dict[str, object]]:
-    from nba_lineup_model.orchestration.daily_instance import DailyInstance
-    binding = DailyInstance.read(dagster_home, environment)
-    arguments = (f"nba_gestalt_{environment}_daily_pipeline",) if binding.instance_home else ()
+    # Protected collection has its own instance, independent of dev/prod daily jobs.
     automation = effective_automation_states(
-        dagster_home / "schedules" / "schedules.db", dagster_api_root, *arguments
+        dagster_home / "schedules" / "schedules.db", dagster_api_root
     )
     jobs = dagster_run_states(
         dagster_home / "history" / "runs.db",
