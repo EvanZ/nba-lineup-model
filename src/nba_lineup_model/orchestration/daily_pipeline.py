@@ -572,7 +572,7 @@ class CanonicalPipelineSteps:
         if c.artifact_lake_uri is None:
             return
         from nba_lineup_model.season.durable_release_storage import (
-            publish_production_release,
+            publish_production_release, required_release_dependencies,
         )
 
         assert c.artifact_cache_root is not None
@@ -582,7 +582,7 @@ class CanonicalPipelineSteps:
         publication = publish_production_release(
             release,
             cache_root=c.artifact_cache_root,
-            dependencies=self.durable_dependencies,
+            dependencies=sorted(set(self.durable_dependencies) | set(required_release_dependencies(manifest))),
             lake_uri=c.artifact_lake_uri,
         )
         print(

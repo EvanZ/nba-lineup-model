@@ -175,7 +175,7 @@ def capture(root: Path | None, dates: list[str], *, uri: str, season: str, sourc
             game['status'] = copy.deepcopy(final['status'])
             boxes[gid], hashes[box_uri] = box, box_sha
         # Only in-progress scores may enter from the local ephemeral source.
-        active = {str(g["game_id"]): g for g in clean if g.get("status", {}).get("state") == "in"}
+        active = {str(g["game_id"]): g for g in clean if not g.get("status", {}).get("completed") and g.get("status", {}).get("state") != "post"}
         if active and root is not None:
             path = root / "latest" / f"{day}.json"
             if path.is_file():

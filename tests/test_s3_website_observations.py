@@ -154,3 +154,22 @@ def test_accepted_official_results_are_explicitly_pinned(monkeypatch, tmp_path):
     entries.pop('selected-schedule/final/0022600182.nba.json')
     with pytest.raises(ValueError, match='lacks official NBA result'):
         select_sources([DAY], uri='s3://absent/current', season='2026-27', client=client, release_root=tmp_path)
+
+
+@pytest.mark.parametrize('state,completed,expected_score',[('in',False,67),('post',True,0)])
+def test_only_ephemeral_in_progress_scores_cross_from_ec2(monkeypatch,tmp_path,state,completed,expected_score):
+    client=source(monkeypatch)
+    board=json.loads(client.objects[PREFIX+'/latest.json'])
+    board['games']=board['games'][:1]
+    game=board['games'][0]
+    game.update(home_score=0,away_score=0,status={'state':'pre','completed':False})
+    client.objects={PREFIX+'/latest.json':json.dumps(board).encode()}
+    local={**game,'home_score':67,'away_score':65,'status':{'state':state,'completed':completed},
+           'projection':{'home_margin':999}}
+    (tmp_path/'latest').mkdir()
+    (tmp_path/'latest'/f'{DAY}.json').write_text(json.dumps({'games':[local]}))
+    snapshot=ObservationSnapshot.capture(tmp_path,[DAY])
+    observed=snapshot.boards[DAY]['games'][0]
+    assert observed['home_score']==expected_score
+    assert 'projection' not in observed
+    assert not observed['status'].get('completed')
