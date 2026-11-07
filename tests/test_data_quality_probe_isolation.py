@@ -92,3 +92,19 @@ def test_report_retains_artifacts_and_job_recovery_when_one_api_fails(tmp_path, 
     # suppress claims derived from the unavailable API response.
     assert {f['code'] for f in performance_findings} == {'artifact_identity_missing'}
     assert any(f['scope'] == 'pipeline:api:performance' for f in report['findings'])
+
+
+def test_protected_collectors_do_not_require_a_daily_environment(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+    from nba_lineup_model.orchestration import data_quality_probe as probe
+    from nba_lineup_model.orchestration.daily_instance import DailyInstance
+    calls=[]
+    monkeypatch.setattr(DailyInstance, 'read', lambda *a: pytest.fail('Collectors are not a daily code location'))
+    monkeypatch.setattr(probe, 'effective_automation_states', lambda *a: calls.append(a) or {})
+    monkeypatch.setattr(probe, 'dagster_run_states', lambda *a: {})
+    for name in ('newest_schedule_artifact','injury_artifact_observed_at','odds_artifact_observed_at','file_observed_at'):
+        monkeypatch.setattr(probe, name, lambda *a: '')
+    rows=probe.collector_rows(dagster_home=tmp_path/'collection', schedule_root=tmp_path/'schedule',
+        report_date='2026-11-06',expected={},thresholds={},generated_at=datetime(2026,11,6,tzinfo=UTC))
+    assert len(rows)==len(probe.COLLECTOR_JOBS)
+    assert calls==[(tmp_path/'collection/schedules/schedules.db','http://127.0.0.1:3000')]

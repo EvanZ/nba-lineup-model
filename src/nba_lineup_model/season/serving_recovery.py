@@ -39,7 +39,7 @@ def _relative(value: str) -> str:
     return path.as_posix()
 
 
-def build_inventory(release: Path, *, lake_uri: str, cache_root: Path, client=None) -> dict:
+def build_inventory(release: Path, *, lake_uri: str, cache_root: Path, client=None, observation_s3_uri=None, source_release=None) -> dict:
     """Verify existing history in S3 and archive only missing registry records."""
     from nba_lineup_model.season.durable_forecast_registry import publish_registry, registry_uri
     from nba_lineup_model.season.forecast_publication import publisher_lock
@@ -71,6 +71,11 @@ def build_inventory(release: Path, *, lake_uri: str, cache_root: Path, client=No
             raise ValueError(f"Historical S3 input differs: {name}")
         history[name] = {"s3_uri": uri, "sha256": checksum, "size_bytes": digest.size_bytes}
     index = _read(release / "selected-schedule/forecast-selections.json")
+    from nba_lineup_model.season.durable_observations import select_sources
+    if not observation_s3_uri:
+        raise ValueError('Staging requires the official S3 observation source')
+    sources = select_sources(index['dates'], uri=observation_s3_uri,
+                             season=_read(release / 'runtime-manifest.json')['approved_manifest']['identity']['season'], client=s3, release_root=source_release)
     registry = None
     if index.get("forecast_registry_root"):
         root = Path(index["forecast_registry_root"])
@@ -93,7 +98,8 @@ def build_inventory(release: Path, *, lake_uri: str, cache_root: Path, client=No
         raise ValueError("Historical model pointer is not the accepted release tip")
     value = {"schema_version": 1, "lake_uri": lake_uri,
              "historical": {"source_root": str(historical_root), "uri": historical_uri, "files": history},
-             "registry": registry, "daily": selected, "model_pointer": pointer}
+             "registry": registry, "daily": selected, "model_pointer": pointer,
+             "observation_sources": sources, "observation_s3_uri": observation_s3_uri}
     # Validate the exact artifact scope, including historical parquet fields.
     require_clean_artifact_sources(release / "selected-schedule")
     return value
@@ -214,11 +220,17 @@ def restore_inputs(release: Path, *, client=None) -> Path | None:
 
 
 def historical_path(release: Path) -> Path:
+    from nba_lineup_model.storage.website_data import active
+    if active() is not None:
+        return active().history
     root = restore_inputs(release)
     return root / "historical" if root else Path(_read(release / "serving-bindings.json")["historical_runtime"])
 
 
 def daily_path(path: Path, *, release: Path | None = None) -> Path:
+    from nba_lineup_model.storage.website_data import active
+    if active() is not None:
+        return path
     if release is None:
         selected = os.environ.get("GESTALT_ACTIVE_RELEASE_ROOT")
         if not selected:
@@ -236,6 +248,9 @@ def daily_path(path: Path, *, release: Path | None = None) -> Path:
 
 
 def registry_path(path: Path, *, release: Path | None = None) -> Path:
+    from nba_lineup_model.storage.website_data import active
+    if active() is not None:
+        return path
     selected = os.environ.get("GESTALT_ACTIVE_RELEASE_ROOT")
     if release is None and selected:
         release = Path(selected)
@@ -263,9 +278,9 @@ def registry_path(path: Path, *, release: Path | None = None) -> Path:
     return path
 
 
-def attach_inventory(release: Path, *, lake_uri: str, cache: Path) -> dict:
+def attach_inventory(release: Path, *, lake_uri: str, cache: Path, observation_s3_uri=None, source_release=None) -> dict:
     """Called only on a new staging directory by the canonical producer."""
-    value = build_inventory(release, lake_uri=lake_uri, cache_root=cache)
+    value = build_inventory(release, lake_uri=lake_uri, cache_root=cache, observation_s3_uri=observation_s3_uri, source_release=source_release)
     (release / FILENAME).write_bytes(canonical_json(value) + b"\n")
     runtime = _read(release / "runtime-manifest.json")
     runtime["identity"]["durable_serving_sha256"] = _sha(value)

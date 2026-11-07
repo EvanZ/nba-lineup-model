@@ -8,6 +8,8 @@ player-state checksum and rejects a mismatched or partially written snapshot.
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import hashlib
 import json
 import os
@@ -53,21 +55,21 @@ def load_current_season_lineup_catalog(
     if not serving_metadata:
         return None
     configured = bundle_path or os.environ.get("GESTALT_CURRENT_SEASON_LINEUPS_BUNDLE")
-    root_path = Path(
+    root_path = data_io.resolve(Path(
         root
         or os.environ.get(
             "GESTALT_CURRENT_SEASON_LINEUPS_ROOT",
             DEFAULT_CURRENT_SEASON_LINEUPS_ROOT,
         )
-    ).resolve()
+    ))
     if configured:
-        selected = Path(configured).resolve()
+        selected = data_io.resolve(Path(configured))
     else:
         pointer_path = root_path / "latest.json"
-        if not pointer_path.is_file():
+        if not data_io.is_file(pointer_path):
             return None
         pointer = _read_json(pointer_path)
-        selected = (root_path / str(pointer["bundle_path"])).resolve()
+        selected = data_io.resolve(root_path / str(pointer["bundle_path"]))
     manifest = verify_current_season_lineup_bundle(selected)
     identity = manifest["identity"]
     expected_sha = str(serving_metadata.get("bundle_sha256", ""))
@@ -83,9 +85,9 @@ def load_current_season_lineup_catalog(
         raise ValueError("Current-season lineup and serving cutoffs differ")
     return CurrentSeasonLineupCatalog(
         season=str(identity["season"]),
-        lineups=pd.read_parquet(selected / LINEUPS_FILENAME),
-        stints=pd.read_parquet(selected / STINTS_FILENAME),
-        player_team_exposure=pd.read_parquet(selected / EXPOSURE_FILENAME),
+        lineups=data_io.parquet(selected / LINEUPS_FILENAME),
+        stints=data_io.parquet(selected / STINTS_FILENAME),
+        player_team_exposure=data_io.parquet(selected / EXPOSURE_FILENAME),
         metadata={**identity, "bundle_sha256": str(manifest["bundle_sha256"])},
         bundle_path=selected,
     )
@@ -106,7 +108,7 @@ def publish_current_season_lineup_bundle(
     source_game_ids = sorted(stints["game_id"].astype(str).unique().tolist())
     if source_game_ids != sorted(source_game_checksums):
         raise ValueError("Lineup source-game checksums do not cover the exact stint games")
-    root_path = Path(root).resolve()
+    root_path = data_io.resolve(Path(root))
     root_path.mkdir(parents=True, exist_ok=True)
     # Stage inside the dedicated state root.  Service users own that directory,
     # but correctly do not own its broad /var/lib parent in production.
@@ -152,7 +154,7 @@ def publish_current_season_lineup_bundle(
         ) / f"bundle_sha256={bundle_sha}"
         target = root_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
+        if data_io.exists(target):
             verify_current_season_lineup_bundle(target)
             shutil.rmtree(staging)
         else:
@@ -174,7 +176,7 @@ def publish_current_season_lineup_bundle(
         pointer_tmp.replace(root_path / "latest.json")
         return target
     except Exception:
-        if staging.exists():
+        if data_io.exists(staging):
             shutil.rmtree(staging)
         raise
 
@@ -182,7 +184,7 @@ def publish_current_season_lineup_bundle(
 def verify_current_season_lineup_bundle(path: Path | str) -> dict[str, Any]:
     """Validate files, hashes, schema, and content-addressed directory name."""
 
-    bundle = Path(path).resolve()
+    bundle = data_io.resolve(Path(path))
     manifest = _read_json(bundle / MANIFEST_FILENAME)
     identity = manifest.get("identity")
     if not isinstance(identity, dict):
@@ -199,13 +201,13 @@ def verify_current_season_lineup_bundle(path: Path | str) -> dict[str, Any]:
         raise ValueError("Current-season lineup artifact hashes are missing")
     for filename in (LINEUPS_FILENAME, STINTS_FILENAME, EXPOSURE_FILENAME):
         artifact_path = bundle / filename
-        if not artifact_path.is_file():
+        if not data_io.is_file(artifact_path):
             raise FileNotFoundError(f"Current-season lineup artifact is missing: {filename}")
         if _file_sha256(artifact_path) != str(artifact_hashes.get(filename)):
             raise ValueError(f"Current-season lineup artifact checksum failed: {filename}")
-    lineups = pd.read_parquet(bundle / LINEUPS_FILENAME)
-    stints = pd.read_parquet(bundle / STINTS_FILENAME)
-    exposure = pd.read_parquet(bundle / EXPOSURE_FILENAME)
+    lineups = data_io.parquet(bundle / LINEUPS_FILENAME)
+    stints = data_io.parquet(bundle / STINTS_FILENAME)
+    exposure = data_io.parquet(bundle / EXPOSURE_FILENAME)
     _validate_frames(lineups, stints, exposure)
     if int(identity.get("stint_count", -1)) != len(stints):
         raise ValueError("Current-season lineup stint count does not match manifest")
@@ -299,7 +301,7 @@ def _validate_frames(
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(data_io.read_text(path, encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"Expected a JSON object: {path}")
     return payload
@@ -307,7 +309,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    with data_io.open_file(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()

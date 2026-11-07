@@ -31,10 +31,8 @@ def fetch(api, path):
 
 
 @contextmanager
-def candidate_api(release, report_root):
+def candidate_api(release, report_root, observation_s3_uri=None, operational_reports_s3_uri=None):
     bindings = json.loads((release / "serving-bindings.json").read_text())
-    from nba_lineup_model.season.serving_recovery import historical_path
-    history = historical_path(release)
     # Isolated preflight link, never an environment's live pointer. There is no
     # activation record: only the real publisher can create one after validation.
     pointer = report_root / "preflight-release"
@@ -54,6 +52,11 @@ def candidate_api(release, report_root):
         "PRESEASON_PROFILES_PATH": "preseason/profiles.parquet",
     }.items():
         env["GESTALT_" + variable] = str(release / relative)
+    if not observation_s3_uri:
+        raise ValueError('Code validation requires the configured S3 observation source')
+    env['GESTALT_OBSERVATION_S3_URI'] = observation_s3_uri
+    if operational_reports_s3_uri:
+        env['GESTALT_OPERATIONAL_REPORTS_S3_URI'] = operational_reports_s3_uri
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -61,7 +64,7 @@ def candidate_api(release, report_root):
     with (report_root / "api.log").open("w") as log:
         process = subprocess.Popen(["/opt/nba-gestalt-web-dev/current/bin/python", "-m", "uvicorn",
             "nba_lineup_model.web_api.app:app", "--host", "127.0.0.1", "--port", str(port)],
-            cwd=history, env=env, stdout=log, stderr=subprocess.STDOUT,
+            cwd=release / "code", env=env, stdout=log, stderr=subprocess.STDOUT,
             user="ubuntu" if os.geteuid() == 0 else None,
             group="ubuntu" if os.geteuid() == 0 else None)
         try:
@@ -118,7 +121,7 @@ def main():
     candidate = stage_code_release(base_release=base, code_root=args.code,
                                   output_root=config.environment_root / "code-releases",
                                   artifact_lake_uri=config.artifact_lake_uri,
-                                  artifact_cache_root=config.artifact_cache_root)
+                                  artifact_cache_root=config.artifact_cache_root, observation_s3_uri=config.observation_s3_uri)
     manifest = verify_production_site_release(candidate)
     if config.artifact_lake_uri is not None:
         from nba_lineup_model.season.durable_release_storage import publish_production_release, restore_production_release
@@ -142,7 +145,7 @@ def main():
             if not registry_path.is_relative_to(config.environment_root):
                 raise ValueError("Forecast registry escapes this environment")
             report["receipt_permissions_repaired"] = ForecastRegistry(registry_path).ensure_receipts_readable()
-        with candidate_api(candidate, report_root) as api:
+        with candidate_api(candidate, report_root, config.observation_s3_uri, config.operational_reports_s3_uri) as api:
             print("Candidate API started; validating unchanged data and all schedule dates", flush=True)
             evidence = collect_api_validation(api, evidence_date=identity["evidence_through_date"],
                                               daily_model_root=approved_model_root(manifest["approved_manifest"]["identity"], release=candidate))

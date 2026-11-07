@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import hashlib
 import json
 import re
@@ -20,7 +22,7 @@ def canonical_json(payload: object) -> bytes:
 
 def file_sha256(path: Path | str) -> str:
     digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
+    with data_io.open_file(Path(path), "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -58,7 +60,7 @@ def copy_components(
     for raw_name, raw_source in sorted(components.items()):
         name = require_logical_name(raw_name, "Component name")
         source = Path(raw_source)
-        if not source.is_file():
+        if not data_io.is_file(source):
             raise FileNotFoundError(f"Artifact component is missing: {source}")
         suffix = "".join(source.suffixes)
         destination = files_dir / f"{name}{suffix}"
@@ -81,12 +83,12 @@ def verify_components(bundle: Path, inventory: object) -> None:
         raw_path = raw_entry.get("path")
         if not isinstance(raw_path, str) or not raw_path:
             raise ValueError(f"Artifact component path is missing: {name}")
-        component_path = (bundle / raw_path).resolve()
+        component_path = data_io.resolve(bundle / raw_path)
         try:
-            component_path.relative_to(bundle.resolve())
+            component_path.relative_to(data_io.resolve(bundle))
         except ValueError as error:
             raise ValueError(f"Artifact component escapes its bundle: {name}") from error
-        if not component_path.is_file():
+        if not data_io.is_file(component_path):
             raise FileNotFoundError(f"Artifact component is missing: {name}")
         expected_sha = require_sha256(raw_entry.get("sha256"), f"{name} checksum")
         if file_sha256(component_path) != expected_sha:
@@ -103,7 +105,7 @@ def write_manifest(staging: Path, manifest: Mapping[str, Any]) -> None:
 
 
 def read_manifest(path: Path | str) -> dict[str, Any]:
-    payload = json.loads((Path(path) / "manifest.json").read_text(encoding="utf-8"))
+    payload = json.loads(data_io.read_text(Path(path) / "manifest.json", encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("Artifact manifest must be an object")
     return payload

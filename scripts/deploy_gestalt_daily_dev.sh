@@ -68,6 +68,8 @@ if config.environment_root != Path("/var/lib/nba-gestalt-dev"):
 config = bind_accepted_configuration(config)
 config = replace(config, code_root=package / "code",
     observation_root=Path("/var/lib/nba-gestalt/schedule-serving/current"),
+    operational_reports_s3_uri="s3://nba-gestalt-data/lake/operational-reports/environment=dev",
+    observation_s3_uri="s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2",
     activate_after_validation=enabled, forecast_injury_inputs_path=None,
     artifact_lake_uri=DEFAULT_LAKE_URI,
     artifact_cache_root=Path("/var/lib/nba-gestalt-dev/artifact-cache"))

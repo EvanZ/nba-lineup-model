@@ -589,3 +589,33 @@ def test_api_gate_does_not_retain_full_player_profiles(monkeypatch):
     evidence = release.collect_api_validation("http://test", evidence_date="2026-11-02")
     assert evidence["verified_player_game_logs"] == 2
     assert len(prior) == 2 and all(reference() is None for reference in prior)
+
+
+def test_publisher_validates_s3_observations_without_local_final_files(tmp_path, monkeypatch):
+    from nba_lineup_model.season.serving_selection import ObservationSnapshot
+    inputs = _inputs(tmp_path, monkeypatch)
+    root = inputs[4]
+    board = json.loads((root / 'latest/2026-10-31.json').read_text())
+    board['games'][0]['final_audit'] = json.loads((root / 'final/game.summary.json').read_text())
+    for path in (root / 'final').iterdir():
+        path.unlink()
+    (root / 'final').rmdir()
+    (root / 'forecast-selections.json').write_text('{}')
+    snapshot = ObservationSnapshot('s3-observation-id', {'2026-10-31':board}, {},
+                                   {'s3://official/results':'verified-sha256'})
+    def compose(selected_root, received, **kwargs):
+        assert selected_root == root
+        assert received is snapshot
+        assert not (root / 'final').exists()
+        return [board]
+    monkeypatch.setattr(subject, '_selected_schedule_boards', compose)
+    release = subject.publish_dev_site_release(
+        daily_data_root=inputs[0], daily_model_root=inputs[1], serving_root=inputs[2],
+        lineups_root=inputs[3], schedule_state_dir=root, catalog_path=inputs[5],
+        preseason_rankings_path=inputs[6], preseason_profiles_path=inputs[7],
+        code_revision='a'*40, api_validation=_api_validation(), output_root=tmp_path/'releases',
+        observations=snapshot)
+    identity = subject.verify_dev_site_release(release)['identity']
+    assert identity['schedule']['final_game_count'] == 1
+    assert identity['schedule']['attribution_audit']['actual_minutes_ledgers'] == 1
+    assert identity['schedule']['observation_snapshot']['captured_files'] == snapshot.captured_files
