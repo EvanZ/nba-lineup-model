@@ -128,7 +128,6 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.middleware("http")
     async def consistent_serving(request: Request, call_next):
         if serving is None:
             if os.environ.get('GESTALT_OBSERVATION_S3_URI') and request.url.path in {
@@ -189,6 +188,23 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             frozen_rating_context.reset(rating_token)
             if token is not None:
                 observation_context.reset(token)
+
+    from nba_lineup_model.web_api.schedule_response_cache import ScheduleResponseCache
+    schedule_responses = ScheduleResponseCache()
+
+    @app.middleware("http")
+    async def cached_consistent_serving(request: Request, call_next):
+        expected = request.headers.get("X-Gestalt-Release")
+        if (serving is not None and request.method == "GET"
+                and request.url.path == "/api/schedule-view"
+                and (not expected or expected == serving.release_id)):
+            # Cache before observation retrieval, including all finished calculations.
+            # Query strings keep distinct dates separate; release pins still fail closed.
+            return await schedule_responses.respond(
+                (serving.release_id, request.url.query, request.headers.get("origin")),
+                lambda: consistent_serving(request, call_next),
+            )
+        return await consistent_serving(request, call_next)
 
     @app.get("/api/serving-view")
     def serving_view():

@@ -317,5 +317,18 @@ def test_schedule_view_serializes_like_existing_endpoints_and_shares_snapshot(
     assert len(response.json()["calendar"]) == 7
     assert response.json()["day"]["games"] == board["games"]
     assert captured == [snapshot, snapshot]  # One consistent observation set per request.
+    # A -> B -> A reuses A's finished response before any observation/calculation work.
+    repeated = client.get(f"/api/schedule-view?date={GAME_DATE}")
+    assert repeated.content == response.content
+    assert captured == [snapshot, snapshot]
+    other = client.get("/api/schedule-view?date=2026-11-02")
+    assert other.status_code == 200
+    assert len(captured) == 3
+    assert client.get(f"/api/schedule-view?date={GAME_DATE}").content == response.content
+    assert len(captured) == 3
+    mismatch = client.get(f"/api/schedule-view?date={GAME_DATE}",
+                          headers={"X-Gestalt-Release": "old-release"})
+    assert mismatch.status_code == 409
+    assert len(captured) == 3
     assert response.headers["X-Gestalt-Observations"] == snapshot.observation_id
     assert client.get("/api/schedule-view?date=2026-02-31").status_code == 422
