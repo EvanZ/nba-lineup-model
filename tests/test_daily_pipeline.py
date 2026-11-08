@@ -1043,6 +1043,7 @@ def test_release_archive_uses_verified_dependencies_and_fails_closed(
     calls = []
     monkeypatch.setattr(production_site_release, "verify_production_site_release",
         lambda _: {"identity": {"evidence_through_date": "2026-10-20"}})
+    monkeypatch.setattr(durable_release_storage, "required_release_dependencies", lambda _: (dependency,))
     def chain(root, **kwargs):
         calls.append((root, kwargs["through_date"]))
         return [SimpleNamespace(reference=dependency)]
@@ -1114,3 +1115,25 @@ def test_activation_rejects_invalid_durable_cache_candidate(tmp_path, monkeypatc
             "status": "validated_candidate", "runtime_release": str(release),
             "game_date": "2026-10-20"})
     assert config.live_pointer.resolve() == previous
+
+
+def test_release_archive_includes_its_existing_player_introduction(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from nba_lineup_model.orchestration.daily_pipeline import CanonicalPipelineSteps
+    from nba_lineup_model.season import durable_release_storage, production_site_release
+    from nba_lineup_model.storage.artifact_store import ArtifactReference
+    day=date(2026,11,4)
+    data=ArtifactReference('daily_data','2026-27',day,'data_sha256='+'d'*64)
+    model=ArtifactReference('daily_model','2026-27',day,'model_sha256='+'a'*64)
+    intro=ArtifactReference('roster_reconciliation','2026-27',day,'reconciliation_sha256='+'b'*64)
+    steps=object.__new__(CanonicalPipelineSteps)
+    steps.config=SimpleNamespace(artifact_lake_uri='s3://test/lake',artifact_cache_root=tmp_path/'cache')
+    steps.durable_dependencies=[data,model]
+    steps.archive_daily_inputs=lambda target: None
+    monkeypatch.setattr(production_site_release,'verify_production_site_release',lambda path:{'identity':{'evidence_through_date':str(day)}})
+    monkeypatch.setattr(durable_release_storage,'required_release_dependencies',lambda manifest:(data,model,intro))
+    def publish(release,**kwargs):
+        assert set(kwargs['dependencies'])=={data,model,intro}
+        return SimpleNamespace(reference=SimpleNamespace(content_id='verified-site'))
+    monkeypatch.setattr(durable_release_storage,'publish_production_release',publish)
+    steps.archive_release(tmp_path/'release')

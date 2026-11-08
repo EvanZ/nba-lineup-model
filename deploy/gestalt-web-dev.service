@@ -6,9 +6,10 @@ After=network.target gestalt-web.service
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/opt/nba-gestalt/current
+WorkingDirectory=/var/lib/nba-gestalt-dev/live-release/code
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=GESTALT_OPERATIONAL_REPORTS_S3_URI=s3://nba-gestalt-data/lake/operational-reports/environment=dev
 Environment=GESTALT_DAILY_PIPELINE_ROOT=/var/lib/nba-gestalt-dev/daily-pipeline
 Environment=GESTALT_SCHEDULE_LOCK_PATH=/var/lib/nba-gestalt-dev/.schedule-writer.lock
 Environment=GESTALT_ACTIVE_RELEASE_ROOT=/var/lib/nba-gestalt-dev/live-release
@@ -16,6 +17,8 @@ Environment=PYTHONPATH=/var/lib/nba-gestalt-dev/live-release/code/src
 Environment=GESTALT_CURRENT_SEASON_SERVING_ROOT=/var/lib/nba-gestalt-dev/live-release/current-season-serving
 Environment=GESTALT_CURRENT_SEASON_LINEUPS_ROOT=/var/lib/nba-gestalt-dev/live-release/current-season-lineups
 Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt-dev/live-release/schedule
+Environment=GESTALT_OBSERVATION_S3_URI=s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2
+Environment=GESTALT_OBSERVATION_SEASON=2026-27
 Environment=GESTALT_LIVE_SCORE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
 Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt-dev/live-release/catalog/games.parquet
 Environment=GESTALT_SITE_RELEASE_ROOT=/var/lib/nba-gestalt-dev/live-release/site-releases

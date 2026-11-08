@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import json
 import os
 import random
@@ -438,13 +440,13 @@ class LineupEvaluator:
         root = Path(artifacts_dir) / MODEL_ARTIFACT / season
         latest_path = root / "latest.json"
         if run_id is None:
-            if not latest_path.is_file():
+            if not data_io.is_file(latest_path):
                 raise FileNotFoundError(
                     f"No published {MODEL_DISPLAY_NAME} artifact for {season}: {latest_path}"
                 )
-            run_id = str(json.loads(latest_path.read_text())["run_id"])
+            run_id = str(json.loads(data_io.read_text(latest_path))["run_id"])
         run_dir = root / run_id
-        metadata = json.loads((run_dir / "metadata.json").read_text())
+        metadata = json.loads(data_io.read_text(run_dir / "metadata.json"))
         if metadata.get("model") != MODEL_NAME:
             raise LineupEvaluationError(
                 f"The selected artifact is not the published {MODEL_DISPLAY_NAME} model"
@@ -457,7 +459,7 @@ class LineupEvaluator:
             metadata.get("profile_padding_contract", {}).get("gap_returner_profile_method")
             == "last_observed_padded_profile"
         )
-        historical_coefficients = pd.read_parquet(
+        historical_coefficients = data_io.parquet(
             run_dir / "historical_player_coefficients.parquet"
         )
         coefficients = historical_coefficients.loc[
@@ -465,15 +467,15 @@ class LineupEvaluator:
         ].copy()
         if coefficients.empty or coefficients["player_id"].duplicated().any():
             raise LineupEvaluationError("The artifact has invalid completed player coefficients")
-        prior_profiles = pd.read_parquet(run_dir / "target_player_profiles.parquet")
+        prior_profiles = data_io.parquet(run_dir / "target_player_profiles.parquet")
         if prior_profiles["player_id"].duplicated().any():
             raise LineupEvaluationError("The artifact has duplicate player profiles")
-        raw_seasonal_ratings = pd.read_parquet(run_dir / "player_season_ratings.parquet")
+        raw_seasonal_ratings = data_io.parquet(run_dir / "player_season_ratings.parquet")
         schedule_controls = _mean_reverted_schedule_controls(
-            pd.read_parquet(run_dir / "season_model_metadata.parquet"),
-            pd.read_parquet(run_dir / "season_schedule_control_metadata.parquet"),
+            data_io.parquet(run_dir / "season_model_metadata.parquet"),
+            data_io.parquet(run_dir / "season_schedule_control_metadata.parquet"),
         )
-        models = joblib.load(run_dir / "season_context_models.joblib")
+        models = data_io.joblib_load(run_dir / "season_context_models.joblib")
         context_model = models.get(season)
         if context_model is None:
             raise LineupEvaluationError(
@@ -483,8 +485,8 @@ class LineupEvaluator:
             raise LineupEvaluationError("The artifact has an incompatible contextual model")
         published_ratings_path = published_player_ratings_path(MODEL_ARTIFACT, run_id)
         seasonal_ratings = (
-            pd.read_parquet(published_ratings_path)
-            if published_ratings_path.is_file()
+            data_io.parquet(published_ratings_path)
+            if data_io.is_file(published_ratings_path)
             else raw_seasonal_ratings
         )
         constrained_split_ratings = _load_constrained_split_ratings_cache(
@@ -498,8 +500,8 @@ class LineupEvaluator:
         rookie_seasons = _rookie_seasons(seasonal_ratings)
         team_splits_cache_path = player_team_splits_path(MODEL_ARTIFACT, run_id)
         team_splits_frame = (
-            pd.read_parquet(team_splits_cache_path)
-            if team_splits_cache_path.is_file()
+            data_io.parquet(team_splits_cache_path)
+            if data_io.is_file(team_splits_cache_path)
             else pd.DataFrame()
         )
         player_team_splits = (
@@ -510,8 +512,8 @@ class LineupEvaluator:
         )
         context_exposure_path = player_context_exposure_path(MODEL_ARTIFACT, run_id)
         context_exposure = (
-            pd.read_parquet(context_exposure_path)
-            if context_exposure_path.is_file()
+            data_io.parquet(context_exposure_path)
+            if data_io.is_file(context_exposure_path)
             else pd.DataFrame(columns=["season", "player_id", "observed_context_exposure"])
         )
         historical_rankings = _historical_ranking_catalog(
@@ -531,13 +533,13 @@ class LineupEvaluator:
         )
         if configured_preseason_rankings:
             preseason_path = Path(configured_preseason_rankings)
-            if not preseason_path.is_file():
+            if not data_io.is_file(preseason_path):
                 raise FileNotFoundError(
                     f"Configured preseason rankings are missing: {preseason_path}"
                 )
         preseason_rankings = (
-            pd.read_parquet(preseason_path)
-            if preseason_path.is_file()
+            data_io.parquet(preseason_path)
+            if data_io.is_file(preseason_path)
             else _preseason_ranking_catalog(
                 historical_rankings,
                 roster_path=team_roster_path(PRESEASON_PREVIEW_SEASON),
@@ -560,14 +562,14 @@ class LineupEvaluator:
             )
         if configured_preseason_profiles:
             preseason_profile_cache_path = Path(configured_preseason_profiles)
-            if not preseason_profile_cache_path.is_file():
+            if not data_io.is_file(preseason_profile_cache_path):
                 raise FileNotFoundError(
                     f"Configured preseason profiles are missing: "
                     f"{preseason_profile_cache_path}"
                 )
         preseason_profiles = (
-            pd.read_parquet(preseason_profile_cache_path)
-            if preseason_profile_cache_path.is_file()
+            data_io.parquet(preseason_profile_cache_path)
+            if data_io.is_file(preseason_profile_cache_path)
             else pd.DataFrame()
         )
         if configured_preseason_rankings:
@@ -596,8 +598,8 @@ class LineupEvaluator:
         )
         rotation_history_cache_path = player_rotation_history_path(MODEL_ARTIFACT, run_id)
         player_rotation_histories = (
-            _player_rotation_histories(pd.read_parquet(rotation_history_cache_path))
-            if rotation_history_cache_path.is_file()
+            _player_rotation_histories(data_io.parquet(rotation_history_cache_path))
+            if data_io.is_file(rotation_history_cache_path)
             else {}
         )
         _attach_constrained_split_rating_history(
@@ -615,12 +617,12 @@ class LineupEvaluator:
             four_factor_histories,
         )
         cache_path = response_cache_path(MODEL_ARTIFACT, run_id)
-        response_cache = joblib.load(cache_path) if cache_path.is_file() else {}
-        player_season_panel = pd.read_parquet(panel_path)
+        response_cache = data_io.joblib_load(cache_path) if data_io.is_file(cache_path) else {}
+        player_season_panel = data_io.parquet(panel_path)
         cohort_path = exposure_cohort_path(MODEL_ARTIFACT, run_id)
         exposure_cohort = (
-            pd.read_parquet(cohort_path)
-            if cohort_path.is_file()
+            data_io.parquet(cohort_path)
+            if data_io.is_file(cohort_path)
             else prepare_player_exposure_cohort(
                 player_season_panel.loc[player_season_panel["season"].astype(str).le(season)],
                 through_season=season,
@@ -628,12 +630,12 @@ class LineupEvaluator:
         )
         profile_cache_path = historical_profiles_path(MODEL_ARTIFACT, run_id)
         historical_profiles = (
-            pd.read_parquet(profile_cache_path) if profile_cache_path.is_file() else pd.DataFrame()
+            data_io.parquet(profile_cache_path) if data_io.is_file(profile_cache_path) else pd.DataFrame()
         )
         realized_profile_cache_path = historical_realized_profiles_path(MODEL_ARTIFACT, run_id)
         historical_realized_profiles = (
-            pd.read_parquet(realized_profile_cache_path)
-            if realized_profile_cache_path.is_file()
+            data_io.parquet(realized_profile_cache_path)
+            if data_io.is_file(realized_profile_cache_path)
             else pd.DataFrame()
         )
         realized_profiles = historical_realized_profiles.loc[
@@ -703,7 +705,7 @@ class LineupEvaluator:
         team_win_history_cache_path = team_win_history_path(MODEL_ARTIFACT, run_id)
         team_win_histories = (
             _load_team_gestalt_win_history_cache(team_win_history_cache_path)
-            if team_win_history_cache_path.is_file()
+            if data_io.is_file(team_win_history_cache_path)
             else _build_team_gestalt_win_histories(
                 historical_rankings,
                 team_splits_frame,
@@ -724,7 +726,7 @@ class LineupEvaluator:
         )
         rankings_path = lineup_rankings_path(MODEL_ARTIFACT, run_id, season)
         observed_lineups = (
-            pd.read_parquet(rankings_path) if rankings_path.is_file() else pd.DataFrame()
+            data_io.parquet(rankings_path) if data_io.is_file(rankings_path) else pd.DataFrame()
         )
         return cls(
             season=season,
@@ -1397,7 +1399,7 @@ class LineupEvaluator:
             source = self.observed_lineups
         elif self.lineup_rankings_root is not None:
             path = self.lineup_rankings_root / f"{selected_season}.parquet"
-            source = pd.read_parquet(path) if path.is_file() else pd.DataFrame()
+            source = data_io.parquet(path) if data_io.is_file(path) else pd.DataFrame()
         else:
             source = pd.DataFrame()
         if source.empty:
@@ -1430,8 +1432,8 @@ class LineupEvaluator:
         seasons = {self.season} if not self.observed_lineups.empty else set()
         if not self.current_season_lineups.empty:
             seasons.add(PRESEASON_PREVIEW_SEASON)
-        if self.lineup_rankings_root is not None and self.lineup_rankings_root.is_dir():
-            seasons.update(path.stem for path in self.lineup_rankings_root.glob("*.parquet"))
+        if self.lineup_rankings_root is not None and data_io.is_dir(self.lineup_rankings_root):
+            seasons.update(path.stem for path in data_io.glob(self.lineup_rankings_root, "*.parquet"))
         return sorted(seasons, reverse=True)
 
     def default_opponent(
@@ -2097,8 +2099,8 @@ class LineupEvaluator:
         if cache is None:
             path = response_cache_path(MODEL_ARTIFACT, self.run_id, season)
             cache = (
-                joblib.load(path)
-                if path.is_file()
+                data_io.joblib_load(path)
+                if data_io.is_file(path)
                 else _warm_response_cache(self._context_model(season))
             )
             self.response_caches[season] = cache
@@ -2242,7 +2244,7 @@ def _player_catalog(
     season: str,
     player_latest_teams: dict[tuple[str, int], dict[str, Any]] | None = None,
 ) -> pd.DataFrame:
-    panel = pd.read_parquet(panel_path)
+    panel = data_io.parquet(panel_path)
     panel_columns = [
         "player_id",
         "player_name",
@@ -2542,7 +2544,7 @@ def _historical_ranking_catalog(
             + ", ".join(sorted(missing))
         )
 
-    panel = pd.read_parquet(panel_path)
+    panel = data_io.parquet(panel_path)
     panel_columns = [
         "season",
         "player_id",
@@ -2669,10 +2671,10 @@ def _preseason_ranking_catalog(
         "rookie_season",
         "profile_source",
     ]
-    if not roster_path.is_file():
+    if not data_io.is_file(roster_path):
         return pd.DataFrame(columns=columns)
 
-    roster = pd.read_parquet(roster_path).copy()
+    roster = data_io.parquet(roster_path).copy()
     required_roster_columns = {
         "player_id",
         "player_name",
@@ -2697,8 +2699,8 @@ def _preseason_ranking_catalog(
     returners = completed.set_index("player_id") if not completed.empty else pd.DataFrame()
 
     draft_rankings = pd.DataFrame()
-    if draft_rankings_path.is_file():
-        draft_rankings = pd.read_parquet(draft_rankings_path).copy()
+    if data_io.is_file(draft_rankings_path):
+        draft_rankings = data_io.parquet(draft_rankings_path).copy()
         required_draft_columns = {"player_id", "draft_number", "cold_start_rapm_prior"}
         missing = required_draft_columns - set(draft_rankings.columns)
         if missing:
@@ -2802,9 +2804,9 @@ def _preseason_ranking_catalog(
 def _player_four_factor_histories(path: Path) -> dict[int, list[dict[str, Any]]]:
     """Package completed O/D Four Factors states for player-bio explanation."""
 
-    if not path.is_file():
+    if not data_io.is_file(path):
         return {}
-    effects = pd.read_parquet(path)
+    effects = data_io.parquet(path)
     required = {
         "season",
         "factor",
@@ -3001,7 +3003,7 @@ def _player_rating_histories(
             }
         )
     )
-    panel = pd.read_parquet(panel_path)
+    panel = data_io.parquet(panel_path)
     team_columns = [
         "season",
         "player_id",
@@ -3242,7 +3244,7 @@ def _player_rotation_histories(cache: pd.DataFrame) -> dict[int, list[dict[str, 
 def _player_active_through_years(panel_path: Path) -> dict[int, int]:
     """Return the final season-start year implied by each player's catalog endpoint."""
 
-    panel = pd.read_parquet(panel_path)
+    panel = data_io.parquet(panel_path)
     required = {"player_id", "to_year"}
     missing = required - set(panel.columns)
     if missing:
@@ -4036,15 +4038,15 @@ def _load_constrained_split_ratings_cache(
 
     root = constrained_split_ratings_root(model_artifact, run_id)
     latest_path = root / "latest.json"
-    if not latest_path.is_file():
+    if not data_io.is_file(latest_path):
         return pd.DataFrame()
-    constrained_run_id = str(json.loads(latest_path.read_text())["run_id"])
+    constrained_run_id = str(json.loads(data_io.read_text(latest_path))["run_id"])
     run_root = root / constrained_run_id
     metadata_path = run_root / "metadata.json"
     ratings_path = run_root / "player_ratings.parquet"
-    if not metadata_path.is_file() or not ratings_path.is_file():
+    if not data_io.is_file(metadata_path) or not data_io.is_file(ratings_path):
         raise LineupEvaluationError("Constrained Split NAIL companion cache is incomplete")
-    metadata = json.loads(metadata_path.read_text())
+    metadata = json.loads(data_io.read_text(metadata_path))
     if (
         metadata.get("production_model_artifact") != model_artifact
         or metadata.get("production_run_id") != run_id
@@ -4052,7 +4054,7 @@ def _load_constrained_split_ratings_cache(
         raise LineupEvaluationError(
             "Constrained Split NAIL companion cache targets a different NAIL release"
         )
-    ratings = pd.read_parquet(ratings_path)
+    ratings = data_io.parquet(ratings_path)
     required = {
         "season",
         "player_id",
@@ -4082,15 +4084,15 @@ def _load_constrained_split_context_allocations_cache(
 
     root = constrained_split_ratings_root(model_artifact, run_id)
     latest_path = root / "latest.json"
-    if not latest_path.is_file():
+    if not data_io.is_file(latest_path):
         return pd.DataFrame()
-    constrained_run_id = str(json.loads(latest_path.read_text())["run_id"])
+    constrained_run_id = str(json.loads(data_io.read_text(latest_path))["run_id"])
     run_root = root / constrained_run_id
     metadata_path = run_root / "metadata.json"
     allocations_path = run_root / "context_feature_allocations.parquet"
-    if not metadata_path.is_file() or not allocations_path.is_file():
+    if not data_io.is_file(metadata_path) or not data_io.is_file(allocations_path):
         return pd.DataFrame()
-    metadata = json.loads(metadata_path.read_text())
+    metadata = json.loads(data_io.read_text(metadata_path))
     if (
         metadata.get("production_model_artifact") != model_artifact
         or metadata.get("production_run_id") != run_id
@@ -4098,7 +4100,7 @@ def _load_constrained_split_context_allocations_cache(
         raise LineupEvaluationError(
             "Constrained Split NAIL context allocations target a different NAIL release"
         )
-    allocations = pd.read_parquet(allocations_path)
+    allocations = data_io.parquet(allocations_path)
     required = {
         "season",
         "feature",
@@ -4171,7 +4173,7 @@ def team_win_history_path(model_artifact: str, run_id: str) -> Path:
 def _load_team_gestalt_win_history_cache(path: Path) -> dict[str, list[dict[str, Any]]]:
     """Load completed actual wins and Gestalt PyWins without raw schedules."""
 
-    frame = pd.read_parquet(path)
+    frame = data_io.parquet(path)
     required = {
         "team",
         "season",
@@ -4221,9 +4223,9 @@ def forward_draft_cold_start_rankings_path(season: str) -> Path:
 
     root = DEFAULT_FORWARD_DRAFT_COLD_START_DIR / season
     latest = root / "latest.json"
-    if not latest.is_file():
+    if not data_io.is_file(latest):
         return root / "drafted_rookie_rankings.parquet"
-    run_id = str(json.loads(latest.read_text()).get("run_id", ""))
+    run_id = str(json.loads(data_io.read_text(latest)).get("run_id", ""))
     return root / run_id / "drafted_rookie_rankings.parquet"
 
 
@@ -5046,7 +5048,7 @@ def warm_player_context_exposure(
 
     target = str(ratings["season"].max())
     print("Preparing context-exposure cohort", flush=True)
-    panel = pd.read_parquet(panel_path)
+    panel = data_io.parquet(panel_path)
     exposure_cohort = prepare_player_exposure_cohort(
         panel.loc[panel["season"].astype(str).le(target)],
         through_season=target,

@@ -1,4 +1,6 @@
 """Resolve a game's exact rating source within the release's accepted model chain."""
+
+from nba_lineup_model.storage import website_data as data_io
 from datetime import date, datetime
 from pathlib import Path
 import math
@@ -61,7 +63,7 @@ def load_frozen_game_ratings(selected: dict, *, model_bundle: Path,
         column = "rapm"
     else:
         raise ValueError("Game has no supported immutable rating source")
-    table = pq.ParquetFile(path).read()
+    table = data_io.parquet_file(path).read()
     if "player_id" not in table.column_names or column not in table.column_names:
         raise ValueError("Frozen player ratings have an invalid schema")
     ratings = {}

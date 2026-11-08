@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import argparse
 import copy
 import hashlib
@@ -85,7 +87,7 @@ def build_win_projection_payload(
     after that holdout on the two completed preseason snapshots.
     """
 
-    catalog = pd.read_parquet(catalog_path)
+    catalog = data_io.parquet(catalog_path)
     calibration = _frozen_calibration(evaluator=evaluator, catalog=catalog)
     current_strength = _current_team_strength(minutes_payload)
     controls = evaluator.schedule_controls
@@ -339,7 +341,7 @@ def build_current_season_win_projection_payload(
     else:
         records = records.loc[:, ["team", "games", "wins", "losses"]]
 
-    catalog = pd.read_parquet(catalog_path)
+    catalog = data_io.parquet(catalog_path)
     all_games = _season_games(catalog, PROJECTION_SEASON)
     completed_game_ids = {
         str(game_id) for game_id in records_payload.get("completed_game_ids", [])
@@ -481,9 +483,9 @@ def read_win_projection_cache(*, model_artifact: str, run_id: str) -> dict[str, 
     """Read the release-materialized W0 payload without a request-path replay."""
 
     path = win_projection_cache_path(model_artifact, run_id)
-    if not path.is_file():
+    if not data_io.is_file(path):
         raise FileNotFoundError(f"Missing materialized win projection cache: {path}")
-    payload = json.loads(path.read_text())
+    payload = json.loads(data_io.read_text(path))
     if not isinstance(payload, dict):
         raise ValueError(f"Invalid win projection cache payload: {path}")
     return payload
@@ -730,7 +732,7 @@ def _historical_game_rows(
 
 def _historical_team_strength(*, evaluator: LineupEvaluator, season: str) -> pd.Series:
     run_dir = DEFAULT_ARTIFACTS_DIR / MODEL_ARTIFACT / evaluator.season / evaluator.run_id
-    priors = pd.read_parquet(run_dir / "season_player_priors.parquet")
+    priors = data_io.parquet(run_dir / "season_player_priors.parquet")
     priors = priors.loc[priors["season"].eq(season), ["player_id", "prior_rapm"]].rename(
         columns={"prior_rapm": "rapm"}
     )
@@ -747,7 +749,7 @@ def _historical_team_strength(*, evaluator: LineupEvaluator, season: str) -> pd.
     center = _player_rating_center(uncentered, exposures)
     ratings = _compiled_linear_x3_coefficients(priors, profiles, context_model, center=center)
     rating_by_player = ratings.set_index("player_id")["rapm"]
-    candidates = pd.read_parquet(
+    candidates = data_io.parquet(
         Path("data/curated/opening_rosters") / season / "part-00000.parquet"
     ).copy()
     previous_minutes = _prior_minutes(_previous_season(season))
@@ -778,8 +780,8 @@ def _historical_schedule_controls(
     *, evaluator: LineupEvaluator, target_season: str
 ) -> dict[str, float]:
     run_dir = DEFAULT_ARTIFACTS_DIR / MODEL_ARTIFACT / evaluator.season / evaluator.run_id
-    context = pd.read_parquet(run_dir / "season_context_metadata.parquet")
-    schedule = pd.read_parquet(run_dir / "season_schedule_control_metadata.parquet")
+    context = data_io.parquet(run_dir / "season_context_metadata.parquet")
+    schedule = data_io.parquet(run_dir / "season_schedule_control_metadata.parquet")
     completed = context.loc[context["season"].astype(str).lt(target_season)].copy()
     completed_schedule = schedule.loc[schedule["season"].astype(str).lt(target_season)].copy()
     if completed.empty or completed_schedule.empty:
@@ -1074,17 +1076,17 @@ def read_schedule_day(
 
     state_root = Path(state_dir)
     from nba_lineup_model.season.serving_selection import INDEX_FILENAME, read_selected_day
-    if (state_root / INDEX_FILENAME).is_file():
+    if data_io.is_file(state_root / INDEX_FILENAME):
         return read_selected_day(game_date, root=state_root)
     path = state_root / "latest" / f"{game_date}.json"
-    if not path.is_file():
+    if not data_io.is_file(path):
         return {
             "available": False,
             "game_date": game_date,
             "source": "NBA official schedule and liveData",
             "games": [],
         }
-    payload = json.loads(path.read_text())
+    payload = json.loads(data_io.read_text(path))
     if not isinstance(payload, dict):
         raise ValueError(f"Invalid schedule archive payload: {path}")
     games = payload.get("games", [])
@@ -1096,8 +1098,8 @@ def read_schedule_day(
         else state_root
     )
     observation_path = observation_root / "latest" / f"{game_date}.json"
-    if observation_root != state_root and observation_path.is_file():
-        observations = json.loads(observation_path.read_text())
+    if observation_root != state_root and data_io.is_file(observation_path):
+        observations = json.loads(data_io.read_text(observation_path))
         observed_games = (
             observations.get("games")
             if isinstance(observations, dict)
@@ -1136,8 +1138,8 @@ def read_schedule_day(
             continue
         frozen_path = state_root / "frozen" / f"{game_id}.json"
         frozen = None
-        if frozen_path.is_file():
-            frozen = json.loads(frozen_path.read_text())
+        if data_io.is_file(frozen_path):
+            frozen = json.loads(data_io.read_text(frozen_path))
         elif str(game.get("status", {}).get("state")) != "pre":
             frozen = _select_immutable_pretip_candidate(
                 state_root=state_root,
@@ -1151,8 +1153,8 @@ def read_schedule_day(
             )
         final_path = state_root / "final" / f"{game_id}.summary.json"
         final_audit: dict[str, object] | None = None
-        if final_path.is_file():
-            stored_final_audit = json.loads(final_path.read_text())
+        if data_io.is_file(final_path):
+            stored_final_audit = json.loads(data_io.read_text(final_path))
             if isinstance(stored_final_audit, dict):
                 final_audit = stored_final_audit
         elif (
@@ -1163,8 +1165,8 @@ def read_schedule_day(
             observed_final_path = (
                 observation_root / "final" / f"{game_id}.summary.json"
             )
-            if observed_final_path.is_file():
-                observed_final_audit = json.loads(observed_final_path.read_text())
+            if data_io.is_file(observed_final_path):
+                observed_final_audit = json.loads(data_io.read_text(observed_final_path))
                 if not isinstance(observed_final_audit, dict):
                     raise ValueError(
                         f"Invalid live-score final audit payload: {observed_final_path}"
@@ -1195,8 +1197,8 @@ def read_schedule_day(
                 game["retrospective"] = retrospective
     payload["available"] = True
     manifest_path = state_root / "manifest.json"
-    if manifest_path.is_file():
-        manifest = json.loads(manifest_path.read_text())
+    if data_io.is_file(manifest_path):
+        manifest = json.loads(data_io.read_text(manifest_path))
         if isinstance(manifest, dict):
             payload["forecast_version"] = {
                 "model_track": manifest.get("model_track"),
@@ -1220,8 +1222,8 @@ def _select_immutable_pretip_candidate(
         str(game["start_time"]).replace("Z", "+00:00")
     )
     candidates: list[tuple[datetime, dict[str, object]]] = []
-    for path in sorted((state_root / "pregame-candidates" / game_id).glob("*.json")):
-        candidate = json.loads(path.read_text())
+    for path in sorted(data_io.glob(state_root / "pregame-candidates" / game_id, "*.json")):
+        candidate = json.loads(data_io.read_text(path))
         if not isinstance(candidate, dict):
             raise ValueError(f"Invalid pregame candidate: {path}")
         digest = str(candidate.get("candidate_sha256", ""))
@@ -1339,7 +1341,7 @@ def enrich_player_game_trajectory(
         return enriched
 
     final_dir = Path(state_dir) / "final"
-    if not final_dir.is_dir():
+    if not data_io.is_dir(final_dir):
         return enriched
 
     summaries: dict[str, tuple[dict[str, object], Path]] = {}
@@ -1351,7 +1353,7 @@ def enrich_player_game_trajectory(
     for game_date in game_dates:
         latest_path = Path(state_dir) / "latest" / f"{game_date}.json"
         try:
-            latest = json.loads(latest_path.read_text())
+            latest = json.loads(data_io.read_text(latest_path))
         except (OSError, json.JSONDecodeError):
             continue
         games = latest.get("games") if isinstance(latest, dict) else None
@@ -1365,7 +1367,7 @@ def enrich_player_game_trajectory(
                 continue
             path = final_dir / f"{game_id}.summary.json"
             try:
-                summary = json.loads(path.read_text())
+                summary = json.loads(data_io.read_text(path))
             except (OSError, json.JSONDecodeError):
                 continue
             if isinstance(summary, dict):
@@ -1374,9 +1376,9 @@ def enrich_player_game_trajectory(
     # Old archives may predate the daily latest-file contract. Keep a bounded
     # compatibility fallback only when direct game-date lookup missed a row.
     missing_game_ids = game_ids - set(summaries)
-    for path in final_dir.glob("*.summary.json") if missing_game_ids else ():
+    for path in data_io.glob(final_dir, "*.summary.json") if missing_game_ids else ():
         try:
-            summary = json.loads(path.read_text())
+            summary = json.loads(data_io.read_text(path))
         except (OSError, json.JSONDecodeError):
             continue
         if not isinstance(summary, dict):
@@ -1587,10 +1589,10 @@ def _decorate_player_game_point(
 
     game_id = str(summary.get("game_id", summary_path.name.split(".", 1)[0]))
     boxscore_path = summary_path.with_name(f"{game_id}.nba.json")
-    if not boxscore_path.is_file():
+    if not data_io.is_file(boxscore_path):
         return
     try:
-        nba_boxscore = json.loads(boxscore_path.read_text())
+        nba_boxscore = json.loads(data_io.read_text(boxscore_path))
     except (OSError, json.JSONDecodeError):
         return
     if not isinstance(nba_boxscore, dict):
@@ -1722,8 +1724,8 @@ def _schedule_final_audits(
 
     state_root = Path(state_dir)
     from nba_lineup_model.season.serving_selection import INDEX_FILENAME, read_selected_day
-    if (state_root / INDEX_FILENAME).is_file():
-        index = json.loads((state_root / INDEX_FILENAME).read_text())
+    if data_io.is_file(state_root / INDEX_FILENAME):
+        index = json.loads(data_io.read_text(state_root / INDEX_FILENAME))
         return sorted([
             game["final_audit"]
             for game_date in sorted(index["dates"])
@@ -1738,9 +1740,9 @@ def _schedule_final_audits(
     )
     audits: dict[str, dict[str, object]] = {}
     state_final_dir = state_root / "final"
-    if state_final_dir.is_dir():
-        for path in sorted(state_final_dir.glob("*.summary.json")):
-            audit = json.loads(path.read_text())
+    if data_io.is_dir(state_final_dir):
+        for path in sorted(data_io.glob(state_final_dir, "*.summary.json")):
+            audit = json.loads(data_io.read_text(path))
             if not isinstance(audit, dict) or audit.get("season") != season:
                 continue
             game_id = str(audit.get("game_id", ""))
@@ -1750,9 +1752,9 @@ def _schedule_final_audits(
     if observation_root != state_root:
         missing_by_date: dict[str, set[str]] = {}
         observation_final_dir = observation_root / "final"
-        if observation_final_dir.is_dir():
-            for path in sorted(observation_final_dir.glob("*.summary.json")):
-                observed_audit = json.loads(path.read_text())
+        if data_io.is_dir(observation_final_dir):
+            for path in sorted(data_io.glob(observation_final_dir, "*.summary.json")):
+                observed_audit = json.loads(data_io.read_text(path))
                 if (
                     not isinstance(observed_audit, dict)
                     or observed_audit.get("season") != season
@@ -1808,11 +1810,11 @@ def read_current_season_records(
     latest_archive_time: str | None = None
     final_dir = Path(live_score_state_dir or state_dir) / "final"
     from nba_lineup_model.season.serving_selection import INDEX_FILENAME, selected_result_records
-    if final_dir.is_dir() or (Path(state_dir) / INDEX_FILENAME).is_file():
+    if data_io.is_dir(final_dir) or data_io.is_file(Path(state_dir) / INDEX_FILENAME):
         payloads = (
             selected_result_records(Path(state_dir), season=season)
-            if (Path(state_dir) / INDEX_FILENAME).is_file()
-            else [json.loads(path.read_text()) for path in sorted(final_dir.glob("*.summary.json"))]
+            if data_io.is_file(Path(state_dir) / INDEX_FILENAME)
+            else [json.loads(data_io.read_text(path)) for path in sorted(data_io.glob(final_dir, "*.summary.json"))]
         )
         for payload in payloads:
             if not isinstance(payload, dict) or payload.get("season") != season:
@@ -1885,7 +1887,7 @@ def read_schedule_performance(
 
     manifest_path = Path(state_dir) / "manifest.json"
     manifest = (
-        json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
+        json.loads(data_io.read_text(manifest_path)) if data_io.is_file(manifest_path) else {}
     )
     if not isinstance(manifest, dict):
         manifest = {}
@@ -1899,7 +1901,7 @@ def read_schedule_performance(
         season=season,
     ):
         # Explicit selected references supersede historical display-label filters.
-        if declared_model_track and not (Path(state_dir) / "forecast-selections.json").is_file():
+        if declared_model_track and not data_io.is_file(Path(state_dir) / "forecast-selections.json"):
             pregame = payload.get("pregame")
             pregame = pregame if isinstance(pregame, dict) else {}
             forecast_version = pregame.get("forecast_version")
@@ -2249,9 +2251,9 @@ def mirror_missing_frozen_pregame_snapshots(
     source_root = Path(source_state_dir)
     target_root = Path(target_state_dir)
     latest_path = source_root / "latest" / f"{game_date}.json"
-    if not latest_path.is_file():
+    if not data_io.is_file(latest_path):
         return []
-    latest = json.loads(latest_path.read_text())
+    latest = json.loads(data_io.read_text(latest_path))
     games = latest.get("games", []) if isinstance(latest, dict) else []
     mirrored: list[str] = []
     for game in games:
@@ -2262,9 +2264,9 @@ def mirror_missing_frozen_pregame_snapshots(
             continue
         source_path = source_root / "frozen" / f"{game_id}.json"
         target_path = target_root / "frozen" / f"{game_id}.json"
-        if target_path.is_file() or not source_path.is_file():
+        if data_io.is_file(target_path) or not data_io.is_file(source_path):
             continue
-        frozen = json.loads(source_path.read_text())
+        frozen = json.loads(data_io.read_text(source_path))
         if not isinstance(frozen, dict):
             raise ValueError(f"Invalid frozen pregame record: {source_path}")
         if str(frozen.get("game_id", "")) != game_id:
@@ -2276,7 +2278,7 @@ def mirror_missing_frozen_pregame_snapshots(
                 f"Refusing to mirror a non-pregame frozen record: {source_path}"
             )
         _write_json_exclusive(target_path, frozen)
-        if target_path.is_file():
+        if data_io.is_file(target_path):
             mirrored.append(game_id)
     return mirrored
 
@@ -3027,8 +3029,8 @@ def _ensure_s3_injury_report(
         "sha256": digest,
         "s3_uri": destination,
     }
-    if marker_path.is_file():
-        existing = json.loads(marker_path.read_text())
+    if data_io.is_file(marker_path):
+        existing = json.loads(data_io.read_text(marker_path))
         if existing == artifact:
             return artifact
 
@@ -3051,7 +3053,7 @@ def _write_json(path: Path, payload: object) -> None:
 def _write_json_exclusive(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with path.open("x") as handle:
+        with data_io.open_file(path, "x") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
     except FileExistsError:
@@ -3087,7 +3089,7 @@ def _aws_s3_cp_exclusive(source: Path, destination: str) -> None:
         capture_output=True,
         check=True,
     ).stdout
-    if existing != source.read_bytes():
+    if existing != data_io.read_bytes(source):
         raise RuntimeError(
             f"Refusing to overwrite immutable S3 object with different bytes: {destination}"
         )
@@ -3258,9 +3260,9 @@ def _default_live_score_date(
     ]
     for game_date in candidate_dates:
         path = Path(state_dir) / "latest" / f"{game_date}.json"
-        if not path.is_file():
+        if not data_io.is_file(path):
             continue
-        payload = json.loads(path.read_text())
+        payload = json.loads(data_io.read_text(path))
         if not isinstance(payload, dict) or not isinstance(payload.get("games"), list):
             continue
         games = [game for game in payload["games"] if isinstance(game, dict)]

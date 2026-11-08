@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import hashlib
 import json
 import re
@@ -88,10 +90,10 @@ class SeasonScheduleCache:
 
     def read(self, season: str) -> ScheduleResponse | None:
         path = self.path_for(season)
-        if not path.exists():
+        if not data_io.exists(path):
             return None
 
-        raw_body = path.read_bytes()
+        raw_body = data_io.read_bytes(path)
         try:
             payload = json.loads(raw_body)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -100,9 +102,9 @@ class SeasonScheduleCache:
             raise NbaScheduleError(f"Cached NBA schedule has an unexpected JSON root: {path}")
 
         metadata_path = self.metadata_path_for(season)
-        if not metadata_path.exists():
+        if not data_io.exists(metadata_path):
             raise NbaScheduleError(f"Cached NBA schedule is missing provenance metadata: {path}")
-        metadata = ScheduleCacheMetadata.model_validate_json(metadata_path.read_text())
+        metadata = ScheduleCacheMetadata.model_validate_json(data_io.read_text(metadata_path))
         if metadata.season != season:
             raise NbaScheduleError(f"Cached NBA schedule metadata does not match path: {path}")
         if metadata.sha256 != hashlib.sha256(raw_body).hexdigest():

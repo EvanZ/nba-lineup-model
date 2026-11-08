@@ -90,7 +90,7 @@ def test_code_deploy_checks_exact_approved_game_ids(tmp_path, monkeypatch, serve
     (candidate / "selected-schedule/forecast-selections.json").write_text("{}")
     (candidate / "selected-schedule/latest/2026-10-31.json").write_text(json.dumps({"games": [{"game_id": "game-1"}]}))
     config = SimpleNamespace(environment_root=root, live_pointer=root / "live-release",
-        artifact_lake_uri=None, artifact_cache_root=None, validate=lambda: None)
+        artifact_lake_uri=None, artifact_cache_root=None, observation_s3_uri="s3://official/schedule", operational_reports_s3_uri="s3://reports/dev", validate=lambda: None)
     monkeypatch.setattr(deploy, "Path", lambda value: root if str(value) == "/var/lib/nba-gestalt-dev" else Path(value))
     monkeypatch.setattr(deploy.DailyPipelineConfig, "read", lambda _: config)
     monkeypatch.setattr(sys, "argv", ["deploy", "--config", "config.json", "--code", str(tmp_path)])
@@ -156,8 +156,10 @@ def test_candidate_api_uses_live_dev_python_environment(tmp_path, monkeypatch):
     def launch(command, **kwargs):
         commands.append(command)
         assert kwargs["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
+        assert kwargs["env"]["GESTALT_OBSERVATION_S3_URI"] == "s3://official/schedule"
+        assert kwargs["cwd"] == candidate / "code"
         return SimpleNamespace(poll=lambda: None, terminate=lambda: None, wait=lambda **kwargs: None)
     monkeypatch.setattr(deploy.subprocess, "Popen", launch)
     monkeypatch.setattr(deploy, "fetch", lambda *args: {})
-    with deploy.candidate_api(candidate, report):
+    with deploy.candidate_api(candidate, report, "s3://official/schedule", "s3://reports/dev"):
         assert commands[0][0] == "/opt/nba-gestalt-web-dev/current/bin/python"

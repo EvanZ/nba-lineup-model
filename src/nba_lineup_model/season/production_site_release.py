@@ -63,6 +63,7 @@ def stage_production_site_release(
     artifact_lake_uri: str | None = None,
     artifact_cache_root: Path | None = None,
     reconciliation_root: Path | None = None,
+    observation_s3_uri: str | None = None,
 ) -> Path:
     """Copy a reviewed dev release into an immutable production candidate."""
 
@@ -215,7 +216,7 @@ def stage_production_site_release(
             if artifact_cache_root is None:
                 raise ValueError("S3-backed release requires a cache root")
             from nba_lineup_model.season.serving_recovery import attach_inventory
-            runtime_manifest = attach_inventory(staging, lake_uri=artifact_lake_uri, cache=artifact_cache_root)
+            runtime_manifest = attach_inventory(staging, lake_uri=artifact_lake_uri, cache=artifact_cache_root, observation_s3_uri=observation_s3_uri, source_release=live_pointer)
             runtime_sha = runtime_manifest["runtime_sha256"]
             target = output / f"runtime_sha256={runtime_sha}"
         if target.exists():
@@ -241,7 +242,7 @@ def stage_production_site_release(
 
 
 def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path,
-                       artifact_lake_uri: str | None = None, artifact_cache_root: Path | None = None) -> Path:
+                       artifact_lake_uri: str | None = None, artifact_cache_root: Path | None = None, observation_s3_uri: str | None = None) -> Path:
     """Replace code only; retain the original data approval and every data byte.
 
     The runtime identity records new code; the retained approval describes the
@@ -290,7 +291,7 @@ def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path
             if artifact_cache_root is None:
                 raise ValueError("S3-backed code release requires a cache root")
             from nba_lineup_model.season.serving_recovery import attach_inventory
-            manifest = attach_inventory(staging, lake_uri=artifact_lake_uri, cache=artifact_cache_root)
+            manifest = attach_inventory(staging, lake_uri=artifact_lake_uri, cache=artifact_cache_root, observation_s3_uri=observation_s3_uri, source_release=base)
             target = output_root / f"runtime_sha256={manifest['runtime_sha256']}"
         elif (base / "durable-serving.json").exists():
             shutil.copy2(base / "durable-serving.json", staging / "durable-serving.json")
@@ -379,7 +380,7 @@ def stage_schedule_release(*, base_release: Path, schedule_root: Path, output_ro
         if (base / "durable-serving.json").exists():
             from nba_lineup_model.season.serving_recovery import attach_inventory, inventory, cache_root
             storage = inventory(base)
-            manifest = attach_inventory(staging, lake_uri=storage["lake_uri"], cache=cache_root(base))
+            manifest = attach_inventory(staging, lake_uri=storage["lake_uri"], cache=cache_root(base), observation_s3_uri=storage["observation_s3_uri"], source_release=base)
             target = output_root / f"runtime_sha256={manifest['runtime_sha256']}"
         # These components contain no secrets; the API service must read them.
         for path in staging.rglob("*"):

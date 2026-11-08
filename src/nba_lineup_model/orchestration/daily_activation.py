@@ -219,7 +219,7 @@ def activate_daily_release(
                     approval_reference=legacy_migration_approval,
                 )
                 report["legacy_code_migration"] = migration
-                _report(report_root, report)
+                _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
         def verify_and_select(record: dict) -> None:
             nonlocal durable_selection
             activated_release = Path(str(record["release_path"])).resolve()
@@ -254,7 +254,7 @@ def activate_daily_release(
             error=f"{type(error).__name__}: {error}",
             active_generation=int(active["generation"]) if active else 0,
         )
-        _report(report_root, report)
+        _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
         raise
 
     report.update(
@@ -271,7 +271,7 @@ def activate_daily_release(
             durable_selection_uri=durable_selection.selection_uri,
             durable_selection_activated=durable_selection.activated,
         )
-    _report(report_root, report)
+    _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
 
 
 def activation_report_from_work(config: DailyPipelineConfig, work_root: Path) -> dict:
@@ -357,7 +357,7 @@ def activation_report_from_work(config: DailyPipelineConfig, work_root: Path) ->
             "expected_previous_generation": active["generation"],
             "source_causal_schedule_sha256": causal_schedule_sha256(config.schedule_root),
         }
-        _report(report_root, report)
+        _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
         return report
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import argparse
 import json
 import os
@@ -98,9 +100,9 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     schedule_root = (
         serving.path("schedule")
         if serving
-        else Path(
+        else data_io.resolve(Path(
             os.environ.get("GESTALT_SCHEDULE_STATE_DIR", "/var/lib/nba-gestalt/schedule")
-        ).resolve()
+        ))
     )
     configured_observations = os.environ.get("GESTALT_LIVE_SCORE_STATE_DIR")
     observation_root = Path(configured_observations) if configured_observations else None
@@ -126,9 +128,28 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.middleware("http")
     async def consistent_serving(request: Request, call_next):
         if serving is None:
+            if os.environ.get('GESTALT_OBSERVATION_S3_URI') and request.url.path in {
+                '/api/schedule', '/api/schedule-performance', '/api/schedule-view',
+                '/api/current-season-records', '/api/win-projections'}:
+                from nba_lineup_model.season.serving_selection import ObservationSnapshot, read_object, INDEX_FILENAME
+                from starlette.concurrency import run_in_threadpool
+                index = read_object(schedule_root / INDEX_FILENAME)
+                snapshot = await run_in_threadpool(ObservationSnapshot.capture, None, sorted(index['dates']))
+                token = observation_context.set(snapshot)
+                def ratings(selected):
+                    from nba_lineup_model.season.frozen_game_ratings import load_frozen_game_ratings
+                    model_root = Path(os.environ['GESTALT_DAILY_MODEL_ROOT'])
+                    pointer = read_object(model_root / 'latest.json')
+                    return load_frozen_game_ratings(selected, model_bundle=model_root/pointer['bundle_path'],
+                        model_sha256=pointer['bundle_sha256'], preseason_rankings=Path(os.environ['GESTALT_PRESEASON_RANKINGS_PATH']))
+                rating_token = frozen_rating_context.set(ratings)
+                try:
+                    return await call_next(request)
+                finally:
+                    observation_context.reset(token)
+                    frozen_rating_context.reset(rating_token)
             return await call_next(request)
         expected = request.headers.get("X-Gestalt-Release")
         if expected and expected != serving.release_id:
@@ -144,6 +165,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             "/api/schedule-performance",
             "/api/schedule-view",
             "/api/current-season-records",
+            "/api/win-projections",
         }:
             # Capture once for the whole response, including every nested read.
             from starlette.concurrency import run_in_threadpool
@@ -166,6 +188,23 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             frozen_rating_context.reset(rating_token)
             if token is not None:
                 observation_context.reset(token)
+
+    from nba_lineup_model.web_api.schedule_response_cache import ScheduleResponseCache
+    schedule_responses = ScheduleResponseCache()
+
+    @app.middleware("http")
+    async def cached_consistent_serving(request: Request, call_next):
+        expected = request.headers.get("X-Gestalt-Release")
+        if (serving is not None and request.method == "GET"
+                and request.url.path == "/api/schedule-view"
+                and (not expected or expected == serving.release_id)):
+            # Cache before observation retrieval, including all finished calculations.
+            # Query strings keep distinct dates separate; release pins still fail closed.
+            return await schedule_responses.respond(
+                (serving.release_id, request.url.query, request.headers.get("origin")),
+                lambda: consistent_serving(request, call_next),
+            )
+        return await consistent_serving(request, call_next)
 
     @app.get("/api/serving-view")
     def serving_view():
@@ -210,9 +249,9 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         )
         if preview_path:
             path = Path(preview_path)
-            if not path.is_file():
+            if not data_io.is_file(path):
                 raise FileNotFoundError(f"Configured local preview cache is missing: {path}")
-            preview = json.loads(path.read_text())
+            preview = json.loads(data_io.read_text(path))
             if not isinstance(preview, dict) or not {"minutes", "win_projection"}.issubset(preview):
                 raise ValueError(f"Invalid local preview cache payload: {path}")
             minutes = preview["minutes"]
@@ -259,7 +298,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             if serving
             else os.environ.get("GESTALT_SITE_RELEASE_ROOT")
         )
-        if site_release_root and (Path(site_release_root) / "latest.json").is_file():
+        if site_release_root and data_io.is_file(Path(site_release_root) / "latest.json"):
             release_path = resolve_latest_dev_site_release(site_release_root)
             release_manifest = verify_dev_site_release(release_path)
             release_identity = release_manifest["identity"]
@@ -291,15 +330,24 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         }
 
     @app.get("/api/reports/daily-pipeline")
-    def daily_pipeline_report() -> FileResponse:
+    def daily_pipeline_report() -> Response:
+        uri = os.environ.get('GESTALT_OPERATIONAL_REPORTS_S3_URI')
+        if uri:
+            from nba_lineup_model.storage.operational_reports import read
+            try:
+                return HTMLResponse(read(uri, 'daily-pipeline')['report.html'], headers={'Cache-Control':'no-store'})
+            except (OSError, ValueError, KeyError) as error:
+                raise HTTPException(status_code=503, detail='S3 daily pipeline report is unavailable') from error
+        if data_io.active():
+            raise HTTPException(status_code=503, detail='S3 daily pipeline reporting is not configured')
         configured = os.environ.get("GESTALT_DAILY_PIPELINE_ROOT")
         if not configured:
             raise HTTPException(status_code=404, detail="Daily pipeline is not configured")
-        reports = list((Path(configured) / "reports").glob("*/report.html"))
+        reports = list(data_io.glob(Path(configured) / "reports", "*/report.html"))
         if not reports:
             raise HTTPException(status_code=404, detail="No daily pipeline report yet")
         latest = max(reports, key=lambda path: path.stat().st_mtime_ns)
-        return FileResponse(latest, media_type="text/html")
+        return HTMLResponse(data_io.read_text(latest, encoding="utf-8"))
 
     @app.get("/api/reports/current-season")
     def current_season_report() -> Response:
@@ -317,22 +365,30 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             ) / REPORT_FILENAME
         except (FileNotFoundError, ValueError) as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        if not report_path.is_file():
+        if not data_io.is_file(report_path):
             raise HTTPException(status_code=404, detail="Current-season report is missing")
         quality_root = os.environ.get("GESTALT_DATA_QUALITY_ROOT")
         if not quality_root:
-            return FileResponse(report_path, media_type="text/html")
+            return HTMLResponse(data_io.read_text(report_path, encoding="utf-8"))
         quality_path = Path(quality_root) / "current" / "report.html"
-        if not quality_path.is_file():
+        uri = os.environ.get('GESTALT_OPERATIONAL_REPORTS_S3_URI')
+        quality_files = None
+        if uri:
+            from nba_lineup_model.storage.operational_reports import read
+            try:
+                quality_files = read(uri, 'data-quality')
+            except (OSError, ValueError, KeyError) as error:
+                raise HTTPException(status_code=503, detail='S3 operational report is unavailable') from error
+        if (quality_files is None and (data_io.active() or not data_io.is_file(quality_path))):
             raise HTTPException(
                 status_code=503,
                 detail="The operational data-quality report is not available",
             )
         try:
-            quality_status = read_data_quality_status(Path(quality_root))
+            quality_status = read_data_quality_status(Path(quality_root), files=quality_files)
             combined = compose_data_quality_report(
-                quality_path.read_text(encoding="utf-8"),
-                report_path.read_text(encoding="utf-8"),
+                quality_files["report.html"] if quality_files is not None else data_io.read_text(quality_path, encoding="utf-8"),
+                data_io.read_text(report_path, encoding="utf-8"),
                 quality_status=quality_status,
             )
         except (OSError, ValueError) as error:
@@ -370,7 +426,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
 
     @app.get("/api/reports/dev-release")
     @app.get("/api/reports/site-release")
-    def dev_release_report() -> FileResponse:
+    def dev_release_report() -> Response:
         """Serve the approved release-level verification report when configured."""
 
         root = (
@@ -384,7 +440,7 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
             report_path = resolve_latest_dev_site_release(root) / DEV_RELEASE_REPORT_FILENAME
         except (FileNotFoundError, ValueError) as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        return FileResponse(report_path, media_type="text/html")
+        return HTMLResponse(data_io.read_text(report_path, encoding="utf-8"))
 
     @app.get("/api/players")
     def search_players(
