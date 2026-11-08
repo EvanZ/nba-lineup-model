@@ -28,6 +28,40 @@ def coupled_prior_files(config, provenance):
     return files
 
 
+class MissingProducingConfigurationError(ValueError):
+    """An accepted legacy model predates the canonical producing-work record."""
+
+
+def verify_legacy_accepted_configuration(template):
+    """Verify explicit existing inputs, without inventing a past producing job.
+
+Only the shared migration preparer opts into this path. Normal worker deployment
+still requires producing work. Every mathematical setting (including source URL),
+model revision and complete coupled prior must match the currently accepted model.
+"""
+    from nba_lineup_model.orchestration.daily_pipeline import causal_hca_replay_config
+    from nba_lineup_model.season.daily_model_artifact import verify_daily_model_artifact
+    accepted = read_object(template.live_pointer.resolve(strict=True) / "runtime-manifest.json")["approved_manifest"]["identity"]
+    model = verify_daily_model_artifact(Path(accepted["model"]["bundle_path"]))
+    if model["bundle_sha256"] != accepted["model"]["bundle_sha256"]:
+        raise ValueError("Accepted model does not match its release")
+    provenance = model["identity"]["model_provenance"]
+    if (template.season != model["identity"]["season"] or
+        template.model_track != provenance["model_version"] or
+        template.model_code_revision != provenance["code_revision"] or
+        template.model_configuration_sha256 != provenance["configuration_sha256"]):
+        raise ValueError("Explicit legacy configuration differs from the accepted model")
+    template.validate()
+    causal_hca_replay_config(template)
+    files = coupled_prior_files(template, provenance)
+    from nba_lineup_model.orchestration.daily_work import file_reference
+    files["model-configuration.json"] = file_reference(template.model_configuration_path)
+    return {"schema_version": 1, "kind": "accepted-legacy-configuration-verification",
+            "model_sha256": model["bundle_sha256"], "model_provenance": provenance,
+            "files": files, "original_producing_job_record": "unavailable",
+            "historical_model_recomputed": False}
+
+
 def bind_accepted_configuration(template):
     """Recover settings from the accepted model's verified producing work, never defaults."""
     from dataclasses import replace
@@ -64,7 +98,7 @@ def bind_accepted_configuration(template):
         return selected
     # An untraceable producing configuration is not permission to use a legacy
     # coefficient or infer settings from a filename.
-    raise ValueError("Accepted model has no verified producing-work configuration")
+    raise MissingProducingConfigurationError("Accepted model has no verified producing-work configuration")
 
 
 def next_nightly_date(*, evidence: date, slates: dict[str, list[str]],

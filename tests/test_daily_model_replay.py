@@ -784,3 +784,61 @@ def test_trajectory_includes_official_observation_absent_from_box(classification
     assert missed.outcome_classification==classification
     assert missed.rating_after==2.02  # exact slate checkpoint, not fabricated flat rating
     assert missed.injury_status=="Out"
+
+
+@pytest.fixture
+def cenac_injury_observations(monkeypatch):
+    from nba_lineup_model.season import daily_model_replay as replay
+
+    def observe(name, *, player_id=1643416, roster_name="Chris Cenac Jr.",
+                report_team="BOS", collision=False):
+        teams = [{"team": team, "players": [
+            {"player_id": offset + i, "player_name": f"Player {offset+i}",
+             "minutes": 48.0, "status": "ACTIVE"} for i in range(5)
+        ]} for team, offset in (("BOS", 100), ("MIL", 200))]
+        teams[0]["players"].append({"player_id": player_id,
+            "player_name": roster_name, "minutes": 0.0, "status": "ACTIVE"})
+        if collision:
+            teams[0]["players"].append({"player_id": 999,
+                "player_name": "Christopher Cenac Jr.", "minutes": 0.0, "status": "ACTIVE"})
+        state = pd.DataFrame([{**p, "team": t["team"]}
+            for t in teams for p in t["players"]])
+        monkeypatch.setattr(replay, "_early_role_minutes",
+            lambda *args, **kwargs: ({int(p): 44.0 for p in state.player_id}, None))
+        return replay._minutes_observations(
+            game_date=date(2026, 11, 4),
+            games={"g1": {"home_team": "BOS", "away_team": "MIL"}},
+            rosters={"g1": {"teams": teams}},
+            stints=pd.DataFrame({"game_id": []}), minutes_state=state,
+            role_cutoff_minutes=44, injury_report={"players": [{
+                "game_date": "2026-11-04", "matchup": "MIL@BOS",
+                "team": report_team, "player_name": name,
+                "status": "Available", "reason": "-"}],
+                "game_team_reports": {"2026-11-04|MIL@BOS": {
+                    "BOS": {"status": "submitted"}, "MIL": {"status": "submitted"}}}})
+    return observe
+
+
+def test_reviewed_cenac_alias_preserves_canonical_observations(cenac_injury_observations):
+    canonical, _, warnings = cenac_injury_observations("Chris Cenac Jr.")
+    aliased, injuries, alias_warnings = cenac_injury_observations("Christopher Cenac Jr.")
+    pd.testing.assert_frame_equal(canonical, aliased)
+    assert warnings == alias_warnings
+    player = aliased.set_index("player_id").loc[1643416]
+    assert player.injury_status == "Available"
+    assert player.availability_resolution == "explicit_official_report"
+    assert player.injury_reason == "-"
+    report = injuries["g1"]["teams"]["BOS"][0]
+    assert report["player_id"] == 1643416
+    assert report["player_name"] == "Christopher Cenac Jr."  # preserve source spelling
+    inferred, _, _ = cenac_injury_observations("Christopher Cenac Jr.", report_team="")
+    pd.testing.assert_frame_equal(aliased, inferred)
+
+
+@pytest.mark.parametrize("options", [
+    {"player_id": 999}, {"roster_name": "Chris Different"},
+    {"report_team": "MIL"}, {"collision": True},
+])
+def test_cenac_alias_rejects_wrong_identity_or_ambiguity(cenac_injury_observations, options):
+    with pytest.raises(ValueError, match="identity is unresolved"):
+        cenac_injury_observations("Christopher Cenac Jr.", **options)

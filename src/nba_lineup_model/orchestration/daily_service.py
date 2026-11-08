@@ -15,6 +15,7 @@ def main():
     p.add_argument("--package", type=Path, required=True)
     p.add_argument("--sha256", required=True)
     p.add_argument("--home", type=Path, required=True)
+    p.add_argument("--environment", choices=("dev", "prod"))
     p.add_argument("--component", choices=("code", "daemon", "web", "manual"), required=True)
     p.add_argument("--grpc-port", type=int, required=True)
     p.add_argument("--web-port", type=int, required=True)
@@ -25,7 +26,16 @@ def main():
     code = args.package.resolve() / "code"
     if manifest["identity"]["package_sha256"] != args.sha256 or not Path(__file__).resolve().is_relative_to(code):
         raise ValueError("Daily worker is not executing the selected sealed code")
-    binding = DailyInstance.read(args.home)
+    metadata = read_object(args.home / "environment.json")
+    selected = args.environment
+    if metadata.get("schema_version") == 2:
+        if args.component in {"code", "manual"} and not selected:
+            p.error("A shared code location/manual run requires --environment")
+        binding = DailyInstance.read(args.home, selected or next(iter(metadata["environments"])))
+    else:
+        binding = DailyInstance.read(args.home, selected)
+    if args.component in {"code", "manual"}:
+        os.environ["GESTALT_DAILY_ENVIRONMENT"] = binding.environment
     os.environ.update(DAGSTER_HOME=str(binding.home), PYTHONPATH=str(code / "src"),
                       PYTHONDONTWRITEBYTECODE="1")
     os.chdir(code)

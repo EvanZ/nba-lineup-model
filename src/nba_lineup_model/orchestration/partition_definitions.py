@@ -44,6 +44,9 @@ def prepare_daily_partition_job():
         minimum_interval_seconds=300, default_status=DefaultSensorStatus.STOPPED)
 def resumable_daily_partition_sensor(context):
     binding = binding_for_instance(context.instance)
+    from nba_lineup_model.orchestration.shared_daily_control import automation_enabled
+    if not automation_enabled(binding):
+        return SkipReason("Dev automation is disabled outside an explicit validation window")
     queue = binding.requests
     configured = os.environ.get("GESTALT_DAILY_REQUEST_ROOT")
     if configured and Path(configured).absolute() != queue:
@@ -63,14 +66,14 @@ def resumable_daily_partition_sensor(context):
         return SkipReason("One daily partition is already queued or running")
     for day, work_id, request in sorted(pending):
         runs = context.instance.get_run_records(filters=RunsFilter(
-            job_name="prepare_daily_partition", tags={"gestalt/work_id": work_id}), limit=3)
+            job_name="prepare_daily_partition", tags={"gestalt/work_id": work_id, "gestalt/environment": binding.environment}), limit=3)
         if any(run.dagster_run.status == DagsterRunStatus.SUCCESS for run in runs):
             continue
         if len(runs) >= 3:
             return SkipReason(f"{day}: three failed attempts; review checkpoint failure before continuing")
         if runs and (datetime.now(UTC) - runs[0].update_timestamp).total_seconds() < 900:
             return SkipReason(f"{day}: retry cooling down for 15 minutes")
-        return RunRequest(run_key=f"daily:{work_id}:attempt-{len(runs)+1}",
+        return RunRequest(run_key=f"{binding.environment}:daily:{work_id}:attempt-{len(runs)+1}",
             run_config={"ops":{"prepare_daily_partition_op":{"config":request}}},
             tags={**binding.tags("prepare_daily_partition", request),
                   "gestalt/trigger": "sensor"})
@@ -134,18 +137,21 @@ def automatic_daily_lifecycle_sensor(context):
 def evaluate_automatic_lifecycle(context):
     from nba_lineup_model.orchestration.lifecycle import automation_request
     binding = binding_for_instance(context.instance)
+    from nba_lineup_model.orchestration.shared_daily_control import automation_enabled
+    if not automation_enabled(binding):
+        return SkipReason("Dev automation is disabled outside an explicit validation window")
     configured = os.environ.get("GESTALT_AUTOMATION_CONFIG")
     if not configured:
         return SkipReason("Automatic lifecycle is not enabled for this environment")
     if context.instance.get_runs(filters=RunsFilter(statuses=[DagsterRunStatus.QUEUED,
         DagsterRunStatus.STARTING, DagsterRunStatus.STARTED, DagsterRunStatus.CANCELING]), limit=1):
-        return SkipReason("Environment work is already queued or running")
+        return SkipReason("Daily work is already queued or running in this instance")
     request = automation_request(Path(configured))
     if request is None:
         return SkipReason("No completed slate or changed pregame inputs need publication")
     tags = binding.tags(request["job"], request["config"])
     runs = context.instance.get_run_records(filters=RunsFilter(job_name=request["job"],
-        tags={"gestalt/automation_key": request["key"]}), limit=3)
+        tags={"gestalt/automation_key": request["key"], "gestalt/environment": binding.environment}), limit=3)
     if any(r.dagster_run.status == DagsterRunStatus.SUCCESS for r in runs):
         return SkipReason("This input selection was already processed successfully")
     if len(runs) >= 3:
@@ -153,7 +159,7 @@ def evaluate_automatic_lifecycle(context):
     if runs and (datetime.now(UTC) - runs[0].update_timestamp).total_seconds() < 900:
         return SkipReason("Retry cooling down for 15 minutes")
     return RunRequest(job_name=request["job"],
-        run_key=f"automatic:{request['key']}:attempt-{len(runs)+1}",
+        run_key=f"{binding.environment}:automatic:{request['key']}:attempt-{len(runs)+1}",
         run_config={"ops":{request["job"] + "_op":{"config":request["config"]}}},
         tags={**tags, "gestalt/trigger":"sensor", "gestalt/automation_key":request["key"]})
 
