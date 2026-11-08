@@ -223,11 +223,15 @@ These instructions apply to every task in this repository.
 - Surface actual findings and failures to the user; do not bury them in files.
 - Ask for input before making a new modeling assumption, changing a defined
   metric, or introducing a fallback that alters product behavior.
-- If a task starts becoming materially more complex than the requested outcome
-  requires, stop before adding a workaround, new architecture, extra tooling,
-  or speculative optimization. Explain the concrete source of complexity,
-  present the simplest viable choices, and ask the user to decide before
-  proceeding.
+- Prefer the simplest approach that meets the agreed requirements. When two
+  approaches are functionally equivalent, choose the simpler one. Avoid adding
+  complexity for an anticipated problem.
+- Before adding material complexity such as a workaround, new architecture,
+  or extra tooling, explain what the simpler approach cannot do, why the added
+  complexity is necessary, and what it will cost. Present the simplest viable
+  choices and obtain the user's explicit approval before proceeding. Do not
+  assume approval for added complexity from approval of the goal or of an
+  earlier approach.
 - After completing any material work, promptly report the outcome to the user:
   what changed, the validation evidence, any remaining failures or limitations,
   and the exact next state. Do not silently stop after tool use, leave completed
