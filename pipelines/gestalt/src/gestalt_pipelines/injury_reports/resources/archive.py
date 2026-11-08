@@ -2,6 +2,7 @@
 
 import base64
 import json
+import re
 from contextlib import closing
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -10,10 +11,21 @@ import boto3
 from botocore.exceptions import ClientError
 from dagster import ConfigurableResource
 
-from .official_nba import EASTERN, OfficialInjuryReport
+from .official_nba import EASTERN, MAX_PDF_BYTES, OfficialInjuryReport, publication_time
 
 BUCKET = "nba-gestalt-data"
 PREFIX = "lake/raw/nba/injury-reports"
+EXTRACTION_PREFIX = "lake/artifacts/injury_report_extraction"
+CAPTURE_URI = re.compile(
+    rf"s3://{BUCKET}/(?P<key>{PREFIX}/publication_date=[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}/"
+    r"published_at=[0-9]{8}T[0-9]{6}Z/sha256=(?P<digest>[0-9a-f]{64})/capture\.json)"
+)
+
+
+def _report_prefix(published_at: datetime, digest: str) -> str:
+    day = published_at.astimezone(EASTERN).date().isoformat()
+    instant = published_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return f"{PREFIX}/publication_date={day}/published_at={instant}/sha256={digest}"
 
 
 def _utc_text(value: datetime) -> str:
@@ -53,9 +65,7 @@ class InjuryReportArchive(ConfigurableResource):
         if digest != expected_sha256:
             raise ValueError(f"The report PDF checksum changed: expected {expected_sha256}, got {digest}.")
 
-        day = report.published_at.astimezone(EASTERN).date().isoformat()
-        instant = report.published_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-        prefix = f"{PREFIX}/publication_date={day}/published_at={instant}/sha256={digest}"
+        prefix = _report_prefix(report.published_at, digest)
         pdf_key = f"{prefix}/report.pdf"
         capture_key = f"{prefix}/capture.json"
         client = boto3.client("s3")
@@ -90,3 +100,44 @@ class InjuryReportArchive(ConfigurableResource):
             "published_at": record["published_at"],
             "created": created,
         }
+
+    def load(self, capture_uri: str) -> tuple[dict, bytes]:
+        match = CAPTURE_URI.fullmatch(capture_uri)
+        if match is None:
+            raise ValueError("Expected an exact canonical S3 injury-report capture URI.")
+        capture_key, digest = match["key"], match["digest"]
+        client = boto3.client("s3")
+        with closing(client.get_object(Bucket=BUCKET, Key=capture_key)["Body"]) as body:
+            record = json.load(body)
+
+        if not isinstance(record, dict) or record.get("schema_version") != 1:
+            raise ValueError(f"Unsupported injury-report capture schema: {capture_uri}")
+        source_url = record.get("source_url")
+        if not isinstance(source_url, str):
+            raise ValueError(f"Missing official source URL in capture: {capture_uri}")
+        published_at = publication_time(source_url)
+        prefix = _report_prefix(published_at, digest)
+        pdf_key = f"{prefix}/report.pdf"
+        if (
+            capture_key != f"{prefix}/capture.json"
+            or record.get("immutable_uri") != f"s3://{BUCKET}/{pdf_key}"
+            or record.get("sha256") != digest
+            or record.get("published_at") != _utc_text(published_at)
+        ):
+            raise ValueError(f"Capture metadata does not identify the archived PDF: {capture_uri}")
+
+        with closing(client.get_object(Bucket=BUCKET, Key=pdf_key)["Body"]) as body:
+            pdf = body.read(MAX_PDF_BYTES + 1)
+        if len(pdf) > MAX_PDF_BYTES or sha256(pdf).hexdigest() != digest:
+            raise ValueError(f"Archived injury report does not match its capture: {capture_uri}")
+        return record, pdf
+
+    def save_extraction(self, record: dict) -> tuple[str, bool]:
+        published_at = datetime.fromisoformat(record["published_at"])
+        revision = _report_prefix(published_at, record["sha256"]).removeprefix(f"{PREFIX}/")
+        key = f"{EXTRACTION_PREFIX}/{revision}/parser_version={record['parser_version']}/report.json"
+        payload = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        client = boto3.client("s3")
+        created = _put_once(client, key, payload, "application/json")
+        _verify_bytes(client, key, payload)
+        return f"s3://{BUCKET}/{key}", created

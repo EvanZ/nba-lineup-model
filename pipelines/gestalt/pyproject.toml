@@ -3,7 +3,7 @@ name = "gestalt-pipelines"
 version = "0.1.0"
 description = "Dagster code location for NBA GESTALT pipelines."
 requires-python = ">=3.11"
-dependencies = ["boto3==1.43.118", "dagster==1.13.26"]
+dependencies = ["boto3==1.43.118", "dagster==1.13.26", "pypdf==6.18.0"]
 
 [dependency-groups]
 dev = ["pytest>=8.3.3"]
