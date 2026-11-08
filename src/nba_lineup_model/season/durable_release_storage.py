@@ -43,24 +43,15 @@ def production_release_reference(manifest: dict[str, object]) -> ArtifactReferen
     )
 
 
-def required_release_dependencies(
-    manifest: dict[str, object],
-) -> tuple[ArtifactReference, ...]:
-    approved = manifest["approved_manifest"]["identity"]
-    return tuple(
-        sorted(
-            (
-                parse_legacy_artifact_reference(
-                    approved["data"]["bundle_path"],
-                    artifact_kind="daily_data",
-                ),
-                parse_legacy_artifact_reference(
-                    approved["model"]["bundle_path"],
-                    artifact_kind="daily_model",
-                ),
-            )
-        )
-    )
+def required_release_dependencies(manifest: dict[str, object]) -> tuple[ArtifactReference, ...]:
+    approved = manifest['approved_manifest']['identity']
+    dependencies = [parse_legacy_artifact_reference(approved[key]['bundle_path'], artifact_kind=kind)
+                    for key, kind in [('data', 'daily_data'), ('model', 'daily_model')]]
+    initialized = manifest['identity'].get('forecast_initialization')
+    reference = initialized['reference'] if initialized else manifest['identity'].get('reconciliation_reference')
+    if reference:
+        dependencies.append(ArtifactReference.from_dict(reference))
+    return tuple(sorted(set(dependencies)))
 
 
 def production_release_inventory(
@@ -135,3 +126,39 @@ def publish_production_release(
         manifest_path=RUNTIME_MANIFEST_PATH,
     )
 
+
+
+def restore_production_release(*, reference: ArtifactReference, cache_root: Path,
+                               client: ArtifactClient | None = None,
+                               lake_uri: str = DEFAULT_LAKE_URI) -> Path:
+    """Materialize a complete immutable release from its S3 inventory."""
+    import json
+    import os
+    from nba_lineup_model.season.serving_recovery import _copy_verified
+    from nba_lineup_model.storage.artifact_store import resolve_object
+    from nba_lineup_model.storage.s3_lake import _new_s3_client
+
+    s3 = client or _new_s3_client(1)
+    stored = resolve_storage_manifest(reference=reference, cache_root=cache_root,
+                                      client=s3, lake_uri=lake_uri)
+    root = cache_root / "releases" / reference.content_id
+    for name, entry in stored["objects"].items():
+        digest = ObjectDigest(entry["sha256"], entry["size_bytes"])
+        source = resolve_object(uri=entry["s3_uri"], digest=digest,
+                                cache_root=cache_root / "objects", client=s3, lake_uri=lake_uri)
+        _copy_verified(source, root / name, digest)
+    runtime = json.loads((root / RUNTIME_MANIFEST_PATH).read_text())
+    if not runtime["identity"].get("durable_serving_sha256"):
+        raise ValueError("Release has no complete durable serving inventory")
+    overlay = root / MUTABLE_SCHEDULE_LINK
+    target = Path(runtime["identity"]["schedule_overlay_path"])
+    if overlay.is_symlink():
+        if os.readlink(overlay) != str(target):
+            raise ValueError("Restored overlay differs from release")
+    elif overlay.exists():
+        raise ValueError("Restored overlay is not the declared live observation link")
+    else:
+        overlay.symlink_to(target, target_is_directory=True)
+    if production_release_reference(verify_production_site_release(root)) != reference:
+        raise ValueError("Restored site release identity differs")
+    return root

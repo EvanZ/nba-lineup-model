@@ -67,11 +67,17 @@ These instructions apply to every task in this repository.
 
 ## Daily job history and alert recovery
 
-- Real dev/production daily runs use their environment's permanent Dagster home.
-  Manual reruns and sensors must use the same bound instance; never create a new
-  release-local or temporary instance for real work. Temporary instances are for tests.
-- Watchdogs read that same environment's history. A success in another environment,
-  another job, or different work must not clear its failure.
+- Real dev/production daily runs use the permanent bound Dagster instance. Under
+  the approved #59 shared deployment, each code location must explicitly bind its
+  registered environment, code, configuration, outputs, and tagged run history.
+  Manual reruns and sensors use that same instance; never create a release-local
+  or temporary instance for real work. Temporary instances are for tests only.
+- Watchdogs scope shared history and automation state to the exact environment
+  and code location. A success in another environment, another job, or different
+  work must not clear its failure.
+- Dev automation is off outside explicit validation windows. Production remains
+  scheduled. Enforce one heavy daily run across the shared instance, including
+  manual runs; keep protected collection in its independent service.
 - Recovery comes from actual successful runs, never edited alert state or fabricated
   run records. Any initial history migration requires approval and preserves originals.
 
@@ -190,6 +196,28 @@ These instructions apply to every task in this repository.
 - Removal or quarantine must be restricted to the NBA GESTALT roots named in
   the task. Never delete ESPN data belonging to another project or site.
 
+## Questions are not authorization
+
+- Treat questions, requests for explanation, corrections, criticism, and
+  statements of concern as discussion, not permission to implement a fix or
+  expand previously approved work.
+- When the user asks a question during implementation, pause changes, answer
+  the question, and wait for an explicit instruction to resume implementation.
+  Do not automatically resume earlier work after answering.
+- Read-only inspection needed to answer the question is allowed. A question
+  does not authorize editing files, reverting or deleting changes, changing
+  configuration, running tests or operational jobs, materializing data,
+  publishing artifacts, deploying, or updating tickets.
+- Explain findings and proposed next steps without executing them. A correction
+  identifying your mistake does not authorize repairing it or cleaning it up.
+- After a stop instruction, do not perform cleanup, rollback, or other actions
+  unless the user explicitly requests them. A later instruction authorizes
+  only the action it names; it does not implicitly restart the stopped task.
+- Explicit action requests such as "implement this," "update AGENTS.md," or
+  "resume the work" authorize their stated scope. Polite action requests such
+  as "can you update this file?" also authorize that specific action; questions
+  such as "why is this broken?" or "what job does this?" do not.
+
 ## Collaboration
 
 - Surface actual findings and failures to the user; do not bury them in files.
@@ -203,6 +231,7 @@ These instructions apply to every task in this repository.
 - After completing any material work, promptly report the outcome to the user:
   what changed, the validation evidence, any remaining failures or limitations,
   and the exact next state. Do not silently stop after tool use, leave completed
-  work unreported, or abandon an active task merely because an intervening
-  request was handled; resume the active task unless the user stops or redirects it.
+  work unreported. Follow the Questions are not authorization rules above:
+  after a question, correction, or stop, wait for explicit authorization before
+  resuming changes.
 - When the user stops or redirects work, stop immediately.

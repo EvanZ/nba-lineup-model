@@ -30,13 +30,16 @@ def forbidden_references(value: object, *, path: str = "$") -> list[str]:
     return found
 
 
-def audit_artifact_sources(root: Path | str) -> list[str]:
+def audit_artifact_sources(root: Path | str, *, files: list[str] | None = None) -> list[str]:
     """Read only: return exact contaminated files, never sanitize them silently."""
     directory = Path(root).resolve(strict=True)
     if not directory.is_dir():
         raise ValueError("Artifact source audit requires a directory")
     failures = []
-    for path in sorted(directory.rglob("*")):
+    selected = directory.rglob("*") if files is None else (directory / name for name in files)
+    for path in sorted(selected):
+        if not path.resolve().is_relative_to(directory):
+            raise ValueError("Artifact source audit path escapes its root")
         if path.is_symlink():
             raise ValueError(f"Artifact audit does not follow nested symlinks: {path}")
         if not path.is_file():

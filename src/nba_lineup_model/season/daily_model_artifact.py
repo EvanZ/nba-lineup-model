@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import hashlib
 import shutil
 from collections.abc import Iterable, Mapping, Sequence
@@ -92,7 +94,7 @@ def publish_daily_model_artifact(
         )
     cumulative_game_ids = sorted([*previous_game_ids, *daily_game_ids])
 
-    root_path = Path(root).resolve()
+    root_path = data_io.resolve(Path(root))
     staging = root_path / f".daily-model.tmp-{uuid4().hex}"
     staging.mkdir(parents=True)
     try:
@@ -133,7 +135,7 @@ def publish_daily_model_artifact(
             / f"model_sha256={bundle_sha}"
         )
         target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
+        if data_io.exists(target):
             shutil.rmtree(staging)
             return PublishedDailyModelArtifact(
                 target, False, verify_daily_model_artifact(target, data_bundle=data_bundle)
@@ -152,7 +154,7 @@ def verify_daily_model_artifact(
     *,
     data_bundle: Path | str | None = None,
 ) -> dict[str, Any]:
-    bundle = Path(path).resolve()
+    bundle = data_io.resolve(Path(path))
     manifest = read_manifest(bundle)
     identity = manifest.get("identity")
     if not isinstance(identity, dict):

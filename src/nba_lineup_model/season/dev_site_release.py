@@ -8,6 +8,8 @@ their coverage and API contracts agree.  It never mutates production state.
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 import argparse
 import hashlib
 import html
@@ -57,18 +59,19 @@ def publish_dev_site_release(
     api_validation: Mapping[str, object],
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
     generated_at: datetime | None = None,
+    observations=None,
 ) -> Path:
     """Validate and publish a complete dev release without touching production."""
 
-    data_root = Path(daily_data_root).resolve()
-    model_root = Path(daily_model_root).resolve()
-    serving_root = Path(serving_root).resolve()
-    lineups_root = Path(lineups_root).resolve()
-    schedule_root = Path(schedule_state_dir).resolve()
-    catalog = Path(catalog_path).resolve()
-    preseason_rankings = Path(preseason_rankings_path).resolve()
-    preseason_profiles = Path(preseason_profiles_path).resolve()
-    output = Path(output_root).resolve()
+    data_root = data_io.resolve(Path(daily_data_root))
+    model_root = data_io.resolve(Path(daily_model_root))
+    serving_root = data_io.resolve(Path(serving_root))
+    lineups_root = data_io.resolve(Path(lineups_root))
+    schedule_root = data_io.resolve(Path(schedule_state_dir))
+    catalog = data_io.resolve(Path(catalog_path))
+    preseason_rankings = data_io.resolve(Path(preseason_rankings_path))
+    preseason_profiles = data_io.resolve(Path(preseason_profiles_path))
+    output = data_io.resolve(Path(output_root))
 
     data_bundle, data_manifest = _resolved_daily_data_tip(data_root)
     model_bundle, model_manifest = _resolved_pointer_bundle(
@@ -92,7 +95,7 @@ def publish_dev_site_release(
         raise ValueError("Serving state and daily model have different evidence dates")
 
     lineup_pointer = _read_json(lineups_root / "latest.json")
-    lineup_bundle = (lineups_root / str(lineup_pointer["bundle_path"])).resolve()
+    lineup_bundle = data_io.resolve(lineups_root / str(lineup_pointer["bundle_path"]))
     _require_beneath(lineup_bundle, lineups_root, "Lineup bundle")
     lineup_manifest = verify_current_season_lineup_bundle(lineup_bundle)
     lineup_identity = lineup_manifest["identity"]
@@ -104,14 +107,21 @@ def publish_dev_site_release(
         raise ValueError("Serving coverage differs from the daily model chain")
     if sorted(map(str, lineup_identity["source_game_ids"])) != expected_game_ids:
         raise ValueError("Lineup coverage differs from the daily model chain")
-    final_game_ids = _schedule_final_game_ids(schedule_root)
+    selected_boards = None
+    from nba_lineup_model.season.serving_selection import INDEX_FILENAME
+    if data_io.is_file(schedule_root / INDEX_FILENAME):
+        if observations is None:
+            raise ValueError("Selected schedule validation requires verified S3 observations")
+        selected_boards = _selected_schedule_boards(schedule_root, observations,
+            model_bundle=model_bundle, model_sha=model_sha, preseason_rankings=preseason_rankings)
+    final_game_ids = _schedule_final_game_ids(schedule_root, boards=selected_boards)
     missing_model_finals = sorted(set(expected_game_ids) - set(final_game_ids))
     if missing_model_finals:
         raise ValueError(
             "Schedule finals omit games from the verified daily chain: "
             f"missing={missing_model_finals}"
         )
-    attribution_audit = _schedule_attribution_audit(schedule_root)
+    attribution_audit = _schedule_attribution_audit(schedule_root, boards=selected_boards)
     if attribution_audit["completed_games"] != len(final_game_ids):
         raise ValueError(
             "Schedule attribution coverage differs from schedule finals: "
@@ -130,17 +140,17 @@ def publish_dev_site_release(
     code_revision = str(code_revision).strip()
     if len(code_revision) != 40 or any(c not in "0123456789abcdef" for c in code_revision):
         raise ValueError("Code revision must be a full lowercase Git commit SHA")
-    if not catalog.is_file():
+    if not data_io.is_file(catalog):
         raise FileNotFoundError(f"Game catalog is missing: {catalog}")
-    if not preseason_rankings.is_file() or not preseason_profiles.is_file():
+    if not data_io.is_file(preseason_rankings) or not data_io.is_file(preseason_profiles):
         raise FileNotFoundError("Bound preseason rankings or profiles are missing")
-    rankings_frame = pd.read_parquet(preseason_rankings)
-    profiles_frame = pd.read_parquet(preseason_profiles)
+    rankings_frame = data_io.parquet(preseason_rankings)
+    profiles_frame = data_io.parquet(preseason_profiles)
     ranking_ids = set(rankings_frame["player_id"].astype(int))
     profile_ids = set(profiles_frame["player_id"].astype(int))
     if ranking_ids != profile_ids:
         raise ValueError("Bound preseason rankings and profiles use different players")
-    serving_state = pd.read_parquet(serving_bundle / "serving_state.parquet")
+    serving_state = data_io.parquet(serving_bundle / "serving_state.parquet")
     serving_ids = set(serving_state["player_id"].astype(int))
     if ranking_ids != serving_ids:
         raise ValueError("Bound preseason catalogs differ from the serving universe")
@@ -174,6 +184,8 @@ def publish_dev_site_release(
             "root_path": schedule_root.as_posix(),
             "final_game_count": len(final_game_ids),
             "attribution_audit": attribution_audit,
+            **({"observation_snapshot": {"observation_id": observations.observation_id,
+                 "captured_files": observations.captured_files}} if observations is not None else {}),
         },
         "catalog": {
             "sha256": file_sha256(catalog),
@@ -191,7 +203,7 @@ def publish_dev_site_release(
     release_sha = hashlib.sha256(canonical_json(identity)).hexdigest()
     output.mkdir(parents=True, exist_ok=True)
     target = output / f"release_sha256={release_sha}"
-    if not target.exists():
+    if not data_io.exists(target):
         staging = output / f".site-release.tmp-{uuid4().hex}"
         staging.mkdir()
         try:
@@ -209,7 +221,7 @@ def publish_dev_site_release(
             )
             staging.replace(target)
         finally:
-            if staging.exists():
+            if data_io.exists(staging):
                 shutil.rmtree(staging)
     verify_dev_site_release(target)
     pointer = {
@@ -228,7 +240,7 @@ def publish_dev_site_release(
 
 
 def verify_dev_site_release(path: Path | str) -> dict[str, Any]:
-    bundle = Path(path).resolve()
+    bundle = data_io.resolve(Path(path))
     manifest = _read_json(bundle / MANIFEST_FILENAME)
     identity = manifest.get("identity")
     if not isinstance(identity, dict):
@@ -249,9 +261,9 @@ def verify_dev_site_release(path: Path | str) -> dict[str, Any]:
 
 
 def resolve_latest_dev_site_release(root: Path | str) -> Path:
-    root_path = Path(root).resolve()
+    root_path = data_io.resolve(Path(root))
     pointer = _read_json(root_path / "latest.json")
-    target = (root_path / str(pointer["release_path"])).resolve()
+    target = data_io.resolve(root_path / str(pointer["release_path"]))
     _require_beneath(target, root_path, "Dev-site release")
     manifest = verify_dev_site_release(target)
     if pointer.get("release_sha256") != manifest["release_sha256"]:
@@ -277,7 +289,9 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
     # Every actual participant on the release date must be visible in their
     # player-page API, not just the representative Curry profile above.
     checked_logs = 0
-    profiles = {201939: player}
+    # Full profiles include large multi-season charts and caches. Coverage uses
+    # only current-season trajectories; retain those rather than every payload.
+    profiles = {201939: player.get("current_season_trajectory", [])}
     for game in schedule.get("games", []):
         if not game.get("status", {}).get("completed"):
             continue
@@ -290,8 +304,8 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
                     continue
                 player_id = int(row["player_id"])
                 if player_id not in profiles:
-                    profiles[player_id] = _get_json(f"{root}/api/players/{player_id}")
-                matches = [point for point in profiles[player_id].get("current_season_trajectory", []) if str(point.get("game_id")) == game_id]
+                    profiles[player_id] = _get_json(f"{root}/api/players/{player_id}").get("current_season_trajectory", [])
+                matches = [point for point in profiles[player_id] if str(point.get("game_id")) == game_id]
                 if len(matches) != 1 or abs(float(matches[0].get("actual_minutes", -1)) - minutes) > 1e-6:
                     raise ValueError(f"Player game-log coverage mismatch: NBA game {game_id}, player {player_id}")
                 checked_logs += 1
@@ -308,12 +322,12 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
         for day, bundle, manifest in chain:
             if day.isoformat() > evidence_date:
                 continue
-            observations = pd.read_parquet(_component_path(bundle, manifest, "minutes_observations"))
+            observations = data_io.parquet(_component_path(bundle, manifest, "minutes_observations"))
             for row in observations.itertuples(index=False):
                 player_id, game_id = int(row.player_id), str(row.game_id)
                 if player_id not in profiles:
-                    profiles[player_id] = _get_json(f"{root}/api/players/{player_id}")
-                matches = [p for p in profiles[player_id].get("current_season_trajectory", []) if str(p.get("game_id")) == game_id]
+                    profiles[player_id] = _get_json(f"{root}/api/players/{player_id}").get("current_season_trajectory", [])
+                matches = [p for p in profiles[player_id] if str(p.get("game_id")) == game_id]
                 if (len(matches) != 1
                     or matches[0].get("played") is not bool(row.played)
                     or str(matches[0].get("team")) != str(row.team)
@@ -369,10 +383,11 @@ def collect_api_validation(api_root: str, *, evidence_date: str, daily_model_roo
     }
 
 
-def approved_model_root(approved_identity: Mapping[str, Any]) -> Path:
+def approved_model_root(approved_identity: Mapping[str, Any], *, release: Path | None = None) -> Path:
     """Resolve and verify the release's model chain rather than a job directory."""
     reference = approved_identity["model"]
-    bundle = Path(reference["bundle_path"]).resolve(strict=True)
+    from nba_lineup_model.season.serving_recovery import daily_path
+    bundle = data_io.resolve(daily_path(Path(reference["bundle_path"]), release=release), strict=True)
     manifest = verify_daily_model_artifact(bundle)
     if (manifest["bundle_sha256"] != reference["bundle_sha256"]
         or manifest["identity"]["game_date_pacific"] != approved_identity["evidence_through_date"]):
@@ -384,10 +399,11 @@ def approved_model_root(approved_identity: Mapping[str, Any]) -> Path:
     return root
 
 
-def approved_schedule_game_ids(approved_identity: Mapping[str, Any]) -> list[str]:
+def approved_schedule_game_ids(approved_identity: Mapping[str, Any], *, release: Path | None = None) -> list[str]:
     """Read the exact approved artifact, never an outer job's mutable pointer."""
     reference = approved_identity["data"]
-    manifest = verify_daily_data_artifact(Path(reference["bundle_path"]))
+    from nba_lineup_model.season.serving_recovery import daily_path
+    manifest = verify_daily_data_artifact(daily_path(Path(reference["bundle_path"]), release=release))
     if manifest["bundle_sha256"] != reference["bundle_sha256"]:
         raise ValueError("Approved daily data checksum mismatch")
     identity = manifest["identity"]
@@ -469,7 +485,7 @@ def _resolved_daily_data_tip(root: Path) -> tuple[Path, dict[str, Any]]:
     collection = resolve_daily_data_pointer(root, pointer)
     identity = collection["identity"]
     selected = identity["dates"][identity["through_date"]]
-    bundle = (root / str(selected["bundle_path"])).resolve()
+    bundle = data_io.resolve(root / str(selected["bundle_path"]))
     _require_beneath(bundle, root, "Daily data artifact")
     manifest = verify_daily_data_artifact(bundle)
     if selected["bundle_sha256"] != manifest["bundle_sha256"]:
@@ -479,7 +495,7 @@ def _resolved_daily_data_tip(root: Path) -> tuple[Path, dict[str, Any]]:
 
 def _resolved_pointer_bundle(root: Path, verifier) -> tuple[Path, dict[str, Any]]:
     pointer = _read_json(root / "latest.json")
-    bundle = (root / str(pointer["bundle_path"])).resolve()
+    bundle = data_io.resolve(root / str(pointer["bundle_path"]))
     _require_beneath(bundle, root, "Artifact bundle")
     manifest = verifier(bundle)
     if pointer.get("bundle_sha256") != manifest["bundle_sha256"]:
@@ -487,9 +503,36 @@ def _resolved_pointer_bundle(root: Path, verifier) -> tuple[Path, dict[str, Any]
     return bundle, manifest
 
 
-def _schedule_final_game_ids(root: Path) -> list[str]:
+def _selected_schedule_boards(root, observations, *, model_bundle, model_sha, preseason_rankings):
+    from nba_lineup_model.season.serving_selection import (
+        verify_schedule_selection, read_selected_day, frozen_rating_context)
+    from nba_lineup_model.season.frozen_game_ratings import load_frozen_game_ratings
+    index = verify_schedule_selection(root)
+    if observations.errors:
+        raise ValueError(f"Official S3 observation errors: {observations.errors}")
+    def ratings(selected):
+        return load_frozen_game_ratings(selected, model_bundle=model_bundle,
+            model_sha256=model_sha, preseason_rankings=preseason_rankings)
+    token = frozen_rating_context.set(ratings)
+    try:
+        boards = [read_selected_day(day, root=root, observations=observations) for day in sorted(index['dates'])]
+    finally:
+        frozen_rating_context.reset(token)
+    for board in boards:
+        for game in board['games']:
+            if game.get('data_quality_errors'):
+                raise ValueError(f"Selected S3 game validation failed: {game['game_id']}: {game['data_quality_errors']}")
+    return boards
+
+
+def _schedule_final_game_ids(root: Path, *, boards=None) -> list[str]:
+    if boards is not None:
+        ids = [str(g['game_id']) for b in boards for g in b['games'] if g.get('status',{}).get('completed')]
+        if len(set(ids)) != len(ids):
+            raise ValueError('Duplicate selected final game')
+        return sorted(ids)
     game_ids: list[str] = []
-    for path in sorted((root / "final").glob("*.summary.json")):
+    for path in sorted(data_io.glob(root / "final", "*.summary.json")):
         payload = _read_json(path)
         game_id = str(payload.get("game_id", "")).strip()
         if not game_id:
@@ -500,17 +543,18 @@ def _schedule_final_game_ids(root: Path) -> list[str]:
     return sorted(game_ids)
 
 
-def _schedule_attribution_audit(root: Path) -> dict[str, int]:
+def _schedule_attribution_audit(root: Path, *, boards=None) -> dict[str, int]:
     """Reject a release if any served game lacks its auditable ledgers."""
 
     completed_ids: set[str] = set()
-    for path in sorted((root / "final").glob("*.summary.json")):
-        payload = _read_json(path)
+    final_records = ([_read_json(path) for path in sorted(data_io.glob(root / "final", "*.summary.json"))]
+        if boards is None else [g.get('final_audit', {}) for b in boards for g in b['games'] if g.get('status',{}).get('completed')])
+    for payload in final_records:
         game_id = str(payload.get("game_id", "")).strip()
         pregame = payload.get("pregame")
         retrospective = payload.get("retrospective")
         if not isinstance(pregame, dict) or not isinstance(retrospective, dict):
-            raise ValueError(f"Completed game {game_id or path.name} lacks both views")
+            raise ValueError(f"Completed game {game_id or 'unknown'} lacks both views")
         _require_schedule_ledger(
             pregame.get("projection"),
             game_id=game_id,
@@ -525,17 +569,17 @@ def _schedule_attribution_audit(root: Path) -> dict[str, int]:
 
     served_ids: set[str] = set()
     served_completed_ids: set[str] = set()
-    for path in sorted((root / "latest").glob("*.json")):
-        payload = _read_json(path)
+    daily_boards = boards if boards is not None else [_read_json(path) for path in sorted(data_io.glob(root / "latest", "*.json"))]
+    for payload in daily_boards:
         games = payload.get("games")
         if not isinstance(games, list):
-            raise ValueError(f"Schedule day has no games array: {path}")
+            raise ValueError("Schedule day has no games array")
         for game in games:
             if not isinstance(game, dict):
-                raise ValueError(f"Schedule day has an invalid game: {path}")
+                raise ValueError("Schedule day has an invalid game")
             game_id = str(game.get("game_id", "")).strip()
             if not game_id:
-                raise ValueError(f"Schedule game has no ID: {path}")
+                raise ValueError("Schedule game has no ID")
             if game_id in served_ids:
                 raise ValueError(f"Schedule serves duplicate game {game_id}")
             _require_schedule_ledger(
@@ -545,7 +589,7 @@ def _schedule_attribution_audit(root: Path) -> dict[str, int]:
             )
             _require_schedule_projected_minutes(game, game_id=game_id)
             frozen_path = root / "frozen" / f"{game_id}.json"
-            if frozen_path.is_file():
+            if data_io.is_file(frozen_path):
                 frozen = _read_json(frozen_path)
                 frozen_projection = frozen.get("projection")
                 if not isinstance(frozen_projection, dict):
@@ -750,10 +794,10 @@ def _require_schedule_ledger(
 
 
 def _tree_sha256(root: Path) -> str:
-    if not root.is_dir():
+    if not data_io.is_dir(root):
         raise FileNotFoundError(f"Release tree is missing: {root}")
     digest = hashlib.sha256()
-    files = sorted(path for path in root.rglob("*") if path.is_file())
+    files = sorted(path for path in data_io.rglob(root, "*") if data_io.is_file(path))
     if not files:
         raise ValueError(f"Release tree contains no files: {root}")
     for path in files:
@@ -818,13 +862,13 @@ def _get_json(url: str) -> dict[str, Any]:
 
 def _require_beneath(path: Path, root: Path, label: str) -> None:
     try:
-        path.relative_to(root.resolve())
+        path.relative_to(data_io.resolve(root))
     except ValueError as error:
         raise ValueError(f"{label} escapes its root") from error
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(data_io.read_text(path, encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"Expected a JSON object: {path}")
     return payload

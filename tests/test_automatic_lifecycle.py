@@ -87,8 +87,9 @@ def test_future_final_cannot_trigger_nightly():
 
 def sensor_context(monkeypatch, *, running=False, records=()):
     monkeypatch.setenv("GESTALT_AUTOMATION_CONFIG", "/dev/worker/config.json")
-    binding = SimpleNamespace(tags=lambda job, config: {"gestalt/environment":"dev"})
+    binding = SimpleNamespace(environment="dev", instance_home=None, tags=lambda job, config: {"gestalt/environment":"dev"})
     monkeypatch.setattr(jobs, "binding_for_instance", lambda instance: binding)
+    monkeypatch.setattr(jobs, "reconciliation_due", lambda *args: None)
     import nba_lineup_model.orchestration.lifecycle as lifecycle
     monkeypatch.setattr(lifecycle, "automation_request", lambda path: {
         "job":"advance_daily_environment", "key":"same-inputs",
@@ -103,7 +104,7 @@ def test_sensor_submits_existing_environment_job(monkeypatch):
     result = jobs.evaluate_automatic_lifecycle(context)
     assert result.job_name == "advance_daily_environment"
     assert result.tags["gestalt/environment"] == "dev"
-    assert result.run_key == "automatic:same-inputs:attempt-1"
+    assert result.run_key == "dev:automatic:same-inputs:attempt-1"
 
 
 def test_sensor_never_queues_behind_active_environment_work(monkeypatch):
@@ -139,7 +140,7 @@ def test_empty_partition_reuses_every_model_component_without_fitting(tmp_path, 
     steps.spec = {"identity":{"expected_game_ids":[]}}
     steps.model_inputs = [file_reference(parent.path / "manifest.json")]
     steps.data_inputs = [file_reference(empty.path / "manifest.json")]
-    steps.config = SimpleNamespace(data_root=tmp_path / "data-root", model_root=tmp_path / "model-root", season="2026-27")
+    steps.config = SimpleNamespace(data_root=tmp_path / "data-root", model_root=tmp_path / "model-root", season="2026-27", reconciliation_root=None)
     steps.build_target_model(date(2026, 10, 21))
     pointer = read_object(steps.config.model_root / "latest.json")
     result = verify_daily_model_artifact(steps.config.model_root / pointer["bundle_path"])
@@ -147,6 +148,42 @@ def test_empty_partition_reuses_every_model_component_without_fitting(tmp_path, 
     assert result["identity"]["parent_model_sha256"] == parent.manifest["bundle_sha256"]
     assert result["identity"]["daily_game_ids"] == []
     assert result["identity"]["cumulative_game_ids"] == ["0022600001"]
+
+    # Exercise the real empty-date model path followed by durable release
+    # staging, including a restarted worker that skipped previous checkpoints.
+    from test_daily_artifacts import DurableFakeS3, LAKE
+    from nba_lineup_model.season import durable_artifact_storage as storage
+    from nba_lineup_model.season import durable_release_storage, production_site_release
+    from nba_lineup_model.season.daily_data_artifact import promote_daily_data_artifact
+    from nba_lineup_model.storage.artifact_store import resolve_storage_manifest
+    from functools import partial
+    client = DurableFakeS3()
+    promote_daily_data_artifact(first.path, root=steps.config.data_root)
+    promote_daily_data_artifact(empty.path, root=steps.config.data_root)
+    steps.config.artifact_lake_uri = LAKE
+    steps.config.artifact_cache_root = tmp_path / "cache"
+    steps.durable_dependencies = []
+    monkeypatch.setattr(storage, "publish_selected_data_chain",
+        partial(storage.publish_selected_data_chain, client=client))
+    monkeypatch.setattr(storage, "publish_selected_model_chain",
+        partial(storage.publish_selected_model_chain, client=client))
+    monkeypatch.setattr(production_site_release, "verify_production_site_release",
+        lambda _: {"identity": {"evidence_through_date": "2026-10-21"}})
+    seen = []
+    def publish(release, *, cache_root, dependencies, lake_uri):
+        assert len(dependencies) == 4  # both dates, both data and model
+        for reference in dependencies:
+            resolve_storage_manifest(reference=reference, cache_root=cache_root,
+                client=client, lake_uri=lake_uri)
+        seen.append(tuple(dependencies))
+        return SimpleNamespace(reference=dependencies[-1])
+    monkeypatch.setattr(durable_release_storage, "publish_production_release", publish)
+    steps.archive_release(tmp_path / "release")
+    initial_puts = len(client.puts)
+    steps.durable_dependencies = []
+    steps.archive_release(tmp_path / "release")
+    assert seen[0] == seen[1]
+    assert len(client.puts) == initial_puts
 
 
 def test_dev_reload_has_no_sudo_and_never_targets_prod(monkeypatch):
@@ -156,3 +193,20 @@ def test_dev_reload_has_no_sudo_and_never_targets_prod(monkeypatch):
     monkeypatch.setattr(daily_activation.subprocess, "run", run)
     daily_activation.reload_environment_api(SimpleNamespace(environment_root=Path("/var/lib/nba-gestalt-dev")), {})
     assert run.call_args.args[0] == ["systemctl", "--no-ask-password", "restart", "gestalt-web-dev"]
+
+
+def test_reconciliation_is_required_before_other_scheduled_work(monkeypatch):
+    from unittest.mock import Mock
+    from types import SimpleNamespace
+    binding=SimpleNamespace(environment='dev',tags=lambda job,cfg:{'gestalt/work_id':'roster-slot'})
+    instance=SimpleNamespace(get_run_records=Mock(return_value=[]))
+    context=SimpleNamespace(instance=instance)
+    pending=jobs.reconciliation_due(context,binding,'/registered/config.json')
+    assert pending['job']=='reconcile_in_season_rosters'
+    assert pending['key']=='roster-slot'
+    filters=instance.get_run_records.call_args.kwargs['filters']
+    assert filters.job_name=='reconcile_in_season_rosters'
+    assert filters.statuses==[DagsterRunStatus.SUCCESS]
+    assert filters.tags['gestalt/environment']=='dev'
+    instance.get_run_records.return_value=[object()]
+    assert jobs.reconciliation_due(context,binding,'/registered/config.json') is None

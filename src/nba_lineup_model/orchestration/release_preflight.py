@@ -18,6 +18,8 @@ def fetch(api, path):
 @contextmanager
 def candidate_api(release: Path, report_root: Path, *, observation_root: Path, quality_root: Path):
     bindings = json.loads((release / "serving-bindings.json").read_text())
+    from nba_lineup_model.season.serving_recovery import historical_path
+    history = historical_path(release)
     report_root.mkdir(parents=True, exist_ok=True)
     pointer = report_root / "preflight-release"
     if not pointer.is_symlink():
@@ -43,7 +45,7 @@ def candidate_api(release: Path, report_root: Path, *, observation_root: Path, q
     with (report_root / "api.log").open("w") as log:
         process = subprocess.Popen([sys.executable, "-m", "uvicorn",
             "nba_lineup_model.web_api.app:app", "--host", "127.0.0.1", "--port", str(port)],
-            cwd=bindings["historical_runtime"], env=env, stdout=log, stderr=subprocess.STDOUT,
+            cwd=history, env=env, stdout=log, stderr=subprocess.STDOUT,
             user="ubuntu" if os.geteuid() == 0 else None,
             group="ubuntu" if os.geteuid() == 0 else None)
         try:

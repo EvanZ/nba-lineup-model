@@ -586,3 +586,76 @@ def test_daily_model_rejects_a_parent_with_different_provenance(tmp_path: Path) 
                 "prior_sha256": _sha("preseason-prior"),
             },
         )
+
+
+@pytest.mark.parametrize('kind', ['data', 'model'])
+def test_durable_retry_in_new_work_directory_reuses_original_creation_metadata(tmp_path, kind):
+    first = _publish_data(tmp_path / 'first', game_date=date(2026, 10, 20), game_ids=['0022600001'])
+    second = _publish_data(tmp_path / 'second', game_date=date(2026, 10, 20), game_ids=['0022600001'])
+    client = DurableFakeS3()
+    publish_daily_data_bundle(first.path, cache_root=tmp_path / 'cache', client=client, lake_uri=LAKE)
+    publish = publish_daily_data_bundle
+    if kind == 'model':
+        first = _publish_model(tmp_path / 'first-model', data_bundle=first.path)
+        second = _publish_model(tmp_path / 'second-model', data_bundle=second.path)
+        publish = publish_daily_model_bundle
+    assert first.manifest['identity'] == second.manifest['identity']
+    assert first.manifest['generated_at'] != second.manifest['generated_at']
+    original = publish(first.path, cache_root=tmp_path / 'cache', client=client, lake_uri=LAKE)
+    remote_before = dict(client.objects)
+    puts_before = list(client.puts)
+    local_before = (second.path / 'manifest.json').read_bytes()
+    repeated = publish(second.path, cache_root=tmp_path / 'fresh-cache', client=client, lake_uri=LAKE)
+    assert repeated.reference == original.reference
+    assert repeated.storage_manifest_sha256 == original.storage_manifest_sha256
+    assert repeated.objects.uploaded == 0
+    assert not repeated.storage_manifest_uploaded
+    assert client.objects == remote_before
+    assert client.puts == puts_before
+    assert (second.path / 'manifest.json').read_bytes() == local_before
+    assert any(key.endswith('manifest.json') for key in client.gets)
+
+
+@pytest.mark.parametrize('warm_cache', [False, True])
+@pytest.mark.parametrize('difference', ['extra_metadata', 'payload', 'source', 'missing_remote', 'corrupt_remote'])
+def test_creation_time_retry_still_rejects_changed_or_missing_data(tmp_path, difference, warm_cache):
+    first = _publish_data(tmp_path / 'first', game_date=date(2026, 10, 20), game_ids=['0022600001'])
+    second = _publish_data(tmp_path / 'second', game_date=date(2026, 10, 20), game_ids=['0022600001'])
+    client = DurableFakeS3()
+    publish_daily_data_bundle(first.path, cache_root=tmp_path / 'cache', client=client, lake_uri=LAKE)
+    if warm_cache:
+        publish_daily_data_bundle(second.path, cache_root=tmp_path / 'fresh-cache', client=client, lake_uri=LAKE)
+    manifest_path = second.path / 'manifest.json'
+    payload = json.loads(manifest_path.read_text())
+    if difference == 'extra_metadata':
+        payload['new_provenance'] = 'not authorized'
+        manifest_path.write_text(json.dumps(payload))
+    elif difference == 'source':
+        next(iter(payload['identity']['game_sources']['0022600001'].values()))['sha256'] = 'f' * 64
+        manifest_path.write_text(json.dumps(payload))
+    elif difference == 'payload':
+        component = next(iter(payload['identity']['components'].values()))['path']
+        (second.path / component).write_text('changed basketball data')
+    else:
+        key = next(key for key in client.objects if not key[1].endswith('manifest.json'))
+        if difference == 'missing_remote':
+            del client.objects[key]
+        else:
+            data, metadata, checksum = client.objects[key]
+            corrupt = b'X' * len(data)
+            client.objects[key] = (corrupt, metadata, base64.b64encode(hashlib.sha256(corrupt).digest()).decode())
+    puts_before = list(client.puts)
+    with pytest.raises((ValueError, RuntimeError, ClientError, FileNotFoundError)):
+        publish_daily_data_bundle(second.path, cache_root=tmp_path / 'fresh-cache', client=client, lake_uri=LAKE)
+    assert client.puts == puts_before
+
+
+def test_changed_payload_has_new_durable_identity_without_replacing_original(tmp_path):
+    first = _publish_data(tmp_path / 'first', game_date=date(2026, 10, 20), game_ids=['0022600001'])
+    changed = _publish_data(tmp_path / 'second', game_date=date(2026, 10, 20), game_ids=['0022600001'], suffix='-correction')
+    client = DurableFakeS3()
+    original = publish_daily_data_bundle(first.path, cache_root=tmp_path / 'cache', client=client, lake_uri=LAKE)
+    remote_before = dict(client.objects)
+    replacement = publish_daily_data_bundle(changed.path, cache_root=tmp_path / 'cache', client=client, lake_uri=LAKE)
+    assert original.reference != replacement.reference
+    assert all(client.objects[key] == value for key, value in remote_before.items())

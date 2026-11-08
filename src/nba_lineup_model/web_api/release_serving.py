@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nba_lineup_model.storage import website_data as data_io
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,7 +33,7 @@ def build_serving_bindings(
     environment: str = "dev",
 ) -> dict[str, Any]:
     """Bind already materialized artifacts; do not train or replay anything."""
-    historical_runtime = historical_runtime.resolve()
+    historical_runtime = data_io.resolve(historical_runtime)
     model_artifact = "forward_nail_rapm_v1212_residualized_lambda"
     model_root = historical_runtime / "artifacts/models" / model_artifact / "2025-26"
     run_id = str(read_object(model_root / "latest.json")["run_id"])
@@ -43,10 +45,10 @@ def build_serving_bindings(
         historical_runtime / "artifacts/models/analysis/forward_four_factor_offense_defense",
     ]
     for root in roots:
-        for path in sorted(root.rglob("*")) if root.is_dir() else [root]:
-            if path.is_file():
+        for path in sorted(data_io.rglob(root, "*")) if data_io.is_dir(root) else [root]:
+            if data_io.is_file(path):
                 historical_files[str(path.relative_to(historical_runtime))] = file_sha256(path)
-    if not historical_files or not (model_root / run_id / "metadata.json").is_file():
+    if not historical_files or not data_io.is_file(model_root / run_id / "metadata.json"):
         raise ValueError("Historical runtime inputs are missing")
     schedule_manifest = read_object(release / "schedule-snapshot/manifest.json")
     # Preserve the already approved edition identity. This is not a new replay.
@@ -83,6 +85,9 @@ def build_serving_bindings(
         "forecast_selection_id": selection["selection_map_sha256"],
         "historical_inputs_id": digest(historical_files),
     }
+    reconciliation = runtime_identity.get('forecast_initialization', {}).get('reference') or runtime_identity.get('reconciliation_reference')
+    if reconciliation:
+        components['reconciliation_id'] = reconciliation['content_id']
     bindings = {
         "player_pages": [
             "model_state_id",
@@ -114,6 +119,9 @@ def build_serving_bindings(
         ],
         "schedule": ["model_state_id", "forecast_selection_id", "catalog_id"],
     }
+    if reconciliation:
+        for keys in bindings.values():
+            keys.append('reconciliation_id')
     result = {
         "schema_version": 1,
         "release_id": runtime_identity["approved_release_sha256"],
@@ -152,7 +160,7 @@ def verify_serving_bindings(release: Path) -> dict[str, Any]:
         # The paths inside each component must still be explicit and relative.
         if Path(relative).is_absolute() or ".." in Path(relative).parts:
             raise ValueError(f"Invalid component path: {key}")
-        if not (release / relative).exists():
+        if not data_io.exists(release / relative):
             raise ValueError(f"Missing bound component: {key}")
     selection = verify_schedule_selection(release / result["references"]["schedule"])
     if (
@@ -160,9 +168,10 @@ def verify_serving_bindings(release: Path) -> dict[str, Any]:
         or selection["selection_map_sha256"] != result["components"]["forecast_selection_id"]
     ):
         raise ValueError("Schedule does not match the selected edition")
-    history = Path(result["historical_runtime"])
+    from nba_lineup_model.season.serving_recovery import historical_path
+    history = historical_path(release)
     for relative, checksum in result["historical_files"].items():
-        path = (history / relative).resolve()
+        path = data_io.resolve(history / relative)
         if not path.is_relative_to(history) or file_sha256(path) != checksum:
             raise ValueError(f"Historical runtime input changed: {relative}")
     return result
@@ -178,12 +187,17 @@ class ReleaseServing:
     def load(cls, root: str | Path | None) -> ReleaseServing | None:
         if root is None:
             return None
-        resolved = Path(root).resolve()
+        resolved = data_io.resolve(Path(root))
         # Old releases remain usable during migration. New release artifacts
         # declaring bindings are required to pass all checks; no downgrade.
         manifest = read_object(resolved / "runtime-manifest.json")
         if not manifest["identity"].get("serving_bindings_sha256"):
             return None
+        if manifest["identity"].get("durable_serving_sha256"):
+            from nba_lineup_model.storage.website_data import activate
+            from nba_lineup_model.storage.s3_lake import _new_s3_client
+            from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
+            manifest, _ = activate(resolved, manifest, lake_uri=DEFAULT_LAKE_URI, client=_new_s3_client(1))
         bindings = verify_serving_bindings(resolved)
         if manifest["identity"]["serving_bindings_sha256"] != bindings["bindings_sha256"]:
             raise ValueError("Runtime and serving binding identities disagree")
@@ -192,7 +206,7 @@ class ReleaseServing:
         return cls(resolved, manifest, bindings)
 
     def path(self, name: str) -> Path:
-        return (self.root / self.bindings["references"][name]).resolve()
+        return data_io.resolve(self.root / self.bindings["references"][name])
 
     @property
     def release_id(self) -> str:
@@ -216,7 +230,22 @@ class ReleaseServing:
     def evaluator_kwargs(self) -> dict[str, Any]:
         # Historical loaders have relative cache paths. Their process working
         # directory is an immutable release directory and must match this pin.
-        if Path.cwd().resolve() != Path(self.bindings["historical_runtime"]):
+        from nba_lineup_model.season.serving_recovery import historical_path, inventory
+        from nba_lineup_model.storage.website_data import active
+        if active() is not None:
+            return {
+                "run_id": self.bindings["historical_run_id"],
+                "artifacts_dir": active().history / "artifacts/models",
+                "preseason_rankings_override": self.path("preseason_rankings"),
+                "preseason_profiles_override": self.path("preseason_profiles"),
+                "current_serving_bundle": self.path("serving_bundle"),
+                "current_lineups_bundle": self.path("lineup_bundle"),
+            }
+        history = historical_path(self.root)
+        if inventory(self.root) is not None:
+            import os
+            os.chdir(history)
+        if data_io.resolve(Path.cwd()) != history:
             raise ValueError("API working directory differs from bound historical runtime")
         return {
             "run_id": self.bindings["historical_run_id"],
@@ -229,9 +258,13 @@ class ReleaseServing:
     def frozen_game_ratings(self, selected: dict) -> dict[int, float]:
         from nba_lineup_model.season.frozen_game_ratings import load_frozen_game_ratings
         model = self.manifest["approved_manifest"]["identity"]["model"]
-        return load_frozen_game_ratings(selected, model_bundle=Path(model["bundle_path"]),
+        from nba_lineup_model.season.serving_recovery import daily_path
+        return load_frozen_game_ratings(selected, model_bundle=daily_path(Path(model["bundle_path"]), release=self.root),
             model_sha256=model["bundle_sha256"], preseason_rankings=self.path("preseason_rankings"))
 
     def observations(self, root: Path | None) -> ObservationSnapshot:
+        import os
+        if self.manifest['identity'].get('durable_serving_sha256') and not os.environ.get('GESTALT_OBSERVATION_S3_URI'):
+            raise ValueError('Durable website observations require an explicit S3 source')
         index = read_object(self.path("schedule") / INDEX_FILENAME)
         return ObservationSnapshot.capture(root, sorted(index["dates"]))

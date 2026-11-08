@@ -559,3 +559,63 @@ def test_approved_model_chain_is_bound_to_release(tmp_path, monkeypatch, damage)
             subject.approved_model_root(approved)
     else:
         assert subject.approved_model_root(approved) == root
+
+
+def test_api_gate_does_not_retain_full_player_profiles(monkeypatch):
+    """Keep full coverage while releasing each unrelated multi-season payload."""
+    import weakref
+    from nba_lineup_model.season import dev_site_release as release
+
+    class Profile(dict):
+        pass
+
+    prior = []
+
+    def fetch(url):
+        if "/api/schedule?" in url:
+            return {"games": [{"game_id": "g1", "status": {"completed": True},
+                "retrospective": {"actual_minutes": {"home": [
+                    {"player_id": 1, "actual_minutes": 10},
+                    {"player_id": 2, "actual_minutes": 10}]}}}]}
+        if "/api/players/" in url and not url.endswith("201939"):
+            assert all(reference() is None for reference in prior), "Full profiles retained across players"
+            profile = Profile(current_season_trajectory=[{"game_id": "g1", "actual_minutes": 10}],
+                              historical_charts={"unrelated": "large historical payload"})
+            prior.append(weakref.ref(profile))
+            return profile
+        return {}
+
+    monkeypatch.setattr(release, "_get_json", fetch)
+    evidence = release.collect_api_validation("http://test", evidence_date="2026-11-02")
+    assert evidence["verified_player_game_logs"] == 2
+    assert len(prior) == 2 and all(reference() is None for reference in prior)
+
+
+def test_publisher_validates_s3_observations_without_local_final_files(tmp_path, monkeypatch):
+    from nba_lineup_model.season.serving_selection import ObservationSnapshot
+    inputs = _inputs(tmp_path, monkeypatch)
+    root = inputs[4]
+    board = json.loads((root / 'latest/2026-10-31.json').read_text())
+    board['games'][0]['final_audit'] = json.loads((root / 'final/game.summary.json').read_text())
+    for path in (root / 'final').iterdir():
+        path.unlink()
+    (root / 'final').rmdir()
+    (root / 'forecast-selections.json').write_text('{}')
+    snapshot = ObservationSnapshot('s3-observation-id', {'2026-10-31':board}, {},
+                                   {'s3://official/results':'verified-sha256'})
+    def compose(selected_root, received, **kwargs):
+        assert selected_root == root
+        assert received is snapshot
+        assert not (root / 'final').exists()
+        return [board]
+    monkeypatch.setattr(subject, '_selected_schedule_boards', compose)
+    release = subject.publish_dev_site_release(
+        daily_data_root=inputs[0], daily_model_root=inputs[1], serving_root=inputs[2],
+        lineups_root=inputs[3], schedule_state_dir=root, catalog_path=inputs[5],
+        preseason_rankings_path=inputs[6], preseason_profiles_path=inputs[7],
+        code_revision='a'*40, api_validation=_api_validation(), output_root=tmp_path/'releases',
+        observations=snapshot)
+    identity = subject.verify_dev_site_release(release)['identity']
+    assert identity['schedule']['final_game_count'] == 1
+    assert identity['schedule']['attribution_audit']['actual_minutes_ledgers'] == 1
+    assert identity['schedule']['observation_snapshot']['captured_files'] == snapshot.captured_files

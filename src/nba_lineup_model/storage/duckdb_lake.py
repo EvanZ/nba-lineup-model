@@ -7,7 +7,10 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
-import duckdb
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import duckdb
 
 DEFAULT_LAKE_URI = "s3://nba-gestalt-data/lake"
 DEFAULT_S3_REGION = "us-west-1"
@@ -56,6 +59,8 @@ def connect_s3_lake(
     root = lake_uri.rstrip("/")
     if not root.startswith("s3://"):
         raise ValueError(f"S3 lake URI is invalid: {lake_uri}")
+
+    import duckdb
 
     connection = duckdb.connect(str(database))
     try:

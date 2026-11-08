@@ -1,4 +1,4 @@
-"""One durable Dagster instance per environment, shared by every entry point."""
+"""Durable daily history with explicit environment boundaries for each code location."""
 from __future__ import annotations
 
 import argparse
@@ -23,6 +23,11 @@ def request_identity(job_name: str, request: dict) -> tuple[str, str, str]:
         key = f"{job_name}:{identity['season']}:{day}:{identity['edition_id']}"
         return spec["work_id"], day, key
     from datetime import date
+    if job_name == "reconcile_in_season_rosters":
+        day = date.fromisoformat(request['game_date']).isoformat()
+        key = request.get('request_sha256') or request.get('capture_slot')
+        if not key: raise ValueError('Reconciliation requires pinned manual input or a capture slot')
+        return f'reconcile:{key}', day, f'{job_name}:{day}:{key}'
     if job_name == "prepare_forecast_date":
         day = date.fromisoformat(request["forecast_date"]).isoformat()
         track = read_object(Path(request["config_path"])).get("model_track", "legacy")
@@ -41,23 +46,42 @@ def request_identity(job_name: str, request: dict) -> tuple[str, str, str]:
 class DailyInstance:
     environment: str
     root: Path
+    instance_home: Path | None = None
 
     @property
     def home(self) -> Path:
-        return self.root / "daily-dagster"
+        return self.instance_home or self.root / "daily-dagster"
 
     @property
     def requests(self) -> Path:
         return self.root / "daily-requests"
 
     @classmethod
-    def read(cls, home: Path) -> "DailyInstance":
+    def read(cls, home: Path, environment: str | None = None) -> "DailyInstance":
         home = home.absolute()
+        if home != home.resolve():
+            raise ValueError("Dagster history cannot be a link to another instance")
         value = read_object(home / "environment.json")
+        if value.get("schema_version") == 2:
+            selected = environment or os.environ.get("GESTALT_DAILY_ENVIRONMENT")
+            roots = value.get("environments", {})
+            if not roots or set(roots) - {"dev", "prod"} or selected not in roots:
+                raise ValueError("Shared daily history requires an explicit registered environment")
+            resolved = {name: Path(root).resolve(strict=True) for name, root in roots.items()}
+            if any(str(resolved[name]) != root for name, root in roots.items()):
+                raise ValueError("Shared environment roots must be canonical")
+            if len(set(resolved.values())) != len(resolved) or any(
+                left != right and (left.is_relative_to(right) or right.is_relative_to(left))
+                for left in resolved.values() for right in resolved.values()
+            ):
+                raise ValueError("Shared environment roots must be distinct and disjoint")
+            return cls(selected, resolved[selected], home)
         if value.get("schema_version") != 1 or value.get("environment") not in {"dev", "prod"}:
             raise ValueError("Invalid daily Dagster environment binding")
         binding = cls(value["environment"], Path(value["environment_root"]))
-        if binding.root != binding.root.resolve() or home != binding.home or home != home.resolve():
+        if environment and environment != binding.environment:
+            raise ValueError("Requested worker and history belong to different environments")
+        if binding.root != binding.root.resolve() or home != binding.home:
             raise ValueError("Daily Dagster history must be inside its own environment")
         return binding
 
@@ -69,7 +93,7 @@ class DailyInstance:
             raise ValueError("Pipeline configuration belongs to a different environment")
         if Path(config["live_pointer"]).absolute().parent.resolve() != self.root:
             raise ValueError("Pipeline live pointer belongs to a different environment")
-        if job_name not in {"prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment"}:
+        if job_name not in {"prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment", "reconcile_in_season_rosters"}:
             raise ValueError(f"Unsupported daily job: {job_name}")
         work, day, recovery_key = request_identity(job_name, request)
         return {"gestalt/environment": self.environment,
@@ -103,6 +127,9 @@ def initialize(environment: str, root: Path, template: Path) -> DailyInstance:
 
 def binding_for_instance(instance) -> DailyInstance:
     binding = DailyInstance.read(Path(instance.root_directory))
+    selected_environment = os.environ.get("GESTALT_DAILY_ENVIRONMENT")
+    if selected_environment and selected_environment != binding.environment:
+        raise ValueError("Code location belongs to a different environment")
     selected = os.environ.get("DAGSTER_HOME")
     if selected and Path(selected).absolute() != binding.home:
         raise ValueError("Worker DAGSTER_HOME differs from its actual Dagster instance")
@@ -122,11 +149,15 @@ def bind_run(context, job_name: str, request: dict) -> None:
 def run_guard(context, job_name: str, request: dict):
     binding = binding_for_instance(context.instance)
     bind_run(context, job_name, request)
+    from nba_lineup_model.orchestration.shared_daily_control import automation_enabled
+    recorded = context.instance.get_run_by_id(context.run_id).tags
+    if recorded.get("gestalt/trigger") == "sensor" and not automation_enabled(binding):
+        raise RuntimeError("Dev automation window closed before this run started")
     with (binding.home / ".daily-execution.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
-            raise RuntimeError("Another daily job is executing in this environment") from error
+            raise RuntimeError("Another daily job is executing in this Dagster instance") from error
         try:
             yield
         finally:
@@ -137,11 +168,11 @@ def execute_manual(home: Path, job_name: str, request: dict):
     """Manual runs use exactly the same jobs, checks and storage as the sensor."""
     from dagster import DagsterInstance
     from nba_lineup_model.orchestration.partition_definitions import (
-        prepare_daily_partition_job, prepare_forecast_date_job, advance_daily_environment_job,
+        prepare_daily_partition_job, prepare_forecast_date_job, advance_daily_environment_job, reconcile_in_season_rosters_job,
     )
     binding = DailyInstance.read(home)
     tags = binding.tags(job_name, request)
-    jobs = {"prepare_daily_partition": prepare_daily_partition_job,
+    jobs = {"reconcile_in_season_rosters": reconcile_in_season_rosters_job, "prepare_daily_partition": prepare_daily_partition_job,
             "prepare_forecast_date": prepare_forecast_date_job,
             "advance_daily_environment": advance_daily_environment_job}
     with DagsterInstance.from_config(str(binding.home)) as instance:
@@ -167,7 +198,7 @@ def main():
     init.add_argument("--template", type=Path, required=True)
     run = commands.add_parser("run")
     run.add_argument("--home", type=Path, required=True)
-    run.add_argument("--job", choices=("prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment"), required=True)
+    run.add_argument("--job", choices=("prepare_daily_partition", "prepare_forecast_date", "advance_daily_environment", "reconcile_in_season_rosters"), required=True)
     run.add_argument("--request", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "initialize":

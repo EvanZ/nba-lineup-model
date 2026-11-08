@@ -125,9 +125,10 @@ def verify_spec(spec: dict) -> None:
 class DailyWork:
     """Serial, resumable stage execution with immutable success receipts."""
 
-    def __init__(self, root: Path, spec: dict):
+    def __init__(self, root: Path, spec: dict, *, report_s3_uri=None):
         verify_spec(spec)
         self.spec = spec
+        self.report_s3_uri = report_s3_uri
         self.root = root / spec["identity"]["game_date_pacific"] / spec["work_id"]
 
     @contextmanager
@@ -146,7 +147,7 @@ class DailyWork:
                    "status": status, "stage": stage,
                    "completed_stages": [r["stage"] for r in receipts], **extra}
         atomic_json(self.root / "status.json", payload)
-        write_work_report(self.root, self.spec, payload, receipts)
+        write_work_report(self.root, self.spec, payload, receipts, s3_uri=self.report_s3_uri)
 
     def run(self, callbacks: Mapping[str, Callable[[], dict]]) -> dict:
         if tuple(callbacks) != STAGES:
@@ -205,7 +206,7 @@ def verify_receipt(receipt: dict) -> None:
         verify_reference(reference)
 
 
-def write_work_report(root: Path, spec: dict, status: dict, receipts: list[dict]) -> None:
+def write_work_report(root: Path, spec: dict, status: dict, receipts: list[dict], *, s3_uri=None) -> None:
     rows = []
     for stage in STAGES:
         receipt = next((r for r in receipts if r["stage"] == stage), None)
@@ -230,3 +231,7 @@ def write_work_report(root: Path, spec: dict, status: dict, receipts: list[dict]
     temporary = root / f".report-{uuid4().hex}.tmp"
     temporary.write_text(page)
     temporary.replace(root / "report.html")
+    if s3_uri:
+        from nba_lineup_model.storage.operational_reports import publish
+        publish(s3_uri, 'daily-pipeline', {
+            'report.html': page, 'report.json': json.dumps(status, sort_keys=True) + '\n'})

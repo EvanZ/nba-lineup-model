@@ -81,6 +81,8 @@ class PartitionSteps(CanonicalPipelineSteps):
             preseason_rankings_path=candidate / "inputs/rankings.parquet",
             preseason_minutes_path=candidate / "inputs/minutes.json",
             preseason_profiles_path=candidate / "inputs/profiles.parquet",
+            reconciliation_root=(candidate / 'inputs/reconciliation'
+                if 'reconciliation/manifest.json' in execution['files'] else None),
             activate_after_validation=False,
         )
         if config.model_configuration_path is not None:
@@ -314,7 +316,7 @@ def prepare_partition(config, spec, *, approval=None, steps_class=PartitionSteps
     revision = require_clean_code_revision(config.code_root)
     if revision != identity["code_identity"]:
         raise ValueError("Running code differs from the pinned work specification")
-    work = DailyWork(config.pipeline_root / "partitions", spec)
+    work = DailyWork(config.pipeline_root / "partitions", spec, report_s3_uri=config.operational_reports_s3_uri)
     config.pipeline_root.mkdir(parents=True, exist_ok=True)
     with (config.pipeline_root / ".partition-runner.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

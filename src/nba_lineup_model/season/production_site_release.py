@@ -60,6 +60,10 @@ def stage_production_site_release(
     forecast_registry_root: Path | None = None,
     version_references: dict[str, str] | None = None,
     environment: str = "dev",
+    artifact_lake_uri: str | None = None,
+    artifact_cache_root: Path | None = None,
+    reconciliation_root: Path | None = None,
+    observation_s3_uri: str | None = None,
 ) -> Path:
     """Copy a reviewed dev release into an immutable production candidate."""
 
@@ -178,6 +182,9 @@ def stage_production_site_release(
             f"{live / 'preseason' / 'profiles.parquet'}\n",
             encoding="utf-8",
         )
+        if reconciliation_root is not None:
+            from nba_lineup_model.players.reconciliation_artifact import reference, verify
+            runtime_identity['reconciliation_reference'] = reference(verify(reconciliation_root)).as_dict()
         if historical_runtime_root is not None:
             from nba_lineup_model.web_api.release_serving import build_serving_bindings
 
@@ -194,6 +201,8 @@ def stage_production_site_release(
             runtime_identity["serving_bindings_sha256"] = bindings["bindings_sha256"]
             runtime_sha = hashlib.sha256(canonical_json(runtime_identity)).hexdigest()
             target = output / f"runtime_sha256={runtime_sha}"
+        runtime_sha = hashlib.sha256(canonical_json(runtime_identity)).hexdigest()
+        target = output / f"runtime_sha256={runtime_sha}"
         runtime_manifest = {
             "runtime_sha256": runtime_sha,
             "identity": runtime_identity,
@@ -203,6 +212,13 @@ def stage_production_site_release(
             json.dumps(runtime_manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        if artifact_lake_uri is not None:
+            if artifact_cache_root is None:
+                raise ValueError("S3-backed release requires a cache root")
+            from nba_lineup_model.season.serving_recovery import attach_inventory
+            runtime_manifest = attach_inventory(staging, lake_uri=artifact_lake_uri, cache=artifact_cache_root, observation_s3_uri=observation_s3_uri, source_release=live_pointer)
+            runtime_sha = runtime_manifest["runtime_sha256"]
+            target = output / f"runtime_sha256={runtime_sha}"
         if target.exists():
             existing = verify_production_site_release(target)
             if existing["runtime_sha256"] != runtime_sha:
@@ -225,7 +241,8 @@ def stage_production_site_release(
     return target
 
 
-def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path) -> Path:
+def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path,
+                       artifact_lake_uri: str | None = None, artifact_cache_root: Path | None = None, observation_s3_uri: str | None = None) -> Path:
     """Replace code only; retain the original data approval and every data byte.
 
     The runtime identity records new code; the retained approval describes the
@@ -239,7 +256,7 @@ def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path
     checksum = hashlib.sha256(canonical_json(identity)).hexdigest()
     output_root.mkdir(parents=True, exist_ok=True)
     target = output_root / f"runtime_sha256={checksum}"
-    if target.exists():
+    if target.exists() and artifact_lake_uri is None:
         existing = verify_production_site_release(target)
         if existing["identity"] != identity:
             raise ValueError("Code release identity differs from existing release")
@@ -270,10 +287,22 @@ def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path
             raise ValueError("Code changed during packaging")
         manifest = {**original, "identity": identity, "runtime_sha256": checksum}
         (staging / MANIFEST_FILENAME).write_bytes(canonical_json(manifest) + b"\n")
+        if artifact_lake_uri is not None:
+            if artifact_cache_root is None:
+                raise ValueError("S3-backed code release requires a cache root")
+            from nba_lineup_model.season.serving_recovery import attach_inventory
+            manifest = attach_inventory(staging, lake_uri=artifact_lake_uri, cache=artifact_cache_root, observation_s3_uri=observation_s3_uri, source_release=base)
+            target = output_root / f"runtime_sha256={manifest['runtime_sha256']}"
+        elif (base / "durable-serving.json").exists():
+            shutil.copy2(base / "durable-serving.json", staging / "durable-serving.json")
         verify_production_site_release(staging)
         if verify_production_site_release(base) != original:
             raise ValueError("Base release changed during code packaging")
-        staging.replace(target)
+        if target.exists():
+            if verify_production_site_release(target) != manifest:
+                raise ValueError("Existing code release differs")
+        else:
+            staging.replace(target)
     finally:
         if staging.exists():
             for directory in (staging / "code", *(staging / "code").rglob("*")):
@@ -283,8 +312,9 @@ def stage_code_release(*, base_release: Path, code_root: Path, output_root: Path
     return target
 
 
-def stage_schedule_release(*, base_release: Path, schedule_root: Path, output_root: Path) -> Path:
-    """Stage a new schedule pin with the deployed code/model/frontend unchanged.
+def stage_schedule_release(*, base_release: Path, schedule_root: Path, output_root: Path,
+                           initialization: dict | None = None) -> Path:
+    """Stage forecasts and optional verified introductions with accepted model/code retained.
 
     The retained daily approval describes the accepted model/serving evidence.
     The new forecast selection has its own identity and is API-validated by the
@@ -303,7 +333,16 @@ def stage_schedule_release(*, base_release: Path, schedule_root: Path, output_ro
     if set(selection["games"]) != set(previous["games"]) or set(selection["dates"]) != set(previous["dates"]):
         raise ValueError("Forecast publication must preserve complete schedule coverage")
     require_clean_artifact_sources(schedule_root)
+    initialized = None
+    if initialization is not None:
+        from nba_lineup_model.season.forecast_initialization import validate_publication
+        initialized = validate_publication(base=base, **initialization)
     identity = {**original["identity"], "schedule_snapshot_sha256": _tree_sha256(schedule_root)}
+    if initialized is not None:
+        identity.update(serving_bundle_sha256=initialized['serving_bundle_sha256'],
+            preseason_rankings_sha256=file_sha256(initialization['rankings_path']),
+            preseason_profiles_sha256=file_sha256(initialization['profiles_path']),
+            forecast_initialization=initialized)
     identity.pop("serving_bindings_sha256", None)
     output_root.mkdir(parents=True, exist_ok=True)
     staging = output_root / f".schedule-release.tmp-{uuid4().hex}"
@@ -312,6 +351,11 @@ def stage_schedule_release(*, base_release: Path, schedule_root: Path, output_ro
         for name in ("current-season-serving", "current-season-lineups", "site-releases",
                      "web", "catalog", "preseason"):
             shutil.copytree(base / name, staging / name)
+        if initialized is not None:
+            shutil.rmtree(staging / 'current-season-serving')
+            shutil.copytree(initialization['serving_root'], staging / 'current-season-serving')
+            shutil.copyfile(initialization['rankings_path'], staging / 'preseason/rankings.parquet')
+            shutil.copyfile(initialization['profiles_path'], staging / 'preseason/profiles.parquet')
         shutil.copytree(schedule_root, staging / "schedule-snapshot")
         shutil.copy2(base / "site-release.env", staging / "site-release.env")
         (staging / "schedule").symlink_to(Path(identity["schedule_overlay_path"]), target_is_directory=True)
@@ -326,12 +370,18 @@ def stage_schedule_release(*, base_release: Path, schedule_root: Path, output_ro
         identity["serving_bindings_sha256"] = rebound["bindings_sha256"]
         # All page pins except their forecast-selection dependency must match.
         for component, checksum in bindings["components"].items():
-            if component != "forecast_selection_id" and rebound["components"].get(component) != checksum:
+            allowed = {'forecast_selection_id'} | ({'serving_bundle_id', 'reconciliation_id'} if initialized else set())
+            if component not in allowed and rebound["components"].get(component) != checksum:
                 raise ValueError(f"Forecast publication changed another component: {component}")
         checksum = hashlib.sha256(canonical_json(identity)).hexdigest()
         target = output_root / f"runtime_sha256={checksum}"
         manifest = {**original, "identity": identity, "runtime_sha256": checksum}
         (staging / MANIFEST_FILENAME).write_bytes(canonical_json(manifest) + b"\n")
+        if (base / "durable-serving.json").exists():
+            from nba_lineup_model.season.serving_recovery import attach_inventory, inventory, cache_root
+            storage = inventory(base)
+            manifest = attach_inventory(staging, lake_uri=storage["lake_uri"], cache=cache_root(base), observation_s3_uri=storage["observation_s3_uri"], source_release=base)
+            target = output_root / f"runtime_sha256={manifest['runtime_sha256']}"
         # These components contain no secrets; the API service must read them.
         for path in staging.rglob("*"):
             if path.is_symlink() or path.is_relative_to(staging / "code"):

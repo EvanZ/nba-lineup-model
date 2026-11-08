@@ -49,7 +49,7 @@ def old_source(relative):
 
 
 def test_updater_arithmetic_and_context_implementation_are_byte_identical():
-    names = ["season/daily_model_replay.py", "modeling/in_season_nail.py",
+    names = ["modeling/in_season_nail.py",
              "modeling/in_season_minutes.py", "modeling/causal_hca.py",
              "modeling/game_script_minutes.py", "modeling/in_season_nail_monitor.py",
              "models/baselines.py"]
@@ -143,6 +143,43 @@ def test_reviewed_policy_matches_current_calculation_closure():
     result = require_compatible_calculations(ROOT, ACCEPTED)
     policy = json.loads((ROOT / POLICY).read_text())
     changed = {p for p in policy["compatible_files"]
-               if policy["compatible_files"][p] != policy["accepted_files"][p]}
+               if policy["compatible_files"][p] != policy["accepted_files"].get(p)}
     assert changed == set(policy["reviewed_changes"])
     assert result["verified_file_count"] == len(policy["compatible_files"])
+
+
+def test_identity_mapping_and_reconciliation_leave_other_daily_calculations_unchanged():
+    # Reverse only the four reviewed identity-matching edits, then require every
+    # other byte (including updater arithmetic and observation weights) to match.
+    relative = "src/nba_lineup_model/season/daily_model_replay.py"
+    source = (ROOT / relative).read_text()
+    reviewed_edits = [('        names = {normalized_name}\n'
+      '        # Official NBA injury PDF (2026-11-04, MIL@BOS) uses Christopher;\n'
+      '        # official liveData identifies Chris Cenac Jr. as NBA player 1643416.\n'
+      '        # Bind this reviewed alias to that ID and canonical name, never to a\n'
+      '        # general Chris/Christopher substitution or a fuzzy name match.\n'
+      '        if player_id == 1643416 and normalized_name == "chriscenac":\n'
+      '            names.add("christophercenac")\n'
+      '        for name in names:\n'
+      '            identity.setdefault((team, name), set()).add(player_id)\n'
+      '            identity_by_name.setdefault(name, set()).add((team, player_id))',
+      '        identity.setdefault((team, normalized_name), set()).add(player_id)\n'
+      '        identity_by_name.setdefault(normalized_name, set()).add((team, player_id))'),
+     ('mapped_report: dict[tuple[str, int], dict[str, object]] = {}',
+      'mapped_report: dict[tuple[str, str], dict[str, object]] = {}'),
+     ('mapped_report[(team, candidates[0])] = normalized', 'mapped_report[key] = normalized'),
+     ('report = mapped_report.get((team, player_id), {})',
+      'report = mapped_report.get((team, _normalize_name(player["player_name"])), {})')]
+    for current, accepted in reviewed_edits:
+        assert source.count(current) == 1
+        source = source.replace(current, accepted)
+    # #65 changes only state-adoption orchestration and its compatibility checks.
+    # Every other calculation, including observation weights and the solver,
+    # remains the accepted implementation after reversing the reviewed alias.
+    def functions(raw):
+        return {node.name: ast.dump(node, include_attributes=False)
+                for node in ast.parse(raw).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
+    before, after = functions(old_source(relative)), functions(source)
+    permitted = {'replay_daily_model_chain', '_load_parent_state', '_longest_compatible_prefix'}
+    assert set(before) == set(after)
+    assert {name for name in before if before[name] != after[name]} <= permitted

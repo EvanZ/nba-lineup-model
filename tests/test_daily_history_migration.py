@@ -1,3 +1,4 @@
+from test_daily_instance_wiring import pipeline
 import json
 import sqlite3
 from pathlib import Path

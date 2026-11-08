@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import time
 import urllib.request
@@ -88,9 +89,10 @@ def reload_environment_api(
     _activation_record: dict,
 ) -> None:
     service = "gestalt-web-dev" if _environment(config) == "dev" else "gestalt-web"
-    # The dev worker retains NoNewPrivileges. Polkit permits only restarting
-    # this dev API unit; no sudo or production-service permission is granted.
-    prefix = [] if _environment(config) == "dev" else ["sudo", "-n"]
+    # Shared workers retain NoNewPrivileges. Each service account is granted
+    # only its own API restart through Polkit. Legacy production remains unchanged.
+    shared_prod = (_environment(config) == "prod" and os.environ.get("GESTALT_DAILY_ENVIRONMENT") == "prod")
+    prefix = [] if _environment(config) == "dev" or shared_prod else ["sudo", "-n"]
     subprocess.run(
         [*prefix, "systemctl", "--no-ask-password", "restart", service],
         check=True,
@@ -106,8 +108,8 @@ def verify_environment_api(
     manifest = verify_production_site_release(release)
     expected = manifest["identity"]
     from nba_lineup_model.season.dev_site_release import approved_schedule_game_ids, approved_model_root
-    expected_schedule_ids = approved_schedule_game_ids(manifest["approved_manifest"]["identity"])
-    model_root = approved_model_root(manifest["approved_manifest"]["identity"])
+    expected_schedule_ids = approved_schedule_game_ids(manifest["approved_manifest"]["identity"], release=release)
+    model_root = approved_model_root(manifest["approved_manifest"]["identity"], release=release)
     port = 8011 if _environment(config) == "dev" else 8010
     api = f"http://127.0.0.1:{port}"
     verify_loaded_identity(api, activation_record, timeout_seconds=60)
@@ -160,9 +162,21 @@ def activate_daily_release(
     if report.get("status") != "validated_candidate":
         raise ValueError("Only a fully validated candidate can be activated")
     release = Path(report["runtime_release"]).resolve()
-    if not release.is_relative_to(config.pipeline_root.resolve() / "releases"):
-        raise ValueError("Candidate is outside this environment's pipeline")
+    local_candidate = release.is_relative_to(config.pipeline_root.resolve() / "releases")
+    cache_parent = (
+        config.artifact_cache_root.absolute() / "releases"
+        if config.artifact_lake_uri is not None and config.artifact_cache_root is not None
+        else None
+    )
+    if not local_candidate and (cache_parent is None or release.parent != cache_parent):
+        raise ValueError("Candidate is outside this environment's pipeline or release cache")
     manifest = verify_production_site_release(release)
+    if not local_candidate:
+        from nba_lineup_model.season.durable_release_storage import production_release_reference
+
+        expected = cache_parent / production_release_reference(manifest).content_id
+        if release != expected or not manifest["identity"].get("durable_serving_sha256"):
+            raise ValueError("Candidate cache path differs from its verified durable release identity")
     if Path(manifest["identity"]["live_pointer"]) != config.live_pointer.absolute():
         raise ValueError("Candidate was staged for a different live pointer")
     if manifest["identity"]["evidence_through_date"] != report["game_date"]:
@@ -205,7 +219,7 @@ def activate_daily_release(
                     approval_reference=legacy_migration_approval,
                 )
                 report["legacy_code_migration"] = migration
-                _report(report_root, report)
+                _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
         def verify_and_select(record: dict) -> None:
             nonlocal durable_selection
             activated_release = Path(str(record["release_path"])).resolve()
@@ -240,7 +254,7 @@ def activate_daily_release(
             error=f"{type(error).__name__}: {error}",
             active_generation=int(active["generation"]) if active else 0,
         )
-        _report(report_root, report)
+        _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
         raise
 
     report.update(
@@ -257,7 +271,7 @@ def activate_daily_release(
             durable_selection_uri=durable_selection.selection_uri,
             durable_selection_activated=durable_selection.activated,
         )
-    _report(report_root, report)
+    _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
 
 
 def activation_report_from_work(config: DailyPipelineConfig, work_root: Path) -> dict:
@@ -343,7 +357,7 @@ def activation_report_from_work(config: DailyPipelineConfig, work_root: Path) ->
             "expected_previous_generation": active["generation"],
             "source_causal_schedule_sha256": causal_schedule_sha256(config.schedule_root),
         }
-        _report(report_root, report)
+        _report(report_root, report, s3_uri=config.operational_reports_s3_uri)
         return report
 
 

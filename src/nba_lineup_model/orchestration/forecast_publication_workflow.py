@@ -84,7 +84,7 @@ def retained_market_warnings(before: dict, after: dict, existing: list, errors: 
 
 
 def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: str,
-                              activate: bool) -> dict:
+                              activate: bool, initialization: dict | None = None) -> dict:
     """Called by the successful forecast job; failure propagates to Dagster."""
     base = base.resolve(strict=True)
     if config.observation_root is None:
@@ -95,8 +95,15 @@ def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: st
         raise ValueError("Active release changed before forecast publication")
     changed = validate_forecast_handoff(base, schedule)
     candidate = stage_schedule_release(base_release=base, schedule_root=schedule,
-        output_root=config.pipeline_root / "forecast-releases")
+        output_root=config.pipeline_root / "forecast-releases", initialization=initialization)
     manifest = verify_production_site_release(candidate)
+    if config.artifact_lake_uri is not None:
+        from nba_lineup_model.season.durable_release_storage import publish_production_release, restore_production_release
+        publication = publish_production_release(candidate, cache_root=config.artifact_cache_root,
+                                                 lake_uri=config.artifact_lake_uri)
+        candidate = restore_production_release(reference=publication.reference,
+            cache_root=config.artifact_cache_root, lake_uri=config.artifact_lake_uri)
+        manifest = verify_production_site_release(candidate)
     identity = manifest["identity"]
     report_root = config.pipeline_root / "forecast-publication" / work_id
     report_root.mkdir(parents=True, exist_ok=True)
@@ -109,9 +116,9 @@ def publish_forecast_schedule(config, *, schedule: Path, base: Path, work_id: st
         with candidate_api(candidate, report_root, observation_root=config.observation_root,
                            quality_root=config.environment_root / "data-quality") as api:
             evidence = collect_api_validation(api, evidence_date=identity["evidence_through_date"],
-                                              daily_model_root=approved_model_root(manifest["approved_manifest"]["identity"]))
+                                              daily_model_root=approved_model_root(manifest["approved_manifest"]["identity"], release=candidate))
             _normalize_api_validation(evidence, evidence_date=identity["evidence_through_date"],
-                expected_schedule_game_ids=approved_schedule_game_ids(manifest["approved_manifest"]["identity"]),
+                expected_schedule_game_ids=approved_schedule_game_ids(manifest["approved_manifest"]["identity"], release=candidate),
                 expected_game_count=identity["game_count"],
                 expected_final_game_count=manifest["approved_manifest"]["identity"]["schedule"]["final_game_count"],
                 serving_sha=identity["serving_bundle_sha256"], lineup_sha=identity["lineup_bundle_sha256"])

@@ -185,6 +185,7 @@ def test_schedule_lock_remains_same_across_release_switches(tmp_path, monkeypatc
     [
         "success",
         "mutable_live",
+        "durable_cache",
         "causal_stale",
         "reload_failure",
         "health_failure",
@@ -198,8 +199,15 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
     # Replace the test marker directory with a normal release pointer.
     old = config.pipeline_root / "releases/old"
     new = config.pipeline_root / "releases/new"
+    if scenario == "durable_cache":
+        from dataclasses import replace
+        from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
+        config = replace(config, artifact_lake_uri=DEFAULT_LAKE_URI,
+                         artifact_cache_root=config.environment_root / "artifact-cache")
+        new = config.artifact_cache_root / "releases" / ("runtime_sha256=" + "d" * 64)
+        monkeypatch.setattr(activation, "_select_durable_release", lambda *a, **k: None)
     old.mkdir(parents=True)
-    new.mkdir()
+    new.mkdir(parents=True)
     config.live_pointer.unlink()
     config.live_pointer.symlink_to(old, target_is_directory=True)
     (new / "schedule").mkdir()
@@ -214,6 +222,9 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
         ),
     }
     manifest = {"identity":{"live_pointer":str(config.live_pointer), "evidence_through_date":"2026-10-20"}}
+    if scenario == "durable_cache":
+        manifest["runtime_sha256"] = "d" * 64
+        manifest["identity"].update(durable_serving_sha256="e" * 64, season="2026-27")
     monkeypatch.setattr(activation, "verify_production_site_release", lambda path: manifest)
     monkeypatch.setattr(
         "nba_lineup_model.season.release_publisher.verify_production_site_release",
@@ -261,7 +272,7 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
                 config, report, reload_api=reload_api, verify_api=verify_api
             )
         assert events == []
-    elif scenario in {"success", "mutable_live"}:
+    elif scenario in {"success", "mutable_live", "durable_cache"}:
         activation.activate_daily_release(
             config, report, reload_api=reload_api, verify_api=verify_api
         )
@@ -269,7 +280,7 @@ def test_activation_covers_stale_state_and_process_rollback(tmp_path, monkeypatc
         assert active["release_path"] == new.as_posix()
         assert active["generation"] == 1
         assert report["status"] == "activated"
-        assert events == [("reload", "new"), ("verify", "new")]
+        assert events == [("reload", new.name), ("verify", new.name)]
         return
     else:
         with pytest.raises(
@@ -477,6 +488,7 @@ def test_post_activation_production_gate_checks_full_player_history(
     config = config_fixture(tmp_path)
     release = config.pipeline_root / "release"
     release.mkdir(parents=True)
+    (release / "runtime-manifest.json").write_text(json.dumps({"identity": {}}))
     manifest = {
         "identity": {
             "approved_release_sha256": "release-sha",
@@ -523,7 +535,7 @@ def test_post_activation_production_gate_checks_full_player_history(
     monkeypatch.setattr(dev_site_release, "verify_daily_data_artifact", verify_bound_data)
     assert not (config.data_root / "latest.json").exists()
     bound_model_root = release / "bound-model"
-    monkeypatch.setattr(dev_site_release, "approved_model_root", lambda _: bound_model_root)
+    monkeypatch.setattr(dev_site_release, "approved_model_root", lambda _, **kwargs: bound_model_root)
     monkeypatch.setattr(
         daily_activation,
         "verify_loaded_identity",
@@ -941,7 +953,8 @@ def test_data_step_publishes_selected_chain_and_fails_closed(tmp_path, monkeypat
         steps.data(date(2026, 10, 20))
 
 
-def test_model_step_publishes_selected_chain(tmp_path, monkeypatch):
+@pytest.mark.parametrize("data_failure", [False, True])
+def test_model_step_publishes_selected_chain(tmp_path, monkeypatch, data_failure):
     from contextlib import contextmanager
 
     from nba_lineup_model.orchestration.daily_pipeline import CanonicalPipelineSteps
@@ -978,6 +991,8 @@ def test_model_step_publishes_selected_chain(tmp_path, monkeypatch):
 
     def publish(root, *, through_date, cache_root, lake_uri):
         seen.append((root, through_date, cache_root, lake_uri))
+        if root == config.data_root and data_failure:
+            raise RuntimeError("official input archive failed")
         return []
 
     monkeypatch.setattr(
@@ -985,13 +1000,14 @@ def test_model_step_publishes_selected_chain(tmp_path, monkeypatch):
         "publish_selected_model_chain",
         publish,
     )
-    steps.model(date(2026, 10, 20))
-    assert seen == [(
-        config.model_root,
-        date(2026, 10, 20),
-        config.artifact_cache_root,
-        DEFAULT_LAKE_URI,
-    )]
+    monkeypatch.setattr(durable_artifact_storage, "publish_selected_data_chain", publish)
+    if data_failure:
+        with pytest.raises(RuntimeError, match="official input archive failed"):
+            steps.model(date(2026, 10, 20))
+    else:
+        steps.model(date(2026, 10, 20))
+    roots = [config.data_root] if data_failure else [config.data_root, config.model_root]
+    assert seen == [(root, date(2026, 10, 20), config.artifact_cache_root, DEFAULT_LAKE_URI) for root in roots]
 
 
 def test_release_archive_uses_verified_dependencies_and_fails_closed(
@@ -1000,7 +1016,7 @@ def test_release_archive_uses_verified_dependencies_and_fails_closed(
     from types import SimpleNamespace
 
     from nba_lineup_model.orchestration.daily_pipeline import CanonicalPipelineSteps
-    from nba_lineup_model.season import durable_release_storage
+    from nba_lineup_model.season import durable_release_storage, durable_artifact_storage, production_site_release
     from nba_lineup_model.storage.artifact_store import ArtifactReference
     from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
 
@@ -1015,16 +1031,24 @@ def test_release_archive_uses_verified_dependencies_and_fails_closed(
     steps = CanonicalPipelineSteps(config, candidate, "revision")
     release = config.pipeline_root / "release"
 
-    with pytest.raises(RuntimeError, match="no verified daily artifact"):
-        steps.archive_release(release)
-
     dependency = ArtifactReference(
         artifact_kind="daily_data",
         season="2026-27",
         game_date_pacific=date(2026, 10, 20),
         content_id="data_sha256=" + "a" * 64,
     )
-    steps.durable_dependencies.append(dependency)
+    # Fresh/restarted steps have no in-memory dependencies. Staging must
+    # recover them even when data/model checkpoint callbacks are skipped.
+    assert steps.durable_dependencies == []
+    calls = []
+    monkeypatch.setattr(production_site_release, "verify_production_site_release",
+        lambda _: {"identity": {"evidence_through_date": "2026-10-20"}})
+    monkeypatch.setattr(durable_release_storage, "required_release_dependencies", lambda _: (dependency,))
+    def chain(root, **kwargs):
+        calls.append((root, kwargs["through_date"]))
+        return [SimpleNamespace(reference=dependency)]
+    monkeypatch.setattr(durable_artifact_storage, "publish_selected_data_chain", chain)
+    monkeypatch.setattr(durable_artifact_storage, "publish_selected_model_chain", chain)
     seen = []
 
     def publish(path, *, cache_root, dependencies, lake_uri):
@@ -1037,6 +1061,8 @@ def test_release_archive_uses_verified_dependencies_and_fails_closed(
         publish,
     )
     steps.archive_release(release)
+    assert calls == [(config.data_root, date(2026, 10, 20)),
+                     (config.model_root, date(2026, 10, 20))]
     assert seen == [(
         release,
         config.artifact_cache_root,
@@ -1054,3 +1080,60 @@ def test_release_archive_uses_verified_dependencies_and_fails_closed(
     )
     with pytest.raises(RuntimeError, match="release archive failed"):
         steps.archive_release(release)
+
+
+@pytest.mark.parametrize("mismatch", ["other_environment", "digest", "not_durable", "symlink", "pointer"])
+def test_activation_rejects_invalid_durable_cache_candidate(tmp_path, monkeypatch, mismatch):
+    from dataclasses import replace
+    from nba_lineup_model.orchestration import daily_activation as activation
+    from nba_lineup_model.storage.duckdb_lake import DEFAULT_LAKE_URI
+    config = config_fixture(tmp_path)
+    config = replace(config, artifact_lake_uri=DEFAULT_LAKE_URI,
+                     artifact_cache_root=config.environment_root / "artifact-cache")
+    release = config.artifact_cache_root / "releases" / ("runtime_sha256=" + "d" * 64)
+    if mismatch == "other_environment":
+        release = tmp_path / "other-env/artifact-cache/releases" / release.name
+    release.mkdir(parents=True)
+    manifest = {"runtime_sha256": "d" * 64, "identity": {
+        "season": "2026-27", "durable_serving_sha256": "e" * 64,
+        "evidence_through_date": "2026-10-20", "live_pointer": str(config.live_pointer)}}
+    if mismatch == "digest":
+        manifest["runtime_sha256"] = "f" * 64
+    elif mismatch == "not_durable":
+        manifest["identity"].pop("durable_serving_sha256")
+    elif mismatch == "symlink":
+        release.rmdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        release.symlink_to(outside, target_is_directory=True)
+    elif mismatch == "pointer":
+        manifest["identity"]["live_pointer"] = str(tmp_path / "other-env/live-release")
+    monkeypatch.setattr(activation, "verify_production_site_release", lambda p: manifest)
+    previous = config.live_pointer.resolve()
+    with pytest.raises(ValueError, match="outside|cache path|different live pointer"):
+        activation.activate_daily_release(config, {
+            "status": "validated_candidate", "runtime_release": str(release),
+            "game_date": "2026-10-20"})
+    assert config.live_pointer.resolve() == previous
+
+
+def test_release_archive_includes_its_existing_player_introduction(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from nba_lineup_model.orchestration.daily_pipeline import CanonicalPipelineSteps
+    from nba_lineup_model.season import durable_release_storage, production_site_release
+    from nba_lineup_model.storage.artifact_store import ArtifactReference
+    day=date(2026,11,4)
+    data=ArtifactReference('daily_data','2026-27',day,'data_sha256='+'d'*64)
+    model=ArtifactReference('daily_model','2026-27',day,'model_sha256='+'a'*64)
+    intro=ArtifactReference('roster_reconciliation','2026-27',day,'reconciliation_sha256='+'b'*64)
+    steps=object.__new__(CanonicalPipelineSteps)
+    steps.config=SimpleNamespace(artifact_lake_uri='s3://test/lake',artifact_cache_root=tmp_path/'cache')
+    steps.durable_dependencies=[data,model]
+    steps.archive_daily_inputs=lambda target: None
+    monkeypatch.setattr(production_site_release,'verify_production_site_release',lambda path:{'identity':{'evidence_through_date':str(day)}})
+    monkeypatch.setattr(durable_release_storage,'required_release_dependencies',lambda manifest:(data,model,intro))
+    def publish(release,**kwargs):
+        assert set(kwargs['dependencies'])=={data,model,intro}
+        return SimpleNamespace(reference=SimpleNamespace(content_id='verified-site'))
+    monkeypatch.setattr(durable_release_storage,'publish_production_release',publish)
+    steps.archive_release(tmp_path/'release')

@@ -39,13 +39,16 @@ def materialize_daily_model_serving(
     daily_data_root: Path | str = DEFAULT_DAILY_DATA_ROOT,
     release_root: Path | str = DEFAULT_RELEASE_ROOT,
     output_root: Path | str = DEFAULT_OUTPUT_ROOT,
+    forecast_initialization: dict | None = None,
 ) -> Path:
     """Promote one serving bundle from the verified daily-model chain tip.
 
     This path consumes the
     ratings, minutes, and trajectory components from one content-addressed
     model checkpoint.  Those three products therefore cannot advance on
-    different dates or against different frozen-prior universes.
+    different game-evidence dates. An explicitly selected reconciliation can
+    supplement forecast inputs with saved zero-evidence introductions; it never
+    replaces the accepted daily checkpoint.
     """
 
     model_root = Path(daily_model_root).resolve()
@@ -109,6 +112,20 @@ def materialize_daily_model_serving(
     game_count = int(identity["cumulative_game_count"])
     coverage = {"games": game_count, "excluded": 0}
     with tempfile.TemporaryDirectory(prefix="daily-serving-trajectory-") as temp_dir:
+        initialization = None
+        if forecast_initialization is not None:
+            from nba_lineup_model.season.forecast_initialization import initialize_forecast_players
+            ratings, minutes, initialization = initialize_forecast_players(
+                rankings_state=pd.read_parquet(rating_path), minutes_state=pd.read_parquet(minutes_path),
+                **forecast_initialization)
+            rating_path = Path(temp_dir) / "initialized_ratings.parquet"
+            minutes_path = Path(temp_dir) / "initialized_minutes.parquet"
+            ratings['cutoff_time'] = forecast_initialization['available_at']
+            ratings.to_parquet(rating_path, index=False)
+            minutes.to_parquet(minutes_path, index=False)
+            next_midnight_pacific = forecast_initialization['available_at']
+        source_suffix = ('#reconciliation=' + initialization['reference']['content_id']
+                         if initialization else '')
         adapted_trajectory = Path(temp_dir) / "rating_trajectory.parquet"
         adapted_minutes = Path(temp_dir) / "minutes_state.parquet"
         _adapt_daily_rating_trajectory(
@@ -140,18 +157,20 @@ def materialize_daily_model_serving(
                 minutes_conditional_lookback_games=3,
                 minutes_role_cutoff_minutes=44,
             ),
-            rating_source_uri=f"artifact://daily-model/{model_sha}/player_ratings",
+            rating_source_uri=f"artifact://daily-model/{model_sha}/player_ratings" + source_suffix,
             minutes_source_uri=(
-                f"artifact://daily-model/{model_sha}/minutes_state#serving-v1"
+                f"artifact://daily-model/{model_sha}/minutes_state#serving-v1" + source_suffix
             ),
             rating_trajectory_path=adapted_trajectory,
             rating_trajectory_source_uri=(
-                f"artifact://daily-model/{model_sha}/rating_trajectory#serving-v1"
+                f"artifact://daily-model/{model_sha}/rating_trajectory#serving-v1" + source_suffix
             ),
             source_exclusions={"ratings": [], "minutes": []},
             source_coverage={"ratings": coverage, "minutes": coverage},
             schedule_controls=schedule_controls,
         )
+    if initialization is not None:
+        (output_root / 'forecast-initialization.json').write_text(json.dumps(initialization, sort_keys=True) + '\n')
     promoted_pointer, _ = promote_serving_bundle(bundle.path, root=output_root)
     if str(promoted_pointer["evidence_through_date"]) != through_date:
         raise ValueError("Serving pointer did not retain the daily-model date")
