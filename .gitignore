@@ -46,3 +46,6 @@ artifacts/logs/*.log
 *.duckdb
 *.db
 *.sqlite
+
+# Local Dagster code location configuration.
+/pipelines/gestalt/code-location.env

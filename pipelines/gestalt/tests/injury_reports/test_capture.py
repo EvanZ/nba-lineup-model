@@ -18,7 +18,7 @@ SOURCE = (
 PDF = b"%PDF-1.7\nfixture PDF bytes\n%%EOF\n"
 SHA = sha256(PDF).hexdigest()
 PREFIX = (
-    "lake/raw/nba/injury-reports/publication_date=2026-11-07/"
+    "lake/raw/nba/injury-reports/season=2026-27/publication_date=2026-11-07/"
     f"published_at=20261108T044500Z/sha256={SHA}"
 )
 OBSERVED = datetime(2026, 11, 8, 4, 47, tzinfo=UTC)
@@ -87,6 +87,7 @@ def test_capture_uses_agreed_paths_and_reuses_an_existing_revision(capture):
     initial, _ = storage.objects[f"{PREFIX}/capture.json"]
     assert json.loads(initial) == {
         "schema_version": 1,
+        "season": "2026-27",
         "source_url": SOURCE,
         "immutable_uri": f"s3://nba-gestalt-data/{PREFIX}/report.pdf",
         "sha256": SHA,
@@ -187,7 +188,7 @@ def test_extract_exact_captured_pdf(monkeypatch, corrupt_pdf):
 
     storage = MemoryArchive()
     monkeypatch.setattr(archive.boto3, "client", lambda service: storage)
-    capture = archive.InjuryReportArchive().save(
+    capture = archive.InjuryReportArchive(season="2026-27").save(
         official_nba.OfficialInjuryReport(
             SOURCE, official_nba.publication_time(SOURCE), OBSERVED, pdf
         ),
@@ -200,7 +201,7 @@ def test_extract_exact_captured_pdf(monkeypatch, corrupt_pdf):
     }}}}
     result = job.execute_in_process(run_config=config, raise_on_error=False)
     key = (
-        "lake/artifacts/injury_report_extraction/publication_date=2026-11-07/"
+        "lake/artifacts/injury_report_extraction/season=2026-27/publication_date=2026-11-07/"
         f"published_at=20261108T044500Z/sha256={digest}/parser_version=v2/report.json"
     )
 

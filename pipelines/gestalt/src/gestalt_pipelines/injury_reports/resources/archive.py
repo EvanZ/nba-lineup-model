@@ -16,16 +16,17 @@ from .official_nba import EASTERN, MAX_PDF_BYTES, OfficialInjuryReport, publicat
 BUCKET = "nba-gestalt-data"
 PREFIX = "lake/raw/nba/injury-reports"
 EXTRACTION_PREFIX = "lake/artifacts/injury_report_extraction"
+STATUSES_PREFIX = "lake/artifacts/injury_status_by_game_date"
 CAPTURE_URI = re.compile(
-    rf"s3://{BUCKET}/(?P<key>{PREFIX}/publication_date=[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}/"
+    rf"s3://{BUCKET}/(?P<key>{PREFIX}/season=(?P<season>[0-9]{{4}}-[0-9]{{2}})/publication_date=[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}/"
     r"published_at=[0-9]{8}T[0-9]{6}Z/sha256=(?P<digest>[0-9a-f]{64})/capture\.json)"
 )
 
 
-def _report_prefix(published_at: datetime, digest: str) -> str:
+def _report_prefix(season: str, published_at: datetime, digest: str) -> str:
     day = published_at.astimezone(EASTERN).date().isoformat()
     instant = published_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return f"{PREFIX}/publication_date={day}/published_at={instant}/sha256={digest}"
+    return f"{PREFIX}/season={season}/publication_date={day}/published_at={instant}/sha256={digest}"
 
 
 def _utc_text(value: datetime) -> str:
@@ -60,12 +61,14 @@ def _verify_bytes(client, key: str, expected: bytes) -> dict:
 
 
 class InjuryReportArchive(ConfigurableResource):
+    season: str
+
     def save(self, report: OfficialInjuryReport, expected_sha256: str) -> dict:
         digest = sha256(report.pdf).hexdigest()
         if digest != expected_sha256:
             raise ValueError(f"The report PDF checksum changed: expected {expected_sha256}, got {digest}.")
 
-        prefix = _report_prefix(report.published_at, digest)
+        prefix = _report_prefix(self.season, report.published_at, digest)
         pdf_key = f"{prefix}/report.pdf"
         capture_key = f"{prefix}/capture.json"
         client = boto3.client("s3")
@@ -83,6 +86,7 @@ class InjuryReportArchive(ConfigurableResource):
 
         record = {
             "schema_version": 1,
+            "season": self.season,
             "source_url": report.source_url,
             "immutable_uri": f"s3://{BUCKET}/{pdf_key}",
             "sha256": digest,
@@ -103,20 +107,20 @@ class InjuryReportArchive(ConfigurableResource):
 
     def load(self, capture_uri: str) -> tuple[dict, bytes]:
         match = CAPTURE_URI.fullmatch(capture_uri)
-        if match is None:
+        if match is None or match["season"] != self.season:
             raise ValueError("Expected an exact canonical S3 injury-report capture URI.")
         capture_key, digest = match["key"], match["digest"]
         client = boto3.client("s3")
         with closing(client.get_object(Bucket=BUCKET, Key=capture_key)["Body"]) as body:
             record = json.load(body)
 
-        if not isinstance(record, dict) or record.get("schema_version") != 1:
+        if not isinstance(record, dict) or record.get("schema_version") != 1 or record.get("season") != self.season:
             raise ValueError(f"Unsupported injury-report capture schema: {capture_uri}")
         source_url = record.get("source_url")
         if not isinstance(source_url, str):
             raise ValueError(f"Missing official source URL in capture: {capture_uri}")
         published_at = publication_time(source_url)
-        prefix = _report_prefix(published_at, digest)
+        prefix = _report_prefix(self.season, published_at, digest)
         pdf_key = f"{prefix}/report.pdf"
         if (
             capture_key != f"{prefix}/capture.json"
@@ -134,10 +138,62 @@ class InjuryReportArchive(ConfigurableResource):
 
     def save_extraction(self, record: dict) -> tuple[str, bool]:
         published_at = datetime.fromisoformat(record["published_at"])
-        revision = _report_prefix(published_at, record["sha256"]).removeprefix(f"{PREFIX}/")
+        revision = _report_prefix(self.season, published_at, record["sha256"]).removeprefix(f"{PREFIX}/")
         key = f"{EXTRACTION_PREFIX}/{revision}/parser_version={record['parser_version']}/report.json"
         payload = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
         client = boto3.client("s3")
         created = _put_once(client, key, payload, "application/json")
         _verify_bytes(client, key, payload)
         return f"s3://{BUCKET}/{key}", created
+
+    def read_pinned(self, uri: str, expected_sha256: str, *, prefix: str) -> bytes:
+        key = uri.removeprefix(f"s3://{BUCKET}/")
+        if (
+            not uri.startswith(f"s3://{BUCKET}/")
+            or not key.startswith(prefix)
+            or any(part in {"", ".", ".."} for part in key.split("/"))
+            or "espn" in key.casefold()
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+        ):
+            raise ValueError(f"Expected a pinned S3 object under s3://{BUCKET}/{prefix}")
+        client = boto3.client("s3")
+        with closing(client.get_object(Bucket=BUCKET, Key=key)["Body"]) as body:
+            payload = body.read()
+        if sha256(payload).hexdigest() != expected_sha256:
+            raise ValueError(f"S3 object checksum differs from the selected input: {uri}")
+        return payload
+
+    def read_player_repairs(self) -> dict:
+        key = f"{STATUSES_PREFIX}/season={self.season}/player_repairs.json"
+        client = boto3.client("s3")
+        with closing(client.get_object(Bucket=BUCKET, Key=key)["Body"]) as body:
+            payload = body.read()
+        repairs = json.loads(payload)
+        if not isinstance(repairs, dict) or any(
+            not name.strip() or type(player_id) is not int or player_id <= 0
+            for name, player_id in repairs.items()
+        ):
+            raise ValueError("The repair dictionary must map reported names to positive NBA player IDs.")
+        if b"espn" in payload.lower():
+            raise ValueError("Prohibited source in player repairs.")
+        return {
+            "uri": f"s3://{BUCKET}/{key}",
+            "sha256": sha256(payload).hexdigest(),
+            "entries": repairs,
+        }
+
+    def save_statuses(self, record: dict) -> dict:
+        day = record["game_date_pacific"]
+        selection = record["selection_sha256"]
+        key = (
+            f"{STATUSES_PREFIX}/season={self.season}/game_date_pacific={day}/"
+            f"selection_sha256={selection}/statuses.json"
+        )
+        return self.save_json(key, record)
+
+    def save_json(self, key: str, record: dict) -> dict:
+        payload = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        client = boto3.client("s3")
+        _put_once(client, key, payload, "application/json")
+        _verify_bytes(client, key, payload)
+        return {"uri": f"s3://{BUCKET}/{key}", "sha256": sha256(payload).hexdigest()}

@@ -24,6 +24,7 @@ def injury_report_extractions(
     reported_dates = sorted({key.split("|", 1)[0] for key in game_reports})
     record = {
         "schema_version": 1,
+        "season": injury_report_archive.season,
         "parser_version": PARSER_VERSION,
         "capture_uri": config.capture_uri,
         "pdf_uri": capture["immutable_uri"],
