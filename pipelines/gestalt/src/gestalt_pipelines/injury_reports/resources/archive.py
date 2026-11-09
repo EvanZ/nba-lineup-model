@@ -63,10 +63,8 @@ def _verify_bytes(client, key: str, expected: bytes) -> dict:
 class InjuryReportArchive(ConfigurableResource):
     season: str
 
-    def save(self, report: OfficialInjuryReport, expected_sha256: str) -> dict:
+    def save(self, report: OfficialInjuryReport) -> dict:
         digest = sha256(report.pdf).hexdigest()
-        if digest != expected_sha256:
-            raise ValueError(f"The report PDF checksum changed: expected {expected_sha256}, got {digest}.")
 
         prefix = _report_prefix(self.season, report.published_at, digest)
         pdf_key = f"{prefix}/report.pdf"

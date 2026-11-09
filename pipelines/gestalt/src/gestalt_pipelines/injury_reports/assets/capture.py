@@ -1,4 +1,6 @@
-"""Dagster asset for a single manually selected injury report."""
+"""Capture the newest official NBA injury report for a publication date."""
+
+from datetime import date
 
 from dagster import Config, MaterializeResult, asset
 
@@ -6,8 +8,7 @@ from ..resources import InjuryReportArchive, OfficialInjuryReports
 
 
 class CaptureConfig(Config):
-    source_url: str
-    expected_sha256: str
+    publication_date: str
 
 
 @asset(group_name="injury_reports")
@@ -16,5 +17,5 @@ def injury_pdf_archive(
     official_injury_reports: OfficialInjuryReports,
     injury_report_archive: InjuryReportArchive,
 ) -> MaterializeResult:
-    report = official_injury_reports.download(config.source_url)
-    return MaterializeResult(metadata=injury_report_archive.save(report, config.expected_sha256))
+    report = official_injury_reports.download_latest(date.fromisoformat(config.publication_date))
+    return MaterializeResult(metadata=injury_report_archive.save(report))

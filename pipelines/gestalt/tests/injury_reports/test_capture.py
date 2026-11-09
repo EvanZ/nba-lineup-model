@@ -1,9 +1,10 @@
 import base64
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
 from types import SimpleNamespace
+from urllib.error import HTTPError
 
 import pytest
 from botocore.exceptions import ClientError
@@ -66,11 +67,10 @@ def capture(monkeypatch):
     monkeypatch.setattr(official_nba.OfficialInjuryReports, "download", download)
     job = defs.resolve_job_def("capture_injury_pdfs")
 
-    def run(*, checksum=SHA, raise_on_error=True):
+    def run(*, raise_on_error=True):
         return job.execute_in_process(
             run_config={"ops": {"injury_pdf_archive": {"config": {
-                "source_url": SOURCE,
-                "expected_sha256": checksum,
+                "publication_date": "2026-11-07",
             }}}},
             raise_on_error=raise_on_error,
         )
@@ -127,10 +127,43 @@ def test_capture_record_can_be_retried_after_the_pdf_was_saved(capture):
     assert record["first_observed_at"] == "2026-11-08T04:47:00Z"
 
 
-def test_unapproved_pdf_bytes_are_rejected_before_storage(capture):
+def test_capture_skips_unavailable_quarter_hour_slots(capture, monkeypatch):
     storage, _, run = capture
-    assert not run(checksum="0" * 64, raise_on_error=False).success
-    assert storage.objects == {}
+    attempted = []
+
+    def download(_source, url):
+        attempted.append(url)
+        if len(attempted) <= 2:
+            code = (404, 403)[len(attempted) - 1]
+            raise HTTPError(url, code, "Unavailable", None, None)
+        return official_nba.OfficialInjuryReport(
+            url, official_nba.publication_time(url), OBSERVED, PDF,
+        )
+
+    monkeypatch.setattr(official_nba.OfficialInjuryReports, "download", download)
+    assert run().success
+    assert attempted == [
+        SOURCE,
+        SOURCE.replace("11_45PM", "11_30PM"),
+        SOURCE.replace("11_45PM", "11_15PM"),
+    ]
+    [capture_record] = [json.loads(value[0]) for key, value in storage.objects.items() if key.endswith("capture.json")]
+    assert capture_record["source_url"] == attempted[-1]
+    assert capture_record["sha256"] == SHA
+
+
+def test_capture_reports_the_date_when_no_pdf_is_available(monkeypatch):
+    attempted = []
+
+    def download(_source, url):
+        attempted.append(url)
+        raise HTTPError(url, 404, "Unavailable", None, None)
+
+    monkeypatch.setattr(official_nba.OfficialInjuryReports, "download", download)
+    with pytest.raises(FileNotFoundError, match="No official NBA injury report found for 2026-11-07"):
+        official_nba.OfficialInjuryReports().download_latest(date(2026, 11, 7))
+    assert len(attempted) == 96
+    assert attempted[-1] == SOURCE.replace("11_45PM", "12_00AM")
 
 
 @pytest.mark.parametrize("source", [
@@ -192,7 +225,6 @@ def test_extract_exact_captured_pdf(monkeypatch, corrupt_pdf):
         official_nba.OfficialInjuryReport(
             SOURCE, official_nba.publication_time(SOURCE), OBSERVED, pdf
         ),
-        digest,
     )
     storage.corrupt_pdf = corrupt_pdf
     job = defs.resolve_job_def("extract_injury_pdf")
