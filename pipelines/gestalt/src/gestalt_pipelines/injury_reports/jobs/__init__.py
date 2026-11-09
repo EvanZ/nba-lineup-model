@@ -15,7 +15,7 @@ capture_injury_pdfs = define_asset_job(
 extract_injury_pdf = define_asset_job(
     "extract_injury_pdf",
     selection=AssetSelection.assets(injury_report_extractions),
-    description="Extract the latest archived report for an Eastern publication date or an exact capture URI.",
+    description="Extract the archived reports for an Eastern publication-date partition.",
 )
 
 

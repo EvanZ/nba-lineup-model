@@ -346,8 +346,10 @@ def test_extract_exact_captured_pdf(monkeypatch, source, creation_date, publishe
     config = {"ops": {"injury_report_extractions": {"config": {
         "capture_uri": capture["capture_uri"],
     }}}}
-    result = job.execute_in_process(run_config=config, raise_on_error=False)
     publication_date = expected_time.astimezone(official_nba.EASTERN).date()
+    result = job.execute_in_process(
+        partition_key=publication_date.isoformat(), run_config=config, raise_on_error=False,
+    )
     key = (
         f"lake/artifacts/injury_report_extraction/season=2026-27/publication_date={publication_date}/"
         f"published_at={expected_time:%Y%m%dT%H%M%SZ}/sha256={digest}/parser_version=v2/report.json"
@@ -378,12 +380,38 @@ def test_extract_exact_captured_pdf(monkeypatch, source, creation_date, publishe
     assert record["game_team_reports"]["2026-11-07|BOS@NYK"]["NYK"]["status"] == "not_yet_submitted"
     encoded_uri = capture["capture_uri"].replace("=", "%3D", 1).replace("=", "%3d")
     config["ops"]["injury_report_extractions"]["config"]["capture_uri"] = encoded_uri
-    retried = job.execute_in_process(run_config=config)
+    retried = job.execute_in_process(partition_key=publication_date.isoformat(), run_config=config)
     event = retried.get_asset_materialization_events()[0]
     materialization = event.event_specific_data.materialization
     assert materialization.metadata["capture_uri"].value == capture["capture_uri"]
     assert not materialization.metadata["created"].value
     assert storage.objects[key][0] == original
+
+
+def test_extract_partition_processes_all_captures_and_reuses_current_outputs(monkeypatch):
+    from gestalt_pipelines.injury_reports.assets import extract
+
+    storage = MemoryArchive()
+    monkeypatch.setattr(archive.boto3, "client", lambda service: storage)
+    resource = archive.InjuryReportArchive(season="2026-27")
+    for url in (SOURCE, SOURCE.replace("11_45PM", "11_30PM")):
+        resource.save(official_nba.OfficialInjuryReport(url, official_nba.publication_time(url), OBSERVED, PDF))
+
+    parsed = []
+
+    def parse(pdf):
+        parsed.append(pdf)
+        return {"game_team_reports": {"2026-11-07|BOS@NYK": {}}, "players": []}
+
+    monkeypatch.setattr(extract, "parse_pdf", parse)
+    job = defs.resolve_job_def("extract_injury_pdf")
+    assert validate_run_config(job, {})
+    for created in (2, 0):
+        result = job.execute_in_process(partition_key="2026-11-07")
+        materialization = result.get_asset_materialization_events()[0].event_specific_data.materialization
+        assert materialization.metadata["created_count"].value == created
+        assert materialization.metadata["reused_count"].value == 2 - created
+    assert parsed == [PDF, PDF]
 
 
 @pytest.mark.parametrize(("evidence", "status"), [

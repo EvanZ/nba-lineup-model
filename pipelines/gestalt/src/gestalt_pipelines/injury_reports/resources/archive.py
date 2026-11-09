@@ -104,7 +104,7 @@ class InjuryReportArchive(ConfigurableResource):
             "created": created,
         }
 
-    def _captures_for_date(self, publication_date: date) -> list[tuple[str, datetime, str]]:
+    def captures_for_date(self, publication_date: date) -> list[tuple[datetime, datetime, str]]:
         prefix = f"{PREFIX}/season={self.season}/publication_date={publication_date}/"
         client = boto3.client("s3")
         pages = client.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=prefix)
@@ -114,20 +114,35 @@ class InjuryReportArchive(ConfigurableResource):
                 uri = f"s3://{BUCKET}/{obj['Key']}"
                 match = CAPTURE_URI.fullmatch(uri)
                 if match:
-                    captures.append((match["published_at"], obj["LastModified"], uri))
-        return captures
+                    instant = datetime.strptime(match["published_at"], _PUBLICATION_KEY_FORMAT).replace(tzinfo=UTC)
+                    captures.append((instant, obj["LastModified"], uri))
+        return sorted(captures, reverse=True)
 
     def captured_publication_times(self, publication_date: date) -> set[datetime]:
+        return {published_at for published_at, _, _ in self.captures_for_date(publication_date)}
+
+    def extraction_uri(self, capture_uri: str, parser_version: str) -> str:
+        capture = CAPTURE_URI.fullmatch(capture_uri)
+        if not capture or capture["season"] != self.season:
+            raise ValueError("Expected an exact canonical S3 injury-report capture URI.")
+        revision = capture["key"].removeprefix(f"{PREFIX}/").removesuffix("/capture.json")
+        return f"s3://{BUCKET}/{EXTRACTION_PREFIX}/{revision}/parser_version={parser_version}/report.json"
+
+    def extraction_uris(self, publication_date: date, parser_version: str) -> set[str]:
+        prefix = f"{EXTRACTION_PREFIX}/season={self.season}/publication_date={publication_date}/"
+        suffix = f"/parser_version={parser_version}/report.json"
+        client = boto3.client("s3")
+        pages = client.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=prefix)
         return {
-            datetime.strptime(published_at, _PUBLICATION_KEY_FORMAT).replace(tzinfo=UTC)
-            for published_at, _, _ in self._captures_for_date(publication_date)
+            f"s3://{BUCKET}/{obj['Key']}"
+            for page in pages for obj in page.get("Contents", [])
+            if obj["Key"].endswith(suffix)
         }
 
     def latest_capture_uri(self, publication_date: date) -> str:
-        captures = self._captures_for_date(publication_date)
+        captures = self.captures_for_date(publication_date)
         if not captures:
             raise FileNotFoundError(f"No saved NBA injury report capture for {publication_date}.")
-        captures.sort(reverse=True)
         newest = captures[0]
         if len(captures) > 1 and newest[:2] == captures[1][:2]:
             raise ValueError(f"Multiple latest captures for {publication_date}. Select an exact capture_uri.")
@@ -167,14 +182,13 @@ class InjuryReportArchive(ConfigurableResource):
         return record, pdf
 
     def save_extraction(self, record: dict) -> tuple[str, bool]:
-        published_at = datetime.fromisoformat(record["published_at"])
-        revision = _report_prefix(self.season, published_at, record["sha256"]).removeprefix(f"{PREFIX}/")
-        key = f"{EXTRACTION_PREFIX}/{revision}/parser_version={record['parser_version']}/report.json"
+        uri = self.extraction_uri(record["capture_uri"], record["parser_version"])
+        key = uri.removeprefix(f"s3://{BUCKET}/")
         payload = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
         client = boto3.client("s3")
         created = _put_once(client, key, payload, "application/json")
         _verify_bytes(client, key, payload)
-        return f"s3://{BUCKET}/{key}", created
+        return uri, created
 
     def read_pinned(self, uri: str, expected_sha256: str, *, prefix: str) -> bytes:
         key = uri.removeprefix(f"s3://{BUCKET}/")

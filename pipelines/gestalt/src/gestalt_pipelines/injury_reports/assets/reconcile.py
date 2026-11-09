@@ -4,7 +4,9 @@ import json
 from datetime import UTC, date, datetime
 from hashlib import sha256
 
-from dagster import AssetExecutionContext, Config, Failure, MaterializeResult, asset
+from dagster import (
+    AllPartitionMapping, AssetDep, AssetExecutionContext, Config, Failure, MaterializeResult, asset,
+)
 
 from ...resources import NBAScheduleResource
 from ..partitions import injury_game_dates
@@ -59,7 +61,8 @@ def _select_inputs(
 
 
 @asset(
-    deps=[injury_report_extractions],
+    # A Pacific slate can draw on reports from multiple Eastern publication dates.
+    deps=[AssetDep(injury_report_extractions, partition_mapping=AllPartitionMapping())],
     group_name="injury_reports",
     partitions_def=injury_game_dates,
     code_version=RESOLVER_VERSION,
