@@ -10,7 +10,7 @@ from botocore.exceptions import ClientError
 
 from gestalt_pipelines.definitions import defs
 from gestalt_pipelines.injury_reports.resources import archive, official_nba
-from gestalt_pipelines.injury_reports.utils.parse_pdf import parse_pdf
+from gestalt_pipelines.injury_reports.utils import parse_pdf
 
 SOURCE = (
     "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2026-11-07_11_45PM.pdf"

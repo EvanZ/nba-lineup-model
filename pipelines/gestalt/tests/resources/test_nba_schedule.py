@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from io import BytesIO
 from types import SimpleNamespace
@@ -67,3 +67,34 @@ def test_publish_keeps_current_reference_if_archive_verification_fails(objects):
     with pytest.raises(ValueError, match="do not match their checksum"):
         resource.publish(payload, fetched_at=FETCHED_AT)
     assert json.loads(objects[LATEST_KEY][0]) == original_ref
+
+
+def test_games_for_date_uses_pacific_tipoff_date(objects):
+    season = "2026-27"
+    payload = json.dumps({"leagueSchedule": {
+        "seasonYear": season, "leagueId": "00",
+        "gameDates": [{"gameDate": "11/08/2026", "games": [{
+            "gameId": "late",
+            "gameDateEst": "2026-11-08T00:00:00Z",
+            "gameDateTimeUTC": "2026-11-09T01:00:00Z",
+            "awayTeam": {"teamId": 3, "teamTricode": "CCC"},
+            "homeTeam": {"teamId": 4, "teamTricode": "DDD"},
+            "broadcasters": {"nationalBroadcasters": [{"broadcasterDisplay": "ESPN"}]},
+        }, {
+            "gameId": "cup_slot", "gameStatus": 1,
+            "awayTeam": {"teamId": 0}, "homeTeam": {"teamId": 0},
+        }]}],
+    }}).encode()
+    resource = nba_schedule.NBAScheduleResource(season=season)
+    day = date(2026, 11, 8)
+    reference = resource.publish(payload, fetched_at=FETCHED_AT)
+    games, selected = resource.games_for_date(day)
+    assert selected == reference
+    assert len(games) == 1
+    assert games[0]["game_id"] == "late" and games[0]["game_date"] == day
+    assert "broadcasters" not in games[0]
+
+    bad_payload = payload.replace(b'"broadcasters"', b'"espnData"')
+    bad_ref = resource.publish(bad_payload, fetched_at=FETCHED_AT)
+    with pytest.raises(ValueError, match="Prohibited field"):
+        resource.games_for_date(day, bad_ref)

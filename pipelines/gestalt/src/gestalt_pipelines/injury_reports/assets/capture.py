@@ -2,8 +2,7 @@
 
 from dagster import Config, MaterializeResult, asset
 
-from ..resources.archive import InjuryReportArchive
-from ..resources.official_nba import OfficialInjuryReports
+from ..resources import InjuryReportArchive, OfficialInjuryReports
 
 
 class CaptureConfig(Config):

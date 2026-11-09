@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from dagster import DagsterEventType, DagsterRunStatus
 
-from .archive import BUCKET, InjuryReportArchive
+from ..resources import BUCKET, InjuryReportArchive
 
 ERROR_PREFIX = "lake/artifacts/errors/pipeline=injury_reports/"
 STAGE = "injury_status_by_game_date"
@@ -28,7 +28,7 @@ def _event_key(event: dict) -> str:
     )
 
 
-def read_failure(
+def _read_failure(
     archive: InjuryReportArchive, ref: dict, game_date: str, extraction: dict,
 ) -> dict:
     prefix = f"{ERROR_PREFIX}season={archive.season}/"
@@ -47,7 +47,7 @@ def read_failure(
     return event
 
 
-def save_event(
+def _save_event(
     archive: InjuryReportArchive, *, occurred_at: datetime, run_id: str, game_date: str,
     extraction: dict, artifact_path: str, row: dict, original: dict | None = None,
 ) -> dict:
@@ -98,7 +98,7 @@ def select_prior_failures(
 ) -> dict[tuple[str, str, int], dict]:
     prior = {}
     for ref in references:
-        failure = read_failure(archive, ref, game_date, extraction)
+        failure = _read_failure(archive, ref, game_date, extraction)
         source = failure["row"]
         key = row_key(source)
         row = rows.get(key)
@@ -127,10 +127,10 @@ def write_identity_events(
     for key, row in rows.items():
         original = prior.get(key)
         if "identity_status" in row:
-            ref = {k: original[k] for k in ("uri", "sha256")} if original else save_event(archive, **common, row=row)
+            ref = {k: original[k] for k in ("uri", "sha256")} if original else _save_event(archive, **common, row=row)
             open_failures.append(ref)
         elif original:
-            recoveries.append(save_event(archive, **common, row=row, original=original))
+            recoveries.append(_save_event(archive, **common, row=row, original=original))
     return open_failures, recoveries
 
 

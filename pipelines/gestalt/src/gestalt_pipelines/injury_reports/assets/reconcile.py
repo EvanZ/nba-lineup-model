@@ -6,16 +6,24 @@ from hashlib import sha256
 
 from dagster import AssetExecutionContext, Config, Failure, MaterializeResult, asset
 
-from ..partitions.game_date import injury_game_dates
-from ..resources.archive import BUCKET, EXTRACTION_PREFIX, STATUSES_PREFIX, InjuryReportArchive
-from ..resources.errors import identity_rows, read_failed_run, select_prior_failures, write_identity_events
-from ..resources.reconciliation import (
-    SCHEDULE_PREFIX,
-    read_extraction,
-    read_game_catalog,
-    read_roster,
+from ...resources import NBAScheduleResource
+from ..partitions import injury_game_dates
+from ..resources import (
+    BUCKET,
+    EXTRACTION_PREFIX,
+    STATUSES_PREFIX,
+    InjuryReportArchive,
 )
-from ..utils.reconcile import RESOLVER_VERSION, reconcile_games
+from ..utils import (
+    RESOLVER_VERSION,
+    identity_rows,
+    read_extraction,
+    read_failed_run,
+    read_roster,
+    reconcile_games,
+    select_prior_failures,
+    write_identity_events,
+)
 from .extract import injury_report_extractions
 
 
@@ -25,10 +33,9 @@ class S3Input(Config):
 
 
 class ReconciliationSelection(Config):
-    schedule: S3Input
-    schedule_metadata: S3Input
     roster_metadata: list[S3Input]
     extraction: S3Input
+    schedule: S3Input | None = None
 
 
 def _select_inputs(
@@ -46,7 +53,7 @@ def _select_inputs(
         raise ValueError("The failed run's saved result belongs to a different season or date.")
     inputs = record["inputs"]
     return ReconciliationSelection(
-        schedule=inputs["schedule"], schedule_metadata=inputs["schedule_metadata"],
+        schedule=inputs["schedule"],
         extraction=inputs["extraction"], roster_metadata=[item["metadata"] for item in inputs["rosters"].values()],
     ), errors
 
@@ -61,21 +68,14 @@ def injury_status_by_game_date(
     context: AssetExecutionContext,
     config: ReconciliationSelection,
     injury_report_archive: InjuryReportArchive,
+    nba_schedule: NBAScheduleResource,
 ) -> MaterializeResult:
     day = date.fromisoformat(context.partition_key)
     selected, error_refs = _select_inputs(context, config, injury_report_archive)
     season = injury_report_archive.season
-    schedule_uri = f"s3://{BUCKET}/{SCHEDULE_PREFIX}{season}.json"
-    metadata_uri = schedule_uri.removesuffix(".json") + ".meta.json"
-    if selected.schedule.uri != schedule_uri or selected.schedule_metadata.uri != metadata_uri:
-        raise ValueError("Expected the approved archived official schedule and its metadata.")
-    schedule = injury_report_archive.read_pinned(
-        schedule_uri, selected.schedule.sha256, prefix=SCHEDULE_PREFIX,
+    games, schedule_ref = nba_schedule.games_for_date(
+        day, selected.schedule.model_dump() if selected.schedule else None,
     )
-    schedule_metadata = injury_report_archive.read_pinned(
-        metadata_uri, selected.schedule_metadata.sha256, prefix=SCHEDULE_PREFIX,
-    )
-    games = read_game_catalog(schedule, schedule_metadata, season, day)
     now = datetime.now(UTC)
     if context.run.parent_run_id is None and any(game["game_time_utc"] <= now for game in games):
         raise ValueError("This manual slice uses scheduled starts for an unstarted slate.")
@@ -119,8 +119,7 @@ def injury_status_by_game_date(
         "cutoff_source": "nba_scheduled_start",
         "purpose": "manual_diagnostic",
         "inputs": {
-            "schedule": selected.schedule.model_dump(),
-            "schedule_metadata": selected.schedule_metadata.model_dump(),
+            "schedule": schedule_ref,
             "rosters": roster_inputs,
             "extraction": extraction_ref,
             "player_repairs": repairs,

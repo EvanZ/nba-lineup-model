@@ -2,8 +2,8 @@
 
 from dagster import Config, MaterializeResult, asset
 
-from ..resources.archive import InjuryReportArchive
-from ..utils.parse_pdf import PARSER_VERSION, parse_pdf
+from ..resources import InjuryReportArchive
+from ..utils import PARSER_VERSION, parse_pdf
 from .capture import injury_pdf_archive
 
 

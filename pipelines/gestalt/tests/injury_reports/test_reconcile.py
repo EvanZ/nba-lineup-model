@@ -5,8 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gestalt_pipelines.injury_reports.resources.reconciliation import read_game_catalog, read_roster
-from gestalt_pipelines.injury_reports.utils.reconcile import reconcile_games
+from gestalt_pipelines.injury_reports.utils import read_roster, reconcile_games
 
 DAY = date(2026, 11, 8)
 EARLY_GAME = {
@@ -69,37 +68,6 @@ def test_reconcile_applies_game_cutoffs_and_keeps_unresolved_names():
     assert all(row["pdf_uri"] == report["pdf_uri"] for row in away["unresolved_players"])
 
 
-def test_raw_schedule_assigns_utc_rollover_game_to_pacific_date():
-    season = "2026-27"
-    payload = json.dumps({"leagueSchedule": {
-        "seasonYear": season, "leagueId": "00",
-        "gameDates": [{"gameDate": "11/08/2026", "games": [{
-            "gameId": "late",
-            "gameDateEst": "2026-11-08T00:00:00Z",
-            "gameDateTimeUTC": "2026-11-09T01:00:00Z",
-            "awayTeam": {"teamId": 3, "teamTricode": "CCC"},
-            "homeTeam": {"teamId": 4, "teamTricode": "DDD"},
-            "broadcasters": {"nationalBroadcasters": [{"broadcasterDisplay": "ESPN"}]},
-        }]}],
-    }}).encode()
-    metadata = {
-        "season": season, "sha256": sha256(payload).hexdigest(),
-        "url": "https://stats.nba.com/stats/scheduleleaguev2",
-    }
-    games = read_game_catalog(payload, json.dumps(metadata).encode(), season, DAY)
-    assert len(games) == 1
-    assert games[0]["game_id"] == "late"
-    assert games[0]["game_date"] == DAY
-    assert "broadcasters" not in games[0]
-    bad_payload = payload.replace(b'"broadcasters"', b'"espnData"')
-    bad_metadata = json.dumps({**metadata, "sha256": sha256(bad_payload).hexdigest()}).encode()
-    with pytest.raises(ValueError, match="Prohibited field"):
-        read_game_catalog(bad_payload, bad_metadata, season, DAY)
-    metadata["sha256"] = "0" * 64
-    with pytest.raises(ValueError, match="differ from their official NBA capture metadata"):
-        read_game_catalog(payload, json.dumps(metadata).encode(), season, DAY)
-
-
 def test_roster_metadata_retains_capture_date_and_checks_official_team_id():
     team = 1
     season = "2026-27"
@@ -153,7 +121,8 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     from gestalt_pipelines.injury_reports.assets import reconcile as asset
     from gestalt_pipelines.injury_reports.resources import archive as archive_module
 
-    base = "s3://nba-gestalt-data/lake/raw/scheduleleaguev2/2026-27"
+    base = "s3://nba-gestalt-data/lake/raw/scheduleleaguev2/season=2026-27"
+    latest_uri = f"{base}/latest.json"
     objects = {}
 
     def put(uri, raw):
@@ -193,7 +162,12 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     monkeypatch.setattr(archive_module.boto3, "client", lambda _: SimpleNamespace(get_object=get_object))
     monkeypatch.setattr(asset.InjuryReportArchive, "read_pinned", read_pinned)
     monkeypatch.setattr(asset.InjuryReportArchive, "save_json", save_json)
-    monkeypatch.setattr(asset, "read_game_catalog", lambda *_: [game])
+    def games_for_date(resource, day, reference):
+        payload, reference = resource.load(reference)
+        assert day == DAY and payload == b"schedule"
+        return [game], reference
+
+    monkeypatch.setattr(asset.NBAScheduleResource, "games_for_date", games_for_date)
     monkeypatch.setattr(asset, "read_extraction", lambda *_: report)
 
     def roster(_archive, ref, _season):
@@ -212,16 +186,20 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
             run_config={"ops": {"injury_status_by_game_date": {"config": config}}},
         )
 
+    digest = sha256(b"schedule").hexdigest()
+    schedule_ref = put(f"{base}/sha256={digest}/schedule.json", b"schedule")
+    put(latest_uri, json.dumps(schedule_ref).encode())
     with DagsterInstance.ephemeral() as instance:
         failed = run(instance, {
-            "schedule": put(base + ".json", b"schedule"),
-            "schedule_metadata": put(base + ".meta.json", b"metadata"),
             "roster_metadata": roster_refs, "extraction": put("s3://fixture/extraction", b"report"),
         })
         assert not failed.success
         assert sum(uri.endswith(".failure.json") for uri in objects) == 2
         repairs = {"Original Name": 101, "Report Spelling": 102, "New Player": 202}
         repaired_ref = put(repairs_uri, json.dumps(repairs).encode())
+        digest = sha256(b"new schedule").hexdigest()
+        newer = put(f"{base}/sha256={digest}/schedule.json", b"new schedule")
+        put(latest_uri, json.dumps(newer).encode())
 
         parent = instance.get_run_by_id(failed.run_id)
         child = instance.create_run_for_job(
@@ -236,6 +214,7 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     assert sum(uri.endswith(".recovery.json") for uri in objects) == 2
     corrected = [json.loads(raw) for uri, raw in objects.items() if uri.endswith("/statuses.json")][-1]
     assert corrected["complete"]
+    assert corrected["inputs"]["schedule"] == schedule_ref
     assert corrected["inputs"]["player_repairs"] == {**repaired_ref, "entries": repairs}
     teams = corrected["games"]["early"]["teams"]
     assert teams["1"]["players"]["101"]["identity_source"] == "roster"

@@ -5,11 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from gestalt_pipelines.injury_reports.resources.errors import (
-    row_key,
-    select_prior_failures,
-    write_identity_events,
-)
+from gestalt_pipelines.injury_reports.utils import select_prior_failures, write_identity_events
+from gestalt_pipelines.injury_reports.utils.errors import row_key
 
 DAY = "2026-11-08"
 EXTRACTION = {"uri": "s3://nba-gestalt-data/extraction.json", "sha256": "f" * 64}
