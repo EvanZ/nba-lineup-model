@@ -1,1 +1,26 @@
 """Dagster jobs for injury reports."""
+
+from dagster import AssetSelection, define_asset_job
+
+from ..assets import injury_pdf_archive, injury_report_extractions, injury_status_by_game_date
+
+
+capture_injury_pdfs = define_asset_job(
+    "capture_injury_pdfs",
+    selection=AssetSelection.assets(injury_pdf_archive),
+    description="Capture one official NBA injury report PDF with an approved checksum.",
+)
+
+
+extract_injury_pdf = define_asset_job(
+    "extract_injury_pdf",
+    selection=AssetSelection.assets(injury_report_extractions),
+    description="Extract the official NBA injury report identified by one archived capture URI.",
+)
+
+
+reconcile_injury_date = define_asset_job(
+    "reconcile_injury_date",
+    selection=AssetSelection.assets(injury_status_by_game_date),
+    description="Reconcile one Pacific slate from selected S3 injury, schedule, and roster evidence.",
+)

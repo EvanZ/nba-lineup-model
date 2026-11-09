@@ -353,6 +353,7 @@ dependencies = [
     { name = "boto3" },
     { name = "dagster" },
     { name = "pypdf" },
+    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -365,6 +366,7 @@ requires-dist = [
     { name = "boto3", specifier = "==1.43.118" },
     { name = "dagster", specifier = "==1.13.26" },
     { name = "pypdf", specifier = "==6.18.0" },
+    { name = "requests", specifier = "==2.34.2" },
 ]
 
 [package.metadata.requires-dev]
