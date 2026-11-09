@@ -18,6 +18,7 @@ from ..resources import (
 )
 from ..utils import (
     RESOLVER_VERSION,
+    ROSTER_PREFIX,
     identity_rows,
     read_extraction,
     read_failed_run,
@@ -38,6 +39,8 @@ class S3Input(Config):
 class ReconciliationSelection(Config):
     roster_metadata: list[S3Input] | None = None
     extraction: S3Input | None = None
+    extractions: dict[str, S3Input] | None = None
+    live: bool = False
     schedule: S3Input | None = None
 
 
@@ -56,7 +59,65 @@ def _select_inputs(
     if record["game_date_pacific"] != day or record["season"] != archive.season:
         raise ValueError("The failed run's saved result belongs to a different season or date.")
     inputs = record["inputs"]
-    return {**inputs, "roster_metadata": [item["metadata"] for item in inputs["rosters"].values()]}, errors
+    return {
+        **inputs,
+        "roster_metadata": [item["metadata"] for item in inputs["rosters"].values()],
+        "live": record["purpose"] == "live_candidate",
+    }, errors
+
+
+def _advance_latest(
+    archive: InjuryReportArchive,
+    nba_schedule: NBAScheduleResource,
+    games: list[dict],
+    status_record: dict,
+    status_ref: dict,
+    extraction_refs: dict,
+) -> dict:
+    """Accept the full slate only while its pinned inputs are still selected."""
+    day = status_record["game_date_pacific"]
+    inputs = status_record["inputs"]
+    candidate = {**status_ref, "selection_sha256": status_record["selection_sha256"]}
+    prefix = f"{STATUSES_PREFIX}/season={archive.season}/game_date_pacific={day}/"
+
+    for _ in range(3):
+        previous, etag = archive.read_latest_status(day)
+        if previous and all(previous[key] == value for key, value in candidate.items()):
+            return {"latest_update": "already_current", "latest_status": previous}
+
+        _, current_schedule = nba_schedule.load()
+        if current_schedule != inputs["schedule"]:
+            return {"latest_update": "schedule_changed"}
+        if archive.read_player_repairs()["sha256"] != inputs["player_repairs"]["sha256"]:
+            return {"latest_update": "player_repairs_changed"}
+        for evidence in inputs["rosters"].values():
+            reference = evidence["metadata"]
+            _, current = archive.read_input(reference["uri"], prefix=f"{ROSTER_PREFIX}{archive.season}/")
+            if current != reference:
+                return {"latest_update": "roster_changed"}
+
+        selected = select_extractions(
+            archive, games, first_date=injury_publication_dates.start.date(),
+            now=datetime.now(UTC), committed_only=True,
+        )
+        if {game_id: ref for game_id, (_, ref) in selected.items()} != extraction_refs:
+            return {"latest_update": "reports_changed"}
+
+        old = json.loads(archive.read_pinned(previous["uri"], previous["sha256"], prefix=prefix)) if previous else {}
+        old_games = old.get("games", {})
+        old_inputs = old.get("inputs", {})
+        old_refs = old_inputs.get("extractions", dict.fromkeys(old_games, old_inputs.get("extraction")))
+        current_games = status_record["games"]
+        changed = sorted(
+            game_id for game_id in old_games.keys() | current_games.keys()
+            if old_games.get(game_id) != current_games.get(game_id)
+            or old_refs.get(game_id) != extraction_refs.get(game_id)
+        )
+        pointer = {**candidate, "changed_game_ids": changed}
+        if archive.save_latest_status(day, pointer, etag):
+            return {"latest_update": "published", "latest_status": pointer}
+
+    raise Failure(f"Concurrent updates prevented publishing latest injury status for {day}.", allow_retries=False)
 
 
 @asset(
@@ -81,6 +142,8 @@ def injury_status_by_game_date(
     legacy_extraction = selected.get("extraction")
     extraction_refs = selected.get("extractions")
     if legacy_extraction is not None:
+        if extraction_refs is not None:
+            raise ValueError("Select either a single report or per-game reports.")
         extraction_refs = dict.fromkeys(game_ids, legacy_extraction)
     if extraction_refs is None:
         reports = select_extractions(
@@ -138,7 +201,7 @@ def injury_status_by_game_date(
         "season": season,
         "resolver_version": RESOLVER_VERSION,
         "cutoff_source": "nba_scheduled_start",
-        "purpose": "manual_diagnostic",
+        "purpose": "live_candidate" if selected.get("live") else "manual_diagnostic",
         "inputs": {
             "schedule": schedule_ref,
             "rosters": roster_inputs,
@@ -149,13 +212,14 @@ def injury_status_by_game_date(
     selection = sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     roster_dates = sorted({evidence["roster_date_pacific"] for evidence in roster_inputs.values()})
     complete_games = sum(game["complete"] for game in statuses.values())
-    status_ref = injury_report_archive.save_statuses({
+    status_record = {
         **identity,
         "selection_sha256": selection,
         "complete": complete_games == len(statuses),
         "roster_dates_pacific": roster_dates,
         "games": statuses,
-    })
+    }
+    status_ref = injury_report_archive.save_statuses(status_record)
     failures, recoveries = write_identity_events(
         injury_report_archive, rows, prior, occurred_at=datetime.now(UTC),
         run_id=context.run_id, game_date=day.isoformat(),
@@ -180,4 +244,10 @@ def injury_status_by_game_date(
         )
     if missing_reports and legacy_extraction is None:
         raise Failure(f"No eligible injury report for {len(missing_reports)} games on {day}.", metadata=metadata)
+    if missing_reports:
+        metadata["latest_update"] = "incomplete_coverage"
+    else:
+        metadata.update(_advance_latest(
+            injury_report_archive, nba_schedule, games, status_record, status_ref, extraction_refs,
+        ))
     return MaterializeResult(metadata=metadata)

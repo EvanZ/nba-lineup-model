@@ -54,6 +54,7 @@ def read_extraction(payload: bytes, uri: str, season: str) -> dict:
 
 def select_extractions(
     archive: InjuryReportArchive, games: list[dict], *, first_date: date, now: datetime,
+    committed_only: bool = False,
 ) -> dict[str, tuple[dict, dict]]:
     """Select the newest saved report covering each game before its scheduled start."""
     if not games:
@@ -66,6 +67,9 @@ def select_extractions(
 
     while remaining and day >= first_date:
         captures = archive.captures_for_date(day)
+        if committed_only:
+            saved = archive.extraction_uris(day, PARSER_VERSION)
+            captures = [item for item in captures if archive.extraction_uri(item[2], PARSER_VERSION) in saved]
         for (published_at, _), revisions in groupby(captures, key=lambda item: item[:2]):
             eligible = [
                 game for game in remaining.values()

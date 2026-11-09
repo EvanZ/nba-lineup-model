@@ -8,7 +8,7 @@ from urllib.error import HTTPError
 
 import pytest
 from botocore.exceptions import ClientError
-from dagster import DagsterInvalidConfigError, validate_run_config
+from dagster import DagsterInvalidConfigError, build_schedule_context, build_sensor_context, validate_run_config
 
 from gestalt_pipelines.definitions import defs
 from gestalt_pipelines.injury_reports.resources import archive, official_nba
@@ -30,28 +30,43 @@ CAPTURED = OBSERVED + timedelta(seconds=1)
 class MemoryArchive:
     def __init__(self):
         self.objects = {}
+        self.commit_times = {}
+        self.now = CAPTURED
         self.fail_suffix = None
         self.corrupt_pdf = False
 
     def put_object(self, **request):
         key = request["Key"]
         assert request["Bucket"] == "nba-gestalt-data"
-        assert request["IfNoneMatch"] == "*"
         checksum = base64.b64encode(sha256(request["Body"]).digest()).decode("ascii")
         assert request["ChecksumSHA256"] == checksum
         if self.fail_suffix and key.endswith(self.fail_suffix):
             raise ClientError({"Error": {"Code": "503", "Message": "unavailable"}}, "PutObject")
-        if key in self.objects:
+        if "IfMatch" in request:
+            matches = key in self.objects and request["IfMatch"] == self.etag(key)
+        else:
+            assert request["IfNoneMatch"] == "*"
+            matches = key not in self.objects
+        if not matches:
             raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         self.objects[key] = (request["Body"], request["Metadata"])
+        self.commit_times[key] = self.now
         return {}
+
+    def etag(self, key):
+        return f'"{sha256(self.objects[key][0]).hexdigest()}"'
 
     def get_object(self, *, Bucket, Key):
         assert Bucket == "nba-gestalt-data"
+        if Key not in self.objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
         data, metadata = self.objects[Key]
         if self.corrupt_pdf and Key.endswith("report.pdf"):
             data += b"unexpected"
-        return {"Body": BytesIO(data), "Metadata": metadata, "LastModified": CAPTURED}
+        return {
+            "Body": BytesIO(data), "Metadata": metadata, "LastModified": self.commit_times.get(Key, CAPTURED),
+            "ETag": self.etag(Key),
+        }
 
 
     def get_paginator(self, operation):
@@ -61,7 +76,7 @@ class MemoryArchive:
     def _list_objects(self, *, Bucket, Prefix):
         assert Bucket == "nba-gestalt-data"
         return [{"Contents": [
-            {"Key": key, "LastModified": CAPTURED}
+            {"Key": key, "LastModified": self.commit_times.get(key, CAPTURED)}
             for key in self.objects if key.startswith(Prefix)
         ]}]
 
@@ -451,3 +466,188 @@ def test_report_without_readable_submission_evidence_fails():
 
     with pytest.raises(ValueError, match="no readable team submission evidence"):
         parse_pdf(pdf)
+
+
+def test_scheduled_capture_spans_midnight_without_scanning_the_day(capture, monkeypatch):
+    from gestalt_pipelines.injury_reports import schedules
+
+    injury_pdf_poll = schedules.injury_pdf_poll
+    tick = datetime.fromisoformat("2026-11-08T05:02:00Z")
+    monkeypatch.setattr(schedules, "datetime", SimpleNamespace(now=lambda _: tick))
+    missed = build_schedule_context(
+        scheduled_execution_time=tick - timedelta(minutes=15), repository_def=defs.get_repository_def(),
+    )
+    assert not injury_pdf_poll.evaluate_tick(missed).run_requests
+    context = build_schedule_context(scheduled_execution_time=tick, repository_def=defs.get_repository_def())
+    requests = injury_pdf_poll.evaluate_tick(context).run_requests
+    assert [request.partition_key for request in requests] == ["2026-11-07", "2026-11-08"]
+
+    checked = []
+
+    def download(_, url):
+        checked.append(official_nba.publication_time(url))
+        return None
+
+    monkeypatch.setattr(official_nba.OfficialInjuryReports, "download_if_available", download)
+    job = defs.resolve_job_def("capture_injury_pdfs")
+    for request in requests:
+        assert job.execute_in_process(
+            partition_key=request.partition_key, run_config=request.run_config,
+        ).success
+    assert sorted(checked) == [
+        datetime.fromisoformat(value) for value in (
+            "2026-11-08T04:15:00Z", "2026-11-08T04:30:00Z",
+            "2026-11-08T04:45:00Z", "2026-11-08T05:00:00Z",
+        )
+    ]
+
+
+def test_live_sensors_follow_committed_objects_and_pin_reconciliation_inputs(capture, monkeypatch):
+    from gestalt_pipelines.injury_reports import schedules
+    from gestalt_pipelines.injury_reports.assets import extract, reconcile
+    from gestalt_pipelines.injury_reports.schedules import injury_pdf_poll
+    from gestalt_pipelines.injury_reports.sensors import injury_report_dates_ready, live, new_injury_pdf
+    from gestalt_pipelines.resources import NBAScheduleResource
+
+    storage, _, run_capture = capture
+    archive_resource = archive.InjuryReportArchive(season="2026-27")
+    schedule = NBAScheduleResource(season="2026-27")
+    now = [datetime.fromisoformat("2026-11-08T05:02:00Z")]
+    day = date(2026, 11, 8)
+    game = {
+        "game_id": "1", "game_date": day, "game_time_utc": datetime.fromisoformat("2026-11-08T18:00:00Z"),
+        "away_team_id": 1, "home_team_id": 2, "away_team_tricode": "BOS", "home_team_tricode": "NYK",
+    }
+    schedule_ref = {"uri": "s3://fixture/schedule.json", "sha256": "a" * 64}
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz):
+            return now[0].astimezone(tz)
+
+    def slate(_, requested, reference, *, allow_empty):
+        assert reference == schedule_ref
+        return ([game] if requested == day else []), reference
+
+    def roster(_, ref, season):
+        assert season == "2026-27"
+        team = ref if isinstance(ref, int) else int(ref["uri"].rsplit("/", 1)[1].split(".")[0])
+        key = f"lake/raw/commonteamroster/{season}/{team}.meta.json"
+        payload = str(team).encode()
+        storage.objects[key] = (payload, {})
+        metadata = {"uri": f"s3://nba-gestalt-data/{key}", "sha256": sha256(payload).hexdigest()}
+        return team, {team: "Fixture Player"}, {
+            "metadata": metadata, "fetched_at": "2026-10-20T05:00:00Z", "roster_date_pacific": "2026-10-19",
+        }
+
+    monkeypatch.setattr(live, "datetime", Clock)
+    monkeypatch.setattr(schedules, "datetime", Clock)
+    monkeypatch.setattr(NBAScheduleResource, "load", lambda *_: (b"{}", schedule_ref))
+    monkeypatch.setattr(NBAScheduleResource, "games_for_date", slate)
+    monkeypatch.setattr(live, "read_roster", roster)
+    monkeypatch.setattr(reconcile, "read_roster", roster)
+    monkeypatch.setattr(extract, "parse_pdf", lambda _: {
+        "game_team_reports": {f"{day}|BOS@NYK": {
+            "BOS": {"status": "submitted"}, "NYK": {"status": "not_yet_submitted"},
+        }},
+        "players": [],
+    })
+    storage.objects["lake/artifacts/injury_status_by_game_date/season=2026-27/player_repairs.json"] = (b"{}", {})
+
+    def evaluate(sensor, cursor=None):
+        resources = {"injury_report_archive": archive_resource}
+        if sensor is injury_report_dates_ready:
+            resources["nba_schedule"] = schedule
+        with build_sensor_context(
+            repository_def=defs.get_repository_def(), resources=resources, cursor=cursor,
+        ) as context:
+            return sensor.evaluate_tick(context)
+
+    assert run_capture().success
+    extract_tick = evaluate(new_injury_pdf)
+    request, = extract_tick.run_requests
+    assert request.partition_key == "2026-11-07"
+    assert evaluate(new_injury_pdf).run_requests[0].run_key == request.run_key
+    extraction_job = defs.resolve_job_def("extract_injury_pdf")
+    storage.corrupt_pdf = True
+    assert not extraction_job.execute_in_process(
+        partition_key=request.partition_key, run_config=request.run_config, tags=request.tags, raise_on_error=False,
+    ).success
+    storage.corrupt_pdf = False
+
+    later_url = SOURCE.replace("2026-11-07_11_45PM", "2026-11-08_12_15AM")
+    storage.now = datetime.fromisoformat("2026-11-08T05:17:00Z")
+    now[0] = storage.now + timedelta(minutes=1)
+
+    def download(_, url):
+        if url == later_url:
+            return official_nba.OfficialInjuryReport(url, official_nba.publication_time(url), storage.now, PDF)
+        return None
+
+    monkeypatch.setattr(official_nba.OfficialInjuryReports, "download_if_available", download)
+    schedule_context = build_schedule_context(
+        scheduled_execution_time=storage.now, repository_def=defs.get_repository_def(),
+    )
+    capture_request = next(
+        request for request in injury_pdf_poll.evaluate_tick(schedule_context).run_requests
+        if request.partition_key == "2026-11-08"
+    )
+    captured = defs.resolve_job_def("capture_injury_pdfs").execute_in_process(
+        partition_key=capture_request.partition_key, run_config=capture_request.run_config,
+    )
+    capture_meta = captured.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
+    later_uri, = capture_meta["recovered_capture_uris"].value
+    assert capture_meta["recovered_count"].value == 1
+
+    assert extraction_job.execute_in_process(
+        partition_key=request.partition_key, run_config=request.run_config, tags=request.tags,
+    ).success
+    remaining, = evaluate(new_injury_pdf, extract_tick.cursor).run_requests
+    assert remaining.run_config["ops"]["injury_report_extractions"]["config"]["capture_uri"] == later_uri
+
+    reconcile_tick = evaluate(injury_report_dates_ready)
+    request, = reconcile_tick.run_requests
+    assert request.partition_key == "2026-11-08"
+    config = request.run_config["ops"]["injury_status_by_game_date"]["config"]
+    assert config["live"] and config["schedule"] == schedule_ref
+    assert len(config["roster_metadata"]) == 2
+    assert "/published_at=20261108T044500Z/" in config["extractions"]["1"]["uri"]
+    reconcile_job = defs.resolve_job_def("reconcile_injury_date")
+    first = reconcile_job.execute_in_process(
+        partition_key=request.partition_key, run_config=request.run_config,
+    )
+    assert first.success
+    first_metadata = first.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
+    first_pointer, first_etag = archive_resource.read_latest_status(day.isoformat())
+    assert first_metadata["latest_update"].value == "published"
+    assert first_pointer["changed_game_ids"] == ["1"]
+    assert first_pointer["uri"] == first_metadata["statuses"].value["uri"]
+    assert not evaluate(injury_report_dates_ready, reconcile_tick.cursor).run_requests
+
+    storage.now = now[0] + timedelta(minutes=1)
+    now[0] = storage.now + timedelta(minutes=1)
+    assert remaining.partition_key == "2026-11-08"
+    assert extraction_job.execute_in_process(
+        partition_key=remaining.partition_key, run_config=remaining.run_config, tags=remaining.tags,
+    ).success
+    assert not evaluate(new_injury_pdf).run_requests
+    updated, = evaluate(injury_report_dates_ready, reconcile_tick.cursor).run_requests
+    assert updated.partition_key == request.partition_key and updated.run_key != request.run_key
+    pinned = updated.run_config["ops"]["injury_status_by_game_date"]["config"]["extractions"]["1"]
+    assert pinned["uri"] == archive_resource.extraction_uri(later_uri, "v2")
+    newer = reconcile_job.execute_in_process(
+        partition_key=updated.partition_key, run_config=updated.run_config,
+    )
+    assert newer.success
+    newer_pointer, newer_etag = archive_resource.read_latest_status(day.isoformat())
+    assert newer_etag != first_etag
+    assert newer_pointer["changed_game_ids"] == ["1"]
+    assert not archive_resource.save_latest_status(day.isoformat(), first_pointer, first_etag)
+
+    older = reconcile_job.execute_in_process(
+        partition_key=request.partition_key, run_config=request.run_config,
+    )
+    assert older.success
+    older_metadata = older.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
+    assert older_metadata["latest_update"].value == "reports_changed"
+    assert archive_resource.read_latest_status(day.isoformat()) == (newer_pointer, newer_etag)

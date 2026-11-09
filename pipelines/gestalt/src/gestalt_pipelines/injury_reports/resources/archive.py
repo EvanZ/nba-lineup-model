@@ -34,7 +34,10 @@ def _utc_text(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _put_once(client, key: str, body: bytes, content_type: str, *, metadata=None) -> bool:
+def _put_once(
+    client, key: str, body: bytes, content_type: str, *, metadata=None, expected_etag: str | None = None,
+) -> bool:
+    condition = {"IfMatch": expected_etag} if expected_etag is not None else {"IfNoneMatch": "*"}
     try:
         client.put_object(
             Bucket=BUCKET,
@@ -44,10 +47,12 @@ def _put_once(client, key: str, body: bytes, content_type: str, *, metadata=None
             Metadata=metadata or {},
             ChecksumAlgorithm="SHA256",
             ChecksumSHA256=base64.b64encode(sha256(body).digest()).decode("ascii"),
-            IfNoneMatch="*",
+            **condition,
         )
     except ClientError as error:
-        if error.response.get("Error", {}).get("Code") not in {"412", "PreconditionFailed"}:
+        if error.response.get("Error", {}).get("Code") not in {
+            "409", "412", "ConditionalRequestConflict", "PreconditionFailed",
+        }:
             raise
         return False
     return True
@@ -128,16 +133,19 @@ class InjuryReportArchive(ConfigurableResource):
         revision = capture["key"].removeprefix(f"{PREFIX}/").removesuffix("/capture.json")
         return f"s3://{BUCKET}/{EXTRACTION_PREFIX}/{revision}/parser_version={parser_version}/report.json"
 
-    def extraction_uris(self, publication_date: date, parser_version: str) -> set[str]:
+    def extraction_records(self, publication_date: date, parser_version: str) -> list[tuple[datetime, str]]:
         prefix = f"{EXTRACTION_PREFIX}/season={self.season}/publication_date={publication_date}/"
         suffix = f"/parser_version={parser_version}/report.json"
         client = boto3.client("s3")
         pages = client.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=prefix)
-        return {
-            f"s3://{BUCKET}/{obj['Key']}"
+        return [
+            (obj["LastModified"], f"s3://{BUCKET}/{obj['Key']}")
             for page in pages for obj in page.get("Contents", [])
             if obj["Key"].endswith(suffix)
-        }
+        ]
+
+    def extraction_uris(self, publication_date: date, parser_version: str) -> set[str]:
+        return {uri for _, uri in self.extraction_records(publication_date, parser_version)}
 
     def latest_capture_uri(self, publication_date: date) -> str:
         captures = self.captures_for_date(publication_date)
@@ -231,14 +239,39 @@ class InjuryReportArchive(ConfigurableResource):
             "entries": repairs,
         }
 
+    def _status_prefix(self, day: str) -> str:
+        return f"{STATUSES_PREFIX}/season={self.season}/game_date_pacific={day}/"
+
     def save_statuses(self, record: dict) -> dict:
-        day = record["game_date_pacific"]
-        selection = record["selection_sha256"]
-        key = (
-            f"{STATUSES_PREFIX}/season={self.season}/game_date_pacific={day}/"
-            f"selection_sha256={selection}/statuses.json"
+        prefix = self._status_prefix(record["game_date_pacific"])
+        return self.save_json(f"{prefix}selection_sha256={record['selection_sha256']}/statuses.json", record)
+
+    def read_latest_status(self, day: str) -> tuple[dict | None, str | None]:
+        prefix = self._status_prefix(day)
+        client = boto3.client("s3")
+        try:
+            response = client.get_object(Bucket=BUCKET, Key=f"{prefix}latest.json")
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+                return None, None
+            raise
+        with closing(response["Body"]) as body:
+            pointer = json.load(body)
+        selection = pointer["selection_sha256"]
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", selection)
+            or not re.fullmatch(r"[0-9a-f]{64}", pointer["sha256"])
+            or pointer["uri"] != f"s3://{BUCKET}/{prefix}selection_sha256={selection}/statuses.json"
+        ):
+            raise ValueError(f"Invalid latest injury status pointer for {day}.")
+        return pointer, response["ETag"]
+
+    def save_latest_status(self, day: str, pointer: dict, expected_etag: str | None) -> bool:
+        payload = (json.dumps(pointer, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        return _put_once(
+            boto3.client("s3"), f"{self._status_prefix(day)}latest.json", payload,
+            "application/json", expected_etag=expected_etag,
         )
-        return self.save_json(key, record)
 
     def save_json(self, key: str, record: dict) -> dict:
         payload = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")

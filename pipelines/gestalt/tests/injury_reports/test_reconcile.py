@@ -149,6 +149,7 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     from datetime import UTC, timedelta
     from io import BytesIO
 
+    from botocore.exceptions import ClientError
     from dagster import DagsterInstance, in_process_executor
     from dagster._core.definitions.job_base import InMemoryJob
     from dagster._core.execution.api import execute_run
@@ -192,7 +193,10 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     put(repairs_uri, b"{}")
 
     def get_object(*, Bucket, Key):
-        return {"Body": BytesIO(objects[f"s3://{Bucket}/{Key}"])}
+        uri = f"s3://{Bucket}/{Key}"
+        if uri not in objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        return {"Body": BytesIO(objects[uri])}
 
     monkeypatch.setattr(archive_module.boto3, "client", lambda _: SimpleNamespace(get_object=get_object))
     monkeypatch.setattr(asset.InjuryReportArchive, "read_pinned", read_pinned)
@@ -232,6 +236,7 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
         config = {} if automatic else {"roster_metadata": roster_refs, "extraction": extraction_ref}
         failed = run(instance, config)
         assert not failed.success
+        assert not any("injury_status_by_game_date" in uri and uri.endswith("/latest.json") for uri in objects)
         assert sum(uri.endswith(".failure.json") for uri in objects) == 2
         repairs = {"Original Name": 101, "Report Spelling": 102, "New Player": 202}
         repaired_ref = put(repairs_uri, json.dumps(repairs).encode())
@@ -249,6 +254,8 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
                    for log in instance.all_logs(replay.run_id))
 
     assert replay.success
+    metadata = replay.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
+    assert metadata["latest_update"].value == "schedule_changed"
     assert sum(uri.endswith(".recovery.json") for uri in objects) == 2
     corrected = [json.loads(raw) for uri, raw in objects.items() if uri.endswith("/statuses.json")][-1]
     assert corrected["complete"]

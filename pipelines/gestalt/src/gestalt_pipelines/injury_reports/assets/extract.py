@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from dagster import AssetExecutionContext, Field, MaterializeResult, Selector, asset
+from dagster import AssetExecutionContext, Failure, Field, MaterializeResult, Selector, asset
 
 from ..partitions import injury_publication_dates
 from ..resources import InjuryReportArchive
@@ -58,6 +58,12 @@ def injury_report_extractions(
     context: AssetExecutionContext,
     injury_report_archive: InjuryReportArchive,
 ) -> MaterializeResult:
+    requested_version = context.run.tags.get("injury_reports/parser_version", PARSER_VERSION)
+    if requested_version != PARSER_VERSION:
+        raise Failure(
+            f"This extraction requested parser {requested_version}, but {PARSER_VERSION} is loaded.",
+            allow_retries=False,
+        )
     publication_date = date.fromisoformat(context.partition_key)
     config = context.op_config or {}
     if config:
