@@ -190,20 +190,25 @@ class InjuryReportArchive(ConfigurableResource):
         _verify_bytes(client, key, payload)
         return uri, created
 
-    def read_pinned(self, uri: str, expected_sha256: str, *, prefix: str) -> bytes:
+    def read_input(self, uri: str, *, prefix: str) -> tuple[bytes, dict]:
         key = uri.removeprefix(f"s3://{BUCKET}/")
         if (
             not uri.startswith(f"s3://{BUCKET}/")
             or not key.startswith(prefix)
             or any(part in {"", ".", ".."} for part in key.split("/"))
             or "espn" in key.casefold()
-            or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
         ):
-            raise ValueError(f"Expected a pinned S3 object under s3://{BUCKET}/{prefix}")
+            raise ValueError(f"Expected an S3 object under s3://{BUCKET}/{prefix}")
         client = boto3.client("s3")
         with closing(client.get_object(Bucket=BUCKET, Key=key)["Body"]) as body:
             payload = body.read()
-        if sha256(payload).hexdigest() != expected_sha256:
+        return payload, {"uri": uri, "sha256": sha256(payload).hexdigest()}
+
+    def read_pinned(self, uri: str, expected_sha256: str, *, prefix: str) -> bytes:
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+            raise ValueError(f"Expected a pinned S3 object under s3://{BUCKET}/{prefix}")
+        payload, reference = self.read_input(uri, prefix=prefix)
+        if reference["sha256"] != expected_sha256:
             raise ValueError(f"S3 object checksum differs from the selected input: {uri}")
         return payload
 

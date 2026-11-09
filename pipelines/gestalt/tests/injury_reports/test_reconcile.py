@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gestalt_pipelines.injury_reports.utils import read_roster, reconcile_games
+from gestalt_pipelines.injury_reports.utils import read_roster, reconcile_games, select_extractions
 
 DAY = date(2026, 11, 8)
 EARLY_GAME = {
@@ -68,6 +68,40 @@ def test_reconcile_applies_game_cutoffs_and_keeps_unresolved_names():
     assert all(row["pdf_uri"] == report["pdf_uri"] for row in away["unresolved_players"])
 
 
+def test_select_extractions_uses_latest_eligible_report_per_game(monkeypatch):
+    from gestalt_pipelines.injury_reports.utils import reconciliation_inputs
+
+    previous_day = date(2026, 11, 7)
+    reports = {
+        "after_both": ("2026-11-08T22:00:00Z", ["2026-11-08|AAA@BBB", "2026-11-08|CCC@DDD"]),
+        "before_late": ("2026-11-08T20:00:00Z", ["2026-11-08|AAA@BBB", "2026-11-08|CCC@DDD"]),
+        "previous": ("2026-11-08T04:45:00Z", ["2026-11-08|AAA@BBB"]),
+    }
+
+    def captures(day):
+        names = ("after_both", "before_late") if day == DAY else ("previous",)
+        return [(datetime.fromisoformat(reports[name][0]), datetime.fromisoformat(reports[name][0]), name)
+                for name in names]
+
+    def read(uri, *, prefix):
+        assert uri != "after_both"
+        published_at, keys = reports[uri]
+        report = {"published_at": published_at, "game_team_reports": dict.fromkeys(keys, {})}
+        return json.dumps(report).encode(), {"uri": uri, "sha256": "a" * 64}
+
+    archive = SimpleNamespace(
+        season="2026-27", captures_for_date=captures, extraction_uri=lambda uri, _: uri, read_input=read,
+    )
+    monkeypatch.setattr(reconciliation_inputs, "read_extraction", lambda raw, *_: json.loads(raw))
+    selected = select_extractions(
+        archive, [EARLY_GAME, LATE_GAME], first_date=previous_day,
+        now=datetime.fromisoformat("2026-11-09T23:00:00Z"),
+    )
+    assert {game: ref["uri"] for game, (_, ref) in selected.items()} == {
+        "early": "previous", "late": "before_late",
+    }
+
+
 def test_roster_metadata_retains_capture_date_and_checks_official_team_id():
     team = 1
     season = "2026-27"
@@ -110,7 +144,8 @@ def test_roster_metadata_retains_capture_date_and_checks_official_team_id():
         load()
 
 
-def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypatch):
+@pytest.mark.parametrize("automatic", [False, True])
+def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypatch, automatic):
     from datetime import UTC, timedelta
     from io import BytesIO
 
@@ -162,7 +197,7 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     monkeypatch.setattr(archive_module.boto3, "client", lambda _: SimpleNamespace(get_object=get_object))
     monkeypatch.setattr(asset.InjuryReportArchive, "read_pinned", read_pinned)
     monkeypatch.setattr(asset.InjuryReportArchive, "save_json", save_json)
-    def games_for_date(resource, day, reference):
+    def games_for_date(resource, day, reference, *, allow_empty):
         payload, reference = resource.load(reference)
         assert day == DAY and payload == b"schedule"
         return [game], reference
@@ -171,6 +206,8 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     monkeypatch.setattr(asset, "read_extraction", lambda *_: report)
 
     def roster(_archive, ref, _season):
+        if isinstance(ref, int):
+            ref = roster_refs[ref - 1]
         team = int(ref["uri"].rsplit("/", 1)[1])
         players = {101: "Original Name", 102: "Roster Spelling"} if team == 1 else {201: "Other Player"}
         return team, players, {
@@ -189,10 +226,11 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     digest = sha256(b"schedule").hexdigest()
     schedule_ref = put(f"{base}/sha256={digest}/schedule.json", b"schedule")
     put(latest_uri, json.dumps(schedule_ref).encode())
+    extraction_ref = put("s3://fixture/extraction", b"report")
+    monkeypatch.setattr(asset, "select_extractions", lambda *_, **__: {"early": (report, extraction_ref)})
     with DagsterInstance.ephemeral() as instance:
-        failed = run(instance, {
-            "roster_metadata": roster_refs, "extraction": put("s3://fixture/extraction", b"report"),
-        })
+        config = {} if automatic else {"roster_metadata": roster_refs, "extraction": extraction_ref}
+        failed = run(instance, config)
         assert not failed.success
         assert sum(uri.endswith(".failure.json") for uri in objects) == 2
         repairs = {"Original Name": 101, "Report Spelling": 102, "New Player": 202}
@@ -215,6 +253,10 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     corrected = [json.loads(raw) for uri, raw in objects.items() if uri.endswith("/statuses.json")][-1]
     assert corrected["complete"]
     assert corrected["inputs"]["schedule"] == schedule_ref
+    if automatic:
+        assert corrected["inputs"]["extractions"] == {"early": extraction_ref}
+    else:
+        assert corrected["inputs"]["extraction"] == extraction_ref
     assert corrected["inputs"]["player_repairs"] == {**repaired_ref, "entries": repairs}
     teams = corrected["games"]["early"]["teams"]
     assert teams["1"]["players"]["101"]["identity_source"] == "roster"

@@ -16,11 +16,15 @@ def normalize_player_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.casefold())
 
 
+def report_game_key(game: dict) -> str:
+    return f"{game['game_date']}|{game['away_team_tricode']}@{game['home_team_tricode']}"
+
+
 def reconcile_games(
-    games: list[dict], rosters: dict[int, dict[int, str]], report: dict,
+    games: list[dict], rosters: dict[int, dict[int, str]], report: dict | None,
     repairs: dict[str, int] | None = None,
 ) -> dict:
-    published_at = datetime.fromisoformat(report["published_at"])
+    published_at = datetime.fromisoformat(report["published_at"]) if report is not None else None
     by_game = {}
     repairs = repairs or {}
     for game in games:
@@ -28,8 +32,8 @@ def reconcile_games(
         home, away = game["home_team_tricode"], game["away_team_tricode"]
         matchup = f"{away}@{home}"
         reported_date = game["game_date"].isoformat()
-        report_key = f"{reported_date}|{matchup}"
-        eligible = published_at < start and report_key in report["game_team_reports"]
+        report_key = report_game_key(game)
+        eligible = published_at is not None and published_at < start and report_key in report["game_team_reports"]
         submitted = report["game_team_reports"][report_key] if eligible else {}
         teams = {}
 

@@ -33,7 +33,7 @@ def test_replay_recovers_only_the_original_error_for_each_resolved_row():
     }
     second = {**first, "source_row_index": 3, "player_name": "Second Player"}
     unresolved = {row_key(row): {**row, "identity_status": "unmatched"} for row in (first, second)}
-    common = {"game_date": DAY, "extraction": EXTRACTION, "artifact_path": STATUS_PATH}
+    common = {"game_date": DAY, "extractions": {"game": EXTRACTION}, "artifact_path": STATUS_PATH}
     failures, recoveries = write_identity_events(
         archive, unresolved, {}, run_id="failure-run",
         occurred_at=datetime.fromisoformat("2026-11-08T15:00:00Z"), **common,
@@ -43,7 +43,7 @@ def test_replay_recovers_only_the_original_error_for_each_resolved_row():
     assert all(ref["uri"].endswith(".failure.json") for ref in failures)
     refs = failures
     first_replay = {**unresolved, row_key(first): {**first, "player_id": 101}}
-    prior = select_prior_failures(archive, refs, first_replay, DAY, EXTRACTION)
+    prior = select_prior_failures(archive, refs, first_replay, DAY, {"game": EXTRACTION})
 
     still_open, recovered = write_identity_events(
         archive, first_replay, prior, run_id="recovery-run",
@@ -57,4 +57,4 @@ def test_replay_recovers_only_the_original_error_for_each_resolved_row():
     assert recovery["row"]["player_id"] == 101
     assert json.loads(objects[failures[0]["uri"]])["status"] == "failed"
     with pytest.raises(ValueError, match="selected date and extraction"):
-        select_prior_failures(archive, refs, first_replay, DAY, {**EXTRACTION, "sha256": "e" * 64})
+        select_prior_failures(archive, refs, first_replay, DAY, {"game": {**EXTRACTION, "sha256": "e" * 64}})

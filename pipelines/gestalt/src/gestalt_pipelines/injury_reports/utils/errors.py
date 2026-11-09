@@ -29,7 +29,7 @@ def _event_key(event: dict) -> str:
 
 
 def _read_failure(
-    archive: InjuryReportArchive, ref: dict, game_date: str, extraction: dict,
+    archive: InjuryReportArchive, ref: dict, game_date: str, extractions: dict[str, dict],
 ) -> dict:
     prefix = f"{ERROR_PREFIX}season={archive.season}/"
     raw = archive.read_pinned(ref["uri"], ref["sha256"], prefix=prefix)
@@ -37,7 +37,8 @@ def _read_failure(
     if (
         event["schema_version"] != 1 or event["stage"] != STAGE or event["status"] != "failed"
         or event["season"] != archive.season
-        or event["game_date_pacific"] != game_date or event["extraction"] != extraction
+        or event["game_date_pacific"] != game_date
+        or event["extraction"] != extractions.get(event["row"]["game_id"])
         or not re.fullmatch(r"[0-9a-f]{64}", event["event_id"])
         or datetime.fromisoformat(event["timestamp"]).tzinfo is None
         or ref["uri"] != f"s3://{BUCKET}/{_event_key(event)}"
@@ -94,11 +95,11 @@ def identity_rows(games: dict) -> dict[tuple[str, str, int], dict]:
 
 def select_prior_failures(
     archive: InjuryReportArchive, references: list[dict], rows: dict,
-    game_date: str, extraction: dict,
+    game_date: str, extractions: dict[str, dict],
 ) -> dict[tuple[str, str, int], dict]:
     prior = {}
     for ref in references:
-        failure = _read_failure(archive, ref, game_date, extraction)
+        failure = _read_failure(archive, ref, game_date, extractions)
         source = failure["row"]
         key = row_key(source)
         row = rows.get(key)
@@ -113,7 +114,7 @@ def select_prior_failures(
 
 def write_identity_events(
     archive: InjuryReportArchive, rows: dict, prior: dict, *, occurred_at: datetime,
-    run_id: str, game_date: str, extraction: dict, artifact_path: str,
+    run_id: str, game_date: str, extractions: dict[str, dict], artifact_path: str,
 ) -> tuple[list[dict], list[dict]]:
     open_failures = []
     recoveries = []
@@ -121,20 +122,20 @@ def write_identity_events(
         "occurred_at": occurred_at,
         "run_id": run_id,
         "game_date": game_date,
-        "extraction": extraction,
         "artifact_path": artifact_path,
     }
     for key, row in rows.items():
         original = prior.get(key)
+        extraction = extractions[row["game_id"]]
         if "identity_status" in row:
-            ref = {k: original[k] for k in ("uri", "sha256")} if original else _save_event(archive, **common, row=row)
+            ref = {k: original[k] for k in ("uri", "sha256")} if original else _save_event(archive, **common, extraction=extraction, row=row)
             open_failures.append(ref)
         elif original:
-            recoveries.append(_save_event(archive, **common, row=row, original=original))
+            recoveries.append(_save_event(archive, **common, extraction=extraction, row=row, original=original))
     return open_failures, recoveries
 
 
-def read_failed_run(instance, run_id: str, game_date: str) -> tuple[dict, list[dict]]:
+def read_failed_run(instance, run_id: str, game_date: str) -> tuple[dict, list[dict]] | None:
     """Read the selected partition's pinned diagnostic status and open errors."""
     run = instance.get_run_by_id(run_id)
     if (
@@ -151,5 +152,6 @@ def read_failed_run(instance, run_id: str, game_date: str) -> tuple[dict, list[d
             continue
         data = event.step_failure_data.user_failure_data
         if data and "statuses" in data.metadata and "open_failures" in data.metadata:
-            return data.metadata["statuses"].value, data.metadata["open_failures"].value
-    raise ValueError("The selected failure has no saved reconciliation status or open errors.")
+            if failures := data.metadata["open_failures"].value:
+                return data.metadata["statuses"].value, failures
+    return None

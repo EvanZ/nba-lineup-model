@@ -63,7 +63,7 @@ class NBAScheduleResource(ConfigurableResource):
         return self._load_version(client, reference), reference
 
     def games_for_date(
-        self, day: date, reference: dict[str, str] | None = None,
+        self, day: date, reference: dict[str, str] | None = None, *, allow_empty: bool = False,
     ) -> tuple[list[dict], dict[str, str]]:
         """Load the published schedule and return the Pacific slate and its reference."""
         payload, reference = self.load(reference)
@@ -111,7 +111,7 @@ class NBAScheduleResource(ConfigurableResource):
                 })
         if "espn" in json.dumps(games, default=str).casefold():
             raise ValueError("Prohibited source in the selected NBA game identities.")
-        if not games or len({row["game_id"] for row in games}) != len(games):
+        if (not games and not allow_empty) or len({row["game_id"] for row in games}) != len(games):
             raise ValueError(f"Missing or duplicate official games for {day}.")
         return sorted(games, key=lambda row: row["game_id"]), reference
 
