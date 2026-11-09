@@ -8,6 +8,7 @@ from urllib.error import HTTPError
 
 import pytest
 from botocore.exceptions import ClientError
+from dagster import DagsterInvalidConfigError, validate_run_config
 
 from gestalt_pipelines.definitions import defs
 from gestalt_pipelines.injury_reports.resources import archive, official_nba
@@ -184,6 +185,44 @@ def test_download_rejects_a_truncated_pdf(monkeypatch):
         official_nba.OfficialInjuryReports().download(SOURCE)
 
 
+def test_latest_capture_prefers_publication_time_then_saved_revision(monkeypatch):
+    day_prefix = PREFIX.split("/published_at=", 1)[0] + "/"
+    first_revision = f"{PREFIX}/capture.json"
+    corrected = f"{PREFIX.removesuffix(SHA)}{'a' * 64}/capture.json"
+    older_report = first_revision.replace("T044500Z", "T043000Z")
+    incomplete = f"{PREFIX.removesuffix(SHA)}{'b' * 64}/report.pdf"
+
+    def paginate(*, Bucket, Prefix):
+        assert Bucket == "nba-gestalt-data" and Prefix == day_prefix
+        return [
+            {"Contents": [
+                {"Key": older_report, "LastModified": CAPTURED + timedelta(minutes=1)},
+                {"Key": first_revision, "LastModified": CAPTURED},
+            ]},
+            {"Contents": [
+                {"Key": corrected, "LastModified": CAPTURED + timedelta(seconds=1)},
+                {"Key": incomplete, "LastModified": CAPTURED + timedelta(minutes=2)},
+            ]},
+        ]
+
+    client = SimpleNamespace(get_paginator=lambda _: SimpleNamespace(paginate=paginate))
+    monkeypatch.setattr(archive.boto3, "client", lambda _: client)
+
+    resource = archive.InjuryReportArchive(season="2026-27")
+    assert resource.latest_capture_uri(date(2026, 11, 7)) == f"s3://nba-gestalt-data/{corrected}"
+
+
+@pytest.mark.parametrize("config", [
+    {},
+    {"publication_date": "2026-11-07", "capture_uri": f"s3://nba-gestalt-data/{PREFIX}/capture.json"},
+])
+def test_extract_config_requires_exactly_one_input(config):
+    job = defs.resolve_job_def("extract_injury_pdf")
+    run_config = {"ops": {"injury_report_extractions": {"config": config}}}
+    with pytest.raises(DagsterInvalidConfigError):
+        validate_run_config(job, run_config)
+
+
 def _injury_pdf(*pages):
     from pypdf import PdfWriter
     from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
@@ -259,9 +298,12 @@ def test_extract_exact_captured_pdf(monkeypatch, corrupt_pdf):
         "team": "BOS",
     }]
     assert record["game_team_reports"]["2026-11-07|BOS@NYK"]["NYK"]["status"] == "not_yet_submitted"
+    encoded_uri = capture["capture_uri"].replace("=", "%3D", 1).replace("=", "%3d")
+    config["ops"]["injury_report_extractions"]["config"]["capture_uri"] = encoded_uri
     retried = job.execute_in_process(run_config=config)
     event = retried.get_asset_materialization_events()[0]
     materialization = event.event_specific_data.materialization
+    assert materialization.metadata["capture_uri"].value == capture["capture_uri"]
     assert not materialization.metadata["created"].value
     assert storage.objects[key][0] == original
 

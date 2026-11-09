@@ -4,7 +4,7 @@ import base64
 import json
 import re
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from hashlib import sha256
 
 import boto3
@@ -19,7 +19,7 @@ EXTRACTION_PREFIX = "lake/artifacts/injury_report_extraction"
 STATUSES_PREFIX = "lake/artifacts/injury_status_by_game_date"
 CAPTURE_URI = re.compile(
     rf"s3://{BUCKET}/(?P<key>{PREFIX}/season=(?P<season>[0-9]{{4}}-[0-9]{{2}})/publication_date=[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}/"
-    r"published_at=[0-9]{8}T[0-9]{6}Z/sha256=(?P<digest>[0-9a-f]{64})/capture\.json)"
+    r"published_at=(?P<published_at>[0-9]{8}T[0-9]{6}Z)/sha256=(?P<digest>[0-9a-f]{64})/capture\.json)"
 )
 
 
@@ -102,6 +102,25 @@ class InjuryReportArchive(ConfigurableResource):
             "published_at": record["published_at"],
             "created": created,
         }
+
+    def latest_capture_uri(self, publication_date: date) -> str:
+        prefix = f"{PREFIX}/season={self.season}/publication_date={publication_date}/"
+        client = boto3.client("s3")
+        pages = client.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=prefix)
+        captures = []
+        for page in pages:
+            for obj in page.get("Contents", []):
+                uri = f"s3://{BUCKET}/{obj['Key']}"
+                match = CAPTURE_URI.fullmatch(uri)
+                if match:
+                    captures.append((match["published_at"], obj["LastModified"], uri))
+        if not captures:
+            raise FileNotFoundError(f"No saved NBA injury report capture for {publication_date}.")
+        captures.sort(reverse=True)
+        newest = captures[0]
+        if len(captures) > 1 and newest[:2] == captures[1][:2]:
+            raise ValueError(f"Multiple latest captures for {publication_date}. Select an exact capture_uri.")
+        return newest[2]
 
     def load(self, capture_uri: str) -> tuple[dict, bytes]:
         match = CAPTURE_URI.fullmatch(capture_uri)
