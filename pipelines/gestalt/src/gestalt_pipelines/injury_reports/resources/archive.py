@@ -17,6 +17,7 @@ BUCKET = "nba-gestalt-data"
 PREFIX = "lake/raw/nba/injury-reports"
 EXTRACTION_PREFIX = "lake/artifacts/injury_report_extraction"
 STATUSES_PREFIX = "lake/artifacts/injury_status_by_game_date"
+_PUBLICATION_KEY_FORMAT = "%Y%m%dT%H%M%SZ"
 CAPTURE_URI = re.compile(
     rf"s3://{BUCKET}/(?P<key>{PREFIX}/season=(?P<season>[0-9]{{4}}-[0-9]{{2}})/publication_date=[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}/"
     r"published_at=(?P<published_at>[0-9]{8}T[0-9]{6}Z)/sha256=(?P<digest>[0-9a-f]{64})/capture\.json)"
@@ -25,7 +26,7 @@ CAPTURE_URI = re.compile(
 
 def _report_prefix(season: str, published_at: datetime, digest: str) -> str:
     day = published_at.astimezone(EASTERN).date().isoformat()
-    instant = published_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    instant = published_at.astimezone(UTC).strftime(_PUBLICATION_KEY_FORMAT)
     return f"{PREFIX}/season={season}/publication_date={day}/published_at={instant}/sha256={digest}"
 
 
@@ -103,7 +104,7 @@ class InjuryReportArchive(ConfigurableResource):
             "created": created,
         }
 
-    def latest_capture_uri(self, publication_date: date) -> str:
+    def _captures_for_date(self, publication_date: date) -> list[tuple[str, datetime, str]]:
         prefix = f"{PREFIX}/season={self.season}/publication_date={publication_date}/"
         client = boto3.client("s3")
         pages = client.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=prefix)
@@ -114,6 +115,16 @@ class InjuryReportArchive(ConfigurableResource):
                 match = CAPTURE_URI.fullmatch(uri)
                 if match:
                     captures.append((match["published_at"], obj["LastModified"], uri))
+        return captures
+
+    def captured_publication_times(self, publication_date: date) -> set[datetime]:
+        return {
+            datetime.strptime(published_at, _PUBLICATION_KEY_FORMAT).replace(tzinfo=UTC)
+            for published_at, _, _ in self._captures_for_date(publication_date)
+        }
+
+    def latest_capture_uri(self, publication_date: date) -> str:
+        captures = self._captures_for_date(publication_date)
         if not captures:
             raise FileNotFoundError(f"No saved NBA injury report capture for {publication_date}.")
         captures.sort(reverse=True)
@@ -136,7 +147,7 @@ class InjuryReportArchive(ConfigurableResource):
         source_url = record.get("source_url")
         if not isinstance(source_url, str):
             raise ValueError(f"Missing official source URL in capture: {capture_uri}")
-        published_at = publication_time(source_url)
+        published_at = datetime.strptime(match["published_at"], _PUBLICATION_KEY_FORMAT).replace(tzinfo=UTC)
         prefix = _report_prefix(self.season, published_at, digest)
         pdf_key = f"{prefix}/report.pdf"
         if (
@@ -151,6 +162,8 @@ class InjuryReportArchive(ConfigurableResource):
             pdf = body.read(MAX_PDF_BYTES + 1)
         if len(pdf) > MAX_PDF_BYTES or sha256(pdf).hexdigest() != digest:
             raise ValueError(f"Archived injury report does not match its capture: {capture_uri}")
+        if publication_time(source_url, pdf) != published_at:
+            raise ValueError(f"Archived PDF publication time does not match its capture: {capture_uri}")
         return record, pdf
 
     def save_extraction(self, record: dict) -> tuple[str, bool]:

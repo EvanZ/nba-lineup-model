@@ -1,4 +1,4 @@
-"""Pacific slate dates for injury reconciliation."""
+"""NBA publication dates and Pacific game dates for injury reports."""
 
 import os
 import re
@@ -21,4 +21,11 @@ injury_game_dates = DailyPartitionsDefinition(
     start_date=start_date.isoformat(),
     timezone="America/Los_Angeles",
     end_offset=2,  # Today and tomorrow.
+)
+
+
+injury_publication_dates = DailyPartitionsDefinition(
+    start_date=start_date.isoformat(),
+    timezone="America/New_York",
+    end_offset=1,  # Include the current Eastern publication day.
 )

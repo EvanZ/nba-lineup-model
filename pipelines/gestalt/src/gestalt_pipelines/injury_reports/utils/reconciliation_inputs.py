@@ -24,9 +24,10 @@ def _official_json(payload: bytes) -> dict:
 
 def read_extraction(payload: bytes, uri: str, season: str) -> dict:
     report = _official_json(payload)
-    published_at = official_nba.publication_time(report["source_url"])
+    published_at = datetime.fromisoformat(report["published_at"])
     if (
         report["schema_version"] != 1 or report["season"] != season
+        or published_at not in official_nba.publication_instants(report["source_url"])
         or report["published_at"] != archive_module._utc_text(published_at)
     ):
         raise ValueError("Invalid extracted injury report schema or publication time.")

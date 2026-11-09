@@ -12,7 +12,7 @@ from dagster import DagsterInvalidConfigError, validate_run_config
 
 from gestalt_pipelines.definitions import defs
 from gestalt_pipelines.injury_reports.resources import archive, official_nba
-from gestalt_pipelines.injury_reports.utils import parse_pdf
+from gestalt_pipelines.injury_reports.utils import parse_pdf, read_extraction
 
 SOURCE = (
     "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2026-11-07_11_45PM.pdf"
@@ -54,12 +54,26 @@ class MemoryArchive:
         return {"Body": BytesIO(data), "Metadata": metadata, "LastModified": CAPTURED}
 
 
+    def get_paginator(self, operation):
+        assert operation == "list_objects_v2"
+        return SimpleNamespace(paginate=self._list_objects)
+
+    def _list_objects(self, *, Bucket, Prefix):
+        assert Bucket == "nba-gestalt-data"
+        return [{"Contents": [
+            {"Key": key, "LastModified": CAPTURED}
+            for key in self.objects if key.startswith(Prefix)
+        ]}]
+
+
 @pytest.fixture
 def capture(monkeypatch):
     storage = MemoryArchive()
     observed = [OBSERVED]
 
     def download(_source, url):
+        if url != SOURCE:
+            raise HTTPError(url, 404, "Unavailable", None, None)
         return official_nba.OfficialInjuryReport(
             url, official_nba.publication_time(url), observed[0], PDF
         )
@@ -68,13 +82,8 @@ def capture(monkeypatch):
     monkeypatch.setattr(official_nba.OfficialInjuryReports, "download", download)
     job = defs.resolve_job_def("capture_injury_pdfs")
 
-    def run(*, raise_on_error=True):
-        return job.execute_in_process(
-            run_config={"ops": {"injury_pdf_archive": {"config": {
-                "publication_date": "2026-11-07",
-            }}}},
-            raise_on_error=raise_on_error,
-        )
+    def run(partition_key="2026-11-07", *, raise_on_error=True):
+        return job.execute_in_process(partition_key=partition_key, raise_on_error=raise_on_error)
 
     return storage, observed, run
 
@@ -100,6 +109,47 @@ def test_capture_uses_agreed_paths_and_reuses_an_existing_revision(capture):
     assert run().success
     assert storage.objects[f"{PREFIX}/capture.json"][0] == initial
     assert len(storage.objects) == 2
+
+
+def test_capture_partitions_fill_each_date_and_skip_saved_slots(capture, monkeypatch):
+    storage, _, run = capture
+    late = SOURCE.replace("11_45PM", "11_30PM")
+    first_day = {SOURCE, late}
+    second_day = {url.replace("2026-11-07", "2026-11-06") for url in first_day}
+    available = first_day | second_day
+    attempted = []
+
+    def download(_source, url):
+        attempted.append(url)
+        if url not in available:
+            raise HTTPError(url, 404, "Unavailable", None, None)
+        return official_nba.OfficialInjuryReport(
+            url, official_nba.publication_time(url), OBSERVED, PDF,
+        )
+
+    monkeypatch.setattr(official_nba.OfficialInjuryReports, "download", download)
+
+    def metadata(day):
+        attempted.clear()
+        result = run(day)
+        assert result.success
+        [event] = result.get_asset_materialization_events()
+        assert event.partition == day
+        return event.event_specific_data.materialization.metadata
+
+    first = metadata("2026-11-07")
+    assert first["recovered_count"].value == 2
+    assert set(attempted) & available == first_day
+
+    overlapping = metadata("2026-11-07")
+    assert overlapping["reused_count"].value == 2
+    assert overlapping["recovered_capture_uris"].value == []
+    assert set(attempted).isdisjoint(available)
+
+    second = metadata("2026-11-06")
+    assert second["recovered_count"].value == 2
+    assert set(attempted) & available == second_day
+    assert len(storage.objects) == 8
 
 
 def test_failed_pdf_upload_does_not_commit_a_capture(capture):
@@ -134,8 +184,8 @@ def test_capture_skips_unavailable_quarter_hour_slots(capture, monkeypatch):
 
     def download(_source, url):
         attempted.append(url)
-        if len(attempted) <= 2:
-            code = (404, 403)[len(attempted) - 1]
+        if url != SOURCE.replace("11_45PM", "11_15PM"):
+            code = 403 if url.endswith("11_30PM.pdf") else 404
             raise HTTPError(url, code, "Unavailable", None, None)
         return official_nba.OfficialInjuryReport(
             url, official_nba.publication_time(url), OBSERVED, PDF,
@@ -143,17 +193,19 @@ def test_capture_skips_unavailable_quarter_hour_slots(capture, monkeypatch):
 
     monkeypatch.setattr(official_nba.OfficialInjuryReports, "download", download)
     assert run().success
-    assert attempted == [
+    assert attempted[:3] == [
         SOURCE,
         SOURCE.replace("11_45PM", "11_30PM"),
         SOURCE.replace("11_45PM", "11_15PM"),
     ]
     [capture_record] = [json.loads(value[0]) for key, value in storage.objects.items() if key.endswith("capture.json")]
-    assert capture_record["source_url"] == attempted[-1]
+    assert len(attempted) == 96
+    assert capture_record["source_url"] == attempted[2]
     assert capture_record["sha256"] == SHA
 
 
-def test_capture_reports_the_date_when_no_pdf_is_available(monkeypatch):
+def test_capture_reports_the_date_when_no_pdf_is_available(capture, monkeypatch):
+    storage, _, run = capture
     attempted = []
 
     def download(_source, url):
@@ -161,8 +213,12 @@ def test_capture_reports_the_date_when_no_pdf_is_available(monkeypatch):
         raise HTTPError(url, 404, "Unavailable", None, None)
 
     monkeypatch.setattr(official_nba.OfficialInjuryReports, "download", download)
-    with pytest.raises(FileNotFoundError, match="No official NBA injury report found for 2026-11-07"):
-        official_nba.OfficialInjuryReports().download_latest(date(2026, 11, 7))
+    result = run(raise_on_error=False)
+    assert not result.success and not storage.objects
+    [failure] = result.get_step_failure_events()
+    details = failure.event_specific_data.user_failure_data
+    assert "No official NBA injury report found for 2026-11-07" in details.description
+    assert details.metadata["unavailable_count"].value == 96
     assert len(attempted) == 96
     assert attempted[-1] == SOURCE.replace("11_45PM", "12_00AM")
 
@@ -174,6 +230,12 @@ def test_capture_reports_the_date_when_no_pdf_is_available(monkeypatch):
 def test_source_or_publication_time_must_be_unambiguous(source):
     with pytest.raises(ValueError):
         official_nba.publication_time(source)
+
+
+def test_spring_forward_skips_nonexistent_eastern_slots():
+    slots = list(official_nba.OfficialInjuryReports().publication_slots(date(2026, 3, 8)))
+    assert len(slots) == 92
+    assert all("_02_" not in url or not url.endswith("AM.pdf") for _, url in slots)
 
 
 def test_download_rejects_a_truncated_pdf(monkeypatch):
@@ -223,11 +285,13 @@ def test_extract_config_requires_exactly_one_input(config):
         validate_run_config(job, run_config)
 
 
-def _injury_pdf(*pages):
+def _injury_pdf(*pages, creation_date=None):
     from pypdf import PdfWriter
     from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
     writer = PdfWriter()
+    if creation_date is not None:
+        writer.add_metadata({"/CreationDate": creation_date})
     for commands in pages:
         page = writer.add_blank_page(width=850, height=600)
         contents = DecodedStreamObject()
@@ -244,8 +308,17 @@ def _injury_pdf(*pages):
     return buffer.getvalue()
 
 
-@pytest.mark.parametrize("corrupt_pdf", [False, True])
-def test_extract_exact_captured_pdf(monkeypatch, corrupt_pdf):
+@pytest.mark.parametrize(("source", "creation_date", "published_at", "corrupt_pdf"), [
+    (SOURCE, None, "2026-11-08T04:45:00Z", False),
+    (SOURCE, None, "2026-11-08T04:45:00Z", True),
+    (
+        "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2026-11-01_01_45AM.pdf",
+        "D:20261101014502-05'00'",
+        "2026-11-01T06:45:00Z",
+        False,
+    ),
+])
+def test_extract_exact_captured_pdf(monkeypatch, source, creation_date, published_at, corrupt_pdf):
     pdf = _injury_pdf(b"""
         BT 1 0 0 1 20 100 Tm /F1 10 Tf (11/07/2026) Tj ET
         BT 1 0 0 1 190 100 Tm /F1 10 Tf (BOS@NY) Tj ET
@@ -255,14 +328,17 @@ def test_extract_exact_captured_pdf(monkeypatch, corrupt_pdf):
         BT 1 0 0 1 666 100 Tm /F1 10 Tf (Left Ankle) Tj ET
         BT 1 0 0 1 250 120 Tm /F1 10 Tf (New York Knicks) Tj ET
         BT 1 0 0 1 420 120 Tm /F1 10 Tf (NOT YET SUBMITTED) Tj ET
-    """)
+    """, creation_date=creation_date)
     digest = sha256(pdf).hexdigest()
+    verified_time = official_nba.publication_time(source, pdf)
+    expected_time = datetime.fromisoformat(published_at)
+    assert verified_time == expected_time
 
     storage = MemoryArchive()
     monkeypatch.setattr(archive.boto3, "client", lambda service: storage)
     capture = archive.InjuryReportArchive(season="2026-27").save(
         official_nba.OfficialInjuryReport(
-            SOURCE, official_nba.publication_time(SOURCE), OBSERVED, pdf
+            source, verified_time, OBSERVED, pdf
         ),
     )
     storage.corrupt_pdf = corrupt_pdf
@@ -271,9 +347,10 @@ def test_extract_exact_captured_pdf(monkeypatch, corrupt_pdf):
         "capture_uri": capture["capture_uri"],
     }}}}
     result = job.execute_in_process(run_config=config, raise_on_error=False)
+    publication_date = expected_time.astimezone(official_nba.EASTERN).date()
     key = (
-        "lake/artifacts/injury_report_extraction/season=2026-27/publication_date=2026-11-07/"
-        f"published_at=20261108T044500Z/sha256={digest}/parser_version=v2/report.json"
+        f"lake/artifacts/injury_report_extraction/season=2026-27/publication_date={publication_date}/"
+        f"published_at={expected_time:%Y%m%dT%H%M%SZ}/sha256={digest}/parser_version=v2/report.json"
     )
 
     if corrupt_pdf:
@@ -285,7 +362,8 @@ def test_extract_exact_captured_pdf(monkeypatch, corrupt_pdf):
 
     assert result.success
     original = storage.objects[key][0]
-    record = json.loads(original)
+    record = read_extraction(original, f"s3://nba-gestalt-data/{key}", "2026-27")
+    assert record["published_at"] == published_at
     assert record["pdf_uri"] == capture["pdf_uri"]
     assert record["capture_uri"] == capture["capture_uri"]
     assert record["reported_game_dates"] == ["2026-11-07"]

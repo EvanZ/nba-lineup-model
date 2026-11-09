@@ -8,7 +8,7 @@ from ..assets import injury_pdf_archive, injury_report_extractions, injury_statu
 capture_injury_pdfs = define_asset_job(
     "capture_injury_pdfs",
     selection=AssetSelection.assets(injury_pdf_archive),
-    description="Capture the newest official NBA injury report for an Eastern publication date.",
+    description="Fill missing official NBA PDF captures for an Eastern publication-date partition.",
 )
 
 

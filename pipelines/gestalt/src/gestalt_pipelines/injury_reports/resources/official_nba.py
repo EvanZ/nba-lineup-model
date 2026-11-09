@@ -1,13 +1,16 @@
 """Download one official NBA injury report without parsing it."""
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from io import BytesIO
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
 from dagster import ConfigurableResource
+from pypdf import PdfReader
 
 EASTERN = ZoneInfo("America/New_York")
 REPORT_URL_PREFIX = "https://ak-static.cms.nba.com/referee/injury/Injury-Report_"
@@ -26,15 +29,37 @@ class OfficialInjuryReport:
     pdf: bytes
 
 
-def publication_time(source_url: str) -> datetime:
+def _utc_instants(wall_time: datetime) -> tuple[datetime, ...]:
+    instants = set()
+    for fold in (0, 1):
+        instant = wall_time.replace(tzinfo=EASTERN, fold=fold).astimezone(UTC)
+        if instant.astimezone(EASTERN).replace(tzinfo=None) == wall_time:
+            instants.add(instant)
+    return tuple(sorted(instants))
+
+
+def publication_instants(source_url: str) -> tuple[datetime, ...]:
     match = REPORT_URL.fullmatch(source_url)
     if match is None:
         raise ValueError("Expected an official NBA injury report PDF URL.")
     wall_time = datetime.strptime(match["published"], "%Y-%m-%d_%I_%M%p")
-    eastern = wall_time.replace(tzinfo=EASTERN)
-    if eastern.utcoffset() != eastern.replace(fold=1).utcoffset():
-        raise ValueError("The report URL does not identify a unique Eastern publication instant.")
-    return eastern.astimezone(UTC)
+    return _utc_instants(wall_time)
+
+
+def publication_time(source_url: str, pdf: bytes | None = None) -> datetime:
+    instants = publication_instants(source_url)
+    if len(instants) == 1:
+        return instants[0]
+    if not instants:
+        raise ValueError("The report URL names a nonexistent Eastern publication time.")
+    if pdf is not None:
+        metadata = PdfReader(BytesIO(pdf)).metadata
+        created_at = metadata.creation_date if metadata else None
+        if created_at is not None and created_at.utcoffset() is not None:
+            created_slot = created_at.astimezone(UTC).replace(second=0, microsecond=0)
+            if created_slot in instants:
+                return created_slot
+    raise ValueError("The report PDF does not verify a unique Eastern publication instant.")
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -43,7 +68,7 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 class OfficialInjuryReports(ConfigurableResource):
-    def download_latest(self, publication_date: date) -> OfficialInjuryReport:
+    def publication_slots(self, publication_date: date) -> Iterator[tuple[tuple[datetime, ...], str]]:
         now = datetime.now(EASTERN)
         if publication_date > now.date():
             raise ValueError(f"Official NBA injury reports are not available yet for {publication_date}.")
@@ -52,16 +77,19 @@ class OfficialInjuryReports(ConfigurableResource):
         last_slot_of_day = datetime.combine(publication_date, time(23, 45), tzinfo=EASTERN)
         cursor = min(latest_slot, last_slot_of_day)
         while cursor.date() == publication_date:
-            url = f"{REPORT_URL_PREFIX}{publication_date}_{cursor:%I_%M%p}.pdf"
-            try:
-                return self.download(url)
-            except HTTPError as error:
-                if error.code not in {403, 404}:
-                    raise
-                error.close()
+            instants = _utc_instants(cursor.replace(tzinfo=None))
+            if instants:
+                yield instants, f"{REPORT_URL_PREFIX}{publication_date}_{cursor:%I_%M%p}.pdf"
             cursor -= timedelta(minutes=15)
 
-        raise FileNotFoundError(f"No official NBA injury report found for {publication_date}.")
+    def download_if_available(self, source_url: str) -> OfficialInjuryReport | None:
+        try:
+            return self.download(source_url)
+        except HTTPError as error:
+            if error.code not in {403, 404}:
+                raise
+            error.close()
+            return None
 
     def download(self, source_url: str) -> OfficialInjuryReport:
         if REPORT_URL.fullmatch(source_url) is None:
@@ -75,4 +103,4 @@ class OfficialInjuryReports(ConfigurableResource):
             or not pdf.rstrip().endswith(b"%%EOF")
         ):
             raise ValueError("The official response is not a supported PDF.")
-        return OfficialInjuryReport(source_url, publication_time(source_url), datetime.now(UTC), pdf)
+        return OfficialInjuryReport(source_url, publication_time(source_url, pdf), datetime.now(UTC), pdf)
