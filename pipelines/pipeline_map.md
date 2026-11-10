@@ -1,6 +1,6 @@
 # GESTALT pipeline map
 
-The Dagster code location is **nba_gestalt_pipelines**. Its definitions live in [the GESTALT project](gestalt/src/gestalt_pipelines/definitions.py). The pipelines use the season set by `GESTALT_NBA_SEASON`. The injury partitions start on the date set by `GESTALT_INJURY_REPORT_START_DATE`. See the [example configuration](gestalt/code-location.env.example).
+The Dagster code location is **nba_gestalt_pipelines**. Its definitions live in [the GESTALT project](gestalt/src/gestalt_pipelines/definitions.py). The pipelines use the season set by `GESTALT_NBA_SEASON`. The injury and box-score partitions start on the date set by `GESTALT_NBA_SEASON_START_DATE`. See the [example configuration](gestalt/code-location.env.example).
 
 ## Data flow
 
@@ -19,6 +19,9 @@ flowchart LR
     catalog -->|Upcoming games| odds
     odds --> oddsArchive["Immutable odds snapshots in S3"]
     odds --> oddsLatest["Season odds latest.json in S3"]
+    nbaBoxes["Official NBA CDN box scores"] --> boxScores["nba_box_scores"]
+    catalog --> boxScores
+    boxScores --> boxArchive["Final box-score JSON in S3"]
 ~~~
 
 The arrows show which data each stage reads. Injury reconciliation and odds capture load the existing catalog through [NBAScheduleResource](gestalt/src/gestalt_pipelines/resources/nba_schedule.py), so the schedule job runs on its own cadence. Live-score collection has its own code location. Website and forecast integration will use the injury status handoff in separate work.
@@ -47,6 +50,12 @@ Launch the `archive_nba_market_odds` job in `nba_gestalt_pipelines` to materiali
 The schedule runs daily at 8:20 a.m., 12:20 p.m., and hourly from 3:20 through 7:20 p.m. Pacific.
 
 If publication fails after a response is saved, choose **Re-execute from failure** to publish the saved snapshot. Historical provider backfill is unavailable.
+
+## Box scores
+
+In Dagster, launch the `capture_nba_box_scores` job with a Pacific game-date partition. It gets the game IDs from the official season schedule. For each game, it checks the archived box score's checksum, game ID, teams, and final status. If the archive is empty, it fetches the box score from the NBA CDN and saves the verified response.
+
+Today, games before scheduled tipoff are skipped and NBA game statuses that are still pregame or live are recorded as pending. Pending runs record their captured boxes and remaining game IDs as an asset observation. The date materializes once every final box is archived. Historical dates require all final boxes. Each materialization records the schedule and box-score references along with the reused and newly captured counts. If a game fails, the run reports the game ID and keeps the verified boxes already archived. Rerunning the date reuses those files.
 
 ## Injury reports
 
@@ -83,6 +92,7 @@ All keys below are in s3://nba-gestalt-data. The publication date is Eastern, th
 | --- | --- |
 | Versioned NBA schedule | `lake/raw/scheduleleaguev2/season=<season>/sha256=<schedule-sha256>/schedule.json` |
 | Schedule pointer | `lake/raw/scheduleleaguev2/season=<season>/latest.json` |
+| Final NBA CDN box score | `lake/raw/cdn/boxscore/season=<season>/game_id=<game-id>/<sha256>.json` |
 | Archived PDF and capture record | `lake/raw/nba/injury-reports/season=<season>/publication_date=<date>/published_at=<utc>/sha256=<pdf-sha256>/{report.pdf,capture.json}` |
 | Extraction | `lake/artifacts/injury_report_extraction/season=<season>/publication_date=<date>/published_at=<utc>/sha256=<pdf-sha256>/parser_version=<version>/report.json` |
 | Official roster input and metadata | `lake/raw/commonteamroster/<season>/{<team-id>.json,<team-id>.meta.json}` |
