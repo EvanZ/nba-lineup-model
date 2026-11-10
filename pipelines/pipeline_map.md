@@ -1,6 +1,6 @@
 # GESTALT pipeline map
 
-The Dagster code location is **nba_gestalt_pipelines**. Its definitions live in [the GESTALT project](gestalt/src/gestalt_pipelines/definitions.py). Both pipelines use the season set by `GESTALT_NBA_SEASON`. The injury partitions start on the date set by `GESTALT_INJURY_REPORT_START_DATE`. See the [example configuration](gestalt/code-location.env.example).
+The Dagster code location is **nba_gestalt_pipelines**. Its definitions live in [the GESTALT project](gestalt/src/gestalt_pipelines/definitions.py). The pipelines use the season set by `GESTALT_NBA_SEASON`. The injury partitions start on the date set by `GESTALT_INJURY_REPORT_START_DATE`. See the [example configuration](gestalt/code-location.env.example).
 
 ## Data flow
 
@@ -15,9 +15,13 @@ flowchart LR
     rosters["Official team roster snapshots in S3"] --> reconcile
     repairs["Season player repair dictionary"] --> reconcile
     reconcile --> statuses["Versioned statuses and date latest.json"]
+    oddsSource["The Odds API"] --> odds["nba_market_odds"]
+    catalog -->|Upcoming games| odds
+    odds --> oddsArchive["Immutable odds snapshots in S3"]
+    odds --> oddsLatest["Season odds latest.json in S3"]
 ~~~
 
-The arrows show which data each stage reads. Reconciliation loads the existing catalog through [NBAScheduleResource](gestalt/src/gestalt_pipelines/resources/nba_schedule.py), so the schedule job runs on its own cadence. Odds and live scores have their own collection code location. Website and forecast integration will use the injury status handoff in separate work.
+The arrows show which data each stage reads. Injury reconciliation and odds capture load the existing catalog through [NBAScheduleResource](gestalt/src/gestalt_pipelines/resources/nba_schedule.py), so the schedule job runs on its own cadence. Live-score collection has its own code location. Website and forecast integration will use the injury status handoff in separate work.
 
 ## Season preparation
 
@@ -30,6 +34,19 @@ The arrows show which data each stage reads. Reconciliation loads the existing c
 | Refresh | Launch `capture_nba_season_schedule` in Dagster. The job uses `GESTALT_NBA_SEASON` and needs no date range. |
 
 The schedule supplies the NBA game IDs, team IDs, and scheduled starts. Reconciliation groups games by the Pacific date of their scheduled start and records the exact schedule reference it used.
+
+## Market odds
+
+Launch the `archive_nba_market_odds` job in `nba_gestalt_pipelines` to materialize `nba_market_odds`. It needs `GESTALT_ODDS_API_KEY` in the runtime environment and uses the official season schedule to check for upcoming games through seven Pacific dates ahead. An eligible run captures league-wide spreads and moneylines and records the event count and quota in Dagster.
+
+| Output | S3 key in `nba-gestalt-data` |
+| --- | --- |
+| Immutable snapshot | `lake/raw/odds-api/season=<season>/snapshots/<YYYYMMDDTHHMMSSZ>.json` |
+| Latest snapshot | `lake/raw/odds-api/season=<season>/latest.json` |
+
+The schedule runs daily at 8:20 a.m., 12:20 p.m., and hourly from 3:20 through 7:20 p.m. Pacific.
+
+If publication fails after a response is saved, choose **Re-execute from failure** to publish the saved snapshot. Historical provider backfill is unavailable.
 
 ## Injury reports
 
