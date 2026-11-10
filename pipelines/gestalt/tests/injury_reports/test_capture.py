@@ -651,3 +651,84 @@ def test_live_sensors_follow_committed_objects_and_pin_reconciliation_inputs(cap
     older_metadata = older.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
     assert older_metadata["latest_update"].value == "reports_changed"
     assert archive_resource.read_latest_status(day.isoformat()) == (newer_pointer, newer_etag)
+
+
+@pytest.mark.parametrize("upgrade_parser", [False, True])
+def test_extraction_failure_recovery_keeps_the_exact_pdf(capture, monkeypatch, upgrade_parser):
+    from dagster import DagsterInstance, in_process_executor
+    from dagster._core.definitions.job_base import InMemoryJob
+    from dagster._core.execution.api import execute_run
+    from gestalt_pipelines.injury_reports.assets import extract
+
+    storage, _, run_capture = capture
+    assert run_capture().success
+    capture_uri = f"s3://nba-gestalt-data/{PREFIX}/capture.json"
+    waits = []
+    reads = []
+    failing = True
+    load_capture = archive.InjuryReportArchive.load
+
+    def load(resource, uri):
+        reads.append(uri)
+        if failing and not upgrade_parser:
+            raise ClientError(
+                {"Error": {"Code": "ServiceUnavailable"}, "ResponseMetadata": {"HTTPStatusCode": 503}},
+                "GetObject",
+            )
+        return load_capture(resource, uri)
+
+    def parse(_):
+        if failing and upgrade_parser:
+            raise ValueError("The PDF layout is unreadable.")
+        return {"game_team_reports": {"2026-11-07|BOS@NYK": {}}, "players": []}
+
+    monkeypatch.setattr(archive.InjuryReportArchive, "load", load)
+    monkeypatch.setattr(extract, "parse_pdf", parse)
+    monkeypatch.setattr(extract, "sleep", waits.append)
+    job = defs.resolve_job_def("extract_injury_pdf").with_executor_def(in_process_executor)
+    config = {"ops": {"injury_report_extractions": {"config": {"capture_uri": capture_uri}}}}
+
+    with DagsterInstance.ephemeral() as instance:
+        failed = job.execute_in_process(
+            instance=instance, partition_key="2026-11-07", run_config=config,
+            tags={"injury_reports/parser_version": "v2"}, raise_on_error=False,
+        )
+        assert not failed.success
+        assert waits == ([] if upgrade_parser else [15, 15])
+        assert reads == [capture_uri] * (1 if upgrade_parser else 3)
+        metadata = failed.get_step_failure_events()[0].event_specific_data.user_failure_data.metadata
+        failure_ref = metadata["extraction_failure"].value
+        failure_raw = storage.objects[failure_ref["uri"].removeprefix("s3://nba-gestalt-data/")][0]
+        failure = json.loads(failure_raw)
+        assert sha256(failure_raw).hexdigest() == failure_ref["sha256"]
+        assert failure["stage"] == "injury_report_extractions"
+        assert failure["status"] == "failed" and failure["reported_game_dates"] is None
+        assert failure["input"] == {
+            "capture_uri": capture_uri, "pdf_uri": f"s3://nba-gestalt-data/{PREFIX}/report.pdf",
+            "sha256": SHA, "parser_version": "v2",
+        }
+        assert sum(key.endswith(".failure.json") for key in storage.objects) == 1
+
+        failing = False
+        if upgrade_parser:
+            monkeypatch.setattr(extract, "PARSER_VERSION", "v3")
+            config["ops"]["injury_report_extractions"]["config"] = {"repair_failed_run_id": failed.run_id}
+            retry = job.execute_in_process(instance=instance, partition_key="2026-11-07", run_config=config)
+        else:
+            parent = instance.get_run_by_id(failed.run_id)
+            child = instance.create_run_for_job(
+                job, run_config=parent.run_config, tags=parent.tags,
+                parent_run_id=parent.run_id, root_run_id=parent.run_id,
+            )
+            retry = execute_run(InMemoryJob(job), child, instance)
+
+    assert retry.success and reads[-1] == capture_uri
+    metadata = retry.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
+    recovery_ref, = metadata["recoveries"].value
+    recovery = json.loads(storage.objects[recovery_ref["uri"].removeprefix("s3://nba-gestalt-data/")][0])
+    assert recovery["status"] == "recovered"
+    assert recovery["original_failure"] == {**failure_ref, "event_id": failure["event_id"]}
+    assert recovery["input"]["capture_uri"] == capture_uri
+    assert recovery["reported_game_dates"] == ["2026-11-07"]
+    version = "v3" if upgrade_parser else "v2"
+    assert f"/parser_version={version}/report.json" in recovery["artifact_path"]

@@ -1,8 +1,8 @@
-"""Write immutable injury reconciliation failures and their linked recoveries."""
+"""Write immutable injury processing failures and linked recoveries."""
 
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 from zoneinfo import ZoneInfo
 
@@ -12,6 +12,7 @@ from ..resources import BUCKET, InjuryReportArchive
 
 ERROR_PREFIX = "lake/artifacts/errors/pipeline=injury_reports/"
 STAGE = "injury_status_by_game_date"
+EXTRACTION_STAGE = "injury_report_extractions"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
@@ -154,4 +155,66 @@ def read_failed_run(instance, run_id: str, game_date: str) -> tuple[dict, list[d
         if data and "statuses" in data.metadata and "open_failures" in data.metadata:
             if failures := data.metadata["open_failures"].value:
                 return data.metadata["statuses"].value, failures
+    return None
+
+
+def write_extraction_event(
+    archive: InjuryReportArchive, *, run_id: str, publication_date: str, work: dict,
+    message: str, artifact_path: str, reported_game_dates: list[str] | None,
+    original: dict | None = None,
+) -> dict:
+    status = "recovered" if original else "failed"
+    identity = [run_id, EXTRACTION_STAGE, work, status, original]
+    event = {
+        "schema_version": 1,
+        "event_id": sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest(),
+        "stage": EXTRACTION_STAGE,
+        "season": archive.season,
+        "status": status,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "message": message,
+        "dagster_run_id": run_id,
+        "publication_date": publication_date,
+        "input": work,
+        "reported_game_dates": reported_game_dates,
+        "artifact_path": artifact_path,
+    }
+    if original:
+        event["original_failure"] = original
+    return archive.save_json(_event_key(event), event)
+
+
+def read_failed_extraction(
+    instance, archive: InjuryReportArchive, run_id: str, publication_date: str,
+) -> tuple[dict, dict] | None:
+    run = instance.get_run_by_id(run_id)
+    if (
+        run is None or run.job_name != "extract_injury_pdf"
+        or run.status != DagsterRunStatus.FAILURE
+        or run.tags.get("dagster/partition") != publication_date
+    ):
+        return None
+    records = instance.get_records_for_run(run_id, of_type=DagsterEventType.STEP_FAILURE).records
+    for record in reversed(records):
+        event = record.event_log_entry.dagster_event
+        if event.step_key != EXTRACTION_STAGE:
+            continue
+        data = event.step_failure_data.user_failure_data
+        if not data or "extraction_failure" not in data.metadata:
+            continue
+        ref = data.metadata["extraction_failure"].value
+        prefix = f"{ERROR_PREFIX}season={archive.season}/"
+        raw = archive.read_pinned(ref["uri"], ref["sha256"], prefix=prefix)
+        failure = json.loads(raw)
+        if (
+            failure["schema_version"] != 1 or failure["stage"] != EXTRACTION_STAGE
+            or failure["status"] != "failed" or failure["season"] != archive.season
+            or failure["publication_date"] != publication_date
+            or not re.fullmatch(r"[0-9a-f]{64}", failure["event_id"])
+            or datetime.fromisoformat(failure["timestamp"]).tzinfo is None
+            or ref["uri"] != f"s3://{BUCKET}/{_event_key(failure)}"
+            or b"espn" in raw.lower()
+        ):
+            raise ValueError("The extraction failure record does not match the selected partition.")
+        return failure["input"], {**ref, "event_id": failure["event_id"]}
     return None

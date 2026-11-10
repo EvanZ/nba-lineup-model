@@ -1,6 +1,6 @@
 """Dagster jobs for injury reports."""
 
-from dagster import AssetSelection, define_asset_job
+from dagster import AssetSelection, define_asset_job, in_process_executor
 
 from ..assets import injury_pdf_archive, injury_report_extractions, injury_status_by_game_date
 
@@ -22,5 +22,6 @@ extract_injury_pdf = define_asset_job(
 reconcile_injury_date = define_asset_job(
     "reconcile_injury_date",
     selection=AssetSelection.assets(injury_status_by_game_date),
+    executor_def=in_process_executor,
     description="Reconcile one Pacific slate from selected S3 injury, schedule, and roster evidence.",
 )
