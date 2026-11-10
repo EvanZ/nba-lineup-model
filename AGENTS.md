@@ -175,24 +175,26 @@ These instructions apply to every task in this repository.
   active. Promotion must never restart a deprecated service, even if an old
   operator state or unit file says it was previously active.
 
-## ESPN prohibition
+## ESPN basketball source prohibition
 
 - NBA GESTALT must never request, ingest, copy, reconcile, repair, serve, or
-  retain ESPN basketball data.
+  retain basketball data sourced from ESPN websites or APIs.
 - Do not use ESPN as a primary source, fallback, crosswalk, score source, box
   score source, schedule source, player/team identity source, or recovery path.
-- Do not add or preserve ESPN endpoints, source adapters, files, filenames,
+- Do not add ESPN source adapters or preserve ESPN-sourced basketball files,
   payload fields, game IDs, player IDs, team IDs, provenance labels, or cached
-  responses anywhere in NBA GESTALT artifacts or serving roots.
-- A bookmaker market delivered by an independent odds provider is market data,
-  not permission to use ESPN basketball data. Normalize or exclude legacy
-  bookmaker keys containing `espn`; never expose them as source provenance.
+  responses in NBA GESTALT artifacts or serving roots.
+- Preserve bookmaker markets and identifiers supplied by approved independent
+  odds providers, including the bookmaker key "espnbet" in The Odds API
+  snapshots. Record the odds provider as the source.
 - If the official NBA source is unavailable or incomplete, fail the affected
   artifact explicitly and report it. Never silently substitute ESPN or any
   other unapproved source.
 - Before materialization, release, promotion, or repair, scan the exact NBA
-  GESTALT artifact scope for ESPN-named files and ESPN-specific fields. Treat
-  any match as a hard failure. Never copy contaminated artifacts forward.
+  GESTALT artifact scope for ESPN-sourced basketball data and its source
+  identifiers. Treat any confirmed match as a hard failure. Verify the source
+  of a text match and allow bookmaker keys supplied by an approved odds
+  provider. Never copy contaminated artifacts forward.
 - Removal or quarantine must be restricted to the NBA GESTALT roots named in
   the task. Never delete ESPN data belonging to another project or site.
 
