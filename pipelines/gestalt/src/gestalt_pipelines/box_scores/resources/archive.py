@@ -53,6 +53,30 @@ def _validate_box(payload: bytes, scheduled: dict, *, allow_pending: bool = Fals
     return not pending
 
 
+def _roster_hash(team: dict) -> str:
+    """Hash NBA player identities, independent of row order or game statistics."""
+    roster = []
+    seen = set()
+    for player in team["players"]:
+        if not isinstance(player, dict):
+            raise ValueError(f"Invalid roster row for team {team['teamId']}.")
+        player_id = player.get("personId")
+        name = player.get("name")
+        if (
+            type(player_id) is not int or player_id <= 0 or player_id in seen
+            or not isinstance(name, str) or not name.strip()
+        ):
+            raise ValueError(f"Invalid or duplicate roster identity for team {team['teamId']}.")
+        seen.add(player_id)
+        roster.append({"player_id": player_id, "player_name": name.strip()})
+    roster.sort(key=lambda row: row["player_id"])
+    return sha256(_json_bytes(roster)).hexdigest()
+
+
+def _json_bytes(value: object) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
 class NBABoxScoreArchive(ConfigurableResource):
     bucket: str = "nba-gestalt-data"
 
@@ -123,7 +147,50 @@ class NBABoxScoreArchive(ConfigurableResource):
                     raise ValueError(f"Different bytes already exist at s3://{self.bucket}/{key}.") from error
                 reused = True
 
-        return {"uri": f"s3://{self.bucket}/{key}", "sha256": digest, "source_url": url, "reused": reused}
+        metadata = self._ensure_metadata(client, key, season, payload, digest)
+        return {
+            "uri": f"s3://{self.bucket}/{key}", "sha256": digest, "source_url": url, "reused": reused,
+            **metadata,
+        }
+
+    def _ensure_metadata(self, client, key: str, season: str, payload: bytes, digest: str) -> dict:
+        game = json.loads(payload, object_pairs_hook=_official_fields)["game"]
+        metadata = {
+            "season": season, "game_id": game["gameId"], "box_score_sha256": digest,
+            "home_team_id": game["homeTeam"]["teamId"],
+            "home_roster_sha256": _roster_hash(game["homeTeam"]),
+            "away_team_id": game["awayTeam"]["teamId"],
+            "away_roster_sha256": _roster_hash(game["awayTeam"]),
+        }
+        metadata_key = key.removesuffix(".json") + ".meta.json"
+        encoded = _json_bytes(metadata)
+        reused = True
+        try:
+            saved = self._read(client, metadata_key)
+        except ClientError as error:
+            if error.response["Error"]["Code"] not in {"404", "NoSuchKey"}:
+                raise
+            checksum = sha256(encoded)
+            try:
+                client.put_object(
+                    Bucket=self.bucket, Key=metadata_key, Body=encoded,
+                    ContentType="application/json", IfNoneMatch="*",
+                    ChecksumAlgorithm="SHA256",
+                    ChecksumSHA256=base64.b64encode(checksum.digest()).decode("ascii"),
+                )
+                saved = encoded
+                reused = False
+            except ClientError as conflict:
+                if conflict.response["Error"]["Code"] not in {"412", "PreconditionFailed"}:
+                    raise
+                saved = self._read(client, metadata_key)
+
+        if json.loads(saved, object_pairs_hook=_official_fields) != metadata:
+            raise ValueError(f"Roster metadata differs from its box score at s3://{self.bucket}/{metadata_key}.")
+        return {
+            "metadata_uri": f"s3://{self.bucket}/{metadata_key}",
+            "metadata_sha256": sha256(saved).hexdigest(), "metadata_reused": reused,
+        }
 
     def _read(self, client, key: str) -> bytes:
         response = client.get_object(Bucket=self.bucket, Key=key)

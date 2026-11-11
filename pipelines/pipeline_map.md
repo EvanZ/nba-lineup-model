@@ -22,9 +22,14 @@ flowchart LR
     nbaBoxes["Official NBA CDN box scores"] --> boxScores["nba_box_scores"]
     catalog --> boxScores
     boxScores --> boxArchive["Final box-score JSON in S3"]
+    nbaBoard["Official NBA CDN scoreboard"] --> scoreboard["nba_scoreboard"]
+    catalog --> scoreboard
+    scoreboard --> scoresLatest["Date scoreboard latest.json in S3"]
+    movements["Official NBA player movement feed"] --> transactions["transactions_by_date"]
+    transactions --> transactionFiles["Date transaction history in S3"]
 ~~~
 
-The arrows show which data each stage reads. Injury reconciliation and odds capture load the existing catalog through [NBAScheduleResource](gestalt/src/gestalt_pipelines/resources/nba_schedule.py), so the schedule job runs on its own cadence. Live-score collection has its own code location. Website and forecast integration will use the injury status handoff in separate work.
+The arrows show which data each stage reads. Injury reconciliation and odds capture load the existing catalog through [NBAScheduleResource](gestalt/src/gestalt_pipelines/resources/nba_schedule.py), so the schedule job runs on its own cadence. The scoreboard runs in this same code location. Website and forecast integration will use the injury status handoff in separate work.
 
 ## Season preparation
 
@@ -51,11 +56,33 @@ The schedule runs daily at 8:20 a.m., 12:20 p.m., and hourly from 3:20 through 7
 
 If publication fails after a response is saved, choose **Re-execute from failure** to publish the saved snapshot. Historical provider backfill is unavailable.
 
+## Live scoreboard
+
+Launch the `capture_nba_scoreboard` job in Dagster to publish the official NBA CDN scoreboard for the Pacific date of the slate. The job verifies the game IDs and teams against the official season schedule, then replaces `lake/raw/cdn/scoreboard/season=<season>/game_date_pacific=<date>/latest.json` with the raw NBA response. The S3 object metadata records the source, fetch time, and SHA-256 checksum.
+
+The scoreboard_poll schedule checks every minute. It launches a capture during the six hours following a scheduled tipoff while a game still needs a final scoreboard update. It continues past midnight for the original slate, skips an already queued or running capture, and stops requesting runs when the saved games are final. Manual captures remain available without configuration. The endpoint only provides the current slate, so historical backfill is unavailable.
+
 ## Box scores
 
 In Dagster, launch the `capture_nba_box_scores` job with a Pacific game-date partition. It gets the game IDs from the official season schedule. For each game, it checks the archived box score's checksum, game ID, teams, and final status. If the archive is empty, it fetches the box score from the NBA CDN and saves the verified response.
 
 Today, games before scheduled tipoff are skipped and NBA game statuses that are still pregame or live are recorded as pending. Pending runs record their captured boxes and remaining game IDs as an asset observation. The date materializes once every final box is archived. Historical dates require all final boxes. Each materialization records the schedule and box-score references along with the reused and newly captured counts. If a game fails, the run reports the game ID and keeps the verified boxes already archived. Rerunning the date reuses those files.
+
+Each final box has a visible JSON sidecar at the same S3 prefix: the box is named <sha256>.json and its sidecar is <sha256>.meta.json. The sidecar records the season, game ID, box-score checksum, home and away team IDs, and each team's roster hash. Roster hashes use sorted NBA player IDs and names, including listed players who did not play; game statistics and source row order do not affect them. Existing sidecars are checked against the archived box. Missing sidecars are created from the saved box without fetching that game again. Dagster reports metadata_created_count and metadata_reused_count alongside captured_count and reused_count.
+
+To populate sidecars for older boxes, materialize the desired Pacific partitions of nba_box_scores in Dagster. Existing box-score JSON remains unchanged. A metadata mismatch fails visibly and leaves the existing sidecar intact.
+
+The enabled box-score schedule checks every five minutes. It launches the same job when a game has reached scheduled tipoff and still needs a final box. The capture window runs through six hours after tipoff and can continue past midnight under the original Pacific date. Complete slates and dates with an active run are skipped.
+
+## Transactions
+
+The daily-partitioned transactions_by_date asset is captured by capture_nba_transactions. It reads the official NBA movement feed at https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json and selects rows whose TRANSACTION_DATE matches the selected calendar date. The source supplies date-only values encoded at midnight without a timezone; these values are not shifted from UTC.
+
+The hourly schedule transactions_hourly refreshes today's Pacific partition at the top of each hour from 8 a.m. through 8 p.m. Pacific, including daylight-saving changes. Manual runs and backfills use the same job: choose Pacific date partitions in Dagster, with no YAML needed. The season and partition start use GESTALT_NBA_SEASON and GESTALT_NBA_SEASON_START_DATE.
+
+The output is lake/raw/nba/transactions/season=<season>/game_date_pacific=<date>/latest.json in nba-gestalt-data. Its visible provenance includes the official source URL, the full fetched feed's checksum, and last_polled_at. Only the selected date's transaction rows are stored. Each original NBA row is preserved and receives a UTC first_observed_at when first captured. Later polls append distinct rows and retain previously observed rows and their timestamps, including rows no longer returned by the source. The original NBA fields identify distinct rows; identical rows are not appended twice.
+
+Historical backfills record the actual collection time, not a fabricated historical observation time. Roster reconstruction and replay rules remain a separate consumer decision. A date with no published transactions produces an empty transaction list. A failed fetch or invalid source leaves the saved history unchanged. Concurrent publication fails if the saved file changed after it was read. Transactions published after the last daily poll can be collected by a manual date rerun.
 
 ## Injury reports
 
