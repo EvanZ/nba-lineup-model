@@ -22,11 +22,21 @@ flowchart LR
     nbaBoxes["Official NBA CDN box scores"] --> boxScores["nba_box_scores"]
     catalog --> boxScores
     boxScores --> boxArchive["Final box-score JSON in S3"]
+    nbaPlays["Official NBA CDN play-by-play"] --> playByPlay["nba_play_by_play"]
+    catalog --> playByPlay
+    playByPlay --> playArchive["Versioned final play-by-play JSON and sidecars"]
     nbaBoard["Official NBA CDN scoreboard"] --> scoreboard["nba_scoreboard"]
     catalog --> scoreboard
     scoreboard --> scoresLatest["Date scoreboard latest.json in S3"]
     movements["Official NBA player movement feed"] --> transactions["transactions_by_date"]
     transactions --> transactionFiles["Date transaction history in S3"]
+    rosters --> rosterBuilder["rosters_by_date"]
+    transactionFiles --> rosterBuilder
+    transactions -->|"New transaction rows: same-date run"| rosterBuilder
+    rosterMorning["3:30 a.m. Pacific: yesterday"] --> rosterBuilder
+    boxArchive --> rosterBuilder
+    catalog --> rosterBuilder
+    rosterBuilder --> rosterVersions["30-team roster versions in S3"]
 ~~~
 
 The arrows show which data each stage reads. Injury reconciliation and odds capture load the existing catalog through [NBAScheduleResource](gestalt/src/gestalt_pipelines/resources/nba_schedule.py), so the schedule job runs on its own cadence. The scoreboard runs in this same code location. Website and forecast integration will use the injury status handoff in separate work.
@@ -74,6 +84,16 @@ To populate sidecars for older boxes, materialize the desired Pacific partitions
 
 The enabled box-score schedule checks every five minutes. It launches the same job when a game has reached scheduled tipoff and still needs a final box. The capture window runs through six hours after tipoff and can continue past midnight under the original Pacific date. Complete slates and dates with an active run are skipped.
 
+## Play-by-play
+
+The nba_play_by_play asset and capture_nba_play_by_play job use completed Pacific game-date partitions starting at GESTALT_NBA_SEASON_START_DATE. The play_by_play_morning schedule selects yesterday at 3 a.m. America/Los_Angeles each morning. Manual backfills select daily partitions of the same asset without YAML.
+
+NBAScheduleResource supplies the complete slate and exact schedule reference. Each selected game is fetched from https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_<game_id>.json on every run, including reruns, so NBA corrections can be detected. This asset archives the NBA response as received. It checks HTTP availability and a nonempty body; event ordering, completion markers, scores, player data, and JSON/event parsing belong to a separate parsing pipeline. Downloads already saved are retained if another endpoint is unavailable, and the date fails visibly until every selected response is captured.
+
+Raw bytes remain at lake/raw/cdn/playbyplay/season=<season>/game_id=<game_id>/<sha256>.json with a matching <sha256>.meta.json. Identical content reuses the saved version; changed content creates a new immutable version. Existing sidecars are checked against the source and source checksum, and missing sidecars are created. Valid existing metadata remains unchanged. The sidecar preserves the NBA source URL, response headers, collection times, game and team identities, checksum, byte count, and run details. Prohibited legacy source fields fail validation and require a separately approved repair. Date results record the exact raw and metadata references in Dagster. Each game also has latest.json in that same game directory. It contains the accepted raw and sidecar URIs and checksums, the Pacific game date, the check time, and the run ID. It advances after the raw response and sidecar are saved and their checksums verified. Conditional writes prevent an overlapping run from overwriting another accepted selection. A fresh response can select an earlier preserved version if the NBA reverts a correction.
+
+Play-by-play failures use the injury pipeline's error envelope at lake/artifacts/errors/pipeline=play_by_play/season=<season>/occurred_date_pacific=<date>/<event_id>.failure.json. The record includes the Dagster run ID, selected game date, schedule reference, failed game IDs, source URLs, and error messages; its URI and checksum also appear in Dagster failure metadata. Re-executing that failed run successfully writes a linked <event_id>.recovery.json in the same date-organized error root. Recovery reads only the failed parent run and verifies its saved failure record. An ordinary fresh run has no failed parent and does not claim recovery. The original failure files are immutable. S3 or archive-integrity failures remain visible; collection does not bypass them.
+
 ## Transactions
 
 The daily-partitioned transactions_by_date asset is captured by capture_nba_transactions. It reads the official NBA movement feed at https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json and selects rows whose TRANSACTION_DATE matches the selected calendar date. The source supplies date-only values encoded at midnight without a timezone; these values are not shifted from UTC.
@@ -83,6 +103,20 @@ The hourly schedule transactions_hourly refreshes today's Pacific partition at t
 The output is lake/raw/nba/transactions/season=<season>/game_date_pacific=<date>/latest.json in nba-gestalt-data. Its visible provenance includes the official source URL, the full fetched feed's checksum, and last_polled_at. Only the selected date's transaction rows are stored. Each original NBA row is preserved and receives a UTC first_observed_at when first captured. Later polls append distinct rows and retain previously observed rows and their timestamps, including rows no longer returned by the source. The original NBA fields identify distinct rows; identical rows are not appended twice.
 
 Historical backfills record the actual collection time, not a fabricated historical observation time. Roster reconstruction and replay rules remain a separate consumer decision. A date with no published transactions produces an empty transaction list. A failed fetch or invalid source leaves the saved history unchanged. Concurrent publication fails if the saved file changed after it was read. Transactions published after the last daily poll can be collected by a manual date rerun.
+
+## Roster snapshots
+
+The build_nba_rosters job materializes rosters_by_date for selected Pacific date partitions. Partitions are independent: each date reads the opening evidence and dated sources directly, without depending on yesterday's roster output. Single-date runs and backfills use the same job without YAML, using the shared NBA season and season-start settings.
+
+The approved inputs are the existing 30 opening CommonTeamRoster snapshots under lake/raw/commonteamroster/<season>/, daily transaction files under lake/raw/nba/transactions/season=<season>/game_date_pacific=<date>/latest.json, and final box scores with their metadata sidecars. NBAScheduleResource reads the official S3 schedule once for the required date range. The job selects each team's latest available final box through the requested date. Within a run, upstream metadata hashes allow reuse of already-read membership lists. Missing historical games or sidecars are reported for box-score backfill.
+
+Opening memberships carry through days off. Dated signings, trades, waivers, waiver awards, and contract conversions update memberships. Box scores supply explicit positive membership evidence; absence alone does not imply removal. For historical end-of-day reconstruction, reported same-day transactions apply after game evidence. Invalid IDs, unsupported operations, ambiguous moves, or unexplained team conflicts fail visibly in Dagster with source references.
+
+The teams field is a map of all 30 NBA team IDs to sorted player-ID lists. No player names or name-repair dictionary are required or read. A separate consumer can perform name lookup when it needs one. Team hashes and evidence dates are recorded in team_metadata, and exact source URIs/checksums and observation times are recorded in inputs.
+
+Accepted output is lake/artifacts/rosters/season=<season>/game_date_pacific=<date>/<sha256>.json in nba-gestalt-data. Processing timestamps appear in Dagster metadata rather than changing the immutable payload on each run. Identical inputs reuse the file; changed inputs create a new version, preserving earlier versions. Failed runs publish no partial roster.
+
+The rosters_morning schedule runs at 3:30 a.m. Pacific for yesterday's date, including dates without transactions. The roster_transactions_ready sensor also launches the same-date roster job after a successful capture_nba_transactions run adds new rows. Each source run ID identifies one request, preventing duplicate launches on repeated sensor ticks. Polls with no new rows do not trigger an extra roster run. Manual single-date jobs and backfills remain available independently. Roster outputs provide team-to-player-ID membership for the model updater; injury reconciliation is unchanged. No additional latest.json paths are created.
 
 ## Injury reports
 

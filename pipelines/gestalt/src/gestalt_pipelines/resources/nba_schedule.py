@@ -66,6 +66,15 @@ class NBAScheduleResource(ConfigurableResource):
         self, day: date, reference: dict[str, str] | None = None, *, allow_empty: bool = False,
     ) -> tuple[list[dict], dict[str, str]]:
         """Load the published schedule and return the Pacific slate and its reference."""
+        return self.games_between(day, day, reference, allow_empty=allow_empty)
+
+    def games_between(
+        self, first_date: date, last_date: date, reference: dict[str, str] | None = None,
+        *, allow_empty: bool = False,
+    ) -> tuple[list[dict], dict[str, str]]:
+        """Read the schedule once and return games in an inclusive Pacific date range."""
+        if first_date > last_date:
+            raise ValueError("NBA schedule date range is reversed.")
         payload, reference = self.load(reference)
         # The NBA response includes broadcast listings. Read only game identities and times.
         schedule = json.loads(payload, object_pairs_hook=self._check_schedule_fields)["leagueSchedule"]
@@ -88,10 +97,10 @@ class NBAScheduleResource(ConfigurableResource):
                 )
                 start = datetime.fromisoformat(timestamp) if timestamp.upper() not in {"", "TBD", "TBA"} else None
                 if start is None or start.tzinfo is None:
-                    if reported_date == day:
+                    if first_date <= reported_date <= last_date:
                         raise ValueError(f"No verified UTC schedule time for game {game['gameId']}.")
                     continue
-                if start.astimezone(PACIFIC).date() != day:
+                if not first_date <= start.astimezone(PACIFIC).date() <= last_date:
                     continue
                 home, away = game["homeTeam"], game["awayTeam"]
                 home_id, away_id = int(home["teamId"]), int(away["teamId"])
@@ -112,7 +121,7 @@ class NBAScheduleResource(ConfigurableResource):
         if "espn" in json.dumps(games, default=str).casefold():
             raise ValueError("Prohibited source in the selected NBA game identities.")
         if (not games and not allow_empty) or len({row["game_id"] for row in games}) != len(games):
-            raise ValueError(f"Missing or duplicate official games for {day}.")
+            raise ValueError(f"Missing or duplicate official games from {first_date} through {last_date}.")
         return sorted(games, key=lambda row: row["game_id"]), reference
 
     @staticmethod

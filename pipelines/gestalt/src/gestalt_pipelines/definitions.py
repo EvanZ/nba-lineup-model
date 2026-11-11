@@ -16,7 +16,16 @@ from .odds.assets import nba_market_odds
 from .odds.jobs import archive_nba_market_odds
 from .odds.resources import OddsApi
 from .odds.schedules import nba_market_odds_game_day
+from .play_by_play.assets import nba_play_by_play
+from .play_by_play.jobs import capture_nba_play_by_play
+from .play_by_play.resources import NBAPlayByPlayArchive
+from .play_by_play.schedules import play_by_play_morning
 from .resources import NBAScheduleResource
+from .rosters.assets import rosters_by_date
+from .rosters.jobs import build_nba_rosters
+from .rosters.resources import NBARosterArchive
+from .rosters.schedules import rosters_morning
+from .rosters.sensors import roster_transactions_ready
 from .scoreboard.assets import nba_scoreboard
 from .scoreboard.jobs import capture_nba_scoreboard
 from .scoreboard.resources import NBAScoreboardArchive
@@ -31,19 +40,21 @@ from .transactions.schedules import transactions_hourly
 defs = Definitions(
     assets=[
         injury_pdf_archive, injury_report_extractions, injury_status_by_game_date,
-        nba_season_schedule, nba_market_odds, nba_box_scores, nba_scoreboard, transactions_by_date,
+        nba_season_schedule, nba_market_odds, nba_box_scores, nba_scoreboard, transactions_by_date, nba_play_by_play, rosters_by_date,
     ],
     jobs=[
         capture_injury_pdfs, extract_injury_pdf, reconcile_injury_date,
         capture_nba_season_schedule, archive_nba_market_odds, capture_nba_box_scores, capture_nba_scoreboard,
-        capture_nba_transactions,
+        capture_nba_transactions, capture_nba_play_by_play, build_nba_rosters,
     ],
-    schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, scoreboard_poll, transactions_hourly],
-    sensors=[new_injury_pdf, injury_report_dates_ready],
+    schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning],
+    sensors=[new_injury_pdf, injury_report_dates_ready, roster_transactions_ready],
     resources={
         "official_injury_reports": OfficialInjuryReports(),
         "injury_report_archive": InjuryReportArchive(season=INJURY_REPORT_SEASON),
         "nba_box_score_archive": NBABoxScoreArchive(),
+        "nba_play_by_play_archive": NBAPlayByPlayArchive(),
+        "nba_roster_archive": NBARosterArchive(),
         "nba_transactions": NBATransactions(season=EnvVar("GESTALT_NBA_SEASON")),
         "odds_api": OddsApi(api_key=EnvVar("GESTALT_ODDS_API_KEY")),
         "nba_scoreboard_archive": NBAScoreboardArchive(),
