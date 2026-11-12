@@ -22,7 +22,7 @@ STAGE = "nba_play_by_play"
 
 
 def _json_bytes(value: dict | list) -> bytes:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
 def _error_event_key(event: dict) -> str:
@@ -40,19 +40,21 @@ class NBAPlayByPlayArchive(ConfigurableResource):
     def save_error_event(
         self, *, season: str, day: str, run_id: str, message: str,
         schedule: dict | None, failed_games: dict, original_failure: dict | None = None,
+        stage: str = STAGE, inputs: dict | None = None,
     ) -> dict:
         """Persist the same failure/recovery envelope used by injury processing."""
         status = "recovered" if original_failure else "failed"
-        identity = [run_id, STAGE, status, original_failure]
+        identity = [run_id, stage, status, original_failure]
         event = {
             "schema_version": 1,
             "event_id": sha256(_json_bytes(identity)).hexdigest(),
-            "stage": STAGE, "season": season, "status": status,
+            "stage": stage, "season": season, "status": status,
             "timestamp": datetime.now(UTC).isoformat(),
             "message": message, "dagster_run_id": run_id,
             "game_date_pacific": day,
-            "input": {"schedule": schedule},
-            "artifact_path": f"s3://{self.bucket}/lake/raw/cdn/playbyplay/season={season}/",
+            "input": inputs if inputs is not None else {"schedule": schedule},
+            "artifact_path": (f"s3://{self.bucket}/lake/artifacts/stints/season={season}/game_date_pacific={day}/"
+                              if stage == "nba_stints" else f"s3://{self.bucket}/lake/raw/cdn/playbyplay/season={season}/"),
             "failed_games": failed_games,
             "source_urls": {
                 game_id: f"{CDN_URL}/playbyplay_{game_id}.json" for game_id in failed_games
@@ -75,7 +77,7 @@ class NBAPlayByPlayArchive(ConfigurableResource):
             self._put_immutable(client, key, payload)
         return {"uri": f"s3://{self.bucket}/{key}", "sha256": sha256(payload).hexdigest()}
 
-    def read_failure(self, reference: dict, *, season: str, day: str) -> dict:
+    def read_failure(self, reference: dict, *, season: str, day: str, stage: str = STAGE) -> dict:
         prefix = f"s3://{self.bucket}/{ERROR_PREFIX}season={season}/"
         if not reference["uri"].startswith(prefix):
             raise ValueError("Play-by-play failure is outside the selected season's error path.")
@@ -83,12 +85,12 @@ class NBAPlayByPlayArchive(ConfigurableResource):
         event = official_json(raw)
         if (
             sha256(raw).hexdigest() != reference["sha256"]
-            or event.get("schema_version") != 1 or event.get("stage") != STAGE
+            or event.get("schema_version") != 1 or event.get("stage") != stage
             or event.get("status") != "failed" or event.get("season") != season
             or event.get("game_date_pacific") != day
             or reference["uri"] != f"s3://{self.bucket}/{_error_event_key(event)}"
             or event.get("event_id") != sha256(_json_bytes([
-                event["dagster_run_id"], STAGE, "failed", None,
+                event["dagster_run_id"], stage, "failed", None,
             ])).hexdigest()
         ):
             raise ValueError("Play-by-play failure does not match this partition or checksum.")
@@ -287,3 +289,67 @@ class NBAPlayByPlayArchive(ConfigurableResource):
             "metadata_sha256": sha256(saved).hexdigest(),
             "reused": not raw_created, "metadata_reused": not metadata_created,
         }
+
+    def read_game(self, season: str, game: dict) -> tuple[bytes, dict]:
+        """Read the current verified capture without fetching or modifying sources."""
+        client = boto3.client("s3")
+        key = f"lake/raw/cdn/playbyplay/season={season}/game_id={game['game_id']}/latest.json"
+        pointer, _ = self._load_latest(client, key, season, game)
+        if pointer is None:
+            raise FileNotFoundError(f"No saved play-by-play selection for {game['game_id']}.")
+        fields = ("uri", "sha256", "metadata_uri", "metadata_sha256")
+        reference = {k: pointer[k] for k in fields}
+        raw = self._read(client, reference["uri"].removeprefix(f"s3://{self.bucket}/"))
+        if sha256(raw).hexdigest() != reference["sha256"]:
+            raise ValueError("Selected play-by-play changed during reading.")
+        return raw, reference
+
+    def stints_pointer(self, season: str, day: str) -> tuple[dict | None, str | None]:
+        client = boto3.client("s3")
+        prefix = f"lake/artifacts/stints/season={season}/game_date_pacific={day}/"
+        try:
+            response = client.get_object(Bucket=self.bucket, Key=prefix+"latest.json")
+        except ClientError as error:
+            if error.response["Error"]["Code"] in {"404", "NoSuchKey"}:
+                return None, None
+            raise
+        with closing(response["Body"]) as body:
+            pointer = official_json(body.read())
+        digest = pointer.get("sha256")
+        if (
+            not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or pointer.get("uri") != f"s3://{self.bucket}/{prefix}{digest}.json"
+            or pointer.get("season") != season or pointer.get("game_date_pacific") != day
+        ):
+            raise ValueError("Invalid accepted stints selection.")
+        raw = self._read(client, prefix+digest+".json")
+        record = official_json(raw)
+        if (
+            sha256(raw).hexdigest() != digest or record.get("season") != season
+            or record.get("game_date_pacific") != day
+            or record.get("validation", {}).get("complete") is not True
+        ):
+            raise ValueError("Accepted stints failed checksum or coverage validation.")
+        return pointer, response["ETag"]
+
+    def save_stints(self, record: dict, *, prior: dict | None, expected_etag: str | None) -> dict:
+        if record["validation"]["complete"] is not True:
+            raise ValueError("Cannot accept incomplete stints.")
+        raw = _json_bytes(record)
+        digest = sha256(raw).hexdigest()
+        season, day = record["season"], record["game_date_pacific"]
+        prefix = f"lake/artifacts/stints/season={season}/game_date_pacific={day}/"
+        client = boto3.client("s3")
+        created = self._put_immutable(client, prefix+digest+".json", raw)
+        pointer = {
+            "schema_version": 1, "season": season, "game_date_pacific": day,
+            "processing_version": record["processing_version"],
+            "uri": f"s3://{self.bucket}/{prefix}{digest}.json", "sha256": digest,
+        }
+        if pointer != prior:
+            condition = {"IfMatch": expected_etag} if expected_etag else {"IfNoneMatch": "*"}
+            client.put_object(
+                Bucket=self.bucket, Key=prefix+"latest.json", Body=_json_bytes(pointer),
+                ContentType="application/json", **condition,
+            )
+        return {**pointer, "reused": not created}

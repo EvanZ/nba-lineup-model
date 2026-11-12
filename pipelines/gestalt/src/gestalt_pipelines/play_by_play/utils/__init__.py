@@ -28,4 +28,6 @@ def check_download(payload: bytes) -> None:
         raise ValueError("Prohibited basketball source in NBA play-by-play.")
 
 
-__all__ = ["official_json", "check_download"]
+from .stints import PROCESSING_VERSION, StintsError, parse_stints
+
+__all__ = ["official_json", "check_download", "PROCESSING_VERSION", "StintsError", "parse_stints"]

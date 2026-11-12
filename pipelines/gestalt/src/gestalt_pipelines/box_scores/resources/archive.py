@@ -94,12 +94,7 @@ class NBABoxScoreArchive(ConfigurableResource):
                 failures[game_id] = str(error)
         return references, failures
 
-    def _capture_game(self, client, season: str, game: dict, *, allow_pending: bool) -> dict | None:
-        game_id = game["game_id"]
-        if not re.fullmatch(r"[0-9]{10}", game_id):
-            raise ValueError("Expected a 10-digit NBA game ID.")
-        prefix = f"lake/raw/cdn/boxscore/season={season}/game_id={game_id}/"
-        url = f"{CDN_URL}/boxscore_{game_id}.json"
+    def _select_saved(self, client, prefix: str):
         candidates = []
         for page in client.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix):
             for item in page.get("Contents", []):
@@ -108,8 +103,37 @@ class NBABoxScoreArchive(ConfigurableResource):
                     raise ValueError("Prohibited source filename in NBA box-score archive.")
                 if CHECKSUM_FILENAME.fullmatch(name):
                     candidates.append(item)
-        saved = max(candidates, key=lambda item: (item["LastModified"], item["Key"]), default=None)
+        return max(candidates, key=lambda item: (item["LastModified"], item["Key"]), default=None)
 
+
+    def read_saved(self, season: str, game: dict) -> tuple[bytes, dict]:
+        """Read a saved final box and sidecar, without downloading or writing."""
+        if not re.fullmatch(r"[0-9]{10}", game["game_id"]):
+            raise ValueError("Expected a 10-digit NBA game ID.")
+        client = boto3.client("s3")
+        prefix = f"lake/raw/cdn/boxscore/season={season}/game_id={game['game_id']}/"
+        selected = self._select_saved(client, prefix)
+        if selected is None:
+            raise FileNotFoundError(f"No saved final box score for {game['game_id']}.")
+        key = selected["Key"]
+        digest = key.removeprefix(prefix).removesuffix(".json")
+        raw = self._read(client, key)
+        if sha256(raw).hexdigest() != digest:
+            raise ValueError("Saved box score failed checksum verification.")
+        _validate_box(raw, game)
+        metadata = self._ensure_metadata(client, key, season, raw, digest, create=False)
+        return raw, {
+            "uri": f"s3://{self.bucket}/{key}", "sha256": digest,
+            **{k:metadata[k] for k in ("metadata_uri", "metadata_sha256")},
+        }
+
+    def _capture_game(self, client, season: str, game: dict, *, allow_pending: bool) -> dict | None:
+        game_id = game["game_id"]
+        if not re.fullmatch(r"[0-9]{10}", game_id):
+            raise ValueError("Expected a 10-digit NBA game ID.")
+        prefix = f"lake/raw/cdn/boxscore/season={season}/game_id={game_id}/"
+        url = f"{CDN_URL}/boxscore_{game_id}.json"
+        saved = self._select_saved(client, prefix)
         reused = saved is not None
         if saved:
             key = saved["Key"]
@@ -153,7 +177,7 @@ class NBABoxScoreArchive(ConfigurableResource):
             **metadata,
         }
 
-    def _ensure_metadata(self, client, key: str, season: str, payload: bytes, digest: str) -> dict:
+    def _ensure_metadata(self, client, key: str, season: str, payload: bytes, digest: str, *, create: bool = True) -> dict:
         game = json.loads(payload, object_pairs_hook=_official_fields)["game"]
         metadata = {
             "season": season, "game_id": game["gameId"], "box_score_sha256": digest,
@@ -170,6 +194,8 @@ class NBABoxScoreArchive(ConfigurableResource):
         except ClientError as error:
             if error.response["Error"]["Code"] not in {"404", "NoSuchKey"}:
                 raise
+            if not create:
+                raise FileNotFoundError(f"Missing saved box-score metadata at s3://{self.bucket}/{metadata_key}.") from error
             checksum = sha256(encoded)
             try:
                 client.put_object(

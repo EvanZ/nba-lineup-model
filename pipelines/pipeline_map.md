@@ -25,6 +25,11 @@ flowchart LR
     nbaPlays["Official NBA CDN play-by-play"] --> playByPlay["nba_play_by_play"]
     catalog --> playByPlay
     playByPlay --> playArchive["Versioned final play-by-play JSON and sidecars"]
+    playArchive --> stints["nba_stints"]
+    boxArchive --> stints
+    catalog --> stints
+    stints --> stintsArchive["Date stints JSON versions and latest.json"]
+    playByPlay -->|"Scheduled capture succeeds: same-date parsing"| stints
     nbaBoard["Official NBA CDN scoreboard"] --> scoreboard["nba_scoreboard"]
     catalog --> scoreboard
     scoreboard --> scoresLatest["Date scoreboard latest.json in S3"]
@@ -88,11 +93,36 @@ The enabled box-score schedule checks every five minutes. It launches the same j
 
 The nba_play_by_play asset and capture_nba_play_by_play job use completed Pacific game-date partitions starting at GESTALT_NBA_SEASON_START_DATE. The play_by_play_morning schedule selects yesterday at 3 a.m. America/Los_Angeles each morning. Manual backfills select daily partitions of the same asset without YAML.
 
-NBAScheduleResource supplies the complete slate and exact schedule reference. Each selected game is fetched from https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_<game_id>.json on every run, including reruns, so NBA corrections can be detected. This asset archives the NBA response as received. It checks HTTP availability and a nonempty body; event ordering, completion markers, scores, player data, and JSON/event parsing belong to a separate parsing pipeline. Downloads already saved are retained if another endpoint is unavailable, and the date fails visibly until every selected response is captured.
+NBAScheduleResource supplies the complete slate and exact schedule reference. Each selected game is fetched from https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_<game_id>.json on every run, including reruns, so NBA corrections can be detected. This asset archives the NBA response as received. It checks HTTP availability and a nonempty body; event ordering, completion markers, scores, player data, and JSON/event parsing belong to the separate parsing job in this pipeline. Downloads already saved are retained if another endpoint is unavailable, and the date fails visibly until every selected response is captured.
 
 Raw bytes remain at lake/raw/cdn/playbyplay/season=<season>/game_id=<game_id>/<sha256>.json with a matching <sha256>.meta.json. Identical content reuses the saved version; changed content creates a new immutable version. Existing sidecars are checked against the source and source checksum, and missing sidecars are created. Valid existing metadata remains unchanged. The sidecar preserves the NBA source URL, response headers, collection times, game and team identities, checksum, byte count, and run details. Prohibited legacy source fields fail validation and require a separately approved repair. Date results record the exact raw and metadata references in Dagster. Each game also has latest.json in that same game directory. It contains the accepted raw and sidecar URIs and checksums, the Pacific game date, the check time, and the run ID. It advances after the raw response and sidecar are saved and their checksums verified. Conditional writes prevent an overlapping run from overwriting another accepted selection. A fresh response can select an earlier preserved version if the NBA reverts a correction.
 
 Play-by-play failures use the injury pipeline's error envelope at lake/artifacts/errors/pipeline=play_by_play/season=<season>/occurred_date_pacific=<date>/<event_id>.failure.json. The record includes the Dagster run ID, selected game date, schedule reference, failed game IDs, source URLs, and error messages; its URI and checksum also appear in Dagster failure metadata. Re-executing that failed run successfully writes a linked <event_id>.recovery.json in the same date-organized error root. Recovery reads only the failed parent run and verifies its saved failure record. An ordinary fresh run has no failed parent and does not claim recovery. The original failure files are immutable. S3 or archive-integrity failures remain visible; collection does not bypass them.
+
+## Parsed stints
+
+The nba_stints asset and parse_nba_games job belong to the existing play_by_play pipeline. Select one or several completed Pacific date partitions in Dagster; no per-game configuration is required. The job reads saved inputs through NBAScheduleResource, NBAPlayByPlayArchive.read_game, and NBABoxScoreArchive.read_saved. It never downloads missing sources or rematerializes the collectors.
+
+For each game, the PBP selection comes from its existing latest.json. The box selection matches the collector: greatest raw-object LastModified, then key as deterministic tie-break. These are archive selection rules, not a claim of NBA correction timestamps. Checksums, source metadata, final box status, and official matchup identities are verified before parsing. The JSON records the selected immutable schedule, raw PBP, box scores, and sidecar references/checksums.
+
+One accepted date is saved at:
+
+```text
+s3://nba-gestalt-data/lake/artifacts/stints/season=<season>/game_date_pacific=<date>/<sha256>.json
+s3://nba-gestalt-data/lake/artifacts/stints/season=<season>/game_date_pacific=<date>/latest.json
+```
+
+The immutable file's SHA-256 covers its canonical JSON bytes. Its envelope contains schema_version, season, game_date_pacific, processing_version, inputs, validation, and rows. Validation records the expected/processed game IDs and per-game diagnostics. The pointer contains the accepted URI, checksum, season/date, and processing version. New source or processing versions preserve earlier files. Identical results reuse their file and leave an unchanged pointer untouched. Conditional pointer writes detect overlapping updates. A failed date never advances the pointer or publishes an accepted partial slate; a no-game date has explicit empty coverage and rows.
+
+Rows contain game identity/time, stint index and period, team/player IDs, elapsed start/end/duration and source event boundaries, observed points/margin, home/away offensive possession exposure, paired possessions, and observed net rating. All lineup intervals remain, including zero-possession intervals and overtime. Net rating is null at zero exposure. Following the existing frame builder, each team possession is split equally across its reconstructed lineup segments; paired possessions are half the combined team-possession counts. These are observed data conventions, not fitted model predictions.
+
+The NBA event/lineup/possession reconstruction is owned by play_by_play/utils/reconstruction inside gestalt_pipelines. Its basketball rules are ported without behavioral changes; unused DataFrame/Parquet exporters are excluded. Reconstruction errors, scoring inconsistencies, and incomplete or overlapping time coverage fail visibly. No missing-time redistribution, 44-minute role cutoff, availability classification, model parameters, or invented player minutes are added. The 1e-6-second numeric comparison only accommodates floating-point arithmetic; real timeline gaps are not filled. Actual minutes remain in the referenced final box scores.
+
+The play_by_play_ready_for_stints run-success sensor requests the same date after capture_nba_play_by_play succeeds with the play_by_play_morning schedule tag. This orders parsing after the daily 3 a.m. Pacific refresh without another clock delay. Source run ID is the request key. Manual collection/backfills do not implicitly launch parsing; manual parsing/backfills use parse_nba_games independently. The sensor starts stopped in definitions and is enabled through the existing Dagster UI/instance for deployment.
+
+Parsing errors and linked recoveries use the existing lake/artifacts/errors/pipeline=play_by_play/season=<season>/occurred_date_pacific=<date>/ root with stage nba_stints; capture keeps stage nba_play_by_play. Failure metadata includes the exact available input selection and per-game reconstruction diagnostics. Re-execute the failed parsing run to record recovery; a fresh unrelated run does not claim recovery. Source files and previous accepted stints remain unchanged.
+
+Runtime setup is self-contained: uv sync --project pipelines/gestalt --group dev installs the locked pipeline dependencies. No root-project installation, nba_lineup_model import, parent-checkout source path, pandas, or HTTPX is required for reconstruction. Parser fixtures are included under the pipeline tests. No fitted models, legacy releases, live APIs, or legacy orchestration definitions are loaded by parsing.
 
 ## Transactions
 

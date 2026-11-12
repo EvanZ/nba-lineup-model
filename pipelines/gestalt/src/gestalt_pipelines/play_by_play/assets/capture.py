@@ -12,13 +12,17 @@ from ..partitions import play_by_play_dates
 from ..resources import NBAPlayByPlayArchive
 
 
-def _parent_failure(context: AssetExecutionContext, archive: NBAPlayByPlayArchive, season: str, day: str):
+def _parent_failure(
+    context: AssetExecutionContext, archive: NBAPlayByPlayArchive, season: str, day: str, *,
+    job_name: str = "capture_nba_play_by_play", stage: str = "nba_play_by_play",
+    metadata_key: str = "play_by_play_failure",
+):
     """Use the selected failed parent run, without scanning unrelated run history."""
     if not context.run.parent_run_id:
         return None
     parent = context.instance.get_run_by_id(context.run.parent_run_id)
     if (
-        parent is None or parent.job_name != "capture_nba_play_by_play"
+        parent is None or parent.job_name != job_name
         or parent.status != DagsterRunStatus.FAILURE
         or parent.tags.get("dagster/partition") != day
     ):
@@ -28,12 +32,12 @@ def _parent_failure(context: AssetExecutionContext, archive: NBAPlayByPlayArchiv
     ).records
     for record in reversed(records):
         event = record.event_log_entry.dagster_event
-        if event.step_key != "nba_play_by_play":
+        if event.step_key != stage:
             continue
         failure = event.event_specific_data.user_failure_data
-        if failure and "play_by_play_failure" in failure.metadata:
+        if failure and metadata_key in failure.metadata:
             return archive.read_failure(
-                failure.metadata["play_by_play_failure"].value, season=season, day=day,
+                failure.metadata[metadata_key].value, season=season, day=day, stage=stage,
             )
     return None
 
