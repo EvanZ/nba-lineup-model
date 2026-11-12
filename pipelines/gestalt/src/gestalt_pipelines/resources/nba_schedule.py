@@ -6,19 +6,19 @@ import re
 from contextlib import closing
 from datetime import date, datetime
 from hashlib import sha256
-from zoneinfo import ZoneInfo
 
 import boto3
 from botocore.exceptions import ClientError
 from dagster import ConfigurableResource
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
+from ..utils import DATA_BUCKET, PACIFIC
+
 SOURCE_URL = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json"
 
 
 class NBAScheduleResource(ConfigurableResource):
     season: str
-    bucket: str = "nba-gestalt-data"
+    bucket: str = DATA_BUCKET
 
     @property
     def _prefix(self) -> str:

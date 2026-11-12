@@ -12,11 +12,13 @@ from dagster import ConfigurableResource
 
 from ..utils import parse_scoreboard
 
+from ...utils import DATA_BUCKET
+
 SCOREBOARD_URL = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
 
 
 class NBAScoreboardArchive(ConfigurableResource):
-    bucket: str = "nba-gestalt-data"
+    bucket: str = DATA_BUCKET
 
     def fetch(self) -> bytes:
         with requests.get(

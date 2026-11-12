@@ -1,14 +1,14 @@
 """Schedules for the official injury report archive."""
 
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from dagster import DefaultScheduleStatus, RunRequest, ScheduleEvaluationContext, SkipReason, schedule
 
 from ..jobs import capture_injury_pdfs
 from ..partitions import injury_publication_dates
 
-EASTERN = ZoneInfo(injury_publication_dates.timezone)
+from ...utils import EASTERN
+
 
 
 @schedule(

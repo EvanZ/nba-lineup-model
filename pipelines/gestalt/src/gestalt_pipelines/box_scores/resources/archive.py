@@ -11,6 +11,8 @@ import requests
 from botocore.exceptions import BotoCoreError, ClientError
 from dagster import ConfigurableResource
 
+from ...utils import DATA_BUCKET
+
 CDN_URL = "https://cdn.nba.com/static/json/liveData/boxscore"
 CHECKSUM_FILENAME = re.compile(r"[0-9a-f]{64}\.json")
 
@@ -78,7 +80,7 @@ def _json_bytes(value: object) -> bytes:
 
 
 class NBABoxScoreArchive(ConfigurableResource):
-    bucket: str = "nba-gestalt-data"
+    bucket: str = DATA_BUCKET
 
     def capture_slate(self, season: str, games: list[dict], *, allow_pending: bool) -> tuple[dict, dict]:
         """Archive each game independently and report any missing coverage."""

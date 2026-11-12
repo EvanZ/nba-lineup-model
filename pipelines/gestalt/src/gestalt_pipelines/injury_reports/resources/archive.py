@@ -13,7 +13,8 @@ from dagster import ConfigurableResource
 
 from .official_nba import EASTERN, MAX_PDF_BYTES, OfficialInjuryReport, publication_time
 
-BUCKET = "nba-gestalt-data"
+from ...utils import DATA_BUCKET as BUCKET
+
 PREFIX = "lake/raw/nba/injury-reports"
 EXTRACTION_PREFIX = "lake/artifacts/injury_report_extraction"
 STATUSES_PREFIX = "lake/artifacts/injury_status_by_game_date"

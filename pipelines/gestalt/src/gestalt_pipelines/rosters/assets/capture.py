@@ -1,7 +1,6 @@
 """Build one complete NBA roster snapshot for a selected Pacific date."""
 
 from datetime import UTC, date, datetime
-from zoneinfo import ZoneInfo
 
 from dagster import (
     AllPartitionMapping, AssetDep, AssetExecutionContext, AssetKey, Failure,
@@ -12,7 +11,8 @@ from ...resources import NBAScheduleResource
 from ..partitions import roster_dates
 from ..resources import NBARosterArchive
 from ..utils import RosterError, build_rosters
-PACIFIC = ZoneInfo(roster_dates.timezone)
+
+from ...utils import PACIFIC
 
 
 @asset(
@@ -33,6 +33,7 @@ def rosters_by_date(
         raise Failure("Cannot reconstruct a future Pacific roster date.", allow_retries=False)
     inputs = {}
     try:
+        _, expected_etag = nba_roster_archive.selection(nba_schedule.season, day.isoformat())
         opening = nba_roster_archive.opening_rosters(nba_schedule.season)
         if opening["date"] >= day:
             raise ValueError("Opening roster observations must precede the selected date.")
@@ -55,7 +56,7 @@ def rosters_by_date(
             season=nba_schedule.season, day=day, opening=opening,
             transactions=evidence["transactions"], boxes=evidence["boxes"], inputs=inputs,
         )
-        published = nba_roster_archive.publish(record)
+        published = nba_roster_archive.publish(record, expected_etag=expected_etag)
     except RosterError as error:
         raise Failure(str(error), metadata={
             "game_date_pacific": day.isoformat(), "details": MetadataValue.json(error.details),
@@ -68,7 +69,7 @@ def rosters_by_date(
         "team_count": len(record["teams"]),
         "player_count": sum(len(ids) for ids in record["teams"].values()),
         "rosters_uri": published["uri"], "sha256": published["sha256"],
-        "artifact_reused": published["reused"],
+        "artifact_reused": published["reused"], "latest_uri": published["latest_uri"],
         "materialized_at": now.isoformat(),
         "opening_roster_date_pacific": opening["date"].isoformat(),
         "box_score_bodies_read": evidence["box_bodies_read"],

@@ -6,6 +6,8 @@ from datetime import date
 
 from dagster import DailyPartitionsDefinition
 
+from ...utils import EASTERN, PACIFIC
+
 INJURY_REPORT_SEASON = os.environ["GESTALT_NBA_SEASON"]
 start_date = date.fromisoformat(os.environ["GESTALT_NBA_SEASON_START_DATE"])
 season_match = re.fullmatch(r"([0-9]{4})-([0-9]{2})", INJURY_REPORT_SEASON)
@@ -19,13 +21,13 @@ if start_date.year not in {season_start_year, season_start_year + 1}:
 
 injury_game_dates = DailyPartitionsDefinition(
     start_date=start_date.isoformat(),
-    timezone="America/Los_Angeles",
+    timezone=PACIFIC.key,
     end_offset=2,  # Today and tomorrow.
 )
 
 
 injury_publication_dates = DailyPartitionsDefinition(
     start_date=start_date.isoformat(),
-    timezone="America/New_York",
+    timezone=EASTERN.key,
     end_offset=1,  # Include the current Eastern publication day.
 )

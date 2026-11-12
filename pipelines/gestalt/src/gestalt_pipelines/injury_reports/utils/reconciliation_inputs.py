@@ -5,7 +5,6 @@ import re
 from datetime import date, datetime, timedelta
 from itertools import groupby
 from urllib.parse import urlsplit
-from zoneinfo import ZoneInfo
 
 from botocore.exceptions import ClientError
 
@@ -14,7 +13,8 @@ from ..resources import archive as archive_module
 from .parse_pdf import PARSER_VERSION
 from .reconcile import report_game_key
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
+from ...utils import PACIFIC
+
 ROSTER_PREFIX = "lake/raw/commonteamroster/"
 
 

@@ -8,7 +8,6 @@ from contextlib import closing
 from datetime import date, datetime, timedelta
 from hashlib import sha256
 from urllib.parse import urlsplit
-from zoneinfo import ZoneInfo
 
 import boto3
 from botocore.exceptions import ClientError
@@ -16,12 +15,13 @@ from dagster import ConfigurableResource
 
 from ..utils import NBA_TEAM_IDS, box_roster_ids, nba_id, official_json, opening_ids
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
+from ...utils import DATA_BUCKET, PACIFIC
+
 ROOT = "lake/artifacts/rosters"
 
 
 class NBARosterArchive(ConfigurableResource):
-    bucket: str = "nba-gestalt-data"
+    bucket: str = DATA_BUCKET
 
     def _read(self, client, key: str) -> tuple[bytes, dict]:
         try:
@@ -179,9 +179,40 @@ class NBARosterArchive(ConfigurableResource):
             "references": references,
         }
 
-    def publish(self, record: dict) -> dict:
+    def selection(self, season: str, day: str) -> tuple[dict | None, str | None]:
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}", season) or date.fromisoformat(day).isoformat() != day:
+            raise ValueError("Invalid roster season or date.")
+        prefix = f"{ROOT}/season={season}/game_date_pacific={day}/"
+        try:
+            response = boto3.client("s3").get_object(Bucket=self.bucket, Key=prefix+"latest.json")
+        except ClientError as error:
+            if error.response["Error"]["Code"] in {"404", "NoSuchKey", "NotFound"}:
+                return None, None
+            raise
+        with closing(response["Body"]) as body:
+            pointer = official_json(body.read())
+        digest = pointer.get("sha256", "")
+        if (
+            pointer.get("schema_version") != 1 or pointer.get("season") != season
+            or pointer.get("game_date_pacific") != day
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or pointer.get("uri") != f"s3://{self.bucket}/{prefix}{digest}.json"
+        ):
+            raise ValueError("Invalid accepted roster selection.")
+        return {"uri": pointer["uri"], "sha256": digest}, response["ETag"]
+
+    def publish(self, record: dict, *, expected_etag: str | None) -> dict:
         encoded = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
         official_json(encoded)
+        season, day = record["season"], record["game_date_pacific"]
+        if record.get("schema_version") != 1 or set(record["teams"]) != set(map(str, NBA_TEAM_IDS)):
+            raise ValueError("A roster must cover the selected date and all 30 NBA teams.")
+        players = [nba_id(pid) for ids in record["teams"].values() for pid in ids]
+        if len(players) != len(set(players)) or any(not ids for ids in record["teams"].values()):
+            raise ValueError("Roster memberships must be unique and each team must be nonempty.")
+        selected, current_etag = self.selection(season, day)
+        if current_etag != expected_etag:
+            raise ValueError("The accepted roster changed during this run; rerun the date.")
         checksum = sha256(encoded)
         key = f"{ROOT}/season={record['season']}/game_date_pacific={record['game_date_pacific']}/{checksum.hexdigest()}.json"
         client = boto3.client("s3")
@@ -199,4 +230,21 @@ class NBARosterArchive(ConfigurableResource):
             if raw != encoded:
                 raise ValueError(f"Existing roster artifact differs at s3://{self.bucket}/{key}.") from error
             reused = True
-        return {"uri": f"s3://{self.bucket}/{key}", "sha256": checksum.hexdigest(), "reused": reused}
+        reference = {"uri": f"s3://{self.bucket}/{key}", "sha256": checksum.hexdigest()}
+        pointer_key = key.rsplit("/", 1)[0]+"/latest.json"
+        if reference != selected:
+            pointer = {
+                "schema_version": 1, "season": season, "game_date_pacific": day, **reference,
+            }
+            raw = json.dumps(pointer, sort_keys=True, separators=(",", ":")).encode()
+            condition = {"IfMatch": expected_etag} if expected_etag else {"IfNoneMatch": "*"}
+            try:
+                client.put_object(
+                    Bucket=self.bucket, Key=pointer_key, Body=raw,
+                    ContentType="application/json", **condition,
+                )
+            except ClientError as error:
+                if error.response["Error"]["Code"] in {"412", "PreconditionFailed", "ConditionalRequestConflict"}:
+                    raise ValueError("The accepted roster changed during publication; rerun the date.") from error
+                raise
+        return {**reference, "reused": reused, "latest_uri": f"s3://{self.bucket}/{pointer_key}"}

@@ -4,9 +4,11 @@ import os
 
 from dagster import DailyPartitionsDefinition
 
+from ...utils import PACIFIC
+
 box_score_game_dates = DailyPartitionsDefinition(
     start_date=os.environ["GESTALT_NBA_SEASON_START_DATE"],
-    timezone="America/Los_Angeles",
+    timezone=PACIFIC.key,
     end_offset=1,
 )
 

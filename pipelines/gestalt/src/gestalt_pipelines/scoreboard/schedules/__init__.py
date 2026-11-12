@@ -1,7 +1,6 @@
 """Capture current NBA scores and clocks during game windows."""
 
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from dagster import DefaultScheduleStatus, DagsterRunStatus, RunRequest, RunsFilter, ScheduleEvaluationContext, SkipReason, schedule
 
@@ -10,14 +9,15 @@ from ..jobs import capture_nba_scoreboard
 from ..resources import NBAScoreboardArchive
 from ..utils import validate_games
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
+from ...utils import PACIFIC
+
 GAME_WINDOW = timedelta(hours=6)
 
 
 @schedule(
     job=capture_nba_scoreboard,
     cron_schedule="* * * * *",
-    execution_timezone="America/Los_Angeles",
+    execution_timezone=PACIFIC.key,
     default_status=DefaultScheduleStatus.STOPPED,
 )
 def scoreboard_poll(

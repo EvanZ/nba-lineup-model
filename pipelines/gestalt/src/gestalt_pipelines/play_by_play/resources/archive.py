@@ -6,7 +6,6 @@ import re
 from contextlib import closing
 from datetime import UTC, datetime
 from hashlib import sha256
-from zoneinfo import ZoneInfo
 
 import boto3
 import requests
@@ -15,9 +14,10 @@ from dagster import ConfigurableResource
 
 from ..utils import check_download, official_json
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
+from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC
+
 CDN_URL = "https://cdn.nba.com/static/json/liveData/playbyplay"
-ERROR_PREFIX = "lake/artifacts/errors/pipeline=play_by_play/"
+ERROR_PREFIX = f"{ERRORS_PREFIX}/pipeline=play_by_play/"
 STAGE = "nba_play_by_play"
 
 
@@ -35,7 +35,7 @@ def _error_event_key(event: dict) -> str:
 
 
 class NBAPlayByPlayArchive(ConfigurableResource):
-    bucket: str = "nba-gestalt-data"
+    bucket: str = DATA_BUCKET
 
     def save_error_event(
         self, *, season: str, day: str, run_id: str, message: str,

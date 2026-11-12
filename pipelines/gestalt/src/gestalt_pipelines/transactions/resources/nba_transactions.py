@@ -13,12 +13,14 @@ from dagster import ConfigurableResource
 
 from ..utils import merge_transactions, official_json, transaction_rows_by_date, transactions_for_date
 
+from ...utils import DATA_BUCKET
+
 SOURCE_URL = "https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json"
 
 
 class NBATransactions(ConfigurableResource):
     season: str
-    bucket: str = "nba-gestalt-data"
+    bucket: str = DATA_BUCKET
 
     def fetch(self) -> bytes:
         with requests.get(

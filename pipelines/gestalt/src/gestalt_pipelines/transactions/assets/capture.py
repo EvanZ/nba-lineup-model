@@ -1,14 +1,14 @@
 """Capture official transactions for one selected Pacific game date."""
 
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from dagster import AssetExecutionContext, AssetMaterialization, MaterializeResult, asset
 
 from ..partitions import transaction_dates
 from ..resources import NBATransactions
 
-PACIFIC = ZoneInfo(transaction_dates.timezone)
+from ...utils import PACIFIC
+
 
 
 @asset(group_name="transactions", partitions_def=transaction_dates)

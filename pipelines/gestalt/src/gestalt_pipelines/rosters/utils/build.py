@@ -2,11 +2,11 @@
 
 from collections import defaultdict
 from datetime import date
-from zoneinfo import ZoneInfo
 
-from .inputs import NBA_TEAM_IDS, nba_id, roster_hash
+from .inputs import nba_id, roster_hash
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
+from ...utils import NBA_TEAM_IDS, PACIFIC
+
 ADDITIONS = {"Signing", "Trade", "AwardOnWaivers", "ContractConverted"}
 
 

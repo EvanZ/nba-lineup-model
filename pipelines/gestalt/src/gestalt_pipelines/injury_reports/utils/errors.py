@@ -4,16 +4,16 @@ import json
 import re
 from datetime import UTC, datetime
 from hashlib import sha256
-from zoneinfo import ZoneInfo
 
 from dagster import DagsterEventType, DagsterRunStatus
 
 from ..resources import BUCKET, InjuryReportArchive
 
-ERROR_PREFIX = "lake/artifacts/errors/pipeline=injury_reports/"
+from ...utils import ERRORS_PREFIX, PACIFIC
+
+ERROR_PREFIX = f"{ERRORS_PREFIX}/pipeline=injury_reports/"
 STAGE = "injury_status_by_game_date"
 EXTRACTION_STAGE = "injury_report_extractions"
-PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 def row_key(row: dict) -> tuple[str, str, int]:

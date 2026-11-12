@@ -1,6 +1,6 @@
 # GESTALT pipeline map
 
-The Dagster code location is **nba_gestalt_pipelines**. Its definitions live in [the GESTALT project](gestalt/src/gestalt_pipelines/definitions.py). The pipelines use the season set by `GESTALT_NBA_SEASON`. The injury and box-score partitions start on the date set by `GESTALT_NBA_SEASON_START_DATE`. See the [example configuration](gestalt/code-location.env.example).
+The Dagster code location is **nba_gestalt_pipelines**. Its definitions live in [the GESTALT project](gestalt/src/gestalt_pipelines/definitions.py). The pipelines use the season set by `GESTALT_NBA_SEASON`. The daily partitions start on the date set by `GESTALT_NBA_SEASON_START_DATE`. See the [example configuration](gestalt/code-location.env.example).
 
 ## Data flow
 
@@ -41,7 +41,15 @@ flowchart LR
     rosterMorning["3:30 a.m. Pacific: yesterday"] --> rosterBuilder
     boxArchive --> rosterBuilder
     catalog --> rosterBuilder
-    rosterBuilder --> rosterVersions["30-team roster versions in S3"]
+    rosterBuilder --> rosterVersions["30-team roster versions and date latest.json in S3"]
+    priorMinutes["Frozen conditional priors and historical-role lookup"] --> minutes["player_minutes"]
+    stintsArchive --> minutes
+    boxArchive --> minutes
+    rosterVersions --> minutes
+    statuses --> minutes
+    catalog --> minutes
+    minutes --> minutesArchive["Versioned conditional-minutes state and date latest.json"]
+    minutesArchive -->|"Previous Pacific date"| minutes
 ~~~
 
 The arrows show which data each stage reads. Injury reconciliation and odds capture load the existing catalog through [NBAScheduleResource](gestalt/src/gestalt_pipelines/resources/nba_schedule.py), so the schedule job runs on its own cadence. The scoreboard runs in this same code location. Website and forecast integration will use the injury status handoff in separate work.
@@ -144,9 +152,9 @@ Opening memberships carry through days off. Dated signings, trades, waivers, wai
 
 The teams field is a map of all 30 NBA team IDs to sorted player-ID lists. No player names or name-repair dictionary are required or read. A separate consumer can perform name lookup when it needs one. Team hashes and evidence dates are recorded in team_metadata, and exact source URIs/checksums and observation times are recorded in inputs.
 
-Accepted output is lake/artifacts/rosters/season=<season>/game_date_pacific=<date>/<sha256>.json in nba-gestalt-data. Processing timestamps appear in Dagster metadata rather than changing the immutable payload on each run. Identical inputs reuse the file; changed inputs create a new version, preserving earlier versions. Failed runs publish no partial roster.
+Accepted output is lake/artifacts/rosters/season=<season>/game_date_pacific=<date>/<sha256>.json in nba-gestalt-data. Each date also has latest.json containing schema version, season, Pacific date, and the accepted immutable URI and SHA-256. The producer publishes the verified immutable file before conditionally advancing that pointer. Identical inputs reuse the file and leave the pointer unchanged. A concurrent change rejects the stale publication. Processing timestamps remain in Dagster metadata. Changed inputs preserve earlier versions; failed rebuilds leave the accepted pointer intact.
 
-The rosters_morning schedule runs at 3:30 a.m. Pacific for yesterday's date, including dates without transactions. The roster_transactions_ready sensor also rebuilds affected roster dates after a successful capture_nba_transactions run adds new rows. If yesterday gains a late transaction, it rebuilds yesterday and today so the membership correction carries forward. Each source run ID and date identifies one request, preventing duplicate launches on repeated sensor ticks. Polls with no new rows do not trigger an extra roster run. Manual single-date jobs and backfills remain available independently. Roster outputs provide team-to-player-ID membership for the model updater; injury reconciliation is unchanged. No additional latest.json paths are created.
+The rosters_morning schedule runs at 3:30 a.m. Pacific for yesterday's date, including dates without transactions. The roster_transactions_ready sensor also rebuilds affected roster dates after a successful capture_nba_transactions run adds new rows. If yesterday gains a late transaction, it rebuilds yesterday and today so the membership correction carries forward. Each source run ID and date identifies one request, preventing duplicate launches on repeated sensor ticks. Polls with no new rows do not trigger an extra roster run. Manual single-date jobs and backfills remain available independently. Roster outputs provide team-to-player-ID membership for the model updater; injury reconciliation is unchanged. Consumers read the date-level latest.json and verify the selected immutable file; they do not choose versions by S3 modification time. No season-level roster pointer is created. A normal roster backfill creates missing date pointers and can select revised source-based versions. Historical minutes suffix replay is a separate approved operation.
 
 ## Injury reports
 
@@ -214,3 +222,44 @@ s3://nba-gestalt-data/lake/artifacts/errors/pipeline=injury_reports/season=2026-
 ~~~
 
 A `latest.json` object can advance as newer inputs are accepted. A consumer can reproduce an earlier result from the exact immutable reference recorded with that result.
+
+## Conditional player minutes
+
+The `player_minutes` asset and `update_player_minutes` job maintain conditional-minutes estimates: how much a player plays when available. This is separate from the player-ratings/HCA updater, seasonal availability probabilities, forecast minute allocation, and website publication. Daily Pacific partitions use the configured season start. The first estimator version is `v1`.
+
+| Input | Selection |
+| --- | --- |
+| Official slate | `NBAScheduleResource`, including its immutable schedule reference |
+| First-44-minute exposure | Same-date accepted `nba_stints` JSON |
+| Actual participation/minutes | Exact final box-score versions and sidecars referenced by those stints |
+| Membership | Same-date roster `latest.json` selects the accepted `rosters_by_date` JSON for all 30 teams |
+| Injury labels | Same-date accepted `injury_status_by_game_date/latest.json` selection, using resolved NBA IDs |
+| Historical initialization | Verified conditional-only priors below; no refitting or seasonal injury overrides |
+| Previous state | Immediately preceding Pacific date of `player_minutes`, same season/model version |
+
+All output paths below are under `s3://nba-gestalt-data/`.
+
+| Output | S3 key |
+| --- | --- |
+| Conditional priors | `lake/artifacts/player_minutes/season=<season>/model_version=<version>/priors/<sha256>.json` |
+| Immutable daily state | `lake/artifacts/player_minutes/season=<season>/model_version=<version>/game_date_pacific=<date>/<sha256>.json` |
+| Accepted date selection | Same date prefix, `latest.json`, containing the immutable URI and checksum |
+| Failures and recoveries | `lake/artifacts/errors/pipeline=minutes/season=<season>/occurred_date_pacific=<date>/<event_id>.{failure,recovery}.json` |
+
+The registered 2026-27/v1 prior checksum is `08081b51d754bd3fa0abef0a9996d7de8cffaaaa67480833a4c53ca701f4ed47`. It preserves 528 historical starting estimates as a lookup, 1,599 historical-role entries, initialization provenance, and the accepted cold-start cohort. The 528 IDs do not define opening-night membership. Dated roster and explicit game evidence determine introductions. Frozen rookie estimates are reused; later entrants use historical role when available or the approved cold-start median. Known players retain their state when returning after a gap.
+
+The daily JSON contains exact input and parent references, estimator/settings/code identities, every current roster player plus retained off-roster histories, up to three dated eligible observations per player, estimates, and the day's classifications and coverage checks. The date means **updated through games on that date**, available for the following day's forecasts.
+
+A played observation measures regulation exposure before minute 44, scales it by 48/44, and applies the approved prior-relative clipping. The estimate combines the original historical prior (weight 0.2 games) with up to three eligible observations. Healthy DNPs, Available/zero-minute cases, inactive-only cases, and G League assignments count as real zeros. Zero-minute Probable/Questionable/Doubtful/Out cases are excluded, except G League assignments. Medical gaps and days without a team game add no observation. No-game dates still carry state forward.
+
+For a single date, select its partition on `update_player_minutes`; no per-player YAML is needed. For a season backfill, select `player_minutes` on the **asset page**, choose the date range, and launch an asset backfill. Its previous-date dependency enforces date order with one partition per run. The first configured date initializes from priors; later dates require the exact previous state. A failure holds the requested later dates. Do not use a job backfill to assume this ordering.
+
+Rerunning an unchanged date reuses identical JSON. Changed inputs produce a new immutable file before conditionally advancing the pointer. A correction to an earlier date needs an explicitly approved replay of the following dates; automation does not rebuild historical suffixes. Old versions and frozen forecasts remain untouched. Model versions have isolated priors, parents, and pointers.
+
+Morning execution uses the `minutes_ready` declarative automation sensor. It targets the latest completed Pacific date and waits for fresh successful stints and rosters since Pacific midnight, along with the other required inputs and predecessor. The existing 3 a.m. PBP capture triggers stints; the 3:30 a.m. roster job supplies the other morning input. Either may finish first. Missing/running inputs or a failed latest dependency execution block the update until resolved. There is no separate fixed-delay minutes cron schedule. Manual dates and ordered backfills remain available.
+
+A failed run records its exact inputs and diagnostics in S3 and Dagster. After repairing the input, **Re-execute from failure** writes a linked recovery record on success. A new run from scratch does not claim recovery. Failed validation leaves the accepted state untouched.
+
+Shared NBA team IDs, Pacific/Eastern timezone objects, the default data bucket, and the error-root prefix live in `gestalt_pipelines/utils/__init__.py`. Estimator settings and pipeline-specific paths remain with their owning pipeline.
+
+Initial v1 validation covered October 20 through November 10, 2026: 22 ordered daily states and all 160 games, including the November 3 no-game carry. The minutes_ready sensor provides morning automation and is enabled. The November 12 roster-pointer backfill verified all 23 dates from October 20 through November 11 without changing selected roster versions. Detailed arithmetic, named-player checks, remaining acceptance, and the exact accepted references are recorded in [issue #74](https://github.com/EvanZ/nba-lineup-model/issues/74).

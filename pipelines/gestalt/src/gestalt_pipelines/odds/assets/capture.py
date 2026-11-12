@@ -5,14 +5,14 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from fcntl import LOCK_EX, flock
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from dagster import AssetExecutionContext, MaterializeResult, asset
 
 from ...resources import NBAScheduleResource
 from ..resources import OddsApi
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
+from ...utils import PACIFIC
+
 
 
 def _has_upcoming_game(nba_schedule: NBAScheduleResource, now: datetime) -> bool:

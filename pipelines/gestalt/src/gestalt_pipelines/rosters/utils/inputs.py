@@ -3,7 +3,6 @@
 import json
 from hashlib import sha256
 
-NBA_TEAM_IDS = tuple(range(1610612737, 1610612767))
 
 
 def official_json(raw: bytes) -> dict:

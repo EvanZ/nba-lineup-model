@@ -1,14 +1,14 @@
 """Refresh yesterday's final play-by-play each Pacific morning."""
 
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from dagster import DefaultScheduleStatus, RunRequest, ScheduleEvaluationContext, SkipReason, schedule
 
 from ..jobs import capture_nba_play_by_play
 from ..partitions import play_by_play_dates
 
-PACIFIC = ZoneInfo(play_by_play_dates.timezone)
+from ...utils import PACIFIC
+
 
 
 @schedule(

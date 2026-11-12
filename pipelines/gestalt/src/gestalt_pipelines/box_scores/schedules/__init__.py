@@ -1,7 +1,6 @@
 """Poll for final box scores during NBA game windows."""
 
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from dagster import (
     AssetRecordsFilter,
@@ -20,7 +19,8 @@ from ..assets import nba_box_scores
 from ..jobs import capture_nba_box_scores
 from ..partitions import box_score_game_dates
 
-PACIFIC = ZoneInfo(box_score_game_dates.timezone)
+from ...utils import PACIFIC
+
 POLL_INTERVAL = timedelta(minutes=5)
 GAME_WINDOW = timedelta(hours=6)
 

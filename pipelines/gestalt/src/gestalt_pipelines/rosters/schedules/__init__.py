@@ -1,14 +1,14 @@
 """Ensure every completed Pacific date has a roster, even without transactions."""
 
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from dagster import DefaultScheduleStatus, RunRequest, ScheduleEvaluationContext, SkipReason, schedule
 
 from ..jobs import build_nba_rosters
 from ..partitions import roster_dates
 
-PACIFIC = ZoneInfo(roster_dates.timezone)
+from ...utils import PACIFIC
+
 
 
 @schedule(

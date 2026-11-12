@@ -11,6 +11,8 @@ import boto3
 from botocore.exceptions import ClientError
 from dagster import ConfigurableResource
 
+from ...utils import DATA_BUCKET
+
 SPORTS_URL = "https://api.the-odds-api.com/v4/sports"
 SPORT_KEY = "basketball_nba"
 BOOKMAKERS = (
@@ -23,7 +25,7 @@ MINIMUM_REMAINING_CREDITS = 50
 
 class OddsApi(ConfigurableResource):
     api_key: str
-    bucket: str = "nba-gestalt-data"
+    bucket: str = DATA_BUCKET
 
     def fetch(self, season: str) -> dict | None:
         # /sports reports the current quota without consuming credits.

@@ -1,14 +1,14 @@
 """Daytime and end-of-day transaction polling in Pacific time."""
 
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from dagster import DefaultScheduleStatus, RunRequest, ScheduleEvaluationContext, SkipReason, schedule
 
 from ..jobs import capture_nba_transactions
 from ..partitions import transaction_dates
 
-PACIFIC = ZoneInfo(transaction_dates.timezone)
+from ...utils import PACIFIC
+
 
 
 @schedule(

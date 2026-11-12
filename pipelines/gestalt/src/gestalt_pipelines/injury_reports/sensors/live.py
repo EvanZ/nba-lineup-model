@@ -3,7 +3,6 @@
 import json
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from zoneinfo import ZoneInfo
 
 from dagster import DefaultSensorStatus, RunRequest, SensorEvaluationContext, SensorResult, sensor
 
@@ -13,8 +12,8 @@ from ..partitions import injury_game_dates, injury_publication_dates
 from ..resources import EXTRACTION_PREFIX, InjuryReportArchive
 from ..utils import PARSER_VERSION, read_extraction, read_roster, report_game_key, select_extractions
 
-EASTERN = ZoneInfo(injury_publication_dates.timezone)
-PACIFIC = ZoneInfo(injury_game_dates.timezone)
+from ...utils import EASTERN, PACIFIC
+
 
 
 def _scan_window(context: SensorEvaluationContext, now: datetime):

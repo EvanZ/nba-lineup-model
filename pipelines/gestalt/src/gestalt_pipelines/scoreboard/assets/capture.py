@@ -1,7 +1,6 @@
 """Publish the latest official NBA scoreboard for its Pacific game date."""
 
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from dagster import MaterializeResult, MetadataValue, asset
 
@@ -9,7 +8,8 @@ from ...resources import NBAScheduleResource
 from ..resources import NBAScoreboardArchive
 from ..utils import parse_scoreboard, validate_games
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
+from ...utils import PACIFIC
+
 
 
 @asset(group_name="scoreboard")

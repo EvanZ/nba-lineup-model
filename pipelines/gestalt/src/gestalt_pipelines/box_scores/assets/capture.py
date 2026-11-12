@@ -2,7 +2,6 @@
 
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from dagster import AssetExecutionContext, AssetObservation, Failure, MaterializeResult, MetadataValue, asset
 
@@ -11,7 +10,8 @@ from .. import BOX_SCORE_POLL_NAME
 from ..partitions import box_score_game_dates
 from ..resources import NBABoxScoreArchive
 
-PACIFIC = ZoneInfo(box_score_game_dates.timezone)
+from ...utils import PACIFIC
+
 
 
 @asset(group_name="box_scores", partitions_def=box_score_game_dates, output_required=False)

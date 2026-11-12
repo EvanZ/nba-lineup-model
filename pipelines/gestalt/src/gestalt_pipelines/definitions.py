@@ -12,6 +12,10 @@ from .injury_reports.partitions import INJURY_REPORT_SEASON
 from .injury_reports.resources import InjuryReportArchive, OfficialInjuryReports
 from .injury_reports.schedules import injury_pdf_poll
 from .injury_reports.sensors import injury_report_dates_ready, new_injury_pdf
+from .minutes.assets import player_minutes
+from .minutes.jobs import update_player_minutes
+from .minutes.resources import MinutesArchive
+from .minutes.sensors import minutes_ready
 from .odds.assets import nba_market_odds
 from .odds.jobs import archive_nba_market_odds
 from .odds.resources import OddsApi
@@ -40,22 +44,23 @@ from .transactions.schedules import transactions_hourly
 
 defs = Definitions(
     assets=[
-        injury_pdf_archive, injury_report_extractions, injury_status_by_game_date,
+        injury_pdf_archive, injury_report_extractions, injury_status_by_game_date, player_minutes,
         nba_season_schedule, nba_market_odds, nba_box_scores, nba_scoreboard, transactions_by_date, nba_play_by_play, nba_stints, rosters_by_date,
     ],
     jobs=[
-        capture_injury_pdfs, extract_injury_pdf, reconcile_injury_date,
+        capture_injury_pdfs, extract_injury_pdf, reconcile_injury_date, update_player_minutes,
         capture_nba_season_schedule, archive_nba_market_odds, capture_nba_box_scores, capture_nba_scoreboard,
         capture_nba_transactions, capture_nba_play_by_play, parse_nba_games, build_nba_rosters,
     ],
     schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning],
-    sensors=[new_injury_pdf, injury_report_dates_ready, roster_transactions_ready, play_by_play_ready_for_stints],
+    sensors=[new_injury_pdf, injury_report_dates_ready, roster_transactions_ready, play_by_play_ready_for_stints, minutes_ready],
     resources={
         "official_injury_reports": OfficialInjuryReports(),
         "injury_report_archive": InjuryReportArchive(season=INJURY_REPORT_SEASON),
         "nba_box_score_archive": NBABoxScoreArchive(),
         "nba_play_by_play_archive": NBAPlayByPlayArchive(),
         "nba_roster_archive": NBARosterArchive(),
+        "minutes_archive": MinutesArchive(season=EnvVar("GESTALT_NBA_SEASON")),
         "nba_transactions": NBATransactions(season=EnvVar("GESTALT_NBA_SEASON")),
         "odds_api": OddsApi(api_key=EnvVar("GESTALT_ODDS_API_KEY")),
         "nba_scoreboard_archive": NBAScoreboardArchive(),

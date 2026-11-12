@@ -7,12 +7,12 @@ from datetime import UTC, date, datetime, time, timedelta
 from io import BytesIO
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
-from zoneinfo import ZoneInfo
 
 from dagster import ConfigurableResource
 from pypdf import PdfReader
 
-EASTERN = ZoneInfo("America/New_York")
+from ...utils import EASTERN
+
 REPORT_URL_PREFIX = "https://ak-static.cms.nba.com/referee/injury/Injury-Report_"
 REPORT_URL = re.compile(
     re.escape(REPORT_URL_PREFIX)

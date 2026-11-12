@@ -79,14 +79,15 @@ def roster_job(monkeypatch):
         reads.append(key)
         if key not in objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
-        return {"Body": BytesIO(objects[key]), "LastModified": STAMP}
+        return {"Body": BytesIO(objects[key]), "LastModified": STAMP, "ETag": sha256(objects[key]).hexdigest()}
 
     def put_object(**args):
         key = args["Key"]
         assert key.startswith("lake/artifacts/rosters/season=2026-27/game_date_pacific=")
-        assert key.endswith("/"+sha256(args["Body"]).hexdigest()+".json")
-        assert args["IfNoneMatch"] == "*"
-        if key in objects:
+        assert key.endswith("/latest.json") or key.endswith("/"+sha256(args["Body"]).hexdigest()+".json")
+        if args.get("IfNoneMatch") == "*" and key in objects:
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
+        if "IfMatch" in args and (key not in objects or sha256(objects[key]).hexdigest() != args["IfMatch"]):
             raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         objects[key] = args["Body"]
         writes.append(key)
@@ -108,8 +109,13 @@ def test_manual_job_publishes_all_teams_and_reuses_identical_inputs(roster_job):
     control_key = "lake/artifacts/rosters/season=2026-27/latest.json"
     objects[control_key] = b'{"unchanged_live_selection":true}'
     first = job.execute_in_process(partition_key=DAY.isoformat())
-    assert first.success and len(writes) == 1
+    assert first.success and len(writes) == 2
     artifact = json.loads(objects[writes[0]])
+    pointer = json.loads(objects[writes[1]])
+    assert pointer == {
+        "schema_version": 1, "season": SEASON, "game_date_pacific": str(DAY),
+        "uri": "s3://nba-gestalt-data/"+writes[0], "sha256": sha256(objects[writes[0]]).hexdigest(),
+    }
     assert len(artifact["teams"]) == 30
     assert sum(len(ids) for ids in artifact["teams"].values()) == 60
     assert reads.count(raw_key) == 1
@@ -118,7 +124,7 @@ def test_manual_job_publishes_all_teams_and_reuses_identical_inputs(roster_job):
     assert "manual_name_repairs_used" not in artifact
 
     repeat = job.execute_in_process(partition_key=DAY.isoformat())
-    assert repeat.success and len(writes) == 1
+    assert repeat.success and len(writes) == 2
     metadata = repeat.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
     assert metadata["artifact_reused"].value is True
     assert objects[control_key] == b'{"unchanged_live_selection":true}'
@@ -134,7 +140,9 @@ def test_changed_inputs_create_another_readable_version(roster_job):
     source["transactions"][0]["TEAM_ID"] = NBA_TEAM_IDS[2]
     objects[key] = json.dumps(source).encode()
     assert job.execute_in_process(partition_key=DAY.isoformat()).success
-    assert len(writes) == 2 and writes[0] != writes[1]
+    assert len(writes) == 4 and writes[0] != writes[2]
+    pointer = json.loads(objects[writes[3]])
+    assert pointer["uri"] == "s3://nba-gestalt-data/"+writes[2]
     assert objects[first_key] == first
 
 
@@ -149,7 +157,7 @@ def test_signing_without_a_name_succeeds(roster_job):
     })
     objects[key] = json.dumps(source).encode()
     result = job.execute_in_process(partition_key=DAY.isoformat(), raise_on_error=False)
-    assert result.success and len(writes) == 1
+    assert result.success and len(writes) == 2
     record = json.loads(objects[writes[0]])
     assert 999999 in record["teams"][str(SECOND)]
 
@@ -170,3 +178,31 @@ def test_name_repair_dictionary_is_not_a_roster_input(roster_job):
     assert result.success and key not in reads
     record = json.loads(objects[writes[0]])
     assert "player_repairs" not in record["inputs"]
+
+
+def test_stale_run_cannot_replace_another_roster_selection(roster_job):
+    from copy import deepcopy
+    job, objects, _, writes, _ = roster_job
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    a = archive.NBARosterArchive()
+    ref, old_etag = a.selection(SEASON, str(DAY))
+    original = json.loads(objects[ref["uri"].removeprefix("s3://nba-gestalt-data/")])
+    revised = deepcopy(original)
+    revised["inputs"]["test_revision"] = 2
+    a.publish(revised, expected_etag=old_etag)
+    pointer_key = f"lake/artifacts/rosters/season={SEASON}/game_date_pacific={DAY}/latest.json"
+    accepted = objects[pointer_key]
+    with pytest.raises(ValueError, match="changed during"):
+        a.publish(original, expected_etag=old_etag)
+    assert objects[pointer_key] == accepted
+
+
+def test_failed_rebuild_keeps_accepted_roster_pointer(roster_job):
+    job, objects, _, writes, _ = roster_job
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    pointer_key = f"lake/artifacts/rosters/season={SEASON}/game_date_pacific={DAY}/latest.json"
+    accepted = objects[pointer_key]
+    before = list(writes)
+    del objects[f"lake/raw/nba/transactions/season={SEASON}/game_date_pacific=2026-11-07/latest.json"]
+    assert not job.execute_in_process(partition_key=str(DAY), raise_on_error=False).success
+    assert objects[pointer_key] == accepted and writes == before
