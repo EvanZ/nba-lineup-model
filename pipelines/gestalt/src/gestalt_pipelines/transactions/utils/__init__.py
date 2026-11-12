@@ -18,7 +18,9 @@ def official_json(payload: bytes) -> dict:
     return json.loads(payload, object_pairs_hook=_official_fields)
 
 
-def transactions_for_date(payload: bytes, day: date) -> list[dict]:
+def transaction_rows_by_date(payload: bytes, first: date, last: date) -> dict[date, list[dict]]:
+    if first > last:
+        raise ValueError("Transaction date range is reversed.")
     document = official_json(payload)
     movement = document.get("NBA_Player_Movement") if isinstance(document, dict) else None
     if not isinstance(movement, dict):
@@ -32,18 +34,22 @@ def transactions_for_date(payload: bytes, day: date) -> list[dict]:
     if not required <= {column["Name"] for column in columns}:
         raise ValueError("NBA movement feed is missing required transaction columns.")
 
-    selected = []
+    selected = {}
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("TRANSACTION_DATE"), str):
             raise ValueError("NBA movement feed contains an undated transaction.")
         # The source supplies calendar dates without actual transaction times.
         # Preserve its reported date; interpreting midnight as UTC would shift it.
         reported_date = datetime.fromisoformat(row["TRANSACTION_DATE"]).date()
-        if reported_date == day:
+        if first <= reported_date <= last:
             if not required <= row.keys():
                 raise ValueError("NBA movement feed contains an incomplete transaction.")
-            selected.append(row)
+            selected.setdefault(reported_date, []).append(row)
     return selected
+
+
+def transactions_for_date(payload: bytes, day: date) -> list[dict]:
+    return transaction_rows_by_date(payload, day, day).get(day, [])
 
 
 def merge_transactions(existing: list[dict], incoming: list[dict], *, day: date, observed_at: datetime) -> tuple[list[dict], int]:
@@ -84,4 +90,4 @@ def _row_key(row: dict) -> str:
     )
 
 
-__all__ = ["merge_transactions", "official_json", "transactions_for_date"]
+__all__ = ["merge_transactions", "official_json", "transactions_for_date", "transaction_rows_by_date"]

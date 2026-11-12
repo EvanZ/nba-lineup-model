@@ -37,7 +37,7 @@ flowchart LR
     transactions --> transactionFiles["Date transaction history in S3"]
     rosters --> rosterBuilder["rosters_by_date"]
     transactionFiles --> rosterBuilder
-    transactions -->|"New transaction rows: same-date run"| rosterBuilder
+    transactions -->|"New rows: affected date(s)"| rosterBuilder
     rosterMorning["3:30 a.m. Pacific: yesterday"] --> rosterBuilder
     boxArchive --> rosterBuilder
     catalog --> rosterBuilder
@@ -126,13 +126,13 @@ Runtime setup is self-contained: uv sync --project pipelines/gestalt --group dev
 
 ## Transactions
 
-The daily-partitioned transactions_by_date asset is captured by capture_nba_transactions. It reads the official NBA movement feed at https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json and selects rows whose TRANSACTION_DATE matches the selected calendar date. The source supplies date-only values encoded at midnight without a timezone; these values are not shifted from UTC.
+The daily-partitioned transactions_by_date asset is captured by capture_nba_transactions. It reads the official NBA movement feed at https://stats.nba.com/js/data/playermovement/NBA_Player_Movement.json and groups rows by their reported TRANSACTION_DATE. Historical manual runs select only the requested date. A current-day poll checks today and yesterday, catching rows added late under yesterday's date; it fetches the source once and does not scan older dates. The source supplies date-only values encoded at midnight without a timezone; these values are not shifted from UTC.
 
-The hourly schedule transactions_hourly refreshes today's Pacific partition at the top of each hour from 8 a.m. through 8 p.m. Pacific, including daylight-saving changes. Manual runs and backfills use the same job: choose Pacific date partitions in Dagster, with no YAML needed. The season and partition start use GESTALT_NBA_SEASON and GESTALT_NBA_SEASON_START_DATE.
+The hourly schedule transactions_hourly refreshes today's Pacific partition at the top of each hour from 8 a.m. through 8 p.m. Pacific and at 11:59 p.m. Pacific, including daylight-saving changes. Manual runs and backfills use the same job: choose Pacific date partitions in Dagster, with no YAML needed. The season and partition start use GESTALT_NBA_SEASON and GESTALT_NBA_SEASON_START_DATE.
 
-The output is lake/raw/nba/transactions/season=<season>/game_date_pacific=<date>/latest.json in nba-gestalt-data. Its visible provenance includes the official source URL, the full fetched feed's checksum, and last_polled_at. Only the selected date's transaction rows are stored. Each original NBA row is preserved and receives a UTC first_observed_at when first captured. Later polls append distinct rows and retain previously observed rows and their timestamps, including rows no longer returned by the source. The original NBA fields identify distinct rows; identical rows are not appended twice.
+The output is lake/raw/nba/transactions/season=<season>/game_date_pacific=<date>/latest.json in nba-gestalt-data. Its visible provenance includes the official source URL, the full fetched feed's checksum, and last_polled_at. Each date's file contains only that date's rows. Yesterday's file is left untouched if no new rows are found. Each original NBA row is preserved and receives a UTC first_observed_at when first captured. Later polls append distinct rows and retain previously observed rows and their timestamps, including rows no longer returned by the source. The original NBA fields identify distinct rows; identical rows are not appended twice.
 
-Historical backfills record the actual collection time, not a fabricated historical observation time. Roster reconstruction and replay rules remain a separate consumer decision. A date with no published transactions produces an empty transaction list. A failed fetch or invalid source leaves the saved history unchanged. Concurrent publication fails if the saved file changed after it was read. Transactions published after the last daily poll can be collected by a manual date rerun.
+Historical backfills record the actual collection time, not a fabricated historical observation time. Roster reconstruction and replay rules remain a separate consumer decision. A date with no published transactions produces an empty transaction list. A failed fetch or invalid source leaves the saved history unchanged. Concurrent publication fails if the saved file changed after it was read. The next day's polls also catch late transactions dated yesterday. Older dates require an explicit manual date rerun/backfill.
 
 ## Roster snapshots
 
@@ -146,7 +146,7 @@ The teams field is a map of all 30 NBA team IDs to sorted player-ID lists. No pl
 
 Accepted output is lake/artifacts/rosters/season=<season>/game_date_pacific=<date>/<sha256>.json in nba-gestalt-data. Processing timestamps appear in Dagster metadata rather than changing the immutable payload on each run. Identical inputs reuse the file; changed inputs create a new version, preserving earlier versions. Failed runs publish no partial roster.
 
-The rosters_morning schedule runs at 3:30 a.m. Pacific for yesterday's date, including dates without transactions. The roster_transactions_ready sensor also launches the same-date roster job after a successful capture_nba_transactions run adds new rows. Each source run ID identifies one request, preventing duplicate launches on repeated sensor ticks. Polls with no new rows do not trigger an extra roster run. Manual single-date jobs and backfills remain available independently. Roster outputs provide team-to-player-ID membership for the model updater; injury reconciliation is unchanged. No additional latest.json paths are created.
+The rosters_morning schedule runs at 3:30 a.m. Pacific for yesterday's date, including dates without transactions. The roster_transactions_ready sensor also rebuilds affected roster dates after a successful capture_nba_transactions run adds new rows. If yesterday gains a late transaction, it rebuilds yesterday and today so the membership correction carries forward. Each source run ID and date identifies one request, preventing duplicate launches on repeated sensor ticks. Polls with no new rows do not trigger an extra roster run. Manual single-date jobs and backfills remain available independently. Roster outputs provide team-to-player-ID membership for the model updater; injury reconciliation is unchanged. No additional latest.json paths are created.
 
 ## Injury reports
 

@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from dagster import (
-    DagsterEventType, DagsterInstance, DagsterRunStatus, RunRequest, SkipReason,
+    DagsterEventType, DagsterInstance, DagsterRunStatus, SensorResult, SkipReason,
     build_run_status_sensor_context, build_schedule_context,
 )
 
@@ -32,10 +32,12 @@ def test_new_transactions_trigger_same_date_and_stable_run_key(monkeypatch, day)
         ) as context:
             request = roster_transactions_ready(context)
             repeated = roster_transactions_ready(context)
-        assert isinstance(request, RunRequest)
-        assert request.partition_key == day
-        assert request.run_key == result.run_id == repeated.run_key
-        assert request.run_config == {}
+        assert isinstance(request, SensorResult)
+        [run] = request.run_requests
+        [again] = repeated.run_requests
+        assert run.partition_key == day
+        assert run.run_key == f"{result.run_id}:{day}" == again.run_key
+        assert run.run_config == {}
 
 
 def test_zero_new_rows_does_not_launch_rosters(monkeypatch):

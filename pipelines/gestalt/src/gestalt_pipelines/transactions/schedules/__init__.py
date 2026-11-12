@@ -1,4 +1,4 @@
-"""Hourly transaction polling during the Pacific daytime."""
+"""Daytime and end-of-day transaction polling in Pacific time."""
 
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -13,7 +13,7 @@ PACIFIC = ZoneInfo(transaction_dates.timezone)
 
 @schedule(
     job=capture_nba_transactions,
-    cron_schedule="0 8-20 * * *",
+    cron_schedule=["0 8-20 * * *", "59 23 * * *"],
     execution_timezone=transaction_dates.timezone,
     default_status=DefaultScheduleStatus.STOPPED,
     description="Refresh today's transactions hourly from 8 a.m. through 8 p.m. Pacific.",
@@ -21,7 +21,7 @@ PACIFIC = ZoneInfo(transaction_dates.timezone)
 def transactions_hourly(context: ScheduleEvaluationContext):
     tick = context.scheduled_execution_time.astimezone(PACIFIC)
     if datetime.now(UTC) - tick.astimezone(UTC) >= timedelta(hours=1):
-        return SkipReason("This transaction poll was missed. The next poll refreshes the current date.")
+        return SkipReason("This transaction poll was missed. The next poll checks today and yesterday.")
     return RunRequest(run_key=tick.astimezone(UTC).isoformat(), partition_key=tick.date().isoformat())
 
 
