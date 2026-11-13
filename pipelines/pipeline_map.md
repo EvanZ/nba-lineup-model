@@ -6,13 +6,15 @@ The Dagster code location is **nba_gestalt_pipelines**. Its definitions live in 
 
 ~~~mermaid
 flowchart LR
+    playerIndex["Official PlayerIndex JSON and metadata in S3"] --> playerNames["Shared NBAPlayerNamesResource"]
+    playerNames --> reconcile
     scheduleSource["Official NBA season schedule"] --> schedule["nba_season_schedule"]
     schedule --> catalog["Versioned schedule JSON in S3"]
     nba["Official NBA injury PDFs"] --> capture["injury_pdf_archive"]
     capture --> extract["injury_report_extractions"]
     extract --> reconcile["injury_status_by_game_date"]
     catalog --> reconcile
-    rosters["Official team roster snapshots in S3"] --> reconcile
+    rosters["Official opening roster snapshots in S3"]
     repairs["Season player repair dictionary"] --> reconcile
     reconcile --> statuses["Versioned statuses and date latest.json"]
     oddsSource["The Odds API"] --> odds["nba_market_odds"]
@@ -42,6 +44,7 @@ flowchart LR
     boxArchive --> rosterBuilder
     catalog --> rosterBuilder
     rosterBuilder --> rosterVersions["30-team roster versions and date latest.json in S3"]
+    rosterVersions -->|"Newest roster date <= game date"| reconcile
     priorMinutes["Frozen conditional priors and historical-role lookup"] --> minutes["player_minutes"]
     stintsArchive --> minutes
     boxArchive --> minutes
@@ -50,6 +53,12 @@ flowchart LR
     catalog --> minutes
     minutes --> minutesArchive["Versioned conditional-minutes state and date latest.json"]
     minutesArchive -->|"Previous Pacific date"| minutes
+    minutesArchive --> gameMinutes["game_minutes"]
+    rosterVersions --> gameMinutes
+    statuses --> gameMinutes
+    catalog --> gameMinutes
+    gameMinutes --> gameAllocations["Per-game minutes JSON and latest.json"]
+
 ~~~
 
 The arrows show which data each stage reads. Injury reconciliation and odds capture load the existing catalog through [NBAScheduleResource](gestalt/src/gestalt_pipelines/resources/nba_schedule.py), so the schedule job runs on its own cadence. The scoreboard runs in this same code location. Website and forecast integration will use the injury status handoff in separate work.
@@ -263,3 +272,63 @@ A failed run records its exact inputs and diagnostics in S3 and Dagster. After r
 Shared NBA team IDs, Pacific/Eastern timezone objects, the default data bucket, and the error-root prefix live in `gestalt_pipelines/utils/__init__.py`. Estimator settings and pipeline-specific paths remain with their owning pipeline.
 
 Initial v1 validation covered October 20 through November 10, 2026: 22 ordered daily states and all 160 games, including the November 3 no-game carry. The minutes_ready sensor provides morning automation and is enabled. The November 12 roster-pointer backfill verified all 23 dates from October 20 through November 11 without changing selected roster versions. Detailed arithmetic, named-player checks, remaining acceptance, and the exact accepted references are recorded in [issue #74](https://github.com/EvanZ/nba-lineup-model/issues/74).
+
+## Game-specific minutes projections
+
+The game_minutes asset and project_game_minutes job live in the minutes pipeline. Each Pacific date partition writes separate game files, each containing both teams and all players in the selected rosters. This supplies allocations for the future prediction/API integration; it does not run ratings/HCA updates, collect odds, or publish a website release.
+
+The calculation ports the existing Schedule-tab behavior: apply Out=0, Doubtful=0.25, Questionable=0.5, Probable=0.75, Available=1; keep the top 15 injury-adjusted weights per team; allocate 240 minutes proportionally. Unlisted players in a pending team report retain an unknown public status and use multiplier 1 for allocation. Individual allocation caps remain deferred. The existing daily updater's prior-relative clipping also remains unchanged.
+
+Player identity and injury reconciliation belong to injury_status_by_game_date. This asset consumes that accepted data directly by NBA player ID. It does not parse reports, repeat name matching, read the repair dictionary, or require every injury-report row to appear in the allocation roster. Only rostered players enter the allocation pool; additional accepted Out rows do not block a projection.
+
+| Output | S3 key under nba-gestalt-data |
+| --- | --- |
+| Immutable per-game JSON | lake/artifacts/game_minutes/season=<season>/model_version=v1/game_date_pacific=<date>/game_id=<id>/<sha256>.json |
+| Accepted game selection | Same game prefix, latest.json |
+| Failures/recoveries | lake/artifacts/errors/pipeline=minutes/season=<season>/occurred_date_pacific=<date>/<event_id>.{failure,recovery}.json; stage game_minutes |
+
+The JSON records each player's conditional estimate, injury status and multiplier, adjusted weight, selected-rotation flag, final minutes, both team totals, exact input references/checksums, model settings, and implementation identity. Identical inputs reuse the immutable output and leave its selection unchanged. Conditional pointer writes prevent competing runs from silently replacing each other.
+
+For live partitions (today/tomorrow), the job uses the latest completed daily minutes state through yesterday and the newest accepted roster snapshot dated no later than today. Reconciled injury data is selected for each game's Pacific date. Each game stops advancing at scheduled tipoff. A job that finishes after tipoff leaves the accepted pointer intact.
+
+The game_minutes_ready sensor checks accepted source selections about once a minute and requests upcoming date jobs when the daily baseline, roster, injury, or schedule selection changes. It skips dates already running and unchanged projections; it does not automatically backfill history. A failed input selection can be repaired and the job re-executed from failure to create a linked recovery record.
+
+For historical backfill, select the past date partitions of game_minutes, or the project_game_minutes job. Each date reads the immediately previous date's accepted daily state: November 4 uses November 3. Opening day uses the approved frozen starting priors directly, without inventing a previous-day state file. Other dates fail if their required previous state is missing. Historical membership comes from that date's accepted rosters_by_date selection, and injuries come from the producer's saved pre-scheduled-tipoff selection. These game projections are independent date calculations, so they do not require another ordered learning-state replay. The game asset backfill uses one partition per run. A date without games succeeds without creating game files.
+
+Historical files carry purpose=historical_replay and explicitly identify reconstructed game-date roster evidence. They are reconstructed results, not authenticated projections published before the game. Existing files with purpose=pregame_projection are preserved: backfilling a historical date never replaces its genuinely saved pregame selection. Historical runs do not retrain models, alter daily minutes states, or publish/replace website forecasts.
+
+## Shared player names
+
+`NBAPlayerNamesResource` is a shared Dagster resource exported from `gestalt_pipelines.resources`. It reads `s3://nba-gestalt-data/lake/raw/playerindex/<configured-season>.json` and the matching `.meta.json` sidecar. `load()` returns an NBA player ID → official name dictionary plus exact raw/metadata references and SHA-256 checksums. No asset, job, schedule, generated lookup, or new S3 location is required.
+
+The resource verifies the official NBA PlayerIndex URL, season, historical/all-team request parameters, source checksum, and player identities. It reads S3 on each call, so a replacement upload is used by the next run once its metadata checksum is updated. The current-season upload includes historical names. Player identity is separate from dated team membership; the existing season-scoped injury repair dictionary continues to handle spelling/name-order exceptions such as Cenac and Yang. Repairs are not copied into PlayerIndex or a second alias file.
+
+### Manual PlayerIndex acquisition (November 12, 2026 Pacific)
+
+EC2 requests to the NBA Stats PlayerIndex endpoint timed out. Evan obtained the official response through the browser and uploaded it to `s3://nba-gestalt-data/lake/raw/playerindex/2026-27.json`. This is an operator acquisition of official NBA data, not an alternate data provider.
+
+The uploaded file contains **5,197 player identities**, SHA-256 `251af366e1fe85491b2543e736f8e67ff91cb0881c97975be8cfd428e887b129`. Its sidecar is `s3://nba-gestalt-data/lake/raw/playerindex/2026-27.meta.json`, recording the operator-supplied NBA URL/parameters, checksum, and `acquisition_method: manual_browser_response`. The S3 upload time is `2026-11-13T02:54:40+00:00` (November 12 at 6:54:40 p.m. Pacific). The exact download time is unknown, so `fetched_at` is explicitly null; do not interpret upload time as download time.
+
+The source request was `https://stats.nba.com/stats/playerindex?College=&Country=&DraftPick=&DraftRound=&DraftYear=&Height=&Historical=1&LeagueID=00&Season=2026-27&SeasonType=Regular+Season&TeamID=0&Weight=`. Existing historical raw files end at 2025–26. No scheduled PlayerIndex refresh is enabled. The shared name resource reads this saved input directly. Injury reconciliation uses it with the newest accepted roster dated on or before the game date and the existing repair dictionary.
+
+## Injury roster dependency correction (#75)
+
+`injury_status_by_game_date` declares its dependency on `rosters_by_date`. Every manual, backfill, live, or failed-run retry selects the newest accepted roster **dated on or before the game-date partition**, then reads that date's `lake/artifacts/rosters/season=<season>/game_date_pacific=<selected-date>/latest.json` through `NBARosterArchive`. It verifies the selected immutable file and records its URI/checksum in `inputs.rosters` and its actual date in `roster_dates_pacific`. November 13 can use November 12 until a November 13 selection exists; historical dates never use later-dated rosters. No further roster run is required when an eligible selection exists. Fail clearly only when no eligible roster exists.
+
+The ID-only membership list is paired with names from `NBAPlayerNamesResource` for existing team-scoped injury name matching. A name absent from the selected team roster is checked against the full official PlayerIndex. A unique match retains the report's team/status, records `identity_source=player_index` and `identity_warning=not_on_selected_roster`, and emits a warning without changing roster membership. Unknown/ambiguous names and conflicting repairs still produce reconciliation errors; the season repair dictionary continues to resolve name exceptions, including IDs absent from the roster. No additional downstream roster-membership gate is introduced. `inputs.player_names` records the raw PlayerIndex and metadata references/checksums. Report selection, scheduled-tipoff cutoff, player repair location, status layout, error/recovery layout, and model version are unchanged.
+
+`injury_report_dates_ready` checks today/tomorrow's open games about once a minute. Its run key includes selected extractions, newest eligible roster pointer, PlayerIndex references, schedule, and repair checksum, so a roster-only or repair change can trigger reconciliation. The asset selects the newest eligible roster again at execution rather than receiving a fixed opening roster in launch config. If no eligible roster exists, the job fails clearly; publishing an eligible roster changes the sensor key and permits a new run. Raw PDF collection/extraction remain independent.
+
+Failed-run retries preserve the failed attempt's selected schedule/reports for recovery comparison, but read the newest eligible roster and current PlayerIndex/repair inputs. Latest status publication checks those selections again, leaving the pointer unchanged if an input changed during processing. Existing old runs whose launch YAML contains removed `roster_metadata` must be launched as fresh date runs under this config; no legacy opening-roster override is supported. New failed runs can be re-executed from failure after repairing S3 inputs.
+
+Reconciliation backfills and any resulting ordered daily-minutes replay/game-minutes correction require their separately agreed date scope. Implementing this resource/dependency fix does not run them or alter existing historical S3 outputs.
+
+### Known-player roster warnings
+
+Known PlayerIndex identities absent from the selected team roster do not fail reconciliation. Their report rows are retained with a warning flag. Each run writes an immutable event to the existing injury error directory:
+
+`lake/artifacts/errors/pipeline=injury_reports/season=<season>/occurred_date_pacific=<run-date>/<event-id>.warning.json`
+
+The event has `status=warning`, player/game/team/report details, exact roster/PlayerIndex/repair/extraction inputs, the status artifact path, and the Dagster run ID. Occurrence date is when processing ran, including during historical backfill. Dagster also emits a WARNING log and includes `warning_count` and warning artifact references in run materialization metadata. No email/push integration is added. Genuine unresolved or ambiguous identities continue to fail the run with `.failure.json`; a linked successful retry can emit both a recovery and a warning.
+
+Examples are Blake Hinson (Utah, October 21) and Tristan Enaruna (Cleveland, November 7): the official injury report lists each player, while the date's reconstructed roster excludes him after a date-only waiver. PlayerIndex identifies them without adding repair-dictionary entries. Resolver code version v5 identifies this processing change; conditional-minutes model_version remains v1, with no model replay performed.

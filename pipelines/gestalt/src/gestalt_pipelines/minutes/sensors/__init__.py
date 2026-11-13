@@ -31,3 +31,6 @@ minutes_ready = AutomationConditionSensorDefinition(
 )
 
 __all__ = ["minutes_ready", "minutes_ready_condition"]
+
+from .projections import game_minutes_ready
+__all__ += ["game_minutes_ready"]

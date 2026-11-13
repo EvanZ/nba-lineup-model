@@ -11,4 +11,9 @@ minutes_dates = DailyPartitionsDefinition(
     timezone=PACIFIC.key,
 )
 
-__all__ = ["minutes_dates"]
+game_minutes_dates = DailyPartitionsDefinition(
+    start_date=os.environ["GESTALT_NBA_SEASON_START_DATE"],
+    timezone=PACIFIC.key, end_offset=2,
+)
+
+__all__ = ["minutes_dates", "game_minutes_dates"]

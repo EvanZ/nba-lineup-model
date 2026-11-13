@@ -529,23 +529,20 @@ def test_live_sensors_follow_committed_objects_and_pin_reconciliation_inputs(cap
         assert reference == schedule_ref
         return ([game] if requested == day else []), reference
 
-    def roster(_, ref, season):
-        assert season == "2026-27"
-        team = ref if isinstance(ref, int) else int(ref["uri"].rsplit("/", 1)[1].split(".")[0])
-        key = f"lake/raw/commonteamroster/{season}/{team}.meta.json"
-        payload = str(team).encode()
-        storage.objects[key] = (payload, {})
-        metadata = {"uri": f"s3://nba-gestalt-data/{key}", "sha256": sha256(payload).hexdigest()}
-        return team, {team: "Fixture Player"}, {
-            "metadata": metadata, "fetched_at": "2026-10-20T05:00:00Z", "roster_date_pacific": "2026-10-19",
-        }
-
+    from gestalt_pipelines.rosters.resources import NBARosterArchive
+    from gestalt_pipelines.resources import NBAPlayerNamesResource
+    roster_refs = [{"uri": "s3://fixture/dated_roster", "sha256": "a"*64}]
+    monkeypatch.setattr(NBARosterArchive, "latest_selection", lambda *_: (day.isoformat(), roster_refs[0]))
+    monkeypatch.setattr(NBARosterArchive, "load", lambda *_: (
+        {"game_date_pacific": day.isoformat(), "teams": {str(game["away_team_id"]): [1], str(game["home_team_id"]): [2]}}, roster_refs[0],
+    ))
+    monkeypatch.setattr(NBAPlayerNamesResource, "load", lambda _: (
+        {1: "Fixture One", 2: "Fixture Two"}, {"uri": "s3://fixture/names", "sha256": "b"*64},
+    ))
     monkeypatch.setattr(live, "datetime", Clock)
     monkeypatch.setattr(schedules, "datetime", Clock)
     monkeypatch.setattr(NBAScheduleResource, "load", lambda *_: (b"{}", schedule_ref))
     monkeypatch.setattr(NBAScheduleResource, "games_for_date", slate)
-    monkeypatch.setattr(live, "read_roster", roster)
-    monkeypatch.setattr(reconcile, "read_roster", roster)
     monkeypatch.setattr(extract, "parse_pdf", lambda _: {
         "game_team_reports": {f"{day}|BOS@NYK": {
             "BOS": {"status": "submitted"}, "NYK": {"status": "not_yet_submitted"},
@@ -558,6 +555,8 @@ def test_live_sensors_follow_committed_objects_and_pin_reconciliation_inputs(cap
         resources = {"injury_report_archive": archive_resource}
         if sensor is injury_report_dates_ready:
             resources["nba_schedule"] = schedule
+            resources["nba_roster_archive"] = NBARosterArchive()
+            resources["nba_player_names"] = NBAPlayerNamesResource(season="2026-27")
         with build_sensor_context(
             repository_def=defs.get_repository_def(), resources=resources, cursor=cursor,
         ) as context:
@@ -610,7 +609,7 @@ def test_live_sensors_follow_committed_objects_and_pin_reconciliation_inputs(cap
     assert request.partition_key == "2026-11-08"
     config = request.run_config["ops"]["injury_status_by_game_date"]["config"]
     assert config["live"] and config["schedule"] == schedule_ref
-    assert len(config["roster_metadata"]) == 2
+    assert "roster_metadata" not in config
     assert "/published_at=20261108T044500Z/" in config["extractions"]["1"]["uri"]
     reconcile_job = defs.resolve_job_def("reconcile_injury_date")
     first = reconcile_job.execute_in_process(
@@ -622,7 +621,11 @@ def test_live_sensors_follow_committed_objects_and_pin_reconciliation_inputs(cap
     assert first_metadata["latest_update"].value == "published"
     assert first_pointer["changed_game_ids"] == ["1"]
     assert first_pointer["uri"] == first_metadata["statuses"].value["uri"]
-    assert not evaluate(injury_report_dates_ready, reconcile_tick.cursor).run_requests
+    assert evaluate(injury_report_dates_ready, reconcile_tick.cursor).run_requests[0].run_key == request.run_key
+    roster_refs[0] = {**roster_refs[0], "sha256": "c"*64}
+    changed_roster = evaluate(injury_report_dates_ready, reconcile_tick.cursor).run_requests[0]
+    assert changed_roster.run_key != request.run_key
+    roster_refs[0] = {**roster_refs[0], "sha256": "a"*64}
 
     storage.now = now[0] + timedelta(minutes=1)
     now[0] = storage.now + timedelta(minutes=1)

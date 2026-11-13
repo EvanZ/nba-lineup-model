@@ -14,3 +14,12 @@ __all__ = [
     "implementation_identity", "initialize_player", "json_bytes", "model_metadata",
     "official_json", "role_minutes", "update_state", "validate_priors", "validate_state",
 ]
+
+from .projection import (
+    PROJECTION_VERSION, build_game_projection, projection_fingerprint,
+    projection_model, validate_game_projection,
+)
+__all__ += [
+    "PROJECTION_VERSION", "build_game_projection", "projection_fingerprint",
+    "projection_model", "validate_game_projection",
+]

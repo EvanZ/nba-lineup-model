@@ -1,4 +1,4 @@
-"""Write immutable injury processing failures and linked recoveries."""
+"""Write immutable injury processing failures, recoveries, and warnings."""
 
 import json
 import re
@@ -22,7 +22,7 @@ def row_key(row: dict) -> tuple[str, str, int]:
 
 def _event_key(event: dict) -> str:
     occurred = datetime.fromisoformat(event["timestamp"]).astimezone(PACIFIC).date()
-    suffix = {"failed": "failure", "recovered": "recovery"}[event["status"]]
+    suffix = {"failed": "failure", "recovered": "recovery", "warning": "warning"}[event["status"]]
     return (
         f"{ERROR_PREFIX}season={event['season']}/occurred_date_pacific={occurred}/"
         f"{event['event_id']}.{suffix}.json"
@@ -52,11 +52,18 @@ def _read_failure(
 def _save_event(
     archive: InjuryReportArchive, *, occurred_at: datetime, run_id: str, game_date: str,
     extraction: dict, artifact_path: str, row: dict, original: dict | None = None,
+    warning: bool = False, inputs: dict | None = None,
 ) -> dict:
-    status = "recovered" if original else "failed"
+    status = "warning" if warning else "recovered" if original else "failed"
     identity = [run_id, row_key(row), status, original]
     event_id = sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    if original:
+    if warning:
+        message = (
+            f"Resolved {row['player_name']} to NBA player ID {row['player_id']} using PlayerIndex, "
+            f"but the player is absent from {row['team']}'s selected roster. "
+            "Retained the injury report's team and status."
+        )
+    elif original:
         message = f"Resolved {row['player_name']} ({row['team']}) to NBA player ID {row['player_id']}."
     elif row.get("identity_status") == "conflicting_repair":
         message = f"The repair dictionary disagrees with the roster for {row['player_name']} ({row['team']})."
@@ -78,6 +85,8 @@ def _save_event(
     }
     if original:
         event["original_failure"] = original
+    if warning:
+        event["inputs"] = inputs
     return archive.save_json(_event_key(event), event)
 
 
@@ -134,6 +143,21 @@ def write_identity_events(
         elif original:
             recoveries.append(_save_event(archive, **common, extraction=extraction, row=row, original=original))
     return open_failures, recoveries
+
+
+def write_identity_warnings(
+    archive: InjuryReportArchive, rows: dict, *, occurred_at: datetime, run_id: str,
+    game_date: str, extractions: dict, artifact_path: str, inputs: dict,
+) -> list[dict]:
+    """Persist known-player roster mismatches without opening failure incidents."""
+    return [
+        _save_event(
+            archive, occurred_at=occurred_at, run_id=run_id, game_date=game_date,
+            extraction=extractions[row["game_id"]], artifact_path=artifact_path,
+            row=row, warning=True, inputs=inputs,
+        )
+        for row in rows.values() if row.get("identity_warning")
+    ]
 
 
 def read_failed_run(instance, run_id: str, game_date: str) -> tuple[dict, list[dict]] | None:

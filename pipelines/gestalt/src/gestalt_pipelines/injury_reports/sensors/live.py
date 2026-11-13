@@ -6,11 +6,12 @@ from hashlib import sha256
 
 from dagster import DefaultSensorStatus, RunRequest, SensorEvaluationContext, SensorResult, sensor
 
-from ...resources import NBAScheduleResource
+from ...resources import NBAPlayerNamesResource, NBAScheduleResource
+from ...rosters.resources import NBARosterArchive
 from ..jobs import extract_injury_pdf, reconcile_injury_date
 from ..partitions import injury_game_dates, injury_publication_dates
-from ..resources import EXTRACTION_PREFIX, InjuryReportArchive
-from ..utils import PARSER_VERSION, read_extraction, read_roster, report_game_key, select_extractions
+from ..resources import InjuryReportArchive
+from ..utils import PARSER_VERSION, RESOLVER_VERSION, select_extractions
 
 from ...utils import EASTERN, PACIFIC
 
@@ -56,57 +57,47 @@ def new_injury_pdf(
 @sensor(job=reconcile_injury_date, minimum_interval_seconds=60, default_status=DefaultSensorStatus.STOPPED)
 def injury_report_dates_ready(
     context: SensorEvaluationContext, injury_report_archive: InjuryReportArchive, nba_schedule: NBAScheduleResource,
+    nba_roster_archive: NBARosterArchive, nba_player_names: NBAPlayerNamesResource,
 ) -> SensorResult:
-    """Reconcile open games affected by newly committed extractions."""
+    """Reconcile open dates when selected reports, rosters, names, or repairs change."""
     now = datetime.now(UTC)
-    start, end, days = _scan_window(context, now)
-    season = injury_report_archive.season
-    prefix = f"{EXTRACTION_PREFIX}/season={season}/"
-    changed = {}
-    for day in days:
-        for committed_at, uri in injury_report_archive.extraction_records(day, PARSER_VERSION):
-            if start <= committed_at < end:
-                payload, _ = injury_report_archive.read_input(uri, prefix=prefix)
-                changed[uri] = read_extraction(payload, uri, season)
-    if not changed:
-        return SensorResult(cursor=end.isoformat())
-
-    covered = {key for report in changed.values() for key in report["game_team_reports"]}
-    _, schedule_ref = nba_schedule.load()
     today = now.astimezone(PACIFIC).date()
-    roster_refs = {}
+    season = injury_report_archive.season
+    _, schedule_ref = nba_schedule.load()
+    _, names_ref = nba_player_names.load()
+    repairs = injury_report_archive.read_player_repairs()
     requests = []
     for day in (today, today + timedelta(days=1)):
         if day < injury_game_dates.start.date():
             continue
         games, _ = nba_schedule.games_for_date(day, schedule_ref, allow_empty=True)
-        affected = [
-            game["game_id"] for game in games
-            if game["game_time_utc"] > now and report_game_key(game) in covered
-        ]
-        if not affected:
+        open_ids = {game["game_id"] for game in games if game["game_time_utc"] > now}
+        if not open_ids:
             continue
         selected = select_extractions(
-            injury_report_archive, games, first_date=min(days), now=now, committed_only=True,
+            injury_report_archive, games, first_date=injury_publication_dates.start.date(),
+            now=now, committed_only=True,
         )
-        if not any(game_id in selected and selected[game_id][1]["uri"] in changed for game_id in affected):
+        if not open_ids.intersection(selected):
             continue
-
-        teams = {game[field] for game in games for field in ("away_team_id", "home_team_id")}
-        for team in sorted(teams - roster_refs.keys()):
-            _, _, evidence = read_roster(injury_report_archive, team, season)
-            roster_refs[team] = evidence["metadata"]
+        # Select the newest accepted roster no later than the game date.
+        # The asset selects again at execution; missing evidence fails visibly.
+        try:
+            _, roster_ref = nba_roster_archive.latest_selection(season, day)
+        except FileNotFoundError:
+            roster_ref = None
         config = {
             "live": True,
             "schedule": schedule_ref,
             "extractions": {game_id: ref for game_id, (_, ref) in selected.items()},
-            "roster_metadata": [roster_refs[team] for team in sorted(teams)],
         }
-        identity = sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
+        sources = {**config, "resolver_version": RESOLVER_VERSION, "rosters": roster_ref, "player_names": names_ref,
+                   "player_repairs_sha256": repairs["sha256"]}
+        identity = sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()
         requests.append(RunRequest(
             run_key=f"reconcile:{day}:{identity}",
             partition_key=day.isoformat(),
             tags={"dagster/priority": "5"},
             run_config={"ops": {"injury_status_by_game_date": {"config": config}}},
         ))
-    return SensorResult(run_requests=requests, cursor=end.isoformat())
+    return SensorResult(run_requests=requests)

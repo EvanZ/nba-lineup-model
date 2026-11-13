@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gestalt_pipelines.injury_reports.utils import read_roster, reconcile_games, select_extractions
+from gestalt_pipelines.injury_reports.utils import reconcile_games, select_extractions
 
 DAY = date(2026, 11, 8)
 EARLY_GAME = {
@@ -102,48 +102,6 @@ def test_select_extractions_uses_latest_eligible_report_per_game(monkeypatch):
     }
 
 
-def test_roster_metadata_retains_capture_date_and_checks_official_team_id():
-    team = 1
-    season = "2026-27"
-    prefix = f"lake/raw/commonteamroster/{season}/"
-    root = f"s3://nba-gestalt-data/{prefix}{team}"
-    roster = {
-        "resultSets": [{
-            "name": "CommonTeamRoster",
-            "headers": ["PLAYER", "TeamID", "PLAYER_ID"],
-            "rowSet": [["Test Player", team, 101]],
-        }],
-    }
-    metadata = {
-        "endpoint": "commonteamroster", "season": season, "team_id": team,
-        "url": "https://stats.nba.com/stats/commonteamroster",
-        "fetched_at": "2026-10-20T04:58:02Z",
-    }
-
-    def load():
-        raw = json.dumps(roster).encode()
-        sidecar = json.dumps({**metadata, "sha256": sha256(raw).hexdigest()}).encode()
-        objects = {f"{root}.json": raw, f"{root}.meta.json": sidecar}
-
-        def read_pinned(uri, expected, *, prefix):
-            assert prefix == f"lake/raw/commonteamroster/{season}/"
-            assert sha256(objects[uri]).hexdigest() == expected
-            return objects[uri]
-
-        return read_roster(
-            SimpleNamespace(read_pinned=read_pinned),
-            {"uri": f"{root}.meta.json", "sha256": sha256(sidecar).hexdigest()},
-            season,
-        )
-
-    team_id, players, evidence = load()
-    assert team_id == team and players == {101: "Test Player"}
-    assert evidence["roster_date_pacific"] == "2026-10-19"
-    roster["resultSets"][0]["rowSet"][0][1] = 2
-    with pytest.raises(ValueError, match="Invalid official roster evidence"):
-        load()
-
-
 @pytest.mark.parametrize("automatic", [False, True])
 def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypatch, automatic):
     from datetime import UTC, timedelta
@@ -172,7 +130,7 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     def save_json(_archive, key, record):
         return put(f"s3://nba-gestalt-data/{key}", json.dumps(record).encode())
 
-    roster_refs = [put(f"s3://fixture/{team}", b"roster") for team in (1, 2)]
+    roster_ref = {"uri": "s3://fixture/dated_roster", "sha256": "a"*64}
     game = {**EARLY_GAME, "game_time_utc": datetime.now(UTC) + timedelta(hours=1)}
     report = {
         "published_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
@@ -183,7 +141,7 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
         "players": [
             {"player_name": name, "game_date": DAY.isoformat(), "matchup": "AAA@BBB",
              "team": team, "status": "Out", "reason": "Injury"}
-            for name, team in (("Original Name", "AAA"), ("Report Spelling", "AAA"), ("New Player", "BBB"))
+            for name, team in (("Original Name", "AAA"), ("Report Spelling", "AAA"), ("New Player", "BBB"), ("Known Waived Player", "AAA"))
         ],
     }
     repairs_uri = (
@@ -209,16 +167,15 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     monkeypatch.setattr(asset.NBAScheduleResource, "games_for_date", games_for_date)
     monkeypatch.setattr(asset, "read_extraction", lambda *_: report)
 
-    def roster(_archive, ref, _season):
-        if isinstance(ref, int):
-            ref = roster_refs[ref - 1]
-        team = int(ref["uri"].rsplit("/", 1)[1])
-        players = {101: "Original Name", 102: "Roster Spelling"} if team == 1 else {201: "Other Player"}
-        return team, players, {
-            "metadata": ref, "fetched_at": "2026-10-20T04:58:02Z", "roster_date_pacific": "2026-10-19",
-        }
-
-    monkeypatch.setattr(asset, "read_roster", roster)
+    from gestalt_pipelines.resources import NBAPlayerNamesResource
+    from gestalt_pipelines.rosters.resources import NBARosterArchive
+    roster_record = {"game_date_pacific": DAY.isoformat(), "teams": {"1": [101, 102], "2": [201]}}
+    monkeypatch.setattr(NBARosterArchive, "load", lambda _, season, day: (roster_record, roster_ref))
+    monkeypatch.setattr(NBARosterArchive, "latest_selection", lambda _, season, day: (DAY.isoformat(), roster_ref))
+    monkeypatch.setattr(NBAPlayerNamesResource, "load", lambda _: (
+        {101: "Original Name", 102: "Roster Spelling", 201: "Other Player", 301: "Known Waived Player"},
+        {"uri": "s3://fixture/playerindex", "sha256": "b"*64},
+    ))
     job = defs.resolve_job_def("reconcile_injury_date").with_executor_def(in_process_executor)
 
     def run(instance, config):
@@ -233,7 +190,7 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     extraction_ref = put("s3://fixture/extraction", b"report")
     monkeypatch.setattr(asset, "select_extractions", lambda *_, **__: {"early": (report, extraction_ref)})
     with DagsterInstance.ephemeral() as instance:
-        config = {} if automatic else {"roster_metadata": roster_refs, "extraction": extraction_ref}
+        config = {} if automatic else {"extraction": extraction_ref}
         failed = run(instance, config)
         assert not failed.success
         assert not any("injury_status_by_game_date" in uri and uri.endswith("/latest.json") for uri in objects)
@@ -256,9 +213,18 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     assert replay.success
     metadata = replay.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
     assert metadata["latest_update"].value == "schedule_changed"
+    assert metadata["warning_count"].value == 1
+    warning_refs = metadata["warnings"].value
+    assert warning_refs[0]["uri"].endswith(".warning.json")
+    warning = json.loads(objects[warning_refs[0]["uri"]])
+    assert warning["status"] == "warning"
+    assert warning["row"]["player_id"] == 301
+    assert warning["inputs"]["rosters"] == roster_ref
     assert sum(uri.endswith(".recovery.json") for uri in objects) == 2
     corrected = [json.loads(raw) for uri, raw in objects.items() if uri.endswith("/statuses.json")][-1]
     assert corrected["complete"]
+    assert corrected["inputs"]["rosters"] == roster_ref
+    assert corrected["roster_dates_pacific"] == [DAY.isoformat()]
     assert corrected["inputs"]["schedule"] == schedule_ref
     if automatic:
         assert corrected["inputs"]["extractions"] == {"early": extraction_ref}
@@ -267,5 +233,36 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     assert corrected["inputs"]["player_repairs"] == {**repaired_ref, "entries": repairs}
     teams = corrected["games"]["early"]["teams"]
     assert teams["1"]["players"]["101"]["identity_source"] == "roster"
+    assert teams["1"]["players"]["301"]["identity_source"] == "player_index"
+    assert teams["1"]["players"]["301"]["identity_warning"] == "not_on_selected_roster"
     assert teams["1"]["players"]["102"]["identity_source"] == "repair_dictionary"
     assert teams["2"]["players"]["202"]["identity_source"] == "repair_dictionary"
+
+
+@pytest.mark.parametrize("names, expected", [
+    ({50: "Known Player"}, "resolved"),
+    ({50: "Known Player", 51: "Known Player"}, "ambiguous"),
+    ({50: "Someone Else"}, "unmatched"),
+])
+def test_known_off_roster_player_warns_but_unknown_and_ambiguous_still_fail(names, expected):
+    report = {
+        "published_at": "2026-11-08T17:45:00Z", "pdf_uri": "s3://fixture/report.pdf",
+        "game_team_reports": {"2026-11-08|AAA@BBB": {
+            "AAA": {"status": "submitted"}, "BBB": {"status": "submitted"},
+        }},
+        "players": [{"player_name": "Known Player", "game_date": "2026-11-08",
+                     "matchup": "AAA@BBB", "team": "AAA", "status": "Out", "reason": "Injury"}],
+    }
+    rosters = {1: {101: "Roster Player"}, 2: {201: "Other Player"}}
+    result = reconcile_games([EARLY_GAME], rosters, report, {}, names)["early"]
+    team = result["teams"]["1"]
+    if expected == "resolved":
+        row = team["players"]["50"]
+        assert row["identity_source"] == "player_index"
+        assert row["identity_warning"] == "not_on_selected_roster"
+        assert row["team"] == "AAA" and row["status"] == "Out"
+        assert result["complete"] and not team["unresolved_players"]
+        assert 50 not in rosters[1]
+    else:
+        assert not result["complete"] and not team["players"]
+        assert team["unresolved_players"][0]["identity_status"] == expected

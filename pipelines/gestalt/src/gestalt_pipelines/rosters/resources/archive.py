@@ -201,6 +201,40 @@ class NBARosterArchive(ConfigurableResource):
             raise ValueError("Invalid accepted roster selection.")
         return {"uri": pointer["uri"], "sha256": digest}, response["ETag"]
 
+    def load(self, season: str, day: str) -> tuple[dict, dict]:
+        """Read this date's accepted roster; never substitute another date."""
+        reference, _ = self.selection(season, day)
+        if reference is None:
+            raise FileNotFoundError(
+                f"Build rosters for {day} first: missing s3://{self.bucket}/{ROOT}/"
+                f"season={season}/game_date_pacific={day}/latest.json."
+            )
+        key = reference["uri"].removeprefix(f"s3://{self.bucket}/")
+        raw, actual = self._read(boto3.client("s3"), key)
+        record = official_json(raw)
+        if (actual["sha256"] != reference["sha256"] or record["season"] != season
+                or record["game_date_pacific"] != day or record["schema_version"] != 1):
+            raise ValueError("Accepted roster bytes do not match the selected season/date/checksum.")
+        return record, reference
+
+    def latest_selection(self, season: str, through_date: date) -> tuple[str, dict]:
+        """Read the newest accepted dated snapshot on or before the requested date."""
+        prefix = f"{ROOT}/season={season}/"
+        days = set()
+        for page in boto3.client("s3").get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                name = obj["Key"].removeprefix(prefix)
+                match = re.fullmatch(r"game_date_pacific=([0-9-]+)/latest\.json", name)
+                if match and date.fromisoformat(match[1]) <= through_date:
+                    days.add(match[1])
+        if not days:
+            raise FileNotFoundError("No accepted roster snapshot is available on or before the requested date.")
+        day = max(days)
+        ref, _ = self.selection(season, day)
+        if ref is None:
+            raise FileNotFoundError("The selected roster pointer disappeared.")
+        return day, ref
+
     def publish(self, record: dict, *, expected_etag: str | None) -> dict:
         encoded = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
         official_json(encoded)

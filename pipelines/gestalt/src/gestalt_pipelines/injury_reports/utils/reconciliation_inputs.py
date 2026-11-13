@@ -4,7 +4,6 @@ import json
 import re
 from datetime import date, datetime, timedelta
 from itertools import groupby
-from urllib.parse import urlsplit
 
 from botocore.exceptions import ClientError
 
@@ -13,9 +12,7 @@ from ..resources import archive as archive_module
 from .parse_pdf import PARSER_VERSION
 from .reconcile import report_game_key
 
-from ...utils import PACIFIC
 
-ROSTER_PREFIX = "lake/raw/commonteamroster/"
 
 
 def _official_json(payload: bytes) -> dict:
@@ -96,51 +93,3 @@ def select_extractions(
                 break
         day -= timedelta(days=1)
     return selected
-
-
-def read_roster(
-    archive: InjuryReportArchive, metadata_ref: dict | int, season: str,
-) -> tuple[int, dict[int, str], dict]:
-    prefix = f"{ROSTER_PREFIX}{season}/"
-    if isinstance(metadata_ref, int):
-        metadata_uri = f"s3://{BUCKET}/{prefix}{metadata_ref}.meta.json"
-        payload, metadata_ref = archive.read_input(metadata_uri, prefix=prefix)
-    else:
-        metadata_uri = metadata_ref["uri"]
-        payload = archive.read_pinned(metadata_uri, metadata_ref["sha256"], prefix=prefix)
-    metadata = _official_json(payload)
-    team_id = int(metadata["team_id"])
-    source = urlsplit(metadata["url"])
-    observed = datetime.fromisoformat(metadata["fetched_at"])
-    if (
-        metadata["season"] != season or metadata["endpoint"] != "commonteamroster"
-        or metadata_uri != f"s3://{BUCKET}/{prefix}{team_id}.meta.json"
-        or observed.tzinfo is None
-        or (source.scheme, source.netloc, source.path) != (
-            "https", "stats.nba.com", "/stats/commonteamroster"
-        )
-    ):
-        raise ValueError(f"Invalid official roster metadata for team {team_id}.")
-    raw_ref = {"uri": f"s3://{BUCKET}/{prefix}{team_id}.json", "sha256": metadata["sha256"]}
-    raw = archive.read_pinned(raw_ref["uri"], raw_ref["sha256"], prefix=prefix)
-    roster = next(
-        (item for item in _official_json(raw)["resultSets"] if item["name"].casefold() == "commonteamroster"),
-        None,
-    )
-    if roster is None:
-        raise ValueError(f"Missing official CommonTeamRoster result set for team {team_id}.")
-    columns = roster["headers"]
-    team_col, id_col, name_col = (columns.index(name) for name in ("TeamID", "PLAYER_ID", "PLAYER"))
-    rows = roster["rowSet"]
-    players = {int(row[id_col]): row[name_col] for row in rows}
-    if (
-        {int(row[team_col]) for row in rows} != {team_id} or len(players) != len(rows)
-        or any(pid <= 0 or not isinstance(name, str) or not name.strip() for pid, name in players.items())
-    ):
-        raise ValueError(f"Invalid official roster evidence for team {team_id}.")
-    return team_id, players, {
-        "metadata": metadata_ref,
-        "roster": raw_ref,
-        "fetched_at": metadata["fetched_at"],
-        "roster_date_pacific": observed.astimezone(PACIFIC).date().isoformat(),
-    }

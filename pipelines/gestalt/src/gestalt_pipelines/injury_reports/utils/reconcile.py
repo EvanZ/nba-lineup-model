@@ -4,7 +4,7 @@ import re
 import unicodedata
 from datetime import datetime
 
-RESOLVER_VERSION = "v4"
+RESOLVER_VERSION = "v5"
 
 
 def normalize_player_name(value: str) -> str:
@@ -22,11 +22,14 @@ def report_game_key(game: dict) -> str:
 
 def reconcile_games(
     games: list[dict], rosters: dict[int, dict[int, str]], report: dict | None,
-    repairs: dict[str, int] | None = None,
+    repairs: dict[str, int] | None = None, player_names: dict[int, str] | None = None,
 ) -> dict:
     published_at = datetime.fromisoformat(report["published_at"]) if report is not None else None
     by_game = {}
     repairs = repairs or {}
+    index_candidates: dict[str, set[int]] = {}
+    for player_id, name in (player_names or {}).items():
+        index_candidates.setdefault(normalize_player_name(name), set()).add(player_id)
     for game in games:
         start = game["game_time_utc"]
         home, away = game["home_team_tricode"], game["away_team_tricode"]
@@ -52,13 +55,19 @@ def reconcile_games(
                 source = {**row, "source_row_index": index, "pdf_uri": report["pdf_uri"]}
                 reported_name = row["player_name"]
                 matches = candidates.get(normalize_player_name(reported_name), set())
+                identity_source = "roster"
+                if not matches:
+                    matches = index_candidates.get(normalize_player_name(reported_name), set())
+                    identity_source = "player_index"
                 repair = repairs.get(reported_name)
                 if repair is not None and matches and repair not in matches:
                     unresolved.append({**source, "identity_status": "conflicting_repair"})
                     continue
                 if len(matches) == 1:
                     player_id = str(next(iter(matches)))
-                    source["identity_source"] = "roster"
+                    source["identity_source"] = identity_source
+                    if identity_source == "player_index":
+                        source["identity_warning"] = "not_on_selected_roster"
                 elif repair is not None:
                     player_id = str(repair)
                     source["identity_source"] = "repair_dictionary"

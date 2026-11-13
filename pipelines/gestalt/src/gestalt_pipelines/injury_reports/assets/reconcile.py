@@ -5,10 +5,11 @@ from datetime import UTC, date, datetime
 from hashlib import sha256
 
 from dagster import (
-    AllPartitionMapping, AssetDep, AssetExecutionContext, Config, Failure, MaterializeResult, asset,
+    AllPartitionMapping, AssetDep, AssetExecutionContext, AssetKey, Config, Failure, MaterializeResult, asset,
 )
 
-from ...resources import NBAScheduleResource
+from ...resources import NBAPlayerNamesResource, NBAScheduleResource
+from ...rosters.resources import NBARosterArchive
 from ..partitions import injury_game_dates, injury_publication_dates
 from ..resources import (
     BUCKET,
@@ -18,15 +19,14 @@ from ..resources import (
 )
 from ..utils import (
     RESOLVER_VERSION,
-    ROSTER_PREFIX,
     identity_rows,
     read_extraction,
     read_failed_run,
-    read_roster,
     reconcile_games,
     select_extractions,
     select_prior_failures,
     write_identity_events,
+    write_identity_warnings,
 )
 from .extract import injury_report_extractions
 
@@ -37,7 +37,6 @@ class S3Input(Config):
 
 
 class ReconciliationSelection(Config):
-    roster_metadata: list[S3Input] | None = None
     extraction: S3Input | None = None
     extractions: dict[str, S3Input] | None = None
     live: bool = False
@@ -60,8 +59,7 @@ def _select_inputs(
         raise ValueError("The failed run's saved result belongs to a different season or date.")
     inputs = record["inputs"]
     return {
-        **inputs,
-        "roster_metadata": [item["metadata"] for item in inputs["rosters"].values()],
+        **{key: inputs[key] for key in ("schedule", "extraction", "extractions") if key in inputs},
         "live": record["purpose"] == "live_candidate",
     }, errors
 
@@ -69,6 +67,8 @@ def _select_inputs(
 def _advance_latest(
     archive: InjuryReportArchive,
     nba_schedule: NBAScheduleResource,
+    nba_roster_archive: NBARosterArchive,
+    nba_player_names: NBAPlayerNamesResource,
     games: list[dict],
     status_record: dict,
     status_ref: dict,
@@ -90,11 +90,12 @@ def _advance_latest(
             return {"latest_update": "schedule_changed"}
         if archive.read_player_repairs()["sha256"] != inputs["player_repairs"]["sha256"]:
             return {"latest_update": "player_repairs_changed"}
-        for evidence in inputs["rosters"].values():
-            reference = evidence["metadata"]
-            _, current = archive.read_input(reference["uri"], prefix=f"{ROSTER_PREFIX}{archive.season}/")
-            if current != reference:
-                return {"latest_update": "roster_changed"}
+        _, current_roster = nba_roster_archive.latest_selection(archive.season, date.fromisoformat(day))
+        if current_roster != inputs["rosters"]:
+            return {"latest_update": "roster_changed"}
+        _, current_names = nba_player_names.load()
+        if current_names != inputs["player_names"]:
+            return {"latest_update": "player_names_changed"}
 
         selected = select_extractions(
             archive, games, first_date=injury_publication_dates.start.date(),
@@ -122,7 +123,10 @@ def _advance_latest(
 
 @asset(
     # A Pacific slate can draw on reports from multiple Eastern publication dates.
-    deps=[AssetDep(injury_report_extractions, partition_mapping=AllPartitionMapping())],
+    deps=[
+        AssetDep(injury_report_extractions, partition_mapping=AllPartitionMapping()),
+        AssetDep(AssetKey("rosters_by_date"), partition_mapping=AllPartitionMapping()),
+    ],
     group_name="injury_reports",
     partitions_def=injury_game_dates,
     code_version=RESOLVER_VERSION,
@@ -132,6 +136,8 @@ def injury_status_by_game_date(
     config: ReconciliationSelection,
     injury_report_archive: InjuryReportArchive,
     nba_schedule: NBAScheduleResource,
+    nba_roster_archive: NBARosterArchive,
+    nba_player_names: NBAPlayerNamesResource,
 ) -> MaterializeResult:
     day = date.fromisoformat(context.partition_key)
     selected, error_refs = _select_inputs(context, config, injury_report_archive)
@@ -168,22 +174,26 @@ def injury_status_by_game_date(
             reports[game_id] = (loaded[key], ref)
 
     required = {game[field] for game in games for field in ("away_team_id", "home_team_id")}
-    rosters = {}
-    roster_inputs = {}
-    for ref in selected.get("roster_metadata", sorted(required)):
-        team_id, players, evidence = read_roster(injury_report_archive, ref, season)
-        if team_id in rosters or datetime.fromisoformat(evidence["fetched_at"]) > now:
-            raise ValueError(f"Duplicate or future roster evidence for team {team_id}.")
-        rosters[team_id] = players
-        roster_inputs[str(team_id)] = evidence
-    if required != rosters.keys():
-        raise ValueError("Select exactly one official roster for each team in the slate.")
+    if (nba_roster_archive.bucket != BUCKET
+            or nba_player_names.bucket != BUCKET
+            or nba_player_names.season != season):
+        raise ValueError("Injury, roster, and player-name resources must use the same bucket and season.")
+    roster_day, _ = nba_roster_archive.latest_selection(season, day)
+    roster_record, roster_inputs = nba_roster_archive.load(season, roster_day)
+    player_names, names_input = nba_player_names.load()
+    if required - set(map(int, roster_record["teams"])):
+        raise ValueError("The dated roster is missing a team in the official slate.")
+    rosters = {
+        team: {pid: player_names[pid] for value in roster_record["teams"][str(team)]
+               if (pid := int(value)) in player_names}
+        for team in required
+    }
 
     repairs = injury_report_archive.read_player_repairs()
     statuses = {}
     for game in games:
         report, _ = reports.get(game["game_id"], (None, None))
-        statuses.update(reconcile_games([game], rosters, report, repairs["entries"]))
+        statuses.update(reconcile_games([game], rosters, report, repairs["entries"], player_names))
     rows = identity_rows(statuses)
     for row in rows.values():
         name = row["player_name"]
@@ -205,12 +215,13 @@ def injury_status_by_game_date(
         "inputs": {
             "schedule": schedule_ref,
             "rosters": roster_inputs,
+            "player_names": names_input,
             **extraction_inputs,
             "player_repairs": repairs,
         },
     }
     selection = sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    roster_dates = sorted({evidence["roster_date_pacific"] for evidence in roster_inputs.values()})
+    roster_dates = [roster_record["game_date_pacific"]]
     complete_games = sum(game["complete"] for game in statuses.values())
     status_record = {
         **identity,
@@ -225,6 +236,18 @@ def injury_status_by_game_date(
         run_id=context.run_id, game_date=day.isoformat(),
         extractions=extraction_refs, artifact_path=status_ref["uri"],
     )
+    warnings = write_identity_warnings(
+        injury_report_archive, rows, occurred_at=datetime.now(UTC), run_id=context.run_id,
+        game_date=day.isoformat(), extractions=extraction_refs,
+        artifact_path=status_ref["uri"], inputs=status_record["inputs"],
+    )
+    for row in rows.values():
+        if row.get("identity_warning"):
+            context.log.warning(
+                f"{row['player_name']} ({row['player_id']}) resolved via PlayerIndex but absent "
+                f"from {row['team']}'s selected roster for game {row['game_id']}; "
+                "retained the report's team/status. See the warning artifact in run metadata."
+            )
     missing_reports = sorted(game_id for game_id, status in statuses.items() if not status["report_used"])
     metadata = {
         "statuses": status_ref,
@@ -234,6 +257,8 @@ def injury_status_by_game_date(
         "complete_game_count_against_selected_rosters": complete_games,
         "roster_dates_pacific": roster_dates,
         "open_failures": failures,
+        "warnings": warnings,
+        "warning_count": len(warnings),
         "recoveries": recoveries,
     }
     if failures:
@@ -248,6 +273,7 @@ def injury_status_by_game_date(
         metadata["latest_update"] = "incomplete_coverage"
     else:
         metadata.update(_advance_latest(
-            injury_report_archive, nba_schedule, games, status_record, status_ref, extraction_refs,
+            injury_report_archive, nba_schedule, nba_roster_archive, nba_player_names,
+            games, status_record, status_ref, extraction_refs,
         ))
     return MaterializeResult(metadata=metadata)
