@@ -1,29 +1,46 @@
 """One date's postgame conditional-minutes state, ordered after its predecessor."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from dagster import (
     AssetDep, AssetExecutionContext, AssetKey, BackfillPolicy, Failure,
-    MaterializeResult, MetadataValue, TimeWindowPartitionMapping, asset,
+    MaterializeResult, MetadataValue, TimeWindowPartitionMapping, DagsterRunStatus, RunsFilter, asset,
 )
 
 from ...resources import NBAScheduleResource
+from ...utils import PACIFIC
 from ..partitions import minutes_dates
 from ..resources import MinutesArchive
-from ..sensors import minutes_ready_condition
 from ..utils import MinutesError, implementation_identity, update_state
+
+
+def _require_morning_inputs(context: AssetExecutionContext, day: str) -> None:
+    """Scheduled runs require fresh successes; manual dates/backfills use saved S3 inputs."""
+    morning = context.run.tags.get("minutes/morning_date")
+    if morning is None:
+        return
+    midnight = datetime.combine(date.fromisoformat(morning), time.min, PACIFIC).timestamp()
+    for job in ("parse_nba_games", "build_nba_rosters"):
+        records = context.instance.get_run_records(
+            filters=RunsFilter(job_name=job, tags={"dagster/partition": day}), limit=1,
+        )
+        latest = records[0] if records else None
+        if (latest is None or latest.dagster_run.status != DagsterRunStatus.SUCCESS
+                or latest.end_time is None or latest.end_time < midnight):
+            raise MinutesError(
+                f"{job} has not completed successfully this morning for {day}. "
+                "Repair that job, then re-execute update_player_minutes."
+            )
 
 
 @asset(
     group_name="minutes", partitions_def=minutes_dates,
     backfill_policy=BackfillPolicy.multi_run(max_partitions_per_run=1),
-    automation_condition=minutes_ready_condition,
     deps=[
         AssetDep(AssetKey("player_minutes"), partition_mapping=TimeWindowPartitionMapping(
             start_offset=-1, end_offset=-1, allow_nonexistent_upstream_partitions=True,
         )),
         AssetDep(AssetKey("nba_stints")),
-        AssetDep(AssetKey("nba_box_scores")),
         AssetDep(AssetKey("rosters_by_date")),
         AssetDep(AssetKey("injury_status_by_game_date")),
     ],
@@ -42,6 +59,7 @@ def player_minutes(
         "model_version": archive.model_version,
     }
     try:
+        _require_morning_inputs(context, day.isoformat())
         if archive.season != nba_schedule.season:
             raise MinutesError("Minutes and schedule resources use different seasons.")
         priors, inputs["priors"] = archive.load_priors()

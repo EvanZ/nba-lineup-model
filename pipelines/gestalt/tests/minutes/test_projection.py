@@ -204,7 +204,7 @@ def test_projection_cannot_advance_pointer_if_tipoff_passes_during_publication(p
 
 def test_sensor_seeds_then_skips_unchanged_then_requests_changed_injuries(projection_job):
     job,a,_,_,data,_,save = projection_job
-    sensor = defs.get_sensor_def("game_minutes_ready")
+    sensor = defs.get_sensor_def("project_game_minutes_sensor")
     with DagsterInstance.ephemeral() as instance:
         with build_sensor_context(
             instance=instance,repository_def=defs.get_repository_def(),
@@ -251,7 +251,7 @@ def test_later_game_updates_do_not_touch_earlier_frozen_selection(projection_job
 def test_sensor_waits_for_missing_baseline_and_skips_active_date(projection_job):
     from dagster import DagsterRunStatus
     job,a,objects,_,_,_,_=projection_job
-    sensor=defs.get_sensor_def("game_minutes_ready")
+    sensor=defs.get_sensor_def("project_game_minutes_sensor")
     baseline_key=a.prefix+f"game_date_pacific={FIRST}/latest.json"
     source=objects.pop(baseline_key)
     with DagsterInstance.ephemeral() as instance:

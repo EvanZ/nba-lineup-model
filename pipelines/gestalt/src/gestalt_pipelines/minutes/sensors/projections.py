@@ -13,12 +13,12 @@ from ..utils import json_bytes, projection_fingerprint
 
 
 @sensor(
-    name="game_minutes_ready",job_name="project_game_minutes",
+    name="project_game_minutes_sensor",job_name="project_game_minutes",
     minimum_interval_seconds=60,default_status=DefaultSensorStatus.STOPPED,
     required_resource_keys={"nba_schedule","minutes_archive","nba_roster_archive"},
     description="Project upcoming games when accepted daily minutes, rosters, or injuries change.",
 )
-def game_minutes_ready(context: SensorEvaluationContext):
+def project_game_minutes_sensor(context: SensorEvaluationContext):
     now = datetime.now(UTC)
     today = now.astimezone(PACIFIC).date()
     schedule = context.resources.nba_schedule
@@ -66,4 +66,4 @@ def game_minutes_ready(context: SensorEvaluationContext):
     return SensorResult(run_requests=requests)
 
 
-__all__ = ["game_minutes_ready"]
+__all__ = ["project_game_minutes_sensor"]

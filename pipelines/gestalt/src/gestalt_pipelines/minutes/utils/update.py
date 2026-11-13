@@ -64,7 +64,7 @@ def validate_state(record: dict, season: str, version: str = MODEL_VERSION) -> N
 
 def update_state(
     *, day: date, first_date: date, season: str, priors: dict, parent: dict | None,
-    rosters: dict, injuries: dict, stints: dict, boxes: dict, games: list[dict],
+    rosters: dict, injuries: dict, stints: dict, games: list[dict],
     inputs: dict, version: str = MODEL_VERSION,
 ) -> dict:
     validate_priors(priors, season, version)
@@ -117,10 +117,10 @@ def update_state(
         or stints.get("validation", {}).get("complete") is not True
         or stints["validation"]["expected_game_ids"] != expected
         or stints["validation"]["processed_game_ids"] != expected
-        or set(boxes) != set(expected) or set(injuries["games"]) != set(expected)
+        or set(injuries["games"]) != set(expected)
         or injuries.get("season") != season or injuries.get("game_date_pacific") != day.isoformat()
     ):
-        raise MinutesError("Selected stints, boxes, and injuries do not cover the full official slate.")
+        raise MinutesError("Selected stints and injuries do not cover the full official slate.")
     if set(r["game_id"] for r in stints["rows"]) != set(expected):
         raise MinutesError("Stint rows omit a scheduled game or include another date.")
     observations = []
@@ -131,10 +131,10 @@ def update_state(
         if game["game_time_utc"].astimezone(PACIFIC).date() != day:
             raise MinutesError("Official game belongs to a different Pacific date.")
         game_rows = [r for r in stints["rows"] if r["game_id"] == gid]
-        rows = game_observations(game, rosters["teams"], injuries["games"][gid], boxes[gid], game_rows)
+        rows = game_observations(game, rosters["teams"], injuries["games"][gid], game_rows)
         game_inputs[gid] = {
             "stints": inputs["stints"], "rosters": inputs["rosters"],
-            "injuries": inputs["injuries"], "box_score": inputs["boxes"][gid],
+            "injuries": inputs["injuries"],
             "schedule": inputs["schedule"],
         }
         for row in rows:

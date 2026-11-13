@@ -22,20 +22,6 @@ def slate(day=FIRST, gid="0022600001"):
         "home_team_id": HOME, "away_team_id": AWAY,
         "home_team_tricode": "BOS", "away_team_tricode": "PHI",
     }
-    def team(tid, ids, tri):
-        values = [44, 48, 48, 48, 26, 22, 4]
-        return {"teamId": tid, "teamTricode": tri, "players": [
-            {"personId": pid, "name": f"Player {pid}", "status": "ACTIVE",
-             "statistics": {"minutes": f"PT{minutes:02d}M00.00S"}}
-            for pid, minutes in zip(ids, values)
-        ]}
-    home = team(HOME, list(range(1, 8)), "BOS")
-    home["players"] += [
-        {"personId": pid, "name": f"Player {pid}", "status": "ACTIVE",
-         "statistics": {"minutes": "PT00M00.00S"}} for pid in (15, 17)
-    ]
-    box = {"game": {"gameId": gid, "gameStatus": 3, "period": 4,
-                    "homeTeam": home, "awayTeam": team(AWAY, list(range(8, 15)), "PHI")}}
     reports = {
         str(HOME): {"team": "BOS", "submission_status": "submitted", "unresolved_players": [], "players": {
             "15": {"status": "Available", "reason": "Injury/Illness - Illness"},
@@ -65,11 +51,11 @@ def slate(day=FIRST, gid="0022600001"):
         "injuries": {"season": SEASON, "game_date_pacific": str(day), "cutoff_source": "nba_scheduled_start",
                      "games": {gid: {"teams": reports, "report_used": True,
                                      "scheduled_start_utc": game["game_time_utc"].isoformat()}}},
-        "stints": stints, "boxes": {gid: box},
+        "stints": stints,
         "inputs": {
             "priors": reference("priors"), "parent": None, "schedule": reference("schedule"),
             "stints": reference("stints"), "rosters": reference("rosters"),
-            "injuries": reference("injuries"), "boxes": {gid: reference("box")},
+            "injuries": reference("injuries"),
         },
     }
 

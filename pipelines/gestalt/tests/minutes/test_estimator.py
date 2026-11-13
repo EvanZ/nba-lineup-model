@@ -28,20 +28,18 @@ def test_zero_classifications(status, reason, expected):
 def test_first_44_minutes_scales_and_excludes_late_play_and_overtime():
     data = slate()
     game = data["games"][0]
-    box = data["boxes"][game["game_id"]]
-    roles = role_minutes(data["stints"]["rows"], game, box)
+    roles = role_minutes(data["stints"]["rows"], game)
     assert roles[1] == 48
     assert roles[5] == 24
     assert roles[7] == 0
-    box["game"]["period"] = 5
     data["stints"]["rows"].append({
         **data["stints"]["rows"][-1], "stint_index": 3,
         "start_elapsed_game_seconds": 2880, "end_elapsed_game_seconds": 3180,
     })
-    assert role_minutes(data["stints"]["rows"], game, box) == roles
+    assert role_minutes(data["stints"]["rows"], game) == roles
     data["stints"]["rows"][1]["start_elapsed_game_seconds"] += 1
     with pytest.raises(MinutesError, match="gap"):
-        role_minutes(data["stints"]["rows"], game, box)
+        role_minutes(data["stints"]["rows"], game)
 
 
 def test_four_dates_keep_only_three_observations_and_count_true_zeros():
@@ -74,7 +72,7 @@ def test_no_game_date_carries_every_window_without_restarting():
     prior = priors()
     parent = update_state(priors=prior, parent=None, **slate())
     data = slate(FIRST+timedelta(days=1), "0022600002")
-    data["games"], data["boxes"] = [], {}
+    data["games"] = []
     data["injuries"]["games"] = {}
     data["stints"]["rows"] = []
     data["stints"]["validation"].update(expected_game_ids=[], processed_game_ids=[])
@@ -140,7 +138,7 @@ def test_corrupt_estimate_missing_slate_and_duplicate_roster_fail():
     with pytest.raises(MinutesError, match="does not match"):
         validate_state(state, SEASON)
     data = slate()
-    data["boxes"] = {}
+    data["stints"]["validation"]["processed_game_ids"] = []
     with pytest.raises(MinutesError, match="full official slate"):
         update_state(priors=prior, parent=None, **data)
     data = slate()
@@ -169,3 +167,59 @@ def test_prior_source_ignores_forecasts_but_rejects_current_observed_games():
     with pytest.raises(MinutesError, match="Current/future-season"):
         build_priors(frozen, [historical, {**forecast, "is_preseason_forecast": False}], season=SEASON,
                      history_reference=reference("history"), draft_reference=reference("draft"))
+
+
+@pytest.mark.parametrize("report,expected", [
+    (None, "available_zero"),
+    ({"status": "Available", "reason": "Illness"}, "available_zero"),
+    ({"status": "Out", "reason": "G League - Two-Way"}, "g_league_zero"),
+    ({"status": "Probable", "reason": "Ankle"}, "medical_exclusion"),
+    ({"status": "Questionable", "reason": "Ankle"}, "medical_exclusion"),
+    ({"status": "Doubtful", "reason": "Ankle"}, "medical_exclusion"),
+    ({"status": "Out", "reason": "Ankle"}, "medical_exclusion"),
+])
+def test_ticket_74_rostered_player_absent_from_stints_uses_injury_rule(report, expected):
+    data = slate()
+    if report is not None:
+        data["injuries"]["games"]["0022600001"]["teams"][str(HOME)]["players"]["19"] = report
+    state = update_state(priors=priors(), parent=None, **data)
+    observation = next(row for row in state["observations"] if row["player_id"] == 19)
+    assert observation["classification"] == expected
+    assert observation["actual_minutes"] == 0 and observation["role_minutes"] == 0
+    if expected == "medical_exclusion":
+        assert observation["minutes"] is None and not state["players"]["19"]["history"]
+    else:
+        assert observation["minutes"] == 0
+        assert state["players"]["19"]["history"][-1]["minutes"] == 0
+
+
+def test_ticket_74_only_rostered_players_get_observations():
+    data = slate()
+    # Player 7 appears in valid stints but is not on the selected roster.
+    data["rosters"]["teams"][str(HOME)].remove(7)
+    # Player 999 appears only in an injury report, also outside the roster.
+    data["injuries"]["games"]["0022600001"]["teams"][str(HOME)]["players"]["999"] = {
+        "status": "Available", "reason": "",
+    }
+    state = update_state(priors=priors(), parent=None, **data)
+    expected = set(data["rosters"]["teams"][str(HOME)] + data["rosters"]["teams"][str(AWAY)])
+    assert {row["player_id"] for row in state["observations"]} == expected
+    assert "7" not in state["players"] and "999" not in state["players"]
+
+
+@pytest.mark.parametrize("overtime", [False, True])
+def test_played_outside_first_44_is_still_played_and_legacy_clipping_is_preserved(overtime):
+    data = slate()
+    rows = data["stints"]["rows"]
+    if overtime:
+        rows.append({**rows[-1], "stint_index": 3, "start_elapsed_game_seconds": 2880,
+                     "end_elapsed_game_seconds": 3180})
+    rows[-1]["home_player_ids"] = [2, 3, 4, 5, 19]
+    data["injuries"]["games"]["0022600001"]["teams"][str(HOME)]["players"]["19"] = {
+        "status": "Out", "reason": "Injury",
+    }
+    state = update_state(priors=priors(), parent=None, **data)
+    observation = next(row for row in state["observations"] if row["player_id"] == 19)
+    assert observation["actual_minutes"] == (5 if overtime else 4)
+    assert observation["role_minutes"] == 0 and observation["classification"] == "played"
+    assert observation["minutes"] == 18  # Existing prior 30 minus the agreed played clipping of 12.

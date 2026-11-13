@@ -15,7 +15,8 @@ from .injury_reports.sensors import injury_report_dates_ready, new_injury_pdf
 from .minutes.assets import game_minutes, player_minutes
 from .minutes.jobs import project_game_minutes, update_player_minutes
 from .minutes.resources import MinutesArchive
-from .minutes.sensors import game_minutes_ready, minutes_ready
+from .minutes.sensors import project_game_minutes_sensor
+from .minutes.schedules import update_player_minutes_schedule
 from .odds.assets import nba_market_odds
 from .odds.jobs import archive_nba_market_odds
 from .odds.resources import OddsApi
@@ -52,8 +53,8 @@ defs = Definitions(
         capture_nba_season_schedule, archive_nba_market_odds, capture_nba_box_scores, capture_nba_scoreboard,
         capture_nba_transactions, capture_nba_play_by_play, parse_nba_games, build_nba_rosters,
     ],
-    schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning],
-    sensors=[new_injury_pdf, injury_report_dates_ready, roster_transactions_ready, play_by_play_ready_for_stints, minutes_ready, game_minutes_ready],
+    schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning, update_player_minutes_schedule],
+    sensors=[new_injury_pdf, injury_report_dates_ready, roster_transactions_ready, play_by_play_ready_for_stints, project_game_minutes_sensor],
     resources={
         "official_injury_reports": OfficialInjuryReports(),
         "injury_report_archive": InjuryReportArchive(season=INJURY_REPORT_SEASON),

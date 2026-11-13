@@ -171,29 +171,7 @@ class MinutesArchive(ConfigurableResource):
         rosters = self.read_reference(refs["rosters"], roster_prefix)
         if injuries.get("cutoff_source") != "nba_scheduled_start":
             raise MinutesError("Injury inputs must use the approved scheduled-tipoff cutoff.")
-        boxes, refs["boxes"] = {}, {}
-        for gid, sources in stints["inputs"]["games"].items():
-            prefix = f"lake/raw/cdn/boxscore/season={self.season}/game_id={gid}/"
-            ref = self._ref(sources["box_score"], prefix)
-            if ref["uri"] != f"s3://{self.bucket}/{prefix}{ref['sha256']}.json":
-                raise MinutesError("Invalid canonical box-score reference.")
-            boxes[gid] = self.read_reference(ref, prefix)
-            metadata_ref = {
-                "uri": sources["box_score"]["metadata_uri"],
-                "sha256": sources["box_score"]["metadata_sha256"],
-            }
-            metadata = self.read_reference(metadata_ref, prefix)
-            if (
-                metadata.get("box_score_sha256") != ref["sha256"]
-                or metadata.get("game_id") != gid or metadata.get("season") != self.season
-                or metadata.get("home_team_id") != boxes[gid]["game"]["homeTeam"]["teamId"]
-                or metadata.get("away_team_id") != boxes[gid]["game"]["awayTeam"]["teamId"]
-            ):
-                raise MinutesError("Box-score sidecar differs from the exact selected raw source.")
-            refs["boxes"][gid] = {**ref, **{
-                k: sources["box_score"][k] for k in ("metadata_uri", "metadata_sha256")
-            }}
-        return {"stints": stints, "injuries": injuries, "rosters": rosters, "boxes": boxes}, refs
+        return {"stints": stints, "injuries": injuries, "rosters": rosters}, refs
 
     def save_state(self, record: dict, *, prior: dict | None, expected_etag: str | None) -> dict:
         validate_state(record, self.season, self.model_version)

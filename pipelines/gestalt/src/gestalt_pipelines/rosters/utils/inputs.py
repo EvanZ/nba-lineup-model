@@ -48,20 +48,3 @@ def opening_ids(raw: bytes, team_id: int) -> list[int]:
     if not players:
         raise ValueError(f"Empty opening roster for team {team_id}.")
     return sorted(players)
-
-
-def box_roster_ids(raw: bytes, game: dict) -> dict[int, list[int]]:
-    body = official_json(raw).get("game")
-    if not isinstance(body, dict) or body.get("gameId") != game["game_id"] or body.get("gameStatus") != 3:
-        raise ValueError("Roster evidence must be a matching final NBA box score.")
-    result = {}
-    for side in ("home", "away"):
-        team = body[side + "Team"]
-        tid = nba_id(team["teamId"])
-        if tid != game[side + "_team_id"]:
-            raise ValueError("Box-score team differs from the official schedule.")
-        players = [nba_id(row["personId"]) for row in team["players"]]
-        if not players or len(set(players)) != len(players):
-            raise ValueError(f"Invalid or duplicate box-score membership for team {tid}.")
-        result[tid] = sorted(players)
-    return result

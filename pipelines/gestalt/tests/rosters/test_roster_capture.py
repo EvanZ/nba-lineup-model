@@ -75,7 +75,7 @@ def roster_job(monkeypatch):
     def get_object(**args):
         key = args["Key"]
         assert key.startswith(("lake/raw/commonteamroster/", "lake/raw/nba/transactions/",
-                               "lake/raw/cdn/boxscore/", "lake/artifacts/rosters/"))
+                               "lake/artifacts/rosters/", "lake/artifacts/errors/pipeline=rosters/"))
         reads.append(key)
         if key not in objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
@@ -83,8 +83,11 @@ def roster_job(monkeypatch):
 
     def put_object(**args):
         key = args["Key"]
-        assert key.startswith("lake/artifacts/rosters/season=2026-27/game_date_pacific=")
-        assert key.endswith("/latest.json") or key.endswith("/"+sha256(args["Body"]).hexdigest()+".json")
+        if key.startswith("lake/artifacts/errors/pipeline=rosters/season=2026-27/"):
+            assert key.endswith(".warning.json")
+        else:
+            assert key.startswith("lake/artifacts/rosters/season=2026-27/game_date_pacific=")
+            assert key.endswith("/latest.json") or key.endswith("/"+sha256(args["Body"]).hexdigest()+".json")
         if args.get("IfNoneMatch") == "*" and key in objects:
             raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         if "IfMatch" in args and (key not in objects or sha256(objects[key]).hexdigest() != args["IfMatch"]):
@@ -98,9 +101,10 @@ def roster_job(monkeypatch):
     client = SimpleNamespace(get_object=get_object, put_object=put_object,
                              get_paginator=lambda _: SimpleNamespace(paginate=paginate))
     monkeypatch.setattr(archive.boto3, "client", lambda _: client)
-    monkeypatch.setattr(NBAScheduleResource, "games_between", lambda *args, **kwargs: (
-        [GAME], {"uri": "s3://schedule/immutable.json", "sha256": "verified"},
-    ))
+    def no_schedule(*args, **kwargs):
+        raise AssertionError("Roster construction must not read the game schedule.")
+
+    monkeypatch.setattr(NBAScheduleResource, "games_between", no_schedule)
     return defs.resolve_job_def("build_nba_rosters"), objects, reads, writes, raw_key
 
 
@@ -118,8 +122,8 @@ def test_manual_job_publishes_all_teams_and_reuses_identical_inputs(roster_job):
     }
     assert len(artifact["teams"]) == 30
     assert sum(len(ids) for ids in artifact["teams"].values()) == 60
-    assert reads.count(raw_key) == 1
-    assert set(artifact["inputs"]) == {"opening_rosters", "schedule", "transactions", "box_scores"}
+    assert raw_key not in reads
+    assert set(artifact["inputs"]) == {"opening_rosters", "transactions", "repair_transactions"}
     assert all(type(pid) is int for ids in artifact["teams"].values() for pid in ids)
     assert "manual_name_repairs_used" not in artifact
 
@@ -206,3 +210,119 @@ def test_failed_rebuild_keeps_accepted_roster_pointer(roster_job):
     del objects[f"lake/raw/nba/transactions/season={SEASON}/game_date_pacific=2026-11-07/latest.json"]
     assert not job.execute_in_process(partition_key=str(DAY), raise_on_error=False).success
     assert objects[pointer_key] == accepted and writes == before
+
+
+def test_stale_box_cannot_reintroduce_a_waived_player(roster_job):
+    job, objects, reads, writes, box_key = roster_job
+    key = f"lake/raw/nba/transactions/season={SEASON}/game_date_pacific={DAY}/latest.json"
+    source = json.loads(objects[key])
+    source["transactions"][0].update(Transaction_Type="Waive", TEAM_ID=FIRST)
+    objects[key] = json.dumps(source).encode()
+    # The saved box still lists player 1 on FIRST. It must never be read.
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    record = json.loads(objects[writes[0]])
+    assert all(1 not in ids for ids in record["teams"].values())
+    assert not any("boxscore" in key for key in reads)
+    assert box_key in objects
+
+
+def test_repair_file_is_reread_and_records_its_exact_checksum(roster_job):
+    job, objects, reads, writes, _ = roster_job
+    repair_key = f"lake/artifacts/rosters/season={SEASON}/repair_transactions.json"
+    repairs = [{"effective_date": "2026-11-07", "action": "add", "team_id": FIRST, "player_id": 999}]
+    objects[repair_key] = json.dumps(repairs).encode()
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    first_key, first_bytes = writes[0], objects[writes[0]]
+    record = json.loads(first_bytes)
+    assert 999 in record["teams"][str(FIRST)]
+    assert record["inputs"]["repair_transactions"]["uri"] == "s3://nba-gestalt-data/" + repair_key
+    assert record["inputs"]["repair_transactions"]["sha256"] == sha256(objects[repair_key]).hexdigest()
+    repairs.append({"effective_date": "2026-11-08", "action": "remove", "team_id": FIRST, "player_id": 999})
+    objects[repair_key] = json.dumps(repairs).encode()
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    updated = json.loads(objects[writes[2]])
+    assert all(999 not in ids for ids in updated["teams"].values())
+    assert updated["inputs"]["repair_transactions"]["sha256"] == sha256(objects[repair_key]).hexdigest()
+    assert reads.count(repair_key) == 2
+    assert objects[first_key] == first_bytes
+
+
+@pytest.mark.parametrize("repairs", [{"not": "a list"}, [{"action": "add"}]])
+def test_invalid_repair_file_does_not_publish(roster_job, repairs):
+    job, objects, _, writes, _ = roster_job
+    objects[f"lake/artifacts/rosters/season={SEASON}/repair_transactions.json"] = json.dumps(repairs).encode()
+    assert not job.execute_in_process(partition_key=str(DAY), raise_on_error=False).success
+    assert writes == []
+
+
+@pytest.mark.parametrize("repair_count, expected_count", [(17, 18), (18, 19)])
+def test_repair_exceeding_eighteen_players_warns_but_still_publishes(roster_job, repair_count, expected_count):
+    import logging
+    from dagster import DagsterInstance
+
+    job, objects, _, writes, _ = roster_job
+    key = f"lake/artifacts/rosters/season={SEASON}/repair_transactions.json"
+    objects[key] = json.dumps([
+        {"effective_date": "2026-11-07", "action": "add", "team_id": FIRST, "player_id": pid}
+        for pid in range(10000, 10000 + repair_count)
+    ]).encode()
+    with DagsterInstance.ephemeral() as instance:
+        result = job.execute_in_process(partition_key=str(DAY), instance=instance)
+        warnings = [entry.message for entry in instance.all_logs(result.run_id)
+                    if entry.level == logging.WARNING]
+    assert result.success and len(writes) == (3 if expected_count > 18 else 2)
+    assert len(json.loads(objects[writes[0]])["teams"][str(FIRST)]) == expected_count
+    metadata = result.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
+    assert metadata["roster_size_warnings"].value == ({str(FIRST): 19} if expected_count > 18 else {})
+    size_warnings = [message for message in warnings if "18-player warning threshold" in message]
+    assert len(size_warnings) == (1 if expected_count > 18 else 0)
+    if size_warnings:
+        assert str(FIRST) in size_warnings[0] and "19 rostered players" in size_warnings[0]
+
+    if expected_count > 18:
+        from gestalt_pipelines.utils import PACIFIC
+        ref = metadata["warning_artifact"].value
+        key = ref["uri"].removeprefix("s3://nba-gestalt-data/")
+        event = json.loads(objects[key])
+        occurred = datetime.fromisoformat(event["timestamp"]).astimezone(PACIFIC).date()
+        assert key.startswith(f"lake/artifacts/errors/pipeline=rosters/season={SEASON}/occurred_date_pacific={occurred}/")
+        assert key.endswith(".warning.json")
+        assert sha256(objects[key]).hexdigest() == ref["sha256"]
+        assert event["status"] == "warning" and event["pipeline"] == "rosters"
+        assert event["dagster_run_id"] == result.run_id and event["game_date_pacific"] == str(DAY)
+        assert event["details"]["warning_threshold"] == 18
+        assert event["details"]["team_player_counts"] == {str(FIRST): 19}
+        assert len(event["details"]["team_player_ids"][str(FIRST)]) == 19
+        assert event["inputs"]["repair_transactions"]["sha256"] == sha256(objects[f"lake/artifacts/rosters/season={SEASON}/repair_transactions.json"]).hexdigest()
+        assert event["artifact_path"] == "s3://nba-gestalt-data/" + writes[0]
+    else:
+        assert metadata["warning_artifact"].value is None
+
+
+def test_contract_expiration_uses_shared_schedule_and_records_ledger(roster_job, monkeypatch):
+    job, objects, reads, writes, _ = roster_job
+    key = f"lake/raw/nba/transactions/season={SEASON}/game_date_pacific=2026-11-07/latest.json"
+    source = json.loads(objects[key])
+    source["transactions"] = [{
+        "Transaction_Type": "Signing", "TRANSACTION_DATE": "2026-11-07T00:00:00",
+        "PLAYER_ID": 999999, "TEAM_ID": FIRST,
+        "TRANSACTION_DESCRIPTION": "Signed guard Example to a 10-Day Contract.",
+        "first_observed_at": STAMP.isoformat(),
+    }]
+    objects[key] = json.dumps(source).encode()
+    schedule_ref = {"uri": "s3://nba-gestalt-data/lake/raw/scheduleleaguev2/season=2026-27/sha256=" + "a"*64 + "/schedule.json", "sha256": "a"*64}
+    calls = []
+
+    def schedule(self, first, last, reference=None, *, allow_empty=False):
+        calls.append((first, last, allow_empty))
+        return [], schedule_ref
+
+    monkeypatch.setattr(NBAScheduleResource, "games_between", schedule)
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    record = json.loads(objects[writes[0]])
+    assert calls == [(date(2026, 11, 7), DAY, True)]
+    assert record["inputs"]["schedule"] == schedule_ref
+    assert 999999 in record["teams"][str(FIRST)]
+    assert record["ten_day_contracts"][0]["player_id"] == 999999
+    assert record["ten_day_contracts"][0]["removal_date"] is None
+    assert not any("boxscore" in key for key in reads)

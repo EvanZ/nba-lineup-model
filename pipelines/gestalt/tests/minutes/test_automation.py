@@ -1,93 +1,72 @@
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+import pytest
 from dagster import (
-    AssetKey, AssetMaterialization, AssetSelection, AssetSpec, DailyPartitionsDefinition,
-    Definitions, DagsterInstance, Failure, asset, define_asset_job,
-    evaluate_automation_conditions, in_process_executor,
+    AssetMaterialization, AssetSelection, Definitions, DagsterInstance, Failure,
+    asset, define_asset_job, evaluate_automation_conditions, in_process_executor,
 )
 
 from gestalt_pipelines.definitions import defs
-from gestalt_pipelines.minutes.assets import player_minutes
+from gestalt_pipelines.minutes.assets.update import _require_morning_inputs
 from gestalt_pipelines.minutes.partitions import minutes_dates
-from gestalt_pipelines.minutes.resources import MinutesArchive
-from gestalt_pipelines.resources import NBAScheduleResource
+from gestalt_pipelines.minutes.utils import MinutesError
 from gestalt_pipelines.utils import PACIFIC
 
 
-def day_keys():
+def test_upstream_events_do_not_launch_the_replaced_minutes_sensor():
     yesterday = datetime.now(UTC).astimezone(PACIFIC).date()-timedelta(days=1)
-    return str(yesterday), str(yesterday-timedelta(days=1))
-
-
-def evaluate(definitions, instance, cursor=None):
-    return evaluate_automation_conditions(
-        definitions, instance=instance, cursor=cursor,
-        asset_selection=AssetSelection.assets("player_minutes"),
-        evaluation_time=datetime.now(UTC)+timedelta(seconds=1),
-    )
-
-
-def report_inputs(instance, day, parent, *, rosters=True):
-    for name in ("nba_stints", "nba_box_scores", "injury_status_by_game_date"):
-        instance.report_runless_asset_event(AssetMaterialization(asset_key=name, partition=day))
-    instance.report_runless_asset_event(AssetMaterialization(asset_key="player_minutes", partition=parent))
-    if rosters:
-        instance.report_runless_asset_event(AssetMaterialization(asset_key="rosters_by_date", partition=day))
-
-
-def test_automation_waits_for_rosters_then_requests_once_and_holds_after_success():
-    day, parent = day_keys()
     with DagsterInstance.ephemeral() as instance:
-        initial = evaluate(defs, instance)
-        report_inputs(instance, day, parent, rosters=False)
-        waiting = evaluate(defs, instance, initial.cursor)
-        assert waiting.total_requested == 0
-        instance.report_runless_asset_event(AssetMaterialization(asset_key="rosters_by_date", partition=day))
-        ready = evaluate(defs, instance, waiting.cursor)
-        assert ready.total_requested == 1
-        assert ready.get_requested_partitions(AssetKey("player_minutes")) == {day}
-        instance.report_runless_asset_event(AssetMaterialization(asset_key="player_minutes", partition=day))
-        done = evaluate(defs, instance, ready.cursor)
-        assert done.total_requested == 0
+        for name in ("nba_stints", "rosters_by_date", "injury_status_by_game_date"):
+            instance.report_runless_asset_event(AssetMaterialization(asset_key=name, partition=str(yesterday)))
+        instance.report_runless_asset_event(AssetMaterialization(
+            asset_key="player_minutes", partition=str(yesterday-timedelta(days=1)),
+        ))
+        result = evaluate_automation_conditions(
+            defs, instance=instance, asset_selection=AssetSelection.assets("player_minutes"),
+            evaluation_time=datetime.now(UTC)+timedelta(seconds=1),
+        )
+        assert result.total_requested == 0
+    sensor_names = {s.name for s in defs.sensors}
+    assert "update_player_minutes_sensor" not in sensor_names
+    assert "minutes_ready" not in sensor_names
+    assert defs.get_schedule_def("update_player_minutes_schedule").cron_schedule == "0 4 * * *"
 
 
-def test_latest_failed_upstream_blocks_even_with_previous_successful_materialization():
-    day, parent = day_keys()
-
-    should_fail = [True]
+def test_latest_failed_morning_input_blocks_even_after_an_earlier_success():
+    today = datetime.now(UTC).astimezone(PACIFIC).date()
+    day = str(today-timedelta(days=1))
+    should_fail = [False]
 
     @asset(name="nba_stints", partitions_def=minutes_dates)
-    def failed_stints():
+    def morning_stints():
         if should_fail[0]:
-            raise Failure("Intentional upstream failure in an isolated automation test.")
+            raise Failure("Intentional upstream failure in an isolated schedule test.")
 
-    fail_job = define_asset_job(
-        "fail_stints_test", selection=AssetSelection.assets(failed_stints),
-        executor_def=in_process_executor,
-    )
+    @asset(name="rosters_by_date", partitions_def=minutes_dates)
+    def morning_rosters():
+        pass
+
     definitions = Definitions(
-        assets=[player_minutes, failed_stints]+[
-            AssetSpec(name, partitions_def=minutes_dates)
-            for name in ("nba_box_scores", "rosters_by_date", "injury_status_by_game_date")
+        assets=[morning_stints, morning_rosters],
+        jobs=[
+            define_asset_job("parse_nba_games", selection=AssetSelection.assets(morning_stints), executor_def=in_process_executor),
+            define_asset_job("build_nba_rosters", selection=AssetSelection.assets(morning_rosters), executor_def=in_process_executor),
         ],
-        jobs=[fail_job],
-        resources={"minutes_archive": MinutesArchive(season="2026-27"),
-                   "nba_schedule": NBAScheduleResource(season="2026-27")},
     )
     with DagsterInstance.ephemeral() as instance:
-        initial = evaluate(definitions, instance)
-        report_inputs(instance, day, parent)
-        failed = definitions.resolve_job_def("fail_stints_test").execute_in_process(
-            instance=instance, partition_key=day, raise_on_error=False,
+        context = SimpleNamespace(
+            instance=instance, run=SimpleNamespace(tags={"minutes/morning_date": str(today)}),
         )
-        assert not failed.success
-        blocked = evaluate(definitions, instance, initial.cursor)
-        assert blocked.total_requested == 0
-
+        parser = definitions.resolve_job_def("parse_nba_games")
+        rosters = definitions.resolve_job_def("build_nba_rosters")
+        assert parser.execute_in_process(instance=instance, partition_key=day).success
+        assert rosters.execute_in_process(instance=instance, partition_key=day).success
+        _require_morning_inputs(context, day)
+        should_fail[0] = True
+        assert not parser.execute_in_process(instance=instance, partition_key=day, raise_on_error=False).success
+        with pytest.raises(MinutesError, match="parse_nba_games"):
+            _require_morning_inputs(context, day)
         should_fail[0] = False
-        recovered = definitions.resolve_job_def("fail_stints_test").execute_in_process(
-            instance=instance, partition_key=day, raise_on_error=False,
-        )
-        assert recovered.success
-        resumed = evaluate(definitions, instance, blocked.cursor)
-        assert resumed.get_requested_partitions(AssetKey("player_minutes")) == {day}
+        assert parser.execute_in_process(instance=instance, partition_key=day).success
+        _require_morning_inputs(context, day)

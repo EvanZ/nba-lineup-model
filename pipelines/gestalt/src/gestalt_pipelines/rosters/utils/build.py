@@ -4,8 +4,9 @@ from collections import defaultdict
 from datetime import date
 
 from .inputs import nba_id, roster_hash
+from .contracts import contract_ledger, ten_day_signings
 
-from ...utils import NBA_TEAM_IDS, PACIFIC
+from ...utils import NBA_TEAM_IDS
 
 ADDITIONS = {"Signing", "Trade", "AwardOnWaivers", "ContractConverted"}
 
@@ -18,7 +19,8 @@ class RosterError(ValueError):
 
 def build_rosters(
     *, season: str, day: date, opening: dict,
-    transactions: list[dict], boxes: list[dict], inputs: dict,
+    transactions: list[dict], inputs: dict, repair_transactions: list[dict] | None = None,
+    games: list[dict] | None = None,
 ) -> dict:
     baseline_date = opening["date"]
     teams = opening["teams"]
@@ -34,16 +36,8 @@ def build_rosters(
                 raise RosterError("Player appears on two opening rosters.", {"player_id": pid})
             owners[pid] = team
 
-    dates = defaultdict(lambda: {"boxes": [], "transactions": []})
-    last_game, last_transaction = {}, {}
-    for evidence in boxes:
-        if evidence["team_id"] not in teams:
-            raise RosterError("Box-score evidence references a non-NBA team.", {"team_id": evidence["team_id"]})
-        box_date = evidence["game_time_utc"].astimezone(PACIFIC).date()
-        if not baseline_date < box_date <= day:
-            raise RosterError("Box evidence is outside the selected roster interval.", {})
-        dates[box_date]["boxes"].append(evidence)
-        last_game[evidence["team_id"]] = box_date
+    dates = defaultdict(list)
+    last_transaction = {}
     for row in transactions:
         reported_date = date.fromisoformat(row["TRANSACTION_DATE"][:10])
         if not baseline_date < reported_date <= day:
@@ -53,41 +47,55 @@ def build_rosters(
         team = nba_id(row["TEAM_ID"])
         if team not in teams:
             raise RosterError("Transaction references a non-NBA team.", {"transaction": row})
-        dates[reported_date]["transactions"].append(row)
+        dates[reported_date].append(row)
 
-    # Boxes provide positive membership evidence. Absence never implies a waiver.
-    # Date-only transactions apply after same-day game observations for end-of-day reconstruction.
-    for effective_date, evidence in sorted(dates.items()):
-        seen = {}
-        reported_moves = {
-            nba_id(row["PLAYER_ID"]) for row in evidence["transactions"]
-            if row["Transaction_Type"] in ADDITIONS
-        }
-        for box in sorted(evidence["boxes"], key=lambda b: (b["game_time_utc"], b["team_id"])):
-            team = box["team_id"]
-            for raw_id in box["player_ids"]:
-                pid = nba_id(raw_id)
-                moment = (box["game_time_utc"], pid)
-                if moment in seen and seen[moment] != team:
-                    raise RosterError("Conflicting simultaneous box-score membership.", {"player_id": pid})
-                seen[moment] = team
-                current_team = owners.get(pid)
-                if current_team not in {None, team} and pid not in reported_moves:
-                    raise RosterError(
-                        "Box-score membership conflicts with the dated roster.",
-                        {"player_id": pid, "roster_team_id": current_team, "box_team_id": team,
-                         "game_id": box["game_id"], "game_date_pacific": str(effective_date)},
-                    )
-                if current_team in {None, team}:
-                    owners[pid] = team
+    repair_dates = defaultdict(list)
+    for row in repair_transactions or []:
+        try:
+            if not isinstance(row, dict) or set(row) != {"effective_date", "action", "team_id", "player_id"}:
+                raise ValueError("Expected effective_date, action, team_id, and player_id.")
+            effective_date = date.fromisoformat(row["effective_date"])
+            if effective_date.isoformat() != row["effective_date"] or effective_date < baseline_date:
+                raise ValueError("Repair date must be on or after the opening roster date.")
+            if row["action"] not in {"add", "remove"} or nba_id(row["team_id"]) not in teams:
+                raise ValueError("Expected add/remove and an NBA team ID.")
+            nba_id(row["player_id"])
+        except (ValueError, TypeError) as error:
+            raise RosterError(f"Invalid roster repair transaction: {error}", {"repair": row}) from error
+        if effective_date <= day:
+            repair_dates[effective_date].append(row)
 
+    ledger = contract_ledger(transactions, games, day)
+    contracts = {(entry["player_id"], entry["team_id"], entry["signed_date"]): entry for entry in ledger}
+    expiration_dates = defaultdict(list)
+    for entry in ledger:
+        if entry["removal_date"] and entry["removal_date"] <= day.isoformat():
+            expiration_dates[date.fromisoformat(entry["removal_date"])].append(entry)
+    active_contracts = {}
+
+    def supersede(pid, effective_date):
+        prior = active_contracts.pop(pid, None)
+        if prior is not None:
+            prior["superseded_date"] = effective_date.isoformat()
+
+    for effective_date in sorted(dates.keys() | repair_dates.keys() | expiration_dates.keys()):
+        # Expiration takes effect before any new signing on that date.
+        for entry in expiration_dates[effective_date]:
+            pid, team = entry["player_id"], entry["team_id"]
+            if active_contracts.get(pid) is entry:
+                if owners.get(pid) == team:
+                    del owners[pid]
+                    last_transaction[team] = effective_date
+                del active_contracts[pid]
+        rows = dates[effective_date]
         additions = defaultdict(set)
-        for row in evidence["transactions"]:
+        for row in rows:
             pid, team = nba_id(row["PLAYER_ID"]), nba_id(row["TEAM_ID"])
             last_transaction[team] = effective_date
             if row["Transaction_Type"] == "Waive":
                 if owners.get(pid) == team:
                     del owners[pid]
+                    supersede(pid, effective_date)
             else:
                 additions[pid].add(team)
         for pid, destinations in sorted(additions.items()):
@@ -99,23 +107,44 @@ def build_rosters(
             previous = owners.get(pid)
             if previous is not None:
                 last_transaction[previous] = effective_date
+            supersede(pid, effective_date)
             owners[pid] = next(iter(destinations))
+            contract = contracts.get((pid, owners[pid], effective_date.isoformat()))
+            # A conversion or ordinary signing on the same date replaces the short term.
+            other_moves = [row for row in rows if nba_id(row["PLAYER_ID"]) == pid
+                           and row["Transaction_Type"] in ADDITIONS and not ten_day_signings([row])]
+            if contract is not None and not other_moves:
+                active_contracts[pid] = contract
+        # Repairs follow official moves on their date, in operator file order.
+        for row in repair_dates[effective_date]:
+            pid, team = nba_id(row["player_id"]), nba_id(row["team_id"])
+            last_transaction[team] = effective_date
+            if row["action"] == "remove":
+                if owners.get(pid) == team:
+                    del owners[pid]
+                    supersede(pid, effective_date)
+            else:
+                supersede(pid, effective_date)
+                previous = owners.get(pid)
+                if previous is not None:
+                    last_transaction[previous] = effective_date
+                owners[pid] = team
 
     output, team_metadata = {}, {}
     for team in NBA_TEAM_IDS:
         players = [pid for pid, owner in sorted(owners.items()) if owner == team]
         if not players:
             raise RosterError("Reconstruction produced an empty NBA team.", {"team_id": team})
-        evidence_date = max(baseline_date, last_game.get(team, baseline_date), last_transaction.get(team, baseline_date))
+        evidence_date = max(baseline_date, last_transaction.get(team, baseline_date))
         output[str(team)] = players
         team_metadata[str(team)] = {
             "roster_sha256": roster_hash(players),
             "evidence_date_pacific": evidence_date.isoformat(),
-            "last_game_date_pacific": last_game[team].isoformat() if team in last_game else None,
             "last_transaction_date_pacific": last_transaction[team].isoformat() if team in last_transaction else None,
         }
     return {
         "schema_version": 1, "season": season, "game_date_pacific": day.isoformat(),
         "reconstruction_rule": "end_of_day_reported_transactions",
         "teams": output, "team_metadata": team_metadata, "inputs": inputs,
+        "ten_day_contracts": ledger,
     }

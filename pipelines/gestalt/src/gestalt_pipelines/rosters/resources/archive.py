@@ -13,9 +13,9 @@ import boto3
 from botocore.exceptions import ClientError
 from dagster import ConfigurableResource
 
-from ..utils import NBA_TEAM_IDS, box_roster_ids, nba_id, official_json, opening_ids
+from ..utils import NBA_TEAM_IDS, nba_id, official_json, opening_ids
 
-from ...utils import DATA_BUCKET, PACIFIC
+from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC
 
 ROOT = "lake/artifacts/rosters"
 
@@ -71,10 +71,10 @@ class NBARosterArchive(ConfigurableResource):
             raise ValueError("Opening rosters do not describe a single Pacific baseline date.")
         return {"teams": teams, "date": next(iter(dates)), "references": references}
 
-    def transactions(self, client, season: str, first: date, last: date) -> tuple[list, dict]:
+    def transactions(self, season: str, first: date, last: date) -> tuple[list, dict]:
         days = [first + timedelta(days=i) for i in range((last-first).days+1)]
         keys = [f"lake/raw/nba/transactions/season={season}/game_date_pacific={day}/latest.json" for day in days]
-        saved = self._read_many(client, keys)
+        saved = self._read_many(boto3.client("s3"), keys)
         rows, references = [], {}
         for day, key in zip(days, keys):
             raw, reference = saved[key]
@@ -94,90 +94,53 @@ class NBARosterArchive(ConfigurableResource):
             references[day.isoformat()] = {**reference, "last_polled_at": record["last_polled_at"]}
         return rows, references
 
-    def latest_box_rosters(
-        self, client, season: str, games: list[dict], opening: dict, *, today: date,
-    ) -> tuple[list, dict, int]:
-        prefix = f"lake/raw/cdn/boxscore/season={season}/"
-        inventory = [
-            item for page in client.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix)
-            for item in page.get("Contents", [])
-        ]
-        keys = {item["Key"] for item in inventory}
-        versions = {}
-        for item in inventory:
-            relative = item["Key"].removeprefix(prefix)
-            match = re.fullmatch(r"game_id=([0-9]{10})/([0-9a-f]{64})\.json", relative)
-            if match:
-                versions.setdefault(match[1], []).append(item)
-        saved = {gid: max(items, key=lambda o: (o["LastModified"], o["Key"])) for gid, items in versions.items()}
-        latest, missing = {}, []
-        for game in sorted(games, key=lambda g: g["game_time_utc"]):
-            obj = saved.get(game["game_id"])
-            if obj is None:
-                if game["game_time_utc"].astimezone(PACIFIC).date() < today:
-                    missing.append(game["game_id"])
-                continue
-            if obj["Key"].removesuffix(".json") + ".meta.json" not in keys:
-                missing.append(game["game_id"])
-                continue
-            for side in ("home", "away"):
-                latest[game[side + "_team_id"]] = game
-        if missing:
-            raise FileNotFoundError(f"Backfill nba_box_scores and its sidecars first. Missing games: {sorted(set(missing))}")
+    def repair_transactions(self, season: str) -> tuple[list[dict], dict | None]:
+        """Read the operator's dated membership repairs on every roster run."""
+        key = f"{ROOT}/season={season}/repair_transactions.json"
+        try:
+            raw, reference = self._read(boto3.client("s3"), key)
+        except FileNotFoundError:
+            return [], None
+        rows = json.loads(raw)
+        if not isinstance(rows, list):
+            raise ValueError("Roster repair transactions must be a JSON list.")
+        return rows, reference
 
-        cache = {}
-        selected = {game["game_id"]: game for game in latest.values()}
-        evidence, references, bodies_read = [], {}, 0
-        for gid, game in sorted(selected.items()):
-            obj = saved[gid]
-            raw_key = obj["Key"]
-            digest = raw_key.rsplit("/", 1)[-1].removesuffix(".json")
-            meta_raw, meta_ref = self._read(client, raw_key.removesuffix(".json") + ".meta.json")
-            meta = official_json(meta_raw)
-            if meta["season"] != season or meta["game_id"] != gid or meta["box_score_sha256"] != digest:
-                raise ValueError(f"Box-score sidecar does not match its source for {gid}.")
-            needed = []
-            for side in ("home", "away"):
-                team = game[side + "_team_id"]
-                checksum = meta[side + "_roster_sha256"]
-                if meta[side + "_team_id"] != team or not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-f]{64}", checksum):
-                    raise ValueError(f"Invalid box-score team or roster hash for {gid}.")
-                if latest[team]["game_id"] == gid:
-                    needed.append((team, checksum))
-            raw_ref = {
-                "uri": f"s3://{self.bucket}/{raw_key}", "sha256": digest,
-                "archived_at": obj["LastModified"].isoformat(),
-            }
-            if any(checksum not in cache for _, checksum in needed):
-                raw, raw_ref = self._read(client, raw_key)
-                bodies_read += 1
-                if raw_ref["sha256"] != digest:
-                    raise ValueError(f"Box-score bytes do not match their filename for {gid}.")
-                parsed = box_roster_ids(raw, game)
-                for side in ("home", "away"):
-                    players = parsed[game[side + "_team_id"]]
-                    # Treat the upstream producer's roster hash as an opaque cache key.
-                    checksum = meta[side + "_roster_sha256"]
-                    if checksum in cache and cache[checksum] != players:
-                        raise ValueError(f"Box-score metadata hash refers to inconsistent memberships for {gid}.")
-                    cache[checksum] = players
-            for team, checksum in needed:
-                evidence.append({
-                    "team_id": team, "player_ids": cache[checksum],
-                    "game_time_utc": game["game_time_utc"], "game_id": gid,
-                })
-            references[gid] = {"box_score": raw_ref, "metadata": meta_ref}
-        return evidence, references, bodies_read
-
-    def daily_evidence(self, season: str, day: date, opening: dict, games: list[dict], *, today: date) -> dict:
-        client = boto3.client("s3")
-        rows, transaction_refs = self.transactions(client, season, opening["date"] + timedelta(days=1), day)
-        boxes, box_refs, bodies_read = self.latest_box_rosters(client, season, games, opening, today=today)
-        references = {"transactions": transaction_refs, "box_scores": box_refs}
-        return {
-            "transactions": rows, "boxes": boxes, "box_bodies_read": bodies_read,
-            "references": references,
+    def save_roster_size_warning(
+        self, *, record: dict, artifact: dict, counts: dict,
+        run_id: str, occurred_at: datetime,
+    ) -> dict:
+        event_id = sha256(f"{run_id}:roster_size".encode()).hexdigest()
+        occurred = occurred_at.astimezone(PACIFIC).date()
+        key = (
+            f"{ERRORS_PREFIX}/pipeline=rosters/season={record['season']}/"
+            f"occurred_date_pacific={occurred}/{event_id}.warning.json"
+        )
+        event = {
+            "schema_version": 1, "event_id": event_id, "pipeline": "rosters",
+            "stage": "rosters_by_date", "season": record["season"], "status": "warning",
+            "timestamp": occurred_at.isoformat(), "dagster_run_id": run_id,
+            "game_date_pacific": record["game_date_pacific"],
+            "message": "One or more NBA rosters exceed the 18-player warning threshold.",
+            "details": {"warning_threshold": 18, "team_player_counts": counts,
+                        "team_player_ids": {team: record["teams"][team] for team in counts}},
+            "inputs": record["inputs"], "artifact_path": artifact["uri"],
         }
+        raw = json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
+        official_json(raw)
+        client = boto3.client("s3")
+        try:
+            client.put_object(Bucket=self.bucket, Key=key, Body=raw,
+                              ContentType="application/json", IfNoneMatch="*")
+        except ClientError as error:
+            if error.response["Error"]["Code"] not in {"412", "PreconditionFailed"}:
+                raise
+            raw, _ = self._read(client, key)
+            if {k: v for k, v in official_json(raw).items() if k != "timestamp"} != {
+                k: v for k, v in event.items() if k != "timestamp"
+            }:
+                raise ValueError("Existing roster warning differs from this run.") from error
+        return {"uri": f"s3://{self.bucket}/{key}", "sha256": sha256(raw).hexdigest()}
 
     def selection(self, season: str, day: str) -> tuple[dict | None, str | None]:
         if not re.fullmatch(r"[0-9]{4}-[0-9]{2}", season) or date.fromisoformat(day).isoformat() != day:

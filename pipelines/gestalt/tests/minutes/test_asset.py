@@ -11,7 +11,6 @@ from dagster._core.execution.api import execute_run
 from dagster._core.definitions.job_base import InMemoryJob
 
 from gestalt_pipelines.definitions import defs
-from gestalt_pipelines.box_scores.resources import NBABoxScoreArchive
 from gestalt_pipelines.minutes.assets import player_minutes
 from gestalt_pipelines.minutes.resources import MinutesArchive
 from gestalt_pipelines.minutes.resources import archive
@@ -36,6 +35,7 @@ def minutes_job(monkeypatch):
         times[key] = datetime(2026, 11, 12, tzinfo=UTC)+timedelta(seconds=len(writes))
         writes.append(key)
     def get(**kw):
+        assert not kw["Key"].startswith("lake/raw/cdn/boxscore/"), "Updater must not read box scores."
         if kw["Key"] not in objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
         raw = objects[kw["Key"]]
@@ -56,14 +56,11 @@ def minutes_job(monkeypatch):
         put(Key=key, Body=raw, IfNoneMatch="*")
         return {"uri": "s3://nba-gestalt-data/"+key, "sha256": digest}
     gid = data["games"][0]["game_id"]
-    box_prefix = f"lake/raw/cdn/boxscore/season={SEASON}/game_id={gid}/"
-    box = immutable(box_prefix, data["boxes"][gid])
-    meta = NBABoxScoreArchive()._ensure_metadata(
-        client, box["uri"].removeprefix("s3://nba-gestalt-data/"), SEASON,
-        json_bytes(data["boxes"][gid]), box["sha256"],
-    )
-    box.update({k: meta[k] for k in ("metadata_uri", "metadata_sha256")})
-    data["stints"]["inputs"] = {"games": {gid: {"box_score": box}}}
+    # Upstream stints retain their source references, but the updater never reads raw boxes.
+    data["stints"]["inputs"] = {"games": {gid: {"box_score": {
+        "uri": f"s3://nba-gestalt-data/lake/raw/cdn/boxscore/season={SEASON}/game_id={gid}/"+("a"*64)+".json",
+        "sha256": "a"*64,
+    }}}}
     sp = f"lake/artifacts/stints/season={SEASON}/game_date_pacific={FIRST}/"
     sr = immutable(sp, data["stints"])
     put(Key=sp+"latest.json", Body=json_bytes(sr), IfNoneMatch="*")
@@ -83,6 +80,8 @@ def test_date_only_job_publishes_all_players_and_reuses_same_bytes(minutes_job):
     record, ref, _ = a.state(str(FIRST))
     assert record["validation"]["complete"] is True
     assert record["model"]["model_version"] == "v1"
+    assert "boxes" not in record["inputs"]
+    assert all("box_score" not in refs for refs in record["game_inputs"].values())
     assert record["players"]["15"]["history"][0]["minutes"] == 0
     assert record["players"]["17"]["history"] == []
     key = ref["uri"].removeprefix("s3://nba-gestalt-data/")
