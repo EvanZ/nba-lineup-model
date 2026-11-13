@@ -47,6 +47,8 @@ flowchart LR
     rosterMorning["3:30 a.m. Pacific: yesterday"] --> rosterBuilder
     rosterBuilder --> rosterVersions["30-team roster versions and date latest.json in S3"]
     rosterVersions -->|"Newest roster date <= game date"| reconcile
+    frozenRatings["Approved frozen ratings, profiles, context, HCA and aging inputs"] --> ratingPriors["player_rating_priors"]
+    ratingPriors --> ratingPriorsJSON["Initialization JSON versions and priors/latest.json"]
     priorMinutes["Frozen conditional priors and historical-role lookup"] --> minutes["player_minutes"]
     stintsArchive --> minutes
     rosterVersions --> minutes
@@ -74,6 +76,7 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | Job | Schedule or sensor | When it requests work |
 | --- | --- | --- |
 | `capture_nba_season_schedule` | On demand | Normally once per season |
+| `initialize_player_ratings` | On demand | Prepare approved frozen initialization; no daily updates or schedule yet |
 | `capture_injury_pdfs` | `injury_pdf_poll` | Eastern :02, :17, :32, :47; checks the preceding hour |
 | `extract_injury_pdf` | `new_injury_pdf` | About every minute; new saved PDFs in today's/yesterday's Eastern partitions |
 | `reconcile_injury_date` | `injury_report_dates_ready` | About every minute; changed accepted inputs for open games today/tomorrow |
@@ -426,3 +429,30 @@ The current implementation and real-run evidence are recorded in [#75](https://g
 The source-removal regression was Kevin McCullar Jr.: an archived zero-minute box listing had reintroduced him to New York after his Oct 23 waiver; transaction-based reconstruction keeps him absent until the Nov 5 Toronto signing. Roster builds no longer infer membership from box appearances. The stint parser still reads boxes for its starting lineups and validation, as described above.
 
 Correction evidence is retained on EC2 in `/tmp/75-ten-day-before.json`, `/tmp/75-ten-day-runs.json`, and `/tmp/75-ten-day-validation.json`. The ticket records permanent run IDs and acceptance evidence. Historical data corrections, ordered model replay, and any historical game-projection correction require their agreed scopes; running a roster date does not itself authorize a model replay or website publication.
+
+
+## Ratings/HCA initialization — issue #76, slice 1
+
+Asset **`player_rating_priors`**, manual job **`initialize_player_ratings`**, group **`ratings`**. Launch in the existing `nba_gestalt_pipelines` code location with no run configuration. The resource uses `GESTALT_NBA_SEASON`; only the approved 2026–27/v1 input selection is currently registered. Initialization is unpartitioned and has no schedule or sensor. The daily updater and ordered season replay belong to later slices.
+
+The job verifies all nine pinned S3 source checksums before decoding fitted objects. It preserves the original 524-player catalog and matching profiles, exports the saved context coefficients/scaler values, retains the accepted HCA settings and fixed B2B coefficient, and freezes the aging predictor identity and shared-catalog alignment. Only the updater's nonadditive lineup-style calculation is implemented; additive player terms, HCA and B2B remain separate. No model training, legacy application imports, website publication, minutes update, or historical forecast rewrite occurs.
+
+All paths below are in `s3://nba-gestalt-data/`. Exact source paths and byte hashes are registered in `gestalt/src/gestalt_pipelines/ratings/utils/sources.py` and recorded in the output's `inputs`.
+
+| Input | S3 location |
+| --- | --- |
+| Original 524 ratings and catalog metadata | `nba-gestalt/releases/gestalt-web-d739c28/artifacts/web/preseason_rankings/forward_nail_rapm_v1212_residualized_lambda/forward-nail-rapm-v1212-residualized-lambda-2025-26-20260827T221311Z-2b0c1a25/2026-27.{parquet,json}` |
+| Matching 524 player profiles | Same archived `artifacts/web/` root, under `preseason_profiles/` with the same model/run and `2026-27.parquet` |
+| Fitted context and fixed B2B source | `nba-gestalt/releases/gestalt-web-d739c28/artifacts/models/forward_nail_rapm_v1212_residualized_lambda/2025-26/forward-nail-rapm-v1212-residualized-lambda-2025-26-20260827T221311Z-2b0c1a25/{season_context_models.joblib,season_schedule_control_metadata.parquet}` |
+| Accepted HCA settings | `lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-02/runtime_sha256=042869e115b05d0895f14db3f85568dabb72b0788ae97425e7a1f5df21688e3f/code/deploy/causal-hca-replacement-candidate-v2.json` |
+| Approved rebuilt aging predictor, metadata and alignment evidence | `nba-gestalt/handoffs/2026-11-11/model-rebuild/aging-predictor-2026-27/2026-11-13-aed0818eea96/{aging_predictor.joblib,metadata.json,rebuild_evidence.tar.gz}` |
+
+| Output | S3 key |
+| --- | --- |
+| Immutable initialization JSON | `lake/artifacts/player_ratings/season=<season>/model_version=v1/priors/<sha256>.json` |
+| Accepted initialization pointer | `lake/artifacts/player_ratings/season=<season>/model_version=v1/priors/latest.json` |
+| Failure/recovery records | `lake/artifacts/errors/pipeline=ratings/season=<season>/occurred_date_pacific=<processing-date>/<event-id>.{failure,recovery}.json` |
+
+An identical rerun verifies and reuses the saved initialization. Publication reads the immutable JSON back before creating `latest.json`; a competing selection fails visibly. The job refuses to replace a different already-selected initialization: a replacement requires the separately approved model-version/replay decision. Missing or changed source objects fail without substituting another model or changing the accepted pointer. After repairing an actual failure, use **Re-execute from failure** to record the linked recovery; an unrelated fresh success does not claim recovery.
+
+The original 524 catalog includes later additions documented in its retained metadata; it is an approved numerical lookup, not proof that all 524 players were on an opening-night roster. The rebuilt aging predictor's reported maximum catalog difference is `2.0479982154597565e-08`; the original `1e-8` comparison failed and remains explicitly recorded. Initialization does not introduce those players into a season replay or change their saved catalog values.
