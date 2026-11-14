@@ -26,8 +26,8 @@ from .play_by_play.jobs import capture_nba_play_by_play, parse_nba_games
 from .play_by_play.resources import NBAPlayByPlayArchive
 from .play_by_play.schedules import play_by_play_morning
 from .play_by_play.sensors import play_by_play_ready_for_stints
-from .predictions.assets import game_predictions
-from .predictions.jobs import predict_game_margins
+from .predictions.assets import game_predictions, game_predictions_actual_minutes
+from .predictions.jobs import predict_game_margins, predict_game_margins_actual_minutes
 from .predictions.resources import GamePredictionArchive
 from .ratings.assets import player_rating_priors, player_ratings
 from .ratings.jobs import initialize_player_ratings, update_player_ratings
@@ -53,12 +53,12 @@ from .transactions.schedules import transactions_hourly
 defs = Definitions(
     assets=[
         injury_pdf_archive, injury_report_extractions, injury_status_by_game_date, player_minutes, game_minutes,
-        player_rating_priors, player_ratings, game_predictions,
+        player_rating_priors, player_ratings, game_predictions, game_predictions_actual_minutes,
         nba_season_schedule, nba_market_odds, nba_box_scores, nba_scoreboard, transactions_by_date, nba_play_by_play, nba_stints, rosters_by_date,
     ],
     jobs=[
         capture_injury_pdfs, extract_injury_pdf, reconcile_injury_date, update_player_minutes, project_game_minutes,
-        initialize_player_ratings, update_player_ratings, predict_game_margins,
+        initialize_player_ratings, update_player_ratings, predict_game_margins, predict_game_margins_actual_minutes,
         capture_nba_season_schedule, archive_nba_market_odds, capture_nba_box_scores, capture_nba_scoreboard,
         capture_nba_transactions, capture_nba_play_by_play, parse_nba_games, build_nba_rosters,
     ],

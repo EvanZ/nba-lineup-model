@@ -74,6 +74,10 @@ flowchart LR
     ratingsJSON --> predictions
     catalog --> predictions
     predictions --> predictionFiles["Per-game prediction JSON and latest.json"]
+    predictionFiles --> actualMinutesPredictions["game_predictions_actual_minutes: manual"]
+    boxArchive --> actualMinutesPredictions
+    catalog --> actualMinutesPredictions
+    actualMinutesPredictions --> counterfactualFiles["Postgame counterfactual JSON and latest.json"]
 
 ~~~
 
@@ -86,6 +90,7 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | Job | Schedule or sensor | When it requests work |
 | --- | --- | --- |
 | `capture_nba_season_schedule` | On demand | Normally once per season |
+| `predict_game_margins_actual_minutes` | On demand; daily schedule deferred until manual review | Select a completed Pacific game date; saved predictions plus final box-score minutes |
 | `predict_game_margins` | On demand; automation not yet implemented | Select a Pacific game date; consume accepted ratings and game minutes |
 | `initialize_player_ratings` | On demand | Prepare approved frozen initialization |
 | `update_player_ratings` | `update_player_ratings_schedule`, 04:15 Pacific | Ratings effective today, using games through yesterday; opening day uses initialization; manual partitions/backfills remain available |
@@ -533,3 +538,33 @@ For historical backfill, select daily partitions of **`game_predictions`** in Da
 Failures leave saved accepted files intact and write a `.failure.json`. Repair the owning upstream job/input and choose **Re-execute from failure** on the failed prediction run; an actual successful child run writes the linked `.recovery.json`. Fresh runs do not claim recovery of a failed parent.
 
 This first slice adds **no schedule or sensor**. `predict_game_margins_sensor`, real current/historical manual acceptance runs, and the season prediction backfill remain later acceptance work. Website API/UI integration is tracked separately in #71. Validation so far covers isolated Dagster/S3 tests and read-only complete slates for Oct 20 (3 games), Nov 4 (14 games), and Nov 14 (5 games); no real prediction outputs have been published by that check.
+
+
+## Postgame actual-minutes counterfactual — manual slice (#78)
+
+Asset **`game_predictions_actual_minutes`**, job **`predict_game_margins_actual_minutes`**, group **`predictions`**, in the existing code location. Select a completed Pacific game-date partition, through yesterday, without YAML. Partitions are independent and support the same asset backfill UI. This job selects only the counterfactual asset and declares dependencies on `game_predictions`, `nba_box_scores` and `nba_season_schedule`; it does not rerun those producers. A no-game date succeeds without game files. Missing predictions or missing/non-final saved boxes fail visibly.
+
+Read each game's accepted prediction through `GamePredictionArchive` and its final official NBA box score through the existing `NBABoxScoreArchive`. Enumerate the slate through shared `NBAScheduleResource`. Preserve every baseline player's scalar NAIL and the baseline's HCA, fixed B2B, 100-possession assumption and probability conversion. For each player, calculate `5 * actual_minutes / team_total_actual_minutes * saved_nail`; subtract away contributions from home contributions and add the unchanged HCA/B2B. These are full-game minutes, including overtime. Regulation totals of 240 make this equivalent to actual_minutes/48; overtime minutes remain normalized to five players. No first-44-minute role measurement, injury recomputation, model fitting or updated ratings are involved.
+
+Retain forecast-only players with actual zeroes and include additional players listed in the final box. For an additional player, `RatingsArchive.read_state` reads the exact immutable daily state recorded in the baseline prediction, without consulting today's selection. Its recorded prior can be read with `read_priors`; an unknown player uses the already-approved replacement rating and emits a player-specific warning. Existing baseline player ratings always take precedence. No new roster/name source is introduced.
+
+| Output | S3 key in `nba-gestalt-data` |
+| --- | --- |
+| Immutable counterfactual | `lake/artifacts/game_predictions_actual_minutes/season=<season>/model_version=v1/game_date_pacific=<date>/game_id=<NBA-game-id>/<sha256>.json` |
+| Accepted postgame selection | Same per-game counterfactual directory, `latest.json` |
+| Failures/recoveries/warnings | Existing `lake/artifacts/errors/pipeline=predictions/season=<season>/occurred_date_pacific=<processing-date>/<event-id>.{failure,recovery,warning}.json`, with `stage=game_predictions_actual_minutes` |
+
+The JSON uses `artifact_kind=game_prediction_actual_minutes` and `purpose=postgame_actual_minutes_counterfactual`. It retains `baseline_prediction_purpose`, distinguishing original pregame forecasts from historical replays. Fields include original and counterfactual margin/probability, actual scores/margin, unchanged HCA/B2B components, both teams, and every player's projected/actual minutes, saved NAIL, projected/actual rating contributions and contribution delta. Inputs pin the baseline prediction, final box plus sidecar, schedule, and any additional ratings/prior references actually read. Numeric values retain full precision.
+
+The resource reuses immutable files, checksum/read-back verification and conditional pointer writes. An identical input fingerprint preserves the original generation time and accepted pointer. A changed final box creates another immutable counterfactual version and can advance only the separate postgame latest.json. Baseline prediction files/pointers remain unchanged. All required games are calculated before publishing new selections; source selections are checked again before publication. Repair a failed input and choose Re-execute from failure to obtain a stage-scoped recovery record; unrelated successful runs do not claim recovery.
+
+**Current timing is manual only.** The approved later cadence is `predict_game_margins_actual_minutes_schedule`, 04:30 America/Los_Angeles for yesterday, after manual review. No postgame schedule or sensor has been added or enabled in this slice. Website integration and aggregate scoring remain separate work.
+
+Read-only validation covers complete saved slates for Oct 20 (3 games), Nov 4 (14) and Nov 13 (9), including three overtime games. These checks publish no S3 outputs and launch no real Dagster runs; real manual output acceptance remains for Evan.
+
+
+### Manual counterfactual acceptance and date-redesign checkpoint
+
+On November 14, Evan ran `predict_game_margins_actual_minutes` for game date Nov 4 (run `3ad5d047-3273-41c0-8d81-181f1216c218`). All 14 counterfactuals were read back and reproduced from the saved predictions and official final boxes, including two overtime games. Saved NAIL, HCA/B2B, baseline forecast objects and baseline pointer timestamps remained unchanged.
+
+The subsequent requested backfill `pjqhzhdn` was canceled during the date-convention discussion: 21 runs succeeded and three were canceled. Preserve that history and its existing outputs; complete season coverage has not yet been verified. No partition-date code changes were made during that discussion. [Issue #79](https://github.com/EvanZ/nba-lineup-model/issues/79) records the proposed unified data-date convention, coordinated ratings/minutes reader migration, source-collector partitioning and replay plan. That proposal has not been implemented. Protected collection remains independently enabled; the postgame 04:30 schedule remains pending.

@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 from dagster import AssetKey, ConfigurableResource, DagsterEventType
 
 from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC
-from ..utils import MODEL_VERSION, PredictionError, json_bytes, validate_prediction
+from ..utils import MODEL_VERSION, PredictionError, json_bytes, validate_prediction, validate_actual_minutes_prediction
 
 
 class GamePredictionArchive(ConfigurableResource):
@@ -25,10 +25,10 @@ class GamePredictionArchive(ConfigurableResource):
             raise PredictionError("Invalid prediction season or version.")
         return f"lake/artifacts/game_predictions/season={self.season}/model_version={self.model_version}/"
 
-    def _game_prefix(self, day: str, game_id: str) -> str:
+    def _game_prefix(self, day: str, game_id: str, *, actual_minutes: bool = False) -> str:
         if date.fromisoformat(day).isoformat() != day or not re.fullmatch(r"\d{10}", game_id):
             raise PredictionError("Invalid prediction game/date identity.")
-        return self.prefix+f"game_date_pacific={day}/game_id={game_id}/"
+        return (self.actual_minutes_prefix if actual_minutes else self.prefix)+f"game_date_pacific={day}/game_id={game_id}/"
 
     def _read(self, key: str) -> tuple[bytes, str]:
         response = boto3.client("s3").get_object(Bucket=self.bucket, Key=key)
@@ -45,8 +45,8 @@ class GamePredictionArchive(ConfigurableResource):
         if self._read(key)[0] != raw:
             raise PredictionError("Prediction S3 read-back differs from the immutable bytes.")
 
-    def selection(self, day: str, game_id: str) -> tuple[dict | None, str | None]:
-        prefix = self._game_prefix(day, game_id)
+    def selection(self, day: str, game_id: str, *, actual_minutes: bool = False) -> tuple[dict | None, str | None]:
+        prefix = self._game_prefix(day, game_id, actual_minutes=actual_minutes)
         try:
             raw, etag = self._read(prefix+"latest.json")
         except ClientError as error:
@@ -62,13 +62,14 @@ class GamePredictionArchive(ConfigurableResource):
             raise PredictionError("Invalid accepted prediction pointer.")
         return pointer, etag
 
-    def load(self, pointer: dict) -> dict:
+    def load(self, pointer: dict, *, actual_minutes: bool = False) -> dict:
         raw, _ = self._read(pointer["uri"].removeprefix(f"s3://{self.bucket}/"))
         if sha256(raw).hexdigest() != pointer["sha256"]:
             raise PredictionError("Accepted prediction checksum differs from S3.")
         record = json.loads(raw)
-        validate_prediction(record, self.season, self.model_version)
-        prefix = self._game_prefix(record["game_date_pacific"], record["game_id"])
+        validator = validate_actual_minutes_prediction if actual_minutes else validate_prediction
+        validator(record, self.season, self.model_version)
+        prefix = self._game_prefix(record["game_date_pacific"], record["game_id"], actual_minutes=actual_minutes)
         if pointer["uri"] != f"s3://{self.bucket}/{prefix}{pointer['sha256']}.json":
             raise PredictionError("Selected prediction has a different game identity.")
         return record
@@ -106,18 +107,49 @@ class GamePredictionArchive(ConfigurableResource):
             raise PredictionError("Prediction selection read-back differs from this publication.")
         return {"uri": pointer["uri"], "sha256": digest, "reused": False, "frozen": False}
 
+    @property
+    def actual_minutes_prefix(self) -> str:
+        return self.prefix.replace("/game_predictions/", "/game_predictions_actual_minutes/")
+
+    def save_actual_minutes(self, record: dict, *, expected_etag: str | None) -> dict:
+        validate_actual_minutes_prediction(record, self.season, self.model_version)
+        day, gid = record["game_date_pacific"], record["game_id"]
+        selected, etag = self.selection(day, gid, actual_minutes=True)
+        if etag != expected_etag:
+            raise PredictionError("Another run changed the accepted counterfactual.")
+        if selected and self.load(selected, actual_minutes=True)["input_fingerprint"] == record["input_fingerprint"]:
+            return {"uri": selected["uri"], "sha256": selected["sha256"], "reused": True}
+        raw = json_bytes(record)
+        digest = sha256(raw).hexdigest()
+        prefix = self._game_prefix(day, gid, actual_minutes=True)
+        key = prefix+digest+".json"
+        self._immutable(key, raw)
+        pointer = {"uri": f"s3://{self.bucket}/{key}", "sha256": digest,
+                   **{k: record[k] for k in ("schema_version", "season", "model_version", "game_date_pacific",
+                           "game_id", "purpose", "input_fingerprint")}}
+        condition = {"IfMatch": expected_etag} if expected_etag else {"IfNoneMatch": "*"}
+        boto3.client("s3").put_object(Bucket=self.bucket, Key=prefix+"latest.json", Body=json_bytes(pointer),
+                                      ContentType="application/json", **condition)
+        if self._read(prefix+"latest.json")[0] != json_bytes(pointer):
+            raise PredictionError("Counterfactual selection read-back differs from this publication.")
+        return {"uri": pointer["uri"], "sha256": digest, "reused": False}
+
     def save_event(self, *, day: str, run_id: str, message: str, inputs: dict,
                    status="failed", game_id: str | None = None, details: dict | None = None,
-                   original: dict | None = None) -> dict:
+                   original: dict | None = None, stage: str = "game_predictions") -> dict:
+        if stage not in {"game_predictions", "game_predictions_actual_minutes"}:
+            raise PredictionError("Unknown prediction processing stage.")
         suffix = {"failed": "failure", "recovered": "recovery", "warning": "warning"}[status]
         identity = [run_id, day, game_id, status, details or {}, original]
+        if stage != "game_predictions":
+            identity.append(stage)
         now = datetime.now(UTC)
         event = {"schema_version": 1, "event_id": sha256(json_bytes(identity)).hexdigest(),
-                 "pipeline": "predictions", "stage": "game_predictions", "season": self.season,
+                 "pipeline": "predictions", "stage": stage, "season": self.season,
                  "model_version": self.model_version, "status": status, "timestamp": now.isoformat(),
                  "game_date_pacific": day, "game_id": game_id, "dagster_run_id": run_id,
                  "message": message, "input": inputs, "details": details or {},
-                 "artifact_path": f"s3://{self.bucket}/{self.prefix}game_date_pacific={day}/"}
+                 "artifact_path": f"s3://{self.bucket}/{self.actual_minutes_prefix if stage == 'game_predictions_actual_minutes' else self.prefix}game_date_pacific={day}/"}
         if original:
             event["original_failure"] = original
         key = (f"{ERRORS_PREFIX}/pipeline=predictions/season={self.season}/"
@@ -134,10 +166,11 @@ class GamePredictionArchive(ConfigurableResource):
             raise PredictionError("Saved prediction event differs from this run.")
         return {"uri": f"s3://{self.bucket}/{key}", "sha256": sha256(raw).hexdigest()}
 
-    def parent_failure(self, context, day: str) -> dict | None:
+    def parent_failure(self, context, day: str, *, stage: str = "game_predictions") -> dict | None:
+        job = {"game_predictions": "predict_game_margins", "game_predictions_actual_minutes": "predict_game_margins_actual_minutes"}[stage]
         run = context.instance.get_run_by_id(context.run.parent_run_id) if context.run.parent_run_id else None
         if (run is None or run.status.value != "FAILURE"
-                or (run.job_name != "predict_game_margins" and AssetKey("game_predictions") not in (run.asset_selection or set()))):
+                or (run.job_name != job and AssetKey(stage) not in (run.asset_selection or set()))):
             return None
         selected_day = run.tags.get("dagster/partition")
         if selected_day is None:
@@ -149,7 +182,7 @@ class GamePredictionArchive(ConfigurableResource):
         events = context.instance.get_records_for_run(run.run_id, of_type=DagsterEventType.STEP_FAILURE).records
         for entry in reversed(events):
             event = entry.event_log_entry.dagster_event
-            if event.step_key != "game_predictions":
+            if event.step_key != stage:
                 continue
             data = event.event_specific_data.user_failure_data
             if data and "prediction_failure" in data.metadata:
@@ -161,7 +194,7 @@ class GamePredictionArchive(ConfigurableResource):
                 failure = json.loads(raw)
                 if (sha256(raw).hexdigest() != ref["sha256"] or failure["dagster_run_id"] != run.run_id
                         or failure["game_date_pacific"] != day or failure["status"] != "failed"
-                        or failure["model_version"] != self.model_version):
+                        or failure["model_version"] != self.model_version or failure.get("stage") != stage):
                     raise PredictionError("Recovery failure identity differs from its parent.")
                 return ref
         return None

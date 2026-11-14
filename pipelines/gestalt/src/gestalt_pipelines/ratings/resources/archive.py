@@ -213,6 +213,24 @@ class RatingsArchive(ConfigurableResource):
             raise ValueError("Selected ratings state belongs to a different partition.")
         return record, reference, etag
 
+    def read_state(self, reference: dict, day: str) -> dict:
+        """Read an exact saved daily state without consulting its current selection."""
+        from datetime import date
+        from ..utils import validate_state
+        if date.fromisoformat(day).isoformat() != day:
+            raise ValueError("Invalid pinned ratings date.")
+        record = self._reference_json(reference, self.state_prefix+f"game_date_pacific={day}/")
+        validate_state(record, self.season)
+        if record["game_date_pacific"] != day:
+            raise ValueError("Pinned ratings state belongs to a different date.")
+        return record
+
+    def read_priors(self, reference: dict) -> dict:
+        """Read the exact initialization already recorded by a saved rating state."""
+        record = self._reference_json(reference, self.prefix)
+        validate_initialization(record, self.season, self.model_version)
+        return record
+
     def day_inputs(self, day: str) -> tuple[dict, dict]:
         records, references = {}, {}
         for name, root in (("stints", "stints"), ("rosters", "rosters")):
