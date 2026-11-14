@@ -2,7 +2,7 @@
 
 The Dagster code location is **nba_gestalt_pipelines**. Its definitions live in [the GESTALT project](gestalt/src/gestalt_pipelines/definitions.py). The pipelines use the season set by `GESTALT_NBA_SEASON`. The daily partitions start on the date set by `GESTALT_NBA_SEASON_START_DATE`. See the [example configuration](gestalt/code-location.env.example).
 
-Current reference reviewed November 13, 2026 Pacific. The sections below cover inputs, accepted S3 selections, automatic timing, manual/backfill operation, and recovery. Runtime enablement is a dated snapshot; use Dagster for current run state.
+Current reference reviewed November 14, 2026 Pacific. The sections below cover inputs, accepted S3 selections, automatic timing, manual/backfill operation, and recovery. Runtime enablement is a dated snapshot; use Dagster for current run state.
 
 ## Data flow
 
@@ -64,12 +64,16 @@ flowchart LR
     minutesArchive -->|"Previous Pacific date"| minutes
     minutesArchive --> gameMinutes["game_minutes"]
     priorMinutes --> gameMinutes
-    minutesMorning["4 a.m. Pacific: yesterday"] --> minutes
+    minutesMorning["4 a.m. Pacific: effective today"] --> minutes
     projectionSensor["project_game_minutes_sensor: today/tomorrow"] --> gameMinutes
     rosterVersions --> gameMinutes
     statuses --> gameMinutes
     catalog --> gameMinutes
     gameMinutes --> gameAllocations["Per-game minutes JSON and latest.json"]
+    gameAllocations --> predictions["game_predictions: manual predict_game_margins"]
+    ratingsJSON --> predictions
+    catalog --> predictions
+    predictions --> predictionFiles["Per-game prediction JSON and latest.json"]
 
 ~~~
 
@@ -82,6 +86,7 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | Job | Schedule or sensor | When it requests work |
 | --- | --- | --- |
 | `capture_nba_season_schedule` | On demand | Normally once per season |
+| `predict_game_margins` | On demand; automation not yet implemented | Select a Pacific game date; consume accepted ratings and game minutes |
 | `initialize_player_ratings` | On demand | Prepare approved frozen initialization |
 | `update_player_ratings` | `update_player_ratings_schedule`, 04:15 Pacific | Ratings effective today, using games through yesterday; opening day uses initialization; manual partitions/backfills remain available |
 | `capture_injury_pdfs` | `injury_pdf_poll` | Eastern :02, :17, :32, :47; checks the preceding hour |
@@ -503,3 +508,28 @@ Ratings backfill `kwlsknbm` succeeded on all 26 dates Oct 20–Nov 14. Ratings O
 Game-minutes backfill `shvsjdzn` succeeded on all 26 dates Oct 20–Nov 14. Readback covers all **188 games** (183 completed-season games through Nov 13 plus five Nov 14 games): 175 refreshed selections and 13 preserved frozen pregame selections. All 188 injury selections were checked against original report publication times before scheduled tipoff. The preservation check reads purpose from the immutable forecast, including older pointers that omit that field; their S3 timestamps verify they were not moved. No frozen pregame selection was replaced.
 
 Both daily schedules are RUNNING: minutes at 04:00 and ratings at 04:15 Pacific, next targeting Nov 15 with games through Nov 14. `project_game_minutes_sensor` is RUNNING again. The protected injury, odds and scoreboard collectors were left enabled throughout. Evan approved committing and pushing this completed migration and closing #76. Website/full-game forecast integration and the optional context experiment (#77) remain separate work.
+
+
+## Game-margin predictions — manual first slice (#78)
+
+Asset **`game_predictions`**, job **`predict_game_margins`**, group **`predictions`**, in the existing `nba_gestalt_pipelines` code location. Select a Pacific game-date partition in the launchpad; no YAML or hand-prepared inputs are needed. The job consumes accepted per-game `game_minutes`, accepted daily `player_ratings`, and the shared `NBAScheduleResource`. It does not recalculate injuries, rosters, minutes, ratings, or models. The job selection contains only this new asset; upstream dependencies are visible in the graph without rerunning their producers.
+
+Historical date D uses ratings effective D, with evidence through D−1. For open games today or tomorrow it uses today's effective ratings. Game-minute inputs always belong to the target game date and retain their own baseline cutoff. Opening-night game minutes already contain their approved frozen-minute initialization, and opening-night ratings contain the approved scalar priors. No preseason exhibition data or newly trained inputs are introduced.
+
+For each player, contribution is `projected_minutes / 48 * nail`. The home margin is the sum of home contributions minus away contributions, plus the selected daily HCA and `(home_is_b2b − away_is_b2b) * fixed_b2b_coefficient`. The schedule identifies previous-day games for those flags. Positive margin favors the home team. The approved **100 possessions** assumption makes this the predicted point margin. The saved home win probability is `min(1, max(0, 0.499583 + 0.030250 * predicted_home_margin))`. No pace fitting, profile statistics, non-additive lineup context, or odds enter this producer.
+
+The JSON contains both team/player lists, conditional and allocated minutes, injury statuses/reasons/probabilities, rotation membership, scalar NAIL and each weighted contribution. It also includes team submission status and minute totals, explicit rating/minute evidence dates, HCA/B2B components, fixed probability parameters, source URIs/checksums, implementation identity, and generation time. Injury report publication time, PDF URI and source URL follow the exact injury/extraction references already recorded in `game_minutes`; a newer live report is never independently selected here. An upstream allocation with no eligible report retains a null report summary. All numbers retain full floating-point precision; display rounding belongs in the website.
+
+| Output | S3 key in `nba-gestalt-data` |
+| --- | --- |
+| Immutable prediction | `lake/artifacts/game_predictions/season=<season>/model_version=v1/game_date_pacific=<date>/game_id=<NBA-game-id>/<sha256>.json` |
+| Accepted per-game prediction | Same per-game directory, `latest.json` containing the immutable URI and SHA-256 |
+| Failure/recovery/warning | `lake/artifacts/errors/pipeline=predictions/season=<season>/occurred_date_pacific=<processing-date>/<event-id>.{failure,recovery,warning}.json` |
+
+The source fingerprint includes the selected inputs, calculation settings and implementation. Repeating unchanged inputs reuses the original immutable JSON and generation time without rewriting `latest.json`. The producer verifies immutable and pointer read-back, uses conditional pointer writes, and checks source selections before publishing. A missing required input fails visibly; all pending games are calculated and validated before publishing new selections for the slate. A player missing from daily ratings uses the approved frozen scalar prior if present, otherwise the existing approved replacement rating with a nonfatal warning in S3 and Dagster. This does not modify the rating state.
+
+For historical backfill, select daily partitions of **`game_predictions`** in Dagster. Dates are independent and use one partition per run. Historical calculations are explicitly `purpose=historical_replay`. Existing `pregame_projection` selections remain unchanged, including older pointers where the purpose is only recorded in the immutable file. Live selections stop advancing at scheduled tipoff, with a final time check immediately before pointer publication. Started games lacking a prediction are reported in run metadata and logs rather than assigned a newly fabricated pregame snapshot. Dates without games succeed without writing game files.
+
+Failures leave saved accepted files intact and write a `.failure.json`. Repair the owning upstream job/input and choose **Re-execute from failure** on the failed prediction run; an actual successful child run writes the linked `.recovery.json`. Fresh runs do not claim recovery of a failed parent.
+
+This first slice adds **no schedule or sensor**. `predict_game_margins_sensor`, real current/historical manual acceptance runs, and the season prediction backfill remain later acceptance work. Website API/UI integration is tracked separately in #71. Validation so far covers isolated Dagster/S3 tests and read-only complete slates for Oct 20 (3 games), Nov 4 (14 games), and Nov 14 (5 games); no real prediction outputs have been published by that check.
