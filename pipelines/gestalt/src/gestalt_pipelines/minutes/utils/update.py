@@ -1,4 +1,4 @@
-"""Advance one date from an exact predecessor without counting a game twice."""
+"""Estimates effective on D, using observations only through D−1."""
 
 from collections import Counter
 from copy import deepcopy
@@ -26,6 +26,9 @@ def estimate(start: float, history: list[dict]) -> float:
 def validate_state(record: dict, season: str, version: str = MODEL_VERSION) -> None:
     validate_model(record, season, version, kind="conditional_minutes_state")
     day = date.fromisoformat(record["game_date_pacific"])
+    observed_day = day-timedelta(days=1)
+    if record.get("observed_through_game_date_pacific") != observed_day.isoformat():
+        raise MinutesError("Minutes must declare a previous-day cutoff; rebuild old observation-date states before using them.")
     if record.get("validation", {}).get("complete") is not True:
         raise MinutesError("Previous minutes state did not pass full-slate validation.")
     players = record["players"]
@@ -45,7 +48,7 @@ def validate_state(record: dict, season: str, version: str = MODEL_VERSION) -> N
         if order != sorted(order):
             raise MinutesError("Minutes history is not chronological.")
         for h in history:
-            if date.fromisoformat(h["game_date_pacific"]) > day or h["game_id"] not in included:
+            if date.fromisoformat(h["game_date_pacific"]) > observed_day or h["game_id"] not in included:
                 raise MinutesError("Future or unprocessed evidence in minutes history.")
             number(h["minutes"], label="observed minutes", maximum=48)
             number(h["weight"], label="observation weight", maximum=1)
@@ -68,6 +71,7 @@ def update_state(
     inputs: dict, version: str = MODEL_VERSION,
 ) -> dict:
     validate_priors(priors, season, version)
+    observed_day = day-timedelta(days=1)
     if day < first_date:
         raise MinutesError("Minutes date precedes the configured season start.")
     if day == first_date:
@@ -86,7 +90,7 @@ def update_state(
         included = set(parent["included_game_ids"])
         game_inputs = deepcopy(parent["game_inputs"])
     if (
-        rosters.get("season") != season or rosters.get("game_date_pacific") != day.isoformat()
+        rosters.get("season") != season or rosters.get("game_date_pacific") != observed_day.isoformat()
         or set(rosters["teams"]) != set(map(str, NBA_TEAM_IDS))
     ):
         raise MinutesError("Selected rosters must cover the exact season/date and all 30 NBA teams.")
@@ -105,7 +109,7 @@ def update_state(
     def ensure(pid):
         key = str(pid)
         if key not in players:
-            players[key] = initialize_player(pid, priors, day=day.isoformat())
+            players[key] = initialize_player(pid, priors, day=observed_day.isoformat())
         return players[key]
 
     for pid, tid in owners.items():
@@ -113,12 +117,12 @@ def update_state(
     expected = sorted(g["game_id"] for g in games)
     if (
         len(set(expected)) != len(expected)
-        or stints.get("season") != season or stints.get("game_date_pacific") != day.isoformat()
+        or stints.get("season") != season or stints.get("game_date_pacific") != observed_day.isoformat()
         or stints.get("validation", {}).get("complete") is not True
         or stints["validation"]["expected_game_ids"] != expected
         or stints["validation"]["processed_game_ids"] != expected
         or set(injuries["games"]) != set(expected)
-        or injuries.get("season") != season or injuries.get("game_date_pacific") != day.isoformat()
+        or injuries.get("season") != season or injuries.get("game_date_pacific") != observed_day.isoformat()
     ):
         raise MinutesError("Selected stints and injuries do not cover the full official slate.")
     if set(r["game_id"] for r in stints["rows"]) != set(expected):
@@ -128,7 +132,7 @@ def update_state(
         gid = game["game_id"]
         if gid in included:
             raise MinutesError(f"Game {gid} has already been applied to the parent state.")
-        if game["game_time_utc"].astimezone(PACIFIC).date() != day:
+        if game["game_time_utc"].astimezone(PACIFIC).date() != observed_day:
             raise MinutesError("Official game belongs to a different Pacific date.")
         game_rows = [r for r in stints["rows"] if r["game_id"] == gid]
         rows = game_observations(game, rosters["teams"], injuries["games"][gid], game_rows)
@@ -140,13 +144,13 @@ def update_state(
         for row in rows:
             state = ensure(row["player_id"])
             if row["classification"] == "medical_exclusion":
-                observations.append({**row, "game_date_pacific": day.isoformat(), "minutes": None, "weight": 0})
+                observations.append({**row, "game_date_pacific": observed_day.isoformat(), "minutes": None, "weight": 0})
                 continue
             value = 0.0
             if row["classification"] == "played":
                 prior, delta = state["starting_minutes"], SETTINGS["played_clip_delta_minutes"]
                 value = min(min(48, prior+delta), max(max(0, prior-delta), row["role_minutes"]))
-            item = {**row, "game_date_pacific": day.isoformat(), "minutes": value, "weight": 1.0}
+            item = {**row, "game_date_pacific": observed_day.isoformat(), "minutes": value, "weight": 1.0}
             state["history"] = (state["history"]+[item])[-SETTINGS["eligible_game_window"]:]
             observations.append(item)
         included.add(gid)
@@ -155,7 +159,8 @@ def update_state(
     retained = {h["game_id"] for p in players.values() for h in p["history"]} | set(expected)
     record = {
         "schema_version": 1, "artifact_kind": "conditional_minutes_state",
-        "purpose": "postgame_model_state", "season": season, "game_date_pacific": day.isoformat(),
+        "purpose": "daily_model_state", "season": season, "game_date_pacific": day.isoformat(),
+        "observed_through_game_date_pacific": observed_day.isoformat(),
         "model": model_metadata(version), "implementation": implementation_identity(),
         "inputs": inputs, "players": dict(sorted(players.items(), key=lambda kv: int(kv[0]))),
         "included_game_ids": sorted(included),

@@ -1,7 +1,7 @@
 """The Schedule tab's injury-weighted, active-15 proportional allocation."""
 
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from hashlib import sha256
 from math import isclose
 
@@ -49,7 +49,8 @@ def build_game_projection(
         game["game_time_utc"].astimezone(PACIFIC).date().isoformat() != day
         or (baseline is not None and baseline["season"] != season) or rosters["season"] != season
         or injuries["season"] != season or injuries["game_date_pacific"] != day
-        or (baseline is not None and date.fromisoformat(baseline["game_date_pacific"]) >= date.fromisoformat(day))
+        or (baseline is not None and date.fromisoformat(baseline["game_date_pacific"]) > date.fromisoformat(day))
+        or (baseline is not None and baseline.get("observed_through_game_date_pacific") != str(date.fromisoformat(baseline["game_date_pacific"])-timedelta(days=1)))
         or rosters["game_date_pacific"] > day
         or set(rosters["teams"]) != set(map(str, NBA_TEAM_IDS))
     ):
@@ -111,7 +112,7 @@ def build_game_projection(
         "season": season, "game_date_pacific": day, "game_id": gid,
         "scheduled_start_utc": game["game_time_utc"].isoformat(),
         "home_team_id": game["home_team_id"], "away_team_id": game["away_team_id"],
-        "baseline_through_date": baseline["game_date_pacific"] if baseline is not None else None,
+        "baseline_through_date": baseline["observed_through_game_date_pacific"] if baseline is not None else None,
         "baseline_kind": "daily_state" if baseline is not None else "frozen_priors",
         "roster_evidence": "reconstructed_game_date" if inputs.get("historical_replay") else "latest_known_snapshot",
         "roster_date_pacific": rosters["game_date_pacific"],

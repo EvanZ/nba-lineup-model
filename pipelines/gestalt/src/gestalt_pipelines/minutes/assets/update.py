@@ -1,4 +1,4 @@
-"""One date's postgame conditional-minutes state, ordered after its predecessor."""
+"""One effective date's conditional minutes, using observations through yesterday."""
 
 from datetime import date, datetime, time, timedelta
 
@@ -40,12 +40,18 @@ def _require_morning_inputs(context: AssetExecutionContext, day: str) -> None:
         AssetDep(AssetKey("player_minutes"), partition_mapping=TimeWindowPartitionMapping(
             start_offset=-1, end_offset=-1, allow_nonexistent_upstream_partitions=True,
         )),
-        AssetDep(AssetKey("nba_stints")),
-        AssetDep(AssetKey("rosters_by_date")),
-        AssetDep(AssetKey("injury_status_by_game_date")),
+        AssetDep(AssetKey("nba_stints"), partition_mapping=TimeWindowPartitionMapping(
+            start_offset=-1, end_offset=-1, allow_nonexistent_upstream_partitions=True,
+        )),
+        AssetDep(AssetKey("rosters_by_date"), partition_mapping=TimeWindowPartitionMapping(
+            start_offset=-1, end_offset=-1, allow_nonexistent_upstream_partitions=True,
+        )),
+        AssetDep(AssetKey("injury_status_by_game_date"), partition_mapping=TimeWindowPartitionMapping(
+            start_offset=-1, end_offset=-1, allow_nonexistent_upstream_partitions=True,
+        )),
     ],
     code_version=implementation_identity()["source_sha256"],
-    description="Postgame minutes estimates and dated three-game windows for all known players.",
+    description="Minutes effective on this Pacific date, using games through the previous date.",
 )
 def player_minutes(
     context: AssetExecutionContext, nba_schedule: NBAScheduleResource,
@@ -53,13 +59,15 @@ def player_minutes(
 ) -> MaterializeResult:
     day = date.fromisoformat(context.partition_key)
     archive = minutes_archive
+    observed_day = day-timedelta(days=1)
     inputs = {"priors": None, "parent": None}
     metadata = {
-        "game_date_pacific": str(day), "season": archive.season,
+        "game_date_pacific": str(day), "observed_through_game_date_pacific": str(observed_day),
+        "season": archive.season,
         "model_version": archive.model_version,
     }
     try:
-        _require_morning_inputs(context, day.isoformat())
+        _require_morning_inputs(context, observed_day.isoformat())
         if archive.season != nba_schedule.season:
             raise MinutesError("Minutes and schedule resources use different seasons.")
         priors, inputs["priors"] = archive.load_priors()
@@ -68,9 +76,9 @@ def player_minutes(
             parent, inputs["parent"], _ = archive.state(str(day-timedelta(days=1)))
             if parent is None:
                 raise MinutesError("No accepted minutes state for the immediately preceding date.")
-        _, prior, etag = archive.state(str(day))
-        games, inputs["schedule"] = nba_schedule.games_for_date(day, allow_empty=True)
-        data, refs = archive.load_day(str(day))
+        prior, etag = archive.state_selection(str(day))
+        games, inputs["schedule"] = nba_schedule.games_for_date(observed_day, allow_empty=True)
+        data, refs = archive.load_day(str(observed_day))
         inputs.update(refs)
         record = update_state(
             day=day, first_date=minutes_dates.start.date(), season=archive.season,

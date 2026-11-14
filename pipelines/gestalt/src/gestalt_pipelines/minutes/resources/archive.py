@@ -108,7 +108,7 @@ class MinutesArchive(ConfigurableResource):
         validate_priors(record, self.season, self.model_version)
         return record, reference
 
-    def _state_selection(self, day: str) -> tuple[dict | None, str | None]:
+    def state_selection(self, day: str) -> tuple[dict | None, str | None]:
         prefix = self.prefix+f"game_date_pacific={day}/"
         try:
             response = boto3.client("s3").get_object(Bucket=self.bucket, Key=prefix+"latest.json")
@@ -128,7 +128,7 @@ class MinutesArchive(ConfigurableResource):
         return ref, response["ETag"]
 
     def state(self, day: str) -> tuple[dict | None, dict | None, str | None]:
-        ref, etag = self._state_selection(day)
+        ref, etag = self.state_selection(day)
         if ref is None:
             return None, None, None
         prefix = self.prefix+f"game_date_pacific={day}/"
@@ -176,18 +176,19 @@ class MinutesArchive(ConfigurableResource):
     def save_state(self, record: dict, *, prior: dict | None, expected_etag: str | None) -> dict:
         validate_state(record, self.season, self.model_version)
         day = record["game_date_pacific"]
+        observed_day = record["observed_through_game_date_pacific"]
         inputs = record["inputs"]
         if inputs["parent"] is not None:
             _, current_parent, _ = self.state(str(date.fromisoformat(day)-timedelta(days=1)))
             if current_parent != inputs["parent"]:
                 raise MinutesError("Previous minutes selection changed during this run.")
         for kind, prefix in (
-            ("stints", f"lake/artifacts/stints/season={self.season}/game_date_pacific={day}/"),
-            ("injuries", f"lake/artifacts/injury_status_by_game_date/season={self.season}/game_date_pacific={day}/"),
+            ("stints", f"lake/artifacts/stints/season={self.season}/game_date_pacific={observed_day}/"),
+            ("injuries", f"lake/artifacts/injury_status_by_game_date/season={self.season}/game_date_pacific={observed_day}/"),
         ):
             if self._pointer_ref(prefix) != inputs[kind]:
                 raise MinutesError(f"The selected {kind} changed during this run.")
-        if self._roster_ref(day) != inputs["rosters"]:
+        if self._roster_ref(observed_day) != inputs["rosters"]:
             raise MinutesError("The selected roster changed during this run.")
         raw = json_bytes(record)
         digest = sha256(raw).hexdigest()
@@ -301,11 +302,13 @@ class MinutesArchive(ConfigurableResource):
     def projection_selections(self, day: str, *, today: date, roster_archive) -> dict:
         target = date.fromisoformat(day)
         historical = target < today
-        baseline_day = str((target if historical else today)-timedelta(days=1))
-        baseline, _ = self._state_selection(baseline_day)
+        baseline_day = str(target if historical else today)
         first_date = date.fromisoformat(os.environ["GESTALT_NBA_SEASON_START_DATE"])
-        if baseline is None and target != first_date:
-            raise FileNotFoundError(f"No accepted daily minutes through {baseline_day}.")
+        baseline = None
+        if date.fromisoformat(baseline_day) != first_date:
+            baseline, _ = self.state_selection(baseline_day)
+            if baseline is None:
+                raise FileNotFoundError(f"No accepted daily minutes effective {baseline_day}.")
         if historical:
             roster_day = day
             roster, _ = roster_archive.selection(self.season, roster_day)

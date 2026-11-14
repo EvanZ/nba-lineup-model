@@ -18,7 +18,7 @@ from gestalt_pipelines.minutes.utils import (
 from gestalt_pipelines.resources import NBAScheduleResource
 from gestalt_pipelines.rosters.resources import NBARosterArchive
 
-from .helpers import FIRST, HOME, SEASON, priors, slate
+from .helpers import FIRST, FIRST_STATE, HOME, SEASON, priors, slate
 from .test_asset import minutes_job
 
 DAY = FIRST+timedelta(days=1)
@@ -110,7 +110,7 @@ class Clock:
 @pytest.fixture
 def projection_job(minutes_job,monkeypatch):
     daily,a,objects,writes,_ = minutes_job
-    assert daily.execute_in_process(partition_key=str(FIRST)).success
+    assert daily.execute_in_process(partition_key=str(FIRST_STATE)).success
     data = example()
     game = data["game"]
     monkeypatch.setattr(Clock,"value",NOW)
@@ -252,7 +252,7 @@ def test_sensor_waits_for_missing_baseline_and_skips_active_date(projection_job)
     from dagster import DagsterRunStatus
     job,a,objects,_,_,_,_=projection_job
     sensor=defs.get_sensor_def("project_game_minutes_sensor")
-    baseline_key=a.prefix+f"game_date_pacific={FIRST}/latest.json"
+    baseline_key=a.prefix+f"game_date_pacific={FIRST_STATE}/latest.json"
     source=objects.pop(baseline_key)
     with DagsterInstance.ephemeral() as instance:
         with build_sensor_context(
@@ -294,7 +294,7 @@ def test_historical_partition_uses_previous_day_and_preserves_replay_versions(pr
     assert record["baseline_through_date"]==str(FIRST)
     assert record["roster_date_pacific"]==str(DAY)
     assert record["inputs"]["daily_minutes"]["uri"].startswith(
-        "s3://nba-gestalt-data/"+a.prefix+f"game_date_pacific={FIRST}/"
+        "s3://nba-gestalt-data/"+a.prefix+f"game_date_pacific={FIRST_STATE}/"
     )
     before=len(writes)
     assert job.execute_in_process(partition_key=str(DAY)).success
@@ -320,6 +320,21 @@ def test_opening_day_historical_projection_uses_frozen_priors(projection_job,mon
 def test_historical_missing_previous_day_does_not_fall_back_to_priors(projection_job):
     job,a,objects,_,data,_,_=projection_job
     Clock.value=NOW+timedelta(days=5)
-    del objects[a.prefix+f"game_date_pacific={FIRST}/latest.json"]
+    del objects[a.prefix+f"game_date_pacific={FIRST_STATE}/latest.json"]
     assert not job.execute_in_process(partition_key=str(DAY),raise_on_error=False).success
     assert a.game_selection(str(DAY),data["game"]["game_id"])[0] is None
+
+
+def test_legacy_pregame_pointer_without_purpose_remains_frozen(projection_job):
+    job,a,objects,_,data,_,_=projection_job
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    key=a.game_prefix+f"game_date_pacific={DAY}/game_id={data['game']['game_id']}/latest.json"
+    pointer=json.loads(objects[key])
+    del pointer['purpose']
+    objects[key]=json_bytes(pointer)
+    before=objects[key]
+    Clock.value=NOW+timedelta(days=1)
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    assert objects[key]==before
+    selected,_=a.game_selection(str(DAY),data['game']['game_id'])
+    assert a.read_reference(selected,a.game_prefix)['purpose']=='pregame_projection'

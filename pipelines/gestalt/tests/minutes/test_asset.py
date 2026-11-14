@@ -18,7 +18,7 @@ from gestalt_pipelines.minutes.utils import PRIOR_REFERENCES, json_bytes
 from gestalt_pipelines.resources import NBAScheduleResource
 from gestalt_pipelines.rosters.resources import NBARosterArchive
 
-from .helpers import FIRST, SEASON, priors, reference, slate
+from .helpers import FIRST, FIRST_STATE, SEASON, priors, reference, slate
 
 
 @pytest.fixture
@@ -76,8 +76,8 @@ def minutes_job(monkeypatch):
 
 def test_date_only_job_publishes_all_players_and_reuses_same_bytes(minutes_job):
     job, a, objects, writes, _ = minutes_job
-    assert job.execute_in_process(partition_key=str(FIRST)).success
-    record, ref, _ = a.state(str(FIRST))
+    assert job.execute_in_process(partition_key=str(FIRST_STATE)).success
+    record, ref, _ = a.state(str(FIRST_STATE))
     assert record["validation"]["complete"] is True
     assert record["model"]["model_version"] == "v1"
     assert "boxes" not in record["inputs"]
@@ -88,7 +88,7 @@ def test_date_only_job_publishes_all_players_and_reuses_same_bytes(minutes_job):
     raw = objects[key]
     assert key.endswith("/"+sha256(raw).hexdigest()+".json")
     before = len(writes)
-    assert job.execute_in_process(partition_key=str(FIRST)).success
+    assert job.execute_in_process(partition_key=str(FIRST_STATE)).success
     assert objects[key] == raw
     assert not any(k.endswith("/latest.json") for k in writes[before:])
 
@@ -98,8 +98,8 @@ def test_date_only_job_publishes_all_players_and_reuses_same_bytes(minutes_job):
 def test_missing_upstream_keeps_pointer_and_failed_parent_retry_recovers(minutes_job, backfill_tags, source_kind):
     job, a, objects, _, source_prefix = minutes_job
     with DagsterInstance.ephemeral() as instance:
-        assert job.execute_in_process(instance=instance, partition_key=str(FIRST)).success
-        pointer_key = a.prefix+f"game_date_pacific={FIRST}/latest.json"
+        assert job.execute_in_process(instance=instance, partition_key=str(FIRST_STATE)).success
+        pointer_key = a.prefix+f"game_date_pacific={FIRST_STATE}/latest.json"
         accepted = objects[pointer_key]
         source_key = source_prefix+"latest.json"
         if source_kind == "injuries":
@@ -107,7 +107,7 @@ def test_missing_upstream_keeps_pointer_and_failed_parent_retry_recovers(minutes
         elif source_kind == "rosters":
             source_key = f"lake/artifacts/rosters/season={SEASON}/game_date_pacific={FIRST}/latest.json"
         source = objects.pop(source_key)
-        failed = job.execute_in_process(instance=instance, partition_key=str(FIRST), raise_on_error=False)
+        failed = job.execute_in_process(instance=instance, partition_key=str(FIRST_STATE), raise_on_error=False)
         assert not failed.success and objects[pointer_key] == accepted
         [failure_key] = [k for k in objects if k.endswith(".failure.json")]
         failure_bytes = objects[failure_key]
@@ -119,8 +119,8 @@ def test_missing_upstream_keeps_pointer_and_failed_parent_retry_recovers(minutes
             # Real asset backfills carry a range even with one partition per run.
             parent = parent._replace(
                 job_name="__ASSET_JOB", asset_selection=frozenset({AssetKey("player_minutes")}),
-                tags={"dagster/asset_partition_range_start": str(FIRST),
-                      "dagster/asset_partition_range_end": str(FIRST)},
+                tags={"dagster/asset_partition_range_start": str(FIRST_STATE),
+                      "dagster/asset_partition_range_end": str(FIRST_STATE)},
             )
             context = SimpleNamespace(
                 run=SimpleNamespace(parent_run_id=parent.run_id),
@@ -129,9 +129,9 @@ def test_missing_upstream_keeps_pointer_and_failed_parent_retry_recovers(minutes
                     get_records_for_run=instance.get_records_for_run,
                 ),
             )
-            ref = a.parent_failure(context, str(FIRST))
+            ref = a.parent_failure(context, str(FIRST_STATE))
             assert ref["sha256"] == sha256(failure_bytes).hexdigest()
-            assert a.parent_failure(context, "2026-10-21") is None
+            assert a.parent_failure(context, "2026-10-22") is None
         child = instance.create_run_for_job(
             job, run_config=parent.run_config, tags=parent.tags,
             parent_run_id=parent.run_id, root_run_id=parent.run_id,
@@ -147,13 +147,13 @@ def test_missing_upstream_keeps_pointer_and_failed_parent_retry_recovers(minutes
 
 def test_missing_predecessor_does_not_restart_and_versions_are_isolated(minutes_job):
     job, a, objects, _, _ = minutes_job
-    assert not job.execute_in_process(partition_key="2026-10-21", raise_on_error=False).success
+    assert not job.execute_in_process(partition_key="2026-10-22", raise_on_error=False).success
     assert not any(k.endswith("/latest.json") and k.startswith(a.prefix) for k in objects)
     _, ref = a.load_priors()
     v2 = MinutesArchive(season=SEASON, model_version="v2", prior_uri=ref["uri"])
     with pytest.raises(ValueError, match="reference"):
         v2.load_priors()
-    assert v2.state(str(FIRST)) == (None, None, None)
+    assert v2.state(str(FIRST_STATE)) == (None, None, None)
 
 
 def test_dependency_uses_previous_partition_and_one_partition_per_run():
@@ -169,9 +169,9 @@ def test_publishing_another_model_version_cannot_move_v1(minutes_job):
     from copy import deepcopy
     from gestalt_pipelines.minutes.utils import model_metadata
     job, v1, objects, _, _ = minutes_job
-    assert job.execute_in_process(partition_key=str(FIRST)).success
-    state, original, _ = v1.state(str(FIRST))
-    pointer_key = v1.prefix+f"game_date_pacific={FIRST}/latest.json"
+    assert job.execute_in_process(partition_key=str(FIRST_STATE)).success
+    state, original, _ = v1.state(str(FIRST_STATE))
+    pointer_key = v1.prefix+f"game_date_pacific={FIRST_STATE}/latest.json"
     accepted = objects[pointer_key]
     v2 = MinutesArchive(season=SEASON, model_version="v2")
     prior = priors()
@@ -182,8 +182,8 @@ def test_publishing_another_model_version_cannot_move_v1(minutes_job):
     record["inputs"]["priors"] = v2_prior
     saved = v2.save_state(record, prior=None, expected_etag=None)
     assert "/model_version=v2/" in saved["uri"]
-    assert objects[pointer_key] == accepted and v1.state(str(FIRST))[1] == original
-    assert v2.state(str(FIRST))[1]["uri"] == saved["uri"]
+    assert objects[pointer_key] == accepted and v1.state(str(FIRST_STATE))[1] == original
+    assert v2.state(str(FIRST_STATE))[1]["uri"] == saved["uri"]
     with pytest.raises(ValueError, match="incompatible"):
         v1.save_state(record, prior=original, expected_etag=None)
     assert objects[pointer_key] == accepted

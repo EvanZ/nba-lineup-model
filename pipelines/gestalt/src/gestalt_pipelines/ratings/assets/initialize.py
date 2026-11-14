@@ -10,7 +10,7 @@ from ..utils import implementation_identity, prepare_initialization, source_refe
 
 @asset(
     group_name="ratings", code_version=implementation_identity()["source_sha256"],
-    description="Export the approved 524-player priors and frozen context/HCA inputs to JSON.",
+    description="Preserve the approved numerical priors, joint HCA prior, and fixed B2B control.",
 )
 def player_rating_priors(context: AssetExecutionContext, ratings_archive: RatingsArchive) -> MaterializeResult:
     archive = ratings_archive
@@ -19,9 +19,15 @@ def player_rating_priors(context: AssetExecutionContext, ratings_archive: Rating
     try:
         inputs.update(source_references(archive.season, archive.model_version))
         prior, etag = archive.selection()
-        blobs = archive.read_sources()
-        record = prepare_initialization(blobs, season=archive.season)
-        saved = archive.save_priors(record, prior=prior, expected_etag=etag)
+        if prior is not None:
+            record, reference = archive.load_priors()
+            if reference != prior or archive.selection() != (prior, etag):
+                raise ValueError("The initialization selection changed during this run.")
+            saved = {**reference, "reused": True}
+        else:
+            blobs = archive.read_sources()
+            record = prepare_initialization(blobs, season=archive.season)
+            saved = archive.save_priors(record, prior=prior, expected_etag=etag)
     except Exception as error:
         message = str(error)
         try:
@@ -32,11 +38,10 @@ def player_rating_priors(context: AssetExecutionContext, ratings_archive: Rating
         raise Failure(message, metadata=metadata, allow_retries=False) from error
     metadata.update({
         "priors_uri": saved["uri"], "sha256": saved["sha256"], "reused": saved["reused"],
-        "player_count": len(record["players"]), "profile_count": len(record["profiles"]),
+        "player_count": len(record["players"]),
         "forecast_source_counts": MetadataValue.json(dict(Counter(p["forecast_source"] for p in record["players"]))),
         "hca_prior_mean": record["settings"]["hca"]["prior_mean"],
         "fixed_back_to_back": record["settings"]["fixed_back_to_back"],
-        "aging_alignment_offset": record["aging"]["alignment"]["offset"],
         "inputs": MetadataValue.json(inputs),
     })
     try:

@@ -10,6 +10,7 @@ Current reference reviewed November 13, 2026 Pacific. The sections below cover i
 flowchart LR
     playerIndex["Official PlayerIndex JSON and metadata in S3"] --> playerNames["Shared NBAPlayerNamesResource"]
     playerNames --> reconcile
+    playerNames -->|New-player warning labels| ratings
     scheduleSource["Official NBA season schedule"] --> schedule["nba_season_schedule"]
     schedule --> catalog["Versioned schedule JSON in S3"]
     nba["Official NBA injury PDFs"] --> capture["injury_pdf_archive"]
@@ -47,8 +48,13 @@ flowchart LR
     rosterMorning["3:30 a.m. Pacific: yesterday"] --> rosterBuilder
     rosterBuilder --> rosterVersions["30-team roster versions and date latest.json in S3"]
     rosterVersions -->|"Newest roster date <= game date"| reconcile
-    frozenRatings["Approved frozen ratings, profiles, context, HCA and aging inputs"] --> ratingPriors["player_rating_priors"]
+    frozenRatings["Approved frozen NAIL priors, HCA and fixed B2B"] --> ratingPriors["player_rating_priors"]
     ratingPriors --> ratingPriorsJSON["Initialization JSON versions and priors/latest.json"]
+    ratingPriorsJSON --> ratings["player_ratings: manual daily update"]
+    stintsArchive --> ratings
+    rosterVersions --> ratings
+    catalog --> ratings
+    ratings --> ratingsJSON["Joint player/HCA state and date latest.json"]
     priorMinutes["Frozen conditional priors and historical-role lookup"] --> minutes["player_minutes"]
     stintsArchive --> minutes
     rosterVersions --> minutes
@@ -76,7 +82,8 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | Job | Schedule or sensor | When it requests work |
 | --- | --- | --- |
 | `capture_nba_season_schedule` | On demand | Normally once per season |
-| `initialize_player_ratings` | On demand | Prepare approved frozen initialization; no daily updates or schedule yet |
+| `initialize_player_ratings` | On demand | Prepare approved frozen initialization |
+| `update_player_ratings` | `update_player_ratings_schedule`, 04:15 Pacific | Ratings effective today, using games through yesterday; opening day uses initialization; manual partitions/backfills remain available |
 | `capture_injury_pdfs` | `injury_pdf_poll` | Eastern :02, :17, :32, :47; checks the preceding hour |
 | `extract_injury_pdf` | `new_injury_pdf` | About every minute; new saved PDFs in today's/yesterday's Eastern partitions |
 | `reconcile_injury_date` | `injury_report_dates_ready` | About every minute; changed accepted inputs for open games today/tomorrow |
@@ -87,12 +94,12 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | `parse_nba_games` | `play_by_play_ready_for_stints` | After that scheduled PBP capture succeeds, for the same date |
 | `capture_nba_transactions` | `transactions_hourly` | Hourly 08:00–20:00, plus 23:59; current polls check today and yesterday |
 | `build_nba_rosters` | `rosters_morning`; `roster_transactions_ready` | 03:30 for yesterday, plus affected dates when transaction collection adds rows |
-| `update_player_minutes` | `update_player_minutes_schedule` | 04:00 for yesterday; requires successful parser and roster runs that morning |
+| `update_player_minutes` | `update_player_minutes_schedule` | 04:00 estimates for today, using games through yesterday; requires successful parser and roster runs that morning |
 | `project_game_minutes` | `project_game_minutes_sensor` | About every minute; eligible games today/tomorrow when accepted inputs differ |
 
 All eight listed recurring schedules and five sensors were verified RUNNING in the permanent instance on November 13, 2026. The former `minutes_ready` / `update_player_minutes_sensor` is retired; `game_minutes_ready` was renamed `project_game_minutes_sensor`. Definition defaults may be STOPPED; the table describes enabled instance state. Manual partition runs and backfills remain available alongside automation.
 
-The morning sequence is 03:00 PBP capture → successful capture triggers same-date stints parsing; 03:30 yesterday's roster build; 04:00 yesterday's minutes update. The updater fails visibly if the scheduled parser/roster prerequisites are missing, failed, still running, or stale. Repair them and re-execute the updater manually. Injury reconciliation and game allocation read their approved accepted inputs; neither requires the injury artifact and allocation roster to reference an identical roster version.
+The morning sequence is 03:00 PBP capture → successful capture triggers same-date stints parsing; 03:30 yesterday's roster build; 04:00 today's minutes estimates using yesterday's games. The updater fails visibly if the scheduled parser/roster prerequisites are missing, failed, still running, or stale. Repair them and re-execute the updater manually. Injury reconciliation and game allocation read their approved accepted inputs; neither requires the injury artifact and allocation roster to reference an identical roster version.
 
 ## Season preparation
 
@@ -311,15 +318,15 @@ A `latest.json` object can advance as newer inputs are accepted. A consumer can 
 
 ## Conditional player minutes
 
-The `player_minutes` asset and `update_player_minutes` job maintain conditional-minutes estimates: how much a player plays when available. This is separate from the player-ratings/HCA updater, seasonal availability probabilities, forecast minute allocation, and website publication. Daily Pacific partitions use the configured season start. The first estimator version is `v1`.
+The `player_minutes` asset and `update_player_minutes` job maintain conditional-minutes estimates: how much a player plays when available. This is separate from the player-ratings/HCA updater, seasonal availability probabilities, forecast minute allocation, and website publication. Daily Pacific partitions are effective dates: D uses games through D−1. Updated files start one day after the configured season start (October 21 for 2026–27); opening-day projections use the existing frozen priors. Today is an available partition. The first estimator version remains `v1`; the numerical model is unchanged.
 
 | Input | Selection |
 | --- | --- |
 | Official slate | `NBAScheduleResource`, including its immutable schedule reference |
-| First-44-minute exposure | Same-date accepted `nba_stints` JSON |
+| First-44-minute exposure | Accepted `nba_stints` JSON for D−1 |
 | Actual participation/minutes | Full-game playing time from the same validated stints; no direct box-score reads |
-| Membership | Same-date roster `latest.json` selects the accepted `rosters_by_date` JSON for all 30 teams |
-| Injury labels | Same-date accepted `injury_status_by_game_date/latest.json` selection, using resolved NBA IDs |
+| Membership | D−1 roster `latest.json` selects the accepted `rosters_by_date` JSON for all 30 teams |
+| Injury labels | D−1 accepted `injury_status_by_game_date/latest.json` selection, using resolved NBA IDs and each game’s scheduled-tipoff cutoff |
 | Historical initialization | Verified conditional-only priors below; no refitting or seasonal injury overrides |
 | Previous state | Immediately preceding Pacific date of `player_minutes`, same season/model version |
 
@@ -334,15 +341,15 @@ All output paths below are under `s3://nba-gestalt-data/`.
 
 The registered 2026-27/v1 prior checksum is `08081b51d754bd3fa0abef0a9996d7de8cffaaaa67480833a4c53ca701f4ed47`. It preserves 528 historical starting estimates as a lookup, 1,599 historical-role entries, initialization provenance, and the accepted cold-start cohort. The 528 IDs do not define opening-night membership. Dated roster membership determines introductions. Box-score or injury-report-only players do not enter the observation population. Frozen rookie estimates are reused; later entrants use historical role when available or the approved cold-start median. Known players retain their state when returning after a gap.
 
-The daily JSON contains exact input and parent references, estimator/settings/code identities, every current roster player plus retained off-roster histories, up to three dated eligible observations per player, estimates, and the day's classifications and coverage checks. The date means **updated through games on that date**, available for the following day's forecasts.
+The daily JSON contains exact input and parent references, estimator/settings/code identities, every current roster player plus retained off-roster histories, up to three dated eligible observations per player, estimates, and the day's classifications and coverage checks. The date means **estimates effective on that date**. `observed_through_game_date_pacific` is exactly D−1. Observation/history entries keep the dates the games were actually played. November 14 uses games through November 13. Old observation-date states are rejected as predecessors; an approved ordered backfill replaces date selections while preserving immutable versions.
 
 A played observation measures regulation exposure before minute 44, scales it by 48/44, and applies the approved prior-relative clipping. The estimate combines the original historical prior (weight 0.2 games) with up to three eligible observations. Healthy DNPs, Available/zero-minute cases, inactive-only cases, and G League assignments count as real zeros. Zero-minute Probable/Questionable/Doubtful/Out cases are excluded, except G League assignments. Medical gaps and days without a team game add no observation. No-game dates still carry state forward.
 
-For a single date, select its partition on `update_player_minutes`; no per-player YAML is needed. For a season backfill, select `player_minutes` on the **asset page**, choose the date range, and launch an asset backfill. Its previous-date dependency enforces date order with one partition per run. The first configured date initializes from priors; later dates require the exact previous state. A failure holds the requested later dates. Do not use a job backfill to assume this ordering.
+For a single date, select its partition on `update_player_minutes`; no per-player YAML is needed. For a season backfill, select `player_minutes` on the **asset page**, choose the date range, and launch an asset backfill. Its previous-date dependency enforces date order with one partition per run. The first updated date (season start plus one day) initializes from priors and the opening games; later dates require the exact previous effective-date state. A failure holds the requested later dates. Do not use a job backfill to assume this ordering.
 
 Rerunning an unchanged date reuses identical JSON. Changed inputs produce a new immutable file before conditionally advancing the pointer. A correction to an earlier date needs an explicitly approved replay of the following dates; automation does not rebuild historical suffixes. Old versions and frozen forecasts remain untouched. Model versions have isolated priors, parents, and pointers.
 
-`update_player_minutes_schedule` runs `update_player_minutes` once daily at **4 a.m. America/Los_Angeles**, for the previous Pacific date. It replaces the former updater sensor; no automatic update is requested merely because an input changes during the day. The existing 3 a.m. PBP capture triggers `parse_nba_games`; `build_nba_rosters` runs at 3:30 a.m. Scheduled updates verify that the latest parser and roster runs for that partition succeeded after the scheduled morning's Pacific midnight. Missing, failed, running, or stale upstream work causes a visible failure through the existing S3 error path. Repair the upstream job, then manually re-execute the failed updater. Manual date launches and ordered backfills use saved S3 inputs without requiring recent upstream run history. Missed dates are not automatically backfilled.
+`update_player_minutes_schedule` runs `update_player_minutes` once daily at **4 a.m. America/Los_Angeles**, for the current Pacific date, using the previous day’s source partitions. It replaces the former updater sensor; no automatic update is requested merely because an input changes during the day. The existing 3 a.m. PBP capture triggers `parse_nba_games`; `build_nba_rosters` runs at 3:30 a.m. Scheduled updates verify that the latest parser and roster runs for the previous game-date partition succeeded after the scheduled morning's Pacific midnight. Missing, failed, running, or stale upstream work causes a visible failure through the existing S3 error path. Repair the upstream job, then manually re-execute the failed updater. Manual date launches and ordered backfills use saved S3 inputs without requiring recent upstream run history. Missed dates are not automatically backfilled.
 
 A failed run records its exact inputs and diagnostics in S3 and Dagster. After repairing the input, **Re-execute from failure** writes a linked recovery record on success. A new run from scratch does not claim recovery. Failed validation leaves the accepted state untouched.
 
@@ -366,11 +373,11 @@ Player identity and injury reconciliation belong to injury_status_by_game_date. 
 
 The JSON records each player's conditional estimate, injury status and multiplier, adjusted weight, selected-rotation flag, final minutes, both team totals, exact input references/checksums, model settings, and implementation identity. Identical inputs reuse the immutable output and leave its selection unchanged. Conditional pointer writes prevent competing runs from silently replacing each other.
 
-For live partitions (today/tomorrow), the job requires the accepted daily minutes state for exactly yesterday and the newest accepted roster snapshot dated no later than today. Evaluated on November 13, both November 13 and November 14 use minutes updated through November 12. Reconciled injury data is selected for each game's Pacific date. Each game stops advancing at scheduled tipoff. A job that finishes after tipoff leaves the accepted pointer intact.
+For live partitions (today/tomorrow), the job requires the accepted daily minutes state effective today and the newest accepted roster snapshot dated no later than today. On November 14, both November 14 and November 15 use the November 14 estimates, which include games through November 13. Reconciled injury data is selected for each game's Pacific date. Each game stops advancing at scheduled tipoff. A job that finishes after tipoff leaves the accepted pointer intact.
 
 `project_game_minutes_sensor` checks accepted source selections about once a minute and requests upcoming date jobs when the daily baseline, roster, injury, or schedule version changes. On enable, its first tick immediately checks existing inputs: it creates missing projections and refreshes older ones for today/tomorrow without waiting for another PDF. An unchanged tick creates no new work. It skips dates already running and unchanged projections; it does not automatically backfill history. A failed input selection can be repaired and the job re-executed from failure to create a linked recovery record.
 
-For historical backfill, select the past date partitions of game_minutes, or the project_game_minutes job. Each date reads the immediately previous date's accepted daily state: November 4 uses November 3. Opening day uses the approved frozen starting priors directly, without inventing a previous-day state file. Other dates fail if their required previous state is missing. Historical membership comes from that date's accepted rosters_by_date selection, and injuries come from the producer's saved pre-scheduled-tipoff selection. These game projections are independent date calculations, so they do not require another ordered learning-state replay. The game asset backfill uses one partition per run. A date without games succeeds without creating game files.
+For historical backfill, select the past date partitions of game_minutes, or the project_game_minutes job. Each historical game date reads the accepted daily minutes state effective on that same date: November 4 uses the November 4 file, whose observation cutoff is November 3. Opening day uses the approved frozen starting priors directly, without inventing a previous-day state file. Other dates fail if their required effective-date state is missing or lacks the D−1 observation cutoff. Historical membership comes from that date's accepted rosters_by_date selection, and injuries come from the producer's saved pre-scheduled-tipoff selection. These game projections are independent date calculations, so they do not require another ordered learning-state replay. The game asset backfill uses one partition per run. A date without games succeeds without creating game files.
 
 Historical files carry purpose=historical_replay and explicitly identify reconstructed game-date roster evidence. They are reconstructed results, not authenticated projections published before the game. Existing files with purpose=pregame_projection are preserved: backfilling a historical date never replaces its genuinely saved pregame selection. Historical runs do not retrain models, alter daily minutes states, or publish/replace website forecasts.
 
@@ -431,21 +438,19 @@ The source-removal regression was Kevin McCullar Jr.: an archived zero-minute bo
 Correction evidence is retained on EC2 in `/tmp/75-ten-day-before.json`, `/tmp/75-ten-day-runs.json`, and `/tmp/75-ten-day-validation.json`. The ticket records permanent run IDs and acceptance evidence. Historical data corrections, ordered model replay, and any historical game-projection correction require their agreed scopes; running a roster date does not itself authorize a model replay or website publication.
 
 
-## Ratings/HCA initialization — issue #76, slice 1
+## Ratings/HCA — issue #76
 
-Asset **`player_rating_priors`**, manual job **`initialize_player_ratings`**, group **`ratings`**. Launch in the existing `nba_gestalt_pipelines` code location with no run configuration. The resource uses `GESTALT_NBA_SEASON`; only the approved 2026–27/v1 input selection is currently registered. Initialization is unpartitioned and has no schedule or sensor. The daily updater and ordered season replay belong to later slices.
+Asset **`player_rating_priors`**, manual job **`initialize_player_ratings`**, group **`ratings`**. Launch in the existing `nba_gestalt_pipelines` code location with no run configuration. The resource uses `GESTALT_NBA_SEASON`; only the approved 2026–27/v1 input selection is currently registered. Initialization is unpartitioned and has no schedule or sensor. The manual daily updater is available as described below. Replacement-level introductions and warnings are implemented below. The ordered season replay and 4:15 a.m. Pacific schedule were validated on November 14; website/forecast integration remains separate.
 
-The job verifies all nine pinned S3 source checksums before decoding fitted objects. It preserves the original 524-player catalog and matching profiles, exports the saved context coefficients/scaler values, retains the accepted HCA settings and fixed B2B coefficient, and freezes the aging predictor identity and shared-catalog alignment. Only the updater's nonadditive lineup-style calculation is implemented; additive player terms, HCA and B2B remain separate. No model training, legacy application imports, website publication, minutes update, or historical forecast rewrite occurs.
+The job preserves the approved numerical NAIL priors, joint HCA prior and fixed B2B coefficient. A first initialization checks four source objects before parsing them: the catalog, its metadata, HCA settings, and fixed B2B metadata. An existing accepted initialization is checksum-verified and reused without requiring its earlier unused model/profile sources. No stat-profile, lineup-composition, or aging calculation is part of these jobs. No model training, legacy application imports, website publication, minutes update, or historical forecast rewrite occurs.
 
 All paths below are in `s3://nba-gestalt-data/`. Exact source paths and byte hashes are registered in `gestalt/src/gestalt_pipelines/ratings/utils/sources.py` and recorded in the output's `inputs`.
 
 | Input | S3 location |
 | --- | --- |
 | Original 524 ratings and catalog metadata | `nba-gestalt/releases/gestalt-web-d739c28/artifacts/web/preseason_rankings/forward_nail_rapm_v1212_residualized_lambda/forward-nail-rapm-v1212-residualized-lambda-2025-26-20260827T221311Z-2b0c1a25/2026-27.{parquet,json}` |
-| Matching 524 player profiles | Same archived `artifacts/web/` root, under `preseason_profiles/` with the same model/run and `2026-27.parquet` |
-| Fitted context and fixed B2B source | `nba-gestalt/releases/gestalt-web-d739c28/artifacts/models/forward_nail_rapm_v1212_residualized_lambda/2025-26/forward-nail-rapm-v1212-residualized-lambda-2025-26-20260827T221311Z-2b0c1a25/{season_context_models.joblib,season_schedule_control_metadata.parquet}` |
+| Fixed B2B source | `nba-gestalt/releases/gestalt-web-d739c28/artifacts/models/forward_nail_rapm_v1212_residualized_lambda/2025-26/forward-nail-rapm-v1212-residualized-lambda-2025-26-20260827T221311Z-2b0c1a25/season_schedule_control_metadata.parquet` |
 | Accepted HCA settings | `lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-02/runtime_sha256=042869e115b05d0895f14db3f85568dabb72b0788ae97425e7a1f5df21688e3f/code/deploy/causal-hca-replacement-candidate-v2.json` |
-| Approved rebuilt aging predictor, metadata and alignment evidence | `nba-gestalt/handoffs/2026-11-11/model-rebuild/aging-predictor-2026-27/2026-11-13-aed0818eea96/{aging_predictor.joblib,metadata.json,rebuild_evidence.tar.gz}` |
 
 | Output | S3 key |
 | --- | --- |
@@ -455,4 +460,46 @@ All paths below are in `s3://nba-gestalt-data/`. Exact source paths and byte has
 
 An identical rerun verifies and reuses the saved initialization. Publication reads the immutable JSON back before creating `latest.json`; a competing selection fails visibly. The job refuses to replace a different already-selected initialization: a replacement requires the separately approved model-version/replay decision. Missing or changed source objects fail without substituting another model or changing the accepted pointer. After repairing an actual failure, use **Re-execute from failure** to record the linked recovery; an unrelated fresh success does not claim recovery.
 
-The original 524 catalog includes later additions documented in its retained metadata; it is an approved numerical lookup, not proof that all 524 players were on an opening-night roster. The rebuilt aging predictor's reported maximum catalog difference is `2.0479982154597565e-08`; the original `1e-8` comparison failed and remains explicitly recorded. Initialization does not introduce those players into a season replay or change their saved catalog values.
+The original 524 catalog includes later additions documented in its retained metadata; it is the approved numerical lookup, not proof of opening-night team membership. Opening-day initialization retains all 524 saved numerical priors. Later roster inputs supply team membership. The existing immutable initialization can retain unused profile/model provenance, which the updater does not use or refresh.
+
+
+### Daily ratings/HCA update
+
+Asset **`player_ratings`**, job **`update_player_ratings`**, group **`ratings`**. Select the Pacific date the ratings are **effective for**; today is available, and no additional run configuration is needed. On the configured season start (**2026-10-20**), the state is exactly initialization: all 524 saved priors, the initial HCA, and no current-season game evidence or roster input. Oct 21 incorporates Oct 20's games; Nov 13 incorporates games through Nov 12. Later dates require the immediately preceding effective-date state. Selecting this job does not rerun initialization or the source producers. `update_player_ratings_schedule` runs at **4:15 a.m. America/Los_Angeles**, targeting the current effective date and the previous day’s games. Manual partition runs and ordered asset backfills remain available. Missing inputs fail visibly; missed dates require explicit manual backfill. No ratings sensor is added.
+
+For effective date D after opening day, inputs are the accepted initialization JSON, saved stints and rosters for D−1, the shared `NBAScheduleResource` for that observed slate and its B2B flags, and the ratings state effective D−1. The stints/roster Dagster dependencies explicitly map to the previous partition. Opening day reads initialization only. It reads no raw box scores, injury reports, odds, minutes states, web API, or legacy Python model. All source URI/checksum references are retained in the output. Played evidence remains usable when a player is absent from the end-of-day roster.
+
+The calculation uses full-game and overtime evidence, with positive possession weights. Zero-possession intervals remain in the upstream stints artifact and are counted in diagnostics, while contributing no weighted evidence. Frozen starting NAIL and the B2B coefficient remain fixed. For each stint, the scoring residual is `observed home net rating − fixed B2B offset − signed frozen NAIL sum`. HCA is estimated jointly rather than subtracted as a fixed adjustment. No assists, usage, rebounding, additive-profile rescoring, or remaining lineup-composition terms are calculated. The solve updates player residuals and absolute HCA jointly, retaining all player/HCA cross terms and uncertainty; yesterday's learned estimates do not become a replacement prior.
+
+| Output | S3 key under `s3://nba-gestalt-data/` |
+| --- | --- |
+| Immutable joint ratings/HCA state | `lake/artifacts/player_ratings/season=<season>/model_version=v1/game_date_pacific=<date>/<sha256>.json` |
+| Accepted date selection | `lake/artifacts/player_ratings/season=<season>/model_version=v1/game_date_pacific=<date>/latest.json` |
+| Daily failures/recoveries/warnings | `lake/artifacts/errors/pipeline=ratings/season=<season>/occurred_date_pacific=<processing-date>/<event-id>.{failure,recovery,warning}.json`; records identify `stage=player_ratings` and the game date |
+
+In the JSON, `game_date_pacific` is the ratings' effective date, and `observed_through_game_date_pacific` is exactly the previous date. A future projection consumer for D must select the D ratings file and verify its D−1 cutoff. Same-day game inputs and old observation-date states are rejected; the latter must be rebuilt in order through the producer rather than reused as predecessors. Existing immutable versions are preserved when corrected date selections are published.
+
+The JSON contains all retained player priors/ratings, current roster team IDs, exposure, uncertainty, initialization lineage, HCA, ordered player IDs, the full joint matrix and score/exposure vectors, cumulative game IDs, and exact parent/input references. No-game dates carry the evidence forward. An identical rerun reconstructs the date from the same predecessor and inputs; it does not add its games twice. Source changes, missing coverage, or concurrent publication fail visibly while preserving accepted selections. Repair failed inputs and use **Re-execute from failure** for a linked recovery. Earlier corrections requiring later model dates to be rebuilt remain a separately approved suffix replay.
+
+Player initialization follows the operator-approved rule: retain an existing season state; otherwise reuse an approved saved prior from the 524-player catalog; otherwise assign the fixed replacement starting NAIL **-5.109488431706889** with `forecast_source=in_season_replacement_cold_start_prior`. This is ID-based and has no named exceptions. Injury, delayed first appearance, absence and team changes do not discard a saved prior or reinitialize a retained player. Historical aging prediction and rookie-model generation are not applied to new arrivals under this decision.
+
+Each replacement introduction emits a Dagster warning and a `.warning.json` in the ratings error path before advancing the accepted date selection. The warning identifies the NBA player ID, official name when available, assigned starting rating, game date, run ID and exact inputs. The existing shared `NBAPlayerNamesResource` reads saved NBA PlayerIndex names only when new replacement IDs are present; a missing name is reported by ID. The warning itself does not fail the job. A failure to persist its warning record blocks publication visibly. The materialization metadata includes `new_replacement_players` and `ratings_warnings`. Later dates retain the state and do not generate another introduction warning; re-executing the introduction date can produce another run-linked warning.
+
+The original frozen initialization is retained. Its earlier model/profile provenance is unused; no fitted-model loader or replacement stat-profile defaults remain in ratings. Existing roster/minutes/game-projection history and the final coordinated backfill/release remain deferred at Evan's request.
+
+Validation of this calculation used all three Oct 20 games and the original 524-player numerical priors, without Dagster materialization or S3 writes. The accepted legacy contribution and joint-HCA solver were evaluated with fixed B2B as the only fixed adjustment. Maximum absolute differences: matrix/exposure `0`, score `4.55e-13`, estimates `2.78e-16`, uncertainty `2.23e-16`. This checks the agreed B2B-only calculation; it does not claim parity with checkpoints that included lineup-composition adjustments.
+
+Daily states carry `calculation_contract=frozen_priors_stints_joint_hca_fixed_b2b_v1`. States from the earlier profile-based calculation or the old observation-date convention are rejected as predecessors. The approved November 14 replay rebuilt ratings effective Oct 20–Nov 14 through the canonical asset, preserving older immutable versions. All 26 dates and parent links were read back successfully, covering all 183 games through Nov 13. A fresh aggregation of those same game contributions exactly matches the accumulated matrix, response and exposure; maximum estimate difference is 8.88e-16. The final file retains 533 players and jointly estimated HCA 1.8073343269384732. The schedule is RUNNING; its first scheduled morning execution is still future. No website release or frozen forecast was rewritten.
+
+
+## November 14 effective-date migration and replay
+
+Both `player_minutes` and `player_ratings` now label a file by the date its estimates are effective for; each declares `observed_through_game_date_pacific=D−1`. The 4 a.m. minutes job and 4:15 a.m. ratings job target today. Their numerical estimators remain separate; neither job depends on the other.
+
+The approved minutes backfill `igdnkkuh` succeeded on all 25 effective dates Oct 21–Nov 14. Every player state, observation, three-game window and included-game list is exactly equal to its prior observation-date counterpart; only the output date contract/lineage changes. Opening-day game allocations continue to use the existing frozen minutes priors, with no artificial first-day observation.
+
+Ratings backfill `kwlsknbm` succeeded on all 26 dates Oct 20–Nov 14. Ratings Oct 20 contains the original 524 scalar priors and initial HCA only. Both daily pipelines include all 183 games through Nov 13 in their Nov 14 states. Their final retained player counts are both 533. The combined minutes/ratings test suites pass 130 tests plus the legacy-pointer preservation regression (131 total), including date mappings, same-day leakage rejection, DST scheduling, old-state rejection, and frozen game selections.
+
+Game-minutes backfill `shvsjdzn` succeeded on all 26 dates Oct 20–Nov 14. Readback covers all **188 games** (183 completed-season games through Nov 13 plus five Nov 14 games): 175 refreshed selections and 13 preserved frozen pregame selections. All 188 injury selections were checked against original report publication times before scheduled tipoff. The preservation check reads purpose from the immutable forecast, including older pointers that omit that field; their S3 timestamps verify they were not moved. No frozen pregame selection was replaced.
+
+Both daily schedules are RUNNING: minutes at 04:00 and ratings at 04:15 Pacific, next targeting Nov 15 with games through Nov 14. `project_game_minutes_sensor` is RUNNING again. The protected injury, odds and scoreboard collectors were left enabled throughout. Evan approved committing and pushing this completed migration and closing #76. Website/full-game forecast integration and the optional context experiment (#77) remain separate work.

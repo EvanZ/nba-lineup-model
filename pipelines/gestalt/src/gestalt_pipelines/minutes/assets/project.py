@@ -20,7 +20,7 @@ from ..utils import MinutesError, build_game_projection, implementation_identity
     backfill_policy=BackfillPolicy.multi_run(max_partitions_per_run=1),
     deps=[
         AssetDep(AssetKey("player_minutes"),partition_mapping=TimeWindowPartitionMapping(
-            start_offset=-2,end_offset=-1,allow_nonexistent_upstream_partitions=True,
+            start_offset=-1,end_offset=0,allow_nonexistent_upstream_partitions=True,
         )),
         AssetDep(AssetKey("rosters_by_date"),partition_mapping=AllPartitionMapping()),
         AssetDep(AssetKey("injury_status_by_game_date")),

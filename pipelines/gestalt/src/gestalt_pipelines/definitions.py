@@ -26,9 +26,10 @@ from .play_by_play.jobs import capture_nba_play_by_play, parse_nba_games
 from .play_by_play.resources import NBAPlayByPlayArchive
 from .play_by_play.schedules import play_by_play_morning
 from .play_by_play.sensors import play_by_play_ready_for_stints
-from .ratings.assets import player_rating_priors
-from .ratings.jobs import initialize_player_ratings
+from .ratings.assets import player_rating_priors, player_ratings
+from .ratings.jobs import initialize_player_ratings, update_player_ratings
 from .ratings.resources import RatingsArchive
+from .ratings.schedules import update_player_ratings_schedule
 from .resources import NBAPlayerNamesResource, NBAScheduleResource
 from .rosters.assets import rosters_by_date
 from .rosters.jobs import build_nba_rosters
@@ -49,16 +50,16 @@ from .transactions.schedules import transactions_hourly
 defs = Definitions(
     assets=[
         injury_pdf_archive, injury_report_extractions, injury_status_by_game_date, player_minutes, game_minutes,
-        player_rating_priors,
+        player_rating_priors, player_ratings,
         nba_season_schedule, nba_market_odds, nba_box_scores, nba_scoreboard, transactions_by_date, nba_play_by_play, nba_stints, rosters_by_date,
     ],
     jobs=[
         capture_injury_pdfs, extract_injury_pdf, reconcile_injury_date, update_player_minutes, project_game_minutes,
-        initialize_player_ratings,
+        initialize_player_ratings, update_player_ratings,
         capture_nba_season_schedule, archive_nba_market_odds, capture_nba_box_scores, capture_nba_scoreboard,
         capture_nba_transactions, capture_nba_play_by_play, parse_nba_games, build_nba_rosters,
     ],
-    schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning, update_player_minutes_schedule],
+    schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning, update_player_minutes_schedule, update_player_ratings_schedule],
     sensors=[new_injury_pdf, injury_report_dates_ready, roster_transactions_ready, play_by_play_ready_for_stints, project_game_minutes_sensor],
     resources={
         "official_injury_reports": OfficialInjuryReports(),

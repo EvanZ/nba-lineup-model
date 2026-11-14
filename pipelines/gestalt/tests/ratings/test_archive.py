@@ -1,41 +1,14 @@
 """Immutable publication, stale writers, and actual failed-parent recovery."""
 
-import io
 import json
 from hashlib import sha256
 
 import pytest
-from botocore.exceptions import ClientError
 from dagster import DagsterInstance, Definitions
 
 from gestalt_pipelines.ratings.assets import player_rating_priors
 from gestalt_pipelines.ratings.jobs import initialize_player_ratings
 from gestalt_pipelines.ratings.resources import RatingsArchive
-
-
-class S3:
-    def __init__(self):
-        self.objects = {}
-        self.race = False
-
-    def get_object(self, *, Bucket, Key):
-        if Key not in self.objects:
-            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
-        raw = self.objects[Key]
-        return {"Body": io.BytesIO(raw), "ETag": sha256(raw).hexdigest()}
-
-    def put_object(self, *, Bucket, Key, Body, IfNoneMatch=None, **kwargs):
-        if (IfNoneMatch == "*" and Key in self.objects) or (self.race and Key.endswith("latest.json")):
-            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
-        self.objects[Key] = Body
-        return {}
-
-
-@pytest.fixture
-def archive(monkeypatch):
-    s3 = S3()
-    monkeypatch.setattr("gestalt_pipelines.ratings.resources.archive.boto3.client", lambda service: s3)
-    return RatingsArchive(season="2026-27"), s3
 
 
 def test_identical_rerun_reuses_immutable_selection(archive, record):
@@ -70,7 +43,7 @@ def test_stale_first_writer_cannot_advance_pointer(archive, record):
 
 def test_bad_data_does_not_advance_pointer(archive, record):
     resource, s3 = archive
-    record["profiles"].pop()
+    record["players"].pop()
     with pytest.raises(ValueError, match="coverage"):
         resource.save_priors(record, prior=None, expected_etag=None)
     assert not s3.objects
@@ -120,3 +93,19 @@ def test_only_a_successful_child_of_failed_job_records_recovery(archive, record,
     failure_key = next(k for k in s3.objects if k.endswith(".failure.json"))
     assert recovery["original_failure"]["sha256"] == sha256(s3.objects[failure_key]).hexdigest()
     assert recovery["dagster_run_id"] == recovered.run_id
+
+
+def test_selected_frozen_priors_reuse_needs_no_unused_source_models(archive, record, monkeypatch):
+    resource, s3 = archive
+    record.update(context={"unused": True}, profiles=[{"unused": True}], aging={"unused": True})
+    record["inputs"]["context"] = {"uri": "s3://nba-gestalt-data/unused.joblib", "sha256": "a"*64}
+    resource.save_priors(record, prior=None, expected_etag=None)
+    before = dict(s3.objects)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Accepted frozen priors must be reused without fetching source models")
+    monkeypatch.setattr(RatingsArchive, "read_sources", forbidden)
+    definitions = Definitions(assets=[player_rating_priors], jobs=[initialize_player_ratings],
+                              resources={"ratings_archive": resource})
+    with DagsterInstance.ephemeral() as instance:
+        assert definitions.resolve_job_def("initialize_player_ratings").execute_in_process(instance=instance).success
+    assert s3.objects == before

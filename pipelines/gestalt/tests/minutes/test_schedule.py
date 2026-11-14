@@ -16,7 +16,7 @@ from gestalt_pipelines.utils import PACIFIC
     datetime(2027, 3, 14, 4, tzinfo=PACIFIC),
     datetime(2027, 11, 7, 4, tzinfo=PACIFIC),
 ])
-def test_four_am_schedule_uses_yesterday_across_dst(monkeypatch, tick):
+def test_four_am_schedule_uses_today_with_previous_day_evidence_across_dst(monkeypatch, tick):
     monkeypatch.setattr(schedules, "datetime", SimpleNamespace(now=lambda _: tick.astimezone(UTC)))
     schedule = defs.get_schedule_def("update_player_minutes_schedule")
     assert schedule.cron_schedule == "0 4 * * *"
@@ -24,7 +24,7 @@ def test_four_am_schedule_uses_yesterday_across_dst(monkeypatch, tick):
     with build_schedule_context(scheduled_execution_time=tick, repository_def=defs.get_repository_def()) as context:
         first, = schedule.evaluate_tick(context).run_requests
         again, = schedule.evaluate_tick(context).run_requests
-    assert first.partition_key == str(tick.date()-timedelta(days=1))
+    assert first.partition_key == str(tick.date())
     assert first.run_key == again.run_key == tick.astimezone(UTC).isoformat()
     assert first.tags["minutes/morning_date"] == str(tick.date())
     assert first.run_config == {}
