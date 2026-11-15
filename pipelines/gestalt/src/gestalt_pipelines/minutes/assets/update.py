@@ -1,4 +1,4 @@
-"""One effective date's conditional minutes, using observations through yesterday."""
+"""Conditional minutes incorporating the selected completed game date."""
 
 from datetime import date, datetime, time, timedelta
 
@@ -40,18 +40,12 @@ def _require_morning_inputs(context: AssetExecutionContext, day: str) -> None:
         AssetDep(AssetKey("player_minutes"), partition_mapping=TimeWindowPartitionMapping(
             start_offset=-1, end_offset=-1, allow_nonexistent_upstream_partitions=True,
         )),
-        AssetDep(AssetKey("nba_stints"), partition_mapping=TimeWindowPartitionMapping(
-            start_offset=-1, end_offset=-1, allow_nonexistent_upstream_partitions=True,
-        )),
-        AssetDep(AssetKey("rosters_by_date"), partition_mapping=TimeWindowPartitionMapping(
-            start_offset=-1, end_offset=-1, allow_nonexistent_upstream_partitions=True,
-        )),
-        AssetDep(AssetKey("injury_status_by_game_date"), partition_mapping=TimeWindowPartitionMapping(
-            start_offset=-1, end_offset=-1, allow_nonexistent_upstream_partitions=True,
-        )),
+        AssetDep(AssetKey("nba_stints")),
+        AssetDep(AssetKey("rosters_by_date")),
+        AssetDep(AssetKey("injury_status_by_game_date")),
     ],
     code_version=implementation_identity()["source_sha256"],
-    description="Minutes effective on this Pacific date, using games through the previous date.",
+    description="Minutes incorporating all eligible observations through this completed Pacific date.",
 )
 def player_minutes(
     context: AssetExecutionContext, nba_schedule: NBAScheduleResource,
@@ -59,7 +53,7 @@ def player_minutes(
 ) -> MaterializeResult:
     day = date.fromisoformat(context.partition_key)
     archive = minutes_archive
-    observed_day = day-timedelta(days=1)
+    observed_day = day
     inputs = {"priors": None, "parent": None}
     metadata = {
         "game_date_pacific": str(day), "observed_through_game_date_pacific": str(observed_day),

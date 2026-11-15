@@ -18,8 +18,9 @@ def data():
     source = example()
     allocation = build_game_projection(**source)
     players = [p for t in allocation["teams"].values() for p in t["players"]]
-    ratings = {"season": "2026-27", "game_date_pacific": DAY,
+    ratings = {"season": "2026-27", "game_date_pacific": "2026-10-20",
                "observed_through_game_date_pacific": "2026-10-20",
+               "date_contract": "completed_game_date_v1", "effective_from_game_date_pacific": DAY,
                "players": [{"player_id": p["player_id"], "nail": p["player_id"]/19} for p in players],
                "hca": {"estimate": 1.8073343269384732},
                "settings": {"fixed_back_to_back": -1.5087106592522943, "replacement_prior": -5.109488431706889},

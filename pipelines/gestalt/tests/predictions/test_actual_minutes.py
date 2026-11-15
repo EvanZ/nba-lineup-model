@@ -85,7 +85,9 @@ def test_additional_actual_player_uses_pinned_state_then_prior_then_replacement(
     value = build_actual_minutes_prediction(**args)
     p = next(p for p in value["home"]["players"] if p["player_id"] == pid)
     assert p["rating_source"] == "replacement" and p["nail"] == -5.109488431706889
-    state["game_date_pacific"] = "2026-10-22"
+    state["game_date_pacific"] = "2026-10-21"
+    state["observed_through_game_date_pacific"] = "2026-10-21"
+    state["effective_from_game_date_pacific"] = "2026-10-22"
     with pytest.raises(PredictionError, match="rating input"):
         build_actual_minutes_prediction(**args)
 

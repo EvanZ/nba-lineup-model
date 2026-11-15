@@ -16,7 +16,7 @@ from ..utils import (
     validate_priors, validate_state, PROJECTION_VERSION, validate_game_projection,
 )
 
-from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC
+from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC, forecast_observed_date
 
 ROOT = "lake/artifacts/player_minutes"
 ERROR_ROOT = f"{ERRORS_PREFIX}/pipeline=minutes"
@@ -133,6 +133,11 @@ class MinutesArchive(ConfigurableResource):
             return None, None, None
         prefix = self.prefix+f"game_date_pacific={day}/"
         record = self.read_reference(ref, prefix)
+        # An old effective-date selection has not published this completed date.
+        if (record.get("date_contract") is None
+                and record.get("game_date_pacific") == day
+                and record.get("observed_through_game_date_pacific") == str(date.fromisoformat(day)-timedelta(days=1))):
+            return None, None, None
         validate_state(record, self.season, self.model_version)
         if record["game_date_pacific"] != day:
             raise MinutesError("Selected minutes state has a different date.")
@@ -302,13 +307,13 @@ class MinutesArchive(ConfigurableResource):
     def projection_selections(self, day: str, *, today: date, roster_archive) -> dict:
         target = date.fromisoformat(day)
         historical = target < today
-        baseline_day = str(target if historical else today)
+        baseline_day = str(forecast_observed_date(target, today))
         first_date = date.fromisoformat(os.environ["GESTALT_NBA_SEASON_START_DATE"])
         baseline = None
-        if date.fromisoformat(baseline_day) != first_date:
-            baseline, _ = self.state_selection(baseline_day)
+        if date.fromisoformat(baseline_day) >= first_date:
+            _, baseline, _ = self.state(baseline_day)
             if baseline is None:
-                raise FileNotFoundError(f"No accepted daily minutes effective {baseline_day}.")
+                raise FileNotFoundError(f"No accepted completed-date minutes for {baseline_day}.")
         if historical:
             roster_day = day
             roster, _ = roster_archive.selection(self.season, roster_day)
@@ -342,7 +347,7 @@ class MinutesArchive(ConfigurableResource):
             expected_uri = f"s3://{self.bucket}/{self.prefix}game_date_pacific={baseline['game_date_pacific']}/{inputs['daily_minutes']['sha256']}.json"
             if inputs["daily_minutes"]["uri"] != expected_uri:
                 raise MinutesError("Projection baseline date differs from its accepted selection.")
-        elif day != os.environ["GESTALT_NBA_SEASON_START_DATE"]:
+        elif (day != os.environ["GESTALT_NBA_SEASON_START_DATE"] and (inputs.get("historical_replay") or day != str(date.fromisoformat(os.environ["GESTALT_NBA_SEASON_START_DATE"])+timedelta(days=1)))):
             raise MinutesError("Only opening-day projections may initialize without previous daily state.")
         priors, ref = self.load_priors()
         if inputs["priors"] != ref or (baseline is not None and baseline["inputs"]["priors"] != ref):

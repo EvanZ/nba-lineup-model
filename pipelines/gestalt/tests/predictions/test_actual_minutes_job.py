@@ -28,9 +28,11 @@ def counter_job(archive, record, data, box, clock, monkeypatch):
     monkeypatch.setattr(NBAScheduleResource, "games_for_date", lambda *args, **kwargs: ([data["game"]], refs["schedule"]))
     monkeypatch.setattr(NBAScheduleResource, "load", lambda *args: (b"{}", refs["schedule"]))
     monkeypatch.setattr(NBABoxScoreArchive, "read_saved", lambda *args: (json.dumps({"game":box}).encode(), refs["box"]))
-    def state(self, reference, day):
-        reads.append((reference, day))
-        assert reference == record["inputs"]["player_ratings"] and day == record["ratings_effective_date_pacific"]
+    def state(self, reference, *, effective_date, observed_through):
+        reads.append((reference, effective_date, observed_through))
+        assert reference == record["inputs"]["player_ratings"]
+        assert effective_date == record["ratings_effective_date_pacific"]
+        assert observed_through == record["ratings_observed_through_game_date_pacific"]
         return deepcopy(data["ratings"])
     monkeypatch.setattr(RatingsArchive, "read_state", state)
     monkeypatch.setattr(RatingsArchive, "read_priors", lambda self, reference: {"players": []})

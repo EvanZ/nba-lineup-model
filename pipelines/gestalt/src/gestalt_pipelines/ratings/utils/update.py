@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 from .initialization import check_source_policy, implementation_identity, json_bytes
 from .sources import MODEL_VERSION
-from ...utils import PACIFIC
+from ...utils import COMPLETED_GAME_DATE_CONTRACT, PACIFIC
 
 CALCULATION_CONTRACT = "frozen_priors_stints_joint_hca_fixed_b2b_v1"
 
@@ -96,11 +96,11 @@ def update_state(*, day: date, first_date: date, season: str, priors: dict, pare
 
     if day < first_date:
         raise ValueError("Ratings date precedes the configured season start.")
-    observed_day = day-timedelta(days=1)
-    initialization_only = day == first_date
-    if initialization_only:
-        if parent is not None or stints is not None or rosters is not None or games or previous_games:
-            raise ValueError("Opening-day ratings use initialization only, with no season game inputs.")
+    observed_day = day
+    initialization_only = False
+    if day == first_date:
+        if parent is not None:
+            raise ValueError("First completed date must start from the frozen priors.")
     else:
         if parent is None:
             raise ValueError("The immediately preceding ratings state is required.")
@@ -109,12 +109,12 @@ def update_state(*, day: date, first_date: date, season: str, priors: dict, pare
                 or parent["inputs"]["priors"] != inputs["priors"]
                 or parent["settings"] != priors["settings"]):
             raise ValueError("The ratings parent has the wrong date or frozen initialization.")
-        for data in (stints, rosters):
-            if data is None or data["season"] != season or data["game_date_pacific"] != str(observed_day):
-                raise ValueError("Ratings inputs must belong to the previous Pacific game date.")
-            check_source_policy(data)
-        if any(g["game_time_utc"].astimezone(PACIFIC).date() != observed_day for g in games):
-            raise ValueError("Ratings cannot use games from their effective date or another evidence date.")
+    for data in (stints, rosters):
+        if data is None or data["season"] != season or data["game_date_pacific"] != str(day):
+            raise ValueError("Ratings inputs must belong to the selected completed game date.")
+        check_source_policy(data)
+    if any(g["game_time_utc"].astimezone(PACIFIC).date() != day for g in games):
+        raise ValueError("Ratings inputs contain another game date.")
     expected = sorted(g["game_id"] for g in games)
     if stints is not None:
         coverage = stints["validation"]
@@ -134,7 +134,7 @@ def update_state(*, day: date, first_date: date, season: str, priors: dict, pare
     if len(team_by_player) != sum(len(ids) for ids in teams.values()):
         raise ValueError("A selected roster assigns a player to multiple teams.")
     played = {int(i) for row in rows for side in ("home_player_ids", "away_player_ids") for i in row[side]}
-    ids = sorted(catalog if initialization_only else prior_players.keys() | team_by_player.keys() | played)
+    ids = sorted((prior_players.keys() if parent else catalog.keys()) | team_by_player.keys() | played)
     new_replacements = sorted(set(ids)-prior_players.keys()-catalog.keys())
     starting = {
         i: (prior_players[i]["starting_nail"] if i in prior_players else
@@ -193,6 +193,8 @@ def update_state(*, day: date, first_date: date, season: str, priors: dict, pare
         "calculation_contract": CALCULATION_CONTRACT,
         "model_version": MODEL_VERSION, "game_date_pacific": day.isoformat(),
         "observed_through_game_date_pacific": str(observed_day),
+        "date_contract": COMPLETED_GAME_DATE_CONTRACT,
+        "effective_from_game_date_pacific": str(day+timedelta(days=1)),
         "model_id": priors["model_id"], "model_run_id": priors["model_run_id"],
         "implementation": implementation_identity(), "inputs": inputs, "settings": priors["settings"],
         "players": players, "included_game_ids": included,
@@ -214,7 +216,7 @@ def update_state(*, day: date, first_date: date, season: str, priors: dict, pare
     return record
 
 
-def validate_state(record: dict, season: str) -> None:
+def validate_state(record: dict, season: str, *, allow_legacy_effective_date: bool = False) -> None:
     import numpy as np
 
     if (record.get("schema_version"), record.get("artifact_kind"), record.get("season"),
@@ -222,9 +224,17 @@ def validate_state(record: dict, season: str) -> None:
         raise ValueError("Invalid ratings state identity.")
     if record.get("calculation_contract") != CALCULATION_CONTRACT:
         raise ValueError("Ratings predecessor uses another calculation; a reviewed ratings-only replay is required.")
-    effective_day = date.fromisoformat(record["game_date_pacific"])
-    if record.get("observed_through_game_date_pacific") != str(effective_day-timedelta(days=1)):
-        raise ValueError("Ratings must declare a previous-day observation cutoff; old observation-date states cannot be used.")
+    data_day = date.fromisoformat(record["game_date_pacific"])
+    if record.get("date_contract") == COMPLETED_GAME_DATE_CONTRACT:
+        observed_day = data_day
+        if record.get("effective_from_game_date_pacific") != str(data_day+timedelta(days=1)):
+            raise ValueError("Completed-date ratings must become effective the following day.")
+    elif allow_legacy_effective_date and record.get("date_contract") is None:
+        observed_day = data_day-timedelta(days=1)
+    else:
+        raise ValueError("Ratings use another date contract; the approved completed-date replay is required.")
+    if record.get("observed_through_game_date_pacific") != str(observed_day):
+        raise ValueError("Ratings observation cutoff differs from the recorded date contract.")
     players = record["players"]; ids = [p["player_id"] for p in players]
     stats = record["statistics"]; n = len(ids)
     if not ids or ids != sorted(set(ids)) or stats["player_ids"] != ids or stats["hca_column"] != n:

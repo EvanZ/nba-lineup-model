@@ -68,7 +68,7 @@ def test_sensor_only_monitors_successful_transaction_runs():
     datetime(2027, 3, 14, 3, 30, tzinfo=ZoneInfo("America/Los_Angeles")),
     datetime(2027, 11, 7, 3, 30, tzinfo=ZoneInfo("America/Los_Angeles")),
 ])
-def test_daily_rosters_use_yesterday_in_pacific_even_across_dst(monkeypatch, tick):
+def test_daily_rosters_finalize_yesterday_and_initialize_today_even_across_dst(monkeypatch, tick):
     monkeypatch.setattr(schedules, "datetime", SimpleNamespace(now=lambda _: tick.astimezone(UTC)))
     schedule = defs.get_schedule_def("rosters_morning")
     assert schedule.cron_schedule == "30 3 * * *"
@@ -76,9 +76,10 @@ def test_daily_rosters_use_yesterday_in_pacific_even_across_dst(monkeypatch, tic
     with build_schedule_context(
         scheduled_execution_time=tick, repository_def=defs.get_repository_def(),
     ) as context:
-        [request] = schedule.evaluate_tick(context).run_requests
-    assert request.partition_key == (tick.date() - timedelta(days=1)).isoformat()
-    assert request.run_config == {}
+        requests = schedule.evaluate_tick(context).run_requests
+    assert [r.partition_key for r in requests] == [str(tick.date()-timedelta(days=1)), str(tick.date())]
+    assert len({r.run_key for r in requests}) == 2
+    assert all(r.run_config == {} for r in requests)
 
 
 def test_missed_daily_run_requires_explicit_backfill(monkeypatch):

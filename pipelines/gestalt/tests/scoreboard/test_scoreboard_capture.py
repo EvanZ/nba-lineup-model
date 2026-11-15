@@ -32,7 +32,7 @@ def test_manual_job_publishes_only_a_complete_official_slate(monkeypatch):
     monkeypatch.setattr(archive.boto3, "client", lambda _: SimpleNamespace(put_object=lambda **kwargs: writes.append(kwargs)))
     job = defs.resolve_job_def("capture_nba_scoreboard")
 
-    result = job.execute_in_process()
+    result = job.execute_in_process(partition_key=str(DAY))
     assert result.success
     [saved] = writes
     assert saved["Bucket"] == "nba-gestalt-data"
@@ -44,5 +44,5 @@ def test_manual_job_publishes_only_a_complete_official_slate(monkeypatch):
     assert event.event_specific_data.materialization.metadata["live_game_count"].value == 1
 
     payload = json.dumps({"scoreboard": {"gameDate": DAY.isoformat(), "games": []}}).encode()
-    assert not job.execute_in_process(raise_on_error=False).success
+    assert not job.execute_in_process(partition_key=str(DAY), raise_on_error=False).success
     assert writes == [saved]

@@ -123,7 +123,7 @@ def test_manual_job_publishes_all_teams_and_reuses_identical_inputs(roster_job):
     assert len(artifact["teams"]) == 30
     assert sum(len(ids) for ids in artifact["teams"].values()) == 60
     assert raw_key not in reads
-    assert set(artifact["inputs"]) == {"opening_rosters", "transactions", "repair_transactions"}
+    assert set(artifact["inputs"]) == {"opening_rosters", "transactions", "repair_transactions", "transactions_observed_through_date_pacific", "current_date_transactions_pending"}
     assert all(type(pid) is int for ids in artifact["teams"].values() for pid in ids)
     assert "manual_name_repairs_used" not in artifact
 
@@ -326,3 +326,22 @@ def test_contract_expiration_uses_shared_schedule_and_records_ledger(roster_job,
     assert record["ten_day_contracts"][0]["player_id"] == 999999
     assert record["ten_day_contracts"][0]["removal_date"] is None
     assert not any("boxscore" in key for key in reads)
+
+
+def test_today_before_first_poll_uses_known_transactions_without_fabricating_evidence(roster_job, monkeypatch):
+    job, objects, reads, writes, _ = roster_job
+    from gestalt_pipelines.rosters.assets import capture
+    now = datetime(2026, 11, 8, 11, 30, tzinfo=UTC)
+    clock = SimpleNamespace(now=lambda _: now, fromisoformat=datetime.fromisoformat)
+    monkeypatch.setattr(capture, 'datetime', clock)
+    monkeypatch.setattr(archive, 'datetime', clock)
+    key = f'lake/raw/nba/transactions/season={SEASON}/game_date_pacific={DAY}/latest.json'
+    del objects[key]
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    record = json.loads(objects[writes[0]])
+    assert record['inputs']['current_date_transactions_pending'] is True
+    assert record['inputs']['transactions_observed_through_date_pacific'] == '2026-11-07'
+    assert str(DAY) not in record['inputs']['transactions']
+    assert key not in objects
+    del objects[f'lake/raw/nba/transactions/season={SEASON}/game_date_pacific=2026-11-07/latest.json']
+    assert not job.execute_in_process(partition_key=str(DAY), raise_on_error=False).success

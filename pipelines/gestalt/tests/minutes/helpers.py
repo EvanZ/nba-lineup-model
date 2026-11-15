@@ -6,7 +6,7 @@ from gestalt_pipelines.minutes.utils import build_priors
 
 SEASON = "2026-27"
 FIRST = date(2026, 10, 20)
-FIRST_STATE = FIRST+timedelta(days=1)
+FIRST_STATE = FIRST
 HOME, AWAY = 1610612738, 1610612755
 
 
@@ -47,7 +47,7 @@ def slate(day=FIRST, gid="0022600001"):
         } for i, (start, end, home_ids, away_ids) in enumerate(lineups)],
     }
     return {
-        "day": day+timedelta(days=1), "first_date": FIRST_STATE, "season": SEASON, "games": [game],
+        "day": day, "first_date": FIRST_STATE, "season": SEASON, "games": [game],
         "rosters": {"season": SEASON, "game_date_pacific": str(day), "teams": teams},
         "injuries": {"season": SEASON, "game_date_pacific": str(day), "cutoff_source": "nba_scheduled_start",
                      "games": {gid: {"teams": reports, "report_used": True,

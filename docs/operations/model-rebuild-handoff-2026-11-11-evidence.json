@@ -1,0 +1,1935 @@
+{
+  "inspected_at_utc": "2026-11-11T22:12:54.600448+00:00",
+  "checkout_revision": "39bae56a89def256663308994e8d99cd1561b175",
+  "environments": {
+    "nba-gestalt": {
+      "release_root": "/var/lib/nba-gestalt/site-releases/release_sha256=7b76cd8da41836e7d205c3cb0576c3ea6053c974081416e7376f3158e52c9d0c",
+      "release_identity": {
+        "api_validation": {
+          "canonical_final_game_count": 98,
+          "evidence_game_count": 92,
+          "evidence_through_date": "2026-11-01",
+          "health": "ok",
+          "lineup_bundle_sha256": "efb495a1598e1a0c8485b1fc402def4554fe8205eec46b1589ba078da6d7ee97",
+          "lineup_count": 2363,
+          "lineup_serving_bundle_sha256": "30d18307e4ea4f0f63dad805a869c776ec9f08bc88b7096f6da033f17f2b1be3",
+          "player_id": 201939,
+          "ranking_player_count": 528,
+          "rankings_bundle_sha256": "30d18307e4ea4f0f63dad805a869c776ec9f08bc88b7096f6da033f17f2b1be3",
+          "schedule_game_count": 4,
+          "scheduled_game_count": 1200,
+          "season_performance_games": 98,
+          "serving_bundle_sha256": "30d18307e4ea4f0f63dad805a869c776ec9f08bc88b7096f6da033f17f2b1be3",
+          "status": "clean",
+          "team_player_count": 18,
+          "verified_missed_game_logs": 1073,
+          "verified_player_game_logs": 89,
+          "verified_player_opportunities": 3152
+        },
+        "artifact_kind": "dev_site_release",
+        "catalog": {
+          "path": "/var/lib/nba-gestalt-dev/daily-pipeline-decoupled-v2/releases/release_sha256=7e3c871ab47879d2087540bb57cd885800777e58049574f31fa5c8f1631a4dec/catalog/games.parquet",
+          "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419"
+        },
+        "code_revision": "beb8c3792d2a503243cda45bbbd7e352f266e500",
+        "data": {
+          "bundle_path": "/var/lib/nba-gestalt-dev/daily-data-collection-v2/season=2026-27/game_date_pacific=2026-11-01/data_sha256=4a79de2a153df3bc8f21b6d07533c6e791e37b22947126a79d6288d6157c278d",
+          "bundle_sha256": "4a79de2a153df3bc8f21b6d07533c6e791e37b22947126a79d6288d6157c278d"
+        },
+        "evidence_through_date": "2026-11-01",
+        "game_count": 92,
+        "lineups": {
+          "bundle_path": "/var/lib/nba-gestalt-dev/daily-pipeline-decoupled-v2/releases/release_sha256=7e3c871ab47879d2087540bb57cd885800777e58049574f31fa5c8f1631a4dec/current-season-lineups/season=2026-27/through_date=2026-11-01/bundle_sha256=efb495a1598e1a0c8485b1fc402def4554fe8205eec46b1589ba078da6d7ee97",
+          "bundle_sha256": "efb495a1598e1a0c8485b1fc402def4554fe8205eec46b1589ba078da6d7ee97"
+        },
+        "model": {
+          "bundle_path": "/var/lib/nba-gestalt-dev/candidates/causal_hca_replacement_candidate_v2/revision=1459c83f82b1fa50d901048e65bb39c9fd678204/season=2026-27/game_date_pacific=2026-11-01/model_sha256=2fb91ebfcb125162bb35fad27111eaba4b20c8eb95d0505cacf10a2ec231dba0",
+          "bundle_sha256": "2fb91ebfcb125162bb35fad27111eaba4b20c8eb95d0505cacf10a2ec231dba0",
+          "model_provenance": {
+            "code_revision": "1459c83f82b1fa50d901048e65bb39c9fd678204",
+            "configuration_sha256": "558385560bbb2b2d518bceb847468e2f87900a33964191f54a4ecc2bd07534c3",
+            "model_version": "causal_hca_replacement_candidate_v2",
+            "prior_sha256": "2d92682a63b485d1e47111a31e42b2e2437d866cb97ba73318822feb057c693e"
+          }
+        },
+        "preseason_catalog": {
+          "player_count": 528,
+          "profiles_path": "/var/lib/nba-gestalt-dev/daily-pipeline-decoupled-v2/releases/release_sha256=7e3c871ab47879d2087540bb57cd885800777e58049574f31fa5c8f1631a4dec/preseason/profiles.parquet",
+          "profiles_sha256": "3936ad6c981527994f6b5f4fd8dd5a04cc057c8333889ae2f082d0c4e38848e7",
+          "rankings_path": "/var/lib/nba-gestalt-dev/daily-pipeline-decoupled-v2/releases/release_sha256=7e3c871ab47879d2087540bb57cd885800777e58049574f31fa5c8f1631a4dec/preseason/rankings.parquet",
+          "rankings_sha256": "569b36fbcc4dfca51a96620c2c1d1feb2ada0db01186c5e76fed820f9bba9a73"
+        },
+        "schedule": {
+          "attribution_audit": {
+            "actual_minutes_ledgers": 92,
+            "completed_games": 92,
+            "pregame_ledgers": 154,
+            "served_games": 154
+          },
+          "final_game_count": 92,
+          "root_path": "/var/lib/nba-gestalt-dev/daily-pipeline-decoupled-v2/releases/release_sha256=7e3c871ab47879d2087540bb57cd885800777e58049574f31fa5c8f1631a4dec/schedule-snapshot",
+          "tree_sha256": "173ff82bfe69011fecdc1047bb199634b081cf90f49bb53a9371caa43b65ff8f"
+        },
+        "schema_version": 1,
+        "season": "2026-27",
+        "serving": {
+          "bundle_path": "/var/lib/nba-gestalt-dev/daily-pipeline-decoupled-v2/releases/release_sha256=7e3c871ab47879d2087540bb57cd885800777e58049574f31fa5c8f1631a4dec/current-season-serving/season=2026-27/through_date=2026-11-01/bundle_sha256=30d18307e4ea4f0f63dad805a869c776ec9f08bc88b7096f6da033f17f2b1be3",
+          "bundle_sha256": "30d18307e4ea4f0f63dad805a869c776ec9f08bc88b7096f6da033f17f2b1be3"
+        }
+      },
+      "bundles": {
+        "model": {
+          "path": "/var/lib/nba-gestalt-dev/candidates/causal_hca_replacement_candidate_v2/revision=1459c83f82b1fa50d901048e65bb39c9fd678204/season=2026-27/game_date_pacific=2026-11-01/model_sha256=2fb91ebfcb125162bb35fad27111eaba4b20c8eb95d0505cacf10a2ec231dba0",
+          "manifest": {
+            "bundle_sha256": "2fb91ebfcb125162bb35fad27111eaba4b20c8eb95d0505cacf10a2ec231dba0",
+            "generated_at": "2026-11-03T00:13:40.221349Z",
+            "identity": {
+              "artifact_kind": "daily_model",
+              "components": {
+                "evaluation_metrics": {
+                  "path": "files/evaluation_metrics.json",
+                  "sha256": "913056fc391f656fcd43a57394ae85534a00b23bc776ad5c31f467b7c0b6d2e5",
+                  "size_bytes": 1257
+                },
+                "game_projections": {
+                  "path": "files/game_projections.parquet",
+                  "sha256": "f9eb293b2b1ae07d31bede5d4837e91478023f01ba15f43d36ef614881317242",
+                  "size_bytes": 8649
+                },
+                "home_court_state": {
+                  "path": "files/home_court_state.json",
+                  "sha256": "7046a5965cbe9404765cd9b1375ee87bc1d76e920742228f6aa51fa92793e6d0",
+                  "size_bytes": 541
+                },
+                "lineup_values": {
+                  "path": "files/lineup_values.parquet",
+                  "sha256": "b18e5c6a98110edc398f9b3514c4a9290778f487c22d8440109e09ef021a32c6",
+                  "size_bytes": 8865
+                },
+                "minute_allocations": {
+                  "path": "files/minute_allocations.parquet",
+                  "sha256": "7803b5ffa52998666652e71e07d676c642704dbda9e71b4115523111e5e7db0c",
+                  "size_bytes": 53858
+                },
+                "minutes_observations": {
+                  "path": "files/minutes_observations.parquet",
+                  "sha256": "75f987ca0367cffe00d643d813e80859d2c1643bfb30219c1435ad387e43038f",
+                  "size_bytes": 15621
+                },
+                "minutes_state": {
+                  "path": "files/minutes_state.parquet",
+                  "sha256": "6678af9aa4a783eabd15b103386df1186958d2423a49f5e2807eff1b08e1e5fd",
+                  "size_bytes": 74169
+                },
+                "player_ratings": {
+                  "path": "files/player_ratings.parquet",
+                  "sha256": "5f89e988de47a20e1f92b1d277d014f1f7424bd361cf96dc73d3244226c37b91",
+                  "size_bytes": 73878
+                },
+                "rating_gram": {
+                  "path": "files/rating_gram.npz",
+                  "sha256": "827e6354fac56cd52a02ad698b8554b19efc58762a4d388f40a7df551bd3d663",
+                  "size_bytes": 73863
+                },
+                "rating_trajectory": {
+                  "path": "files/rating_trajectory.parquet",
+                  "sha256": "4034cdf19ba7801edc4ccda5e512b2dc00742d3b5f02bf5adb6ebbf4284b3979",
+                  "size_bytes": 121138
+                },
+                "rating_vectors": {
+                  "path": "files/rating_vectors.npz",
+                  "sha256": "e7c9bd2b9d29d3fb27058ffc5d72b654c9462c1b6966253d5ac7ef60c13c8250",
+                  "size_bytes": 5422
+                },
+                "replay_state": {
+                  "path": "files/replay_state.json",
+                  "sha256": "c4dd61d0dfbee230c7cd2c66164704d6a0dee41194492453d760b1d2447a3247",
+                  "size_bytes": 20714
+                }
+              },
+              "cumulative_game_count": 92,
+              "cumulative_game_ids": [
+                "0022600001",
+                "0022600002",
+                "0022600003",
+                "0022600004",
+                "0022600005",
+                "0022600006",
+                "0022600007",
+                "0022600008",
+                "0022600009",
+                "0022600015",
+                "0022600016",
+                "0022600017",
+                "0022600018",
+                "0022600019",
+                "0022600020",
+                "0022600021",
+                "0022600022",
+                "0022600023",
+                "0022600024",
+                "0022600085",
+                "0022600086",
+                "0022600087",
+                "0022600088",
+                "0022600089",
+                "0022600090",
+                "0022600091",
+                "0022600092",
+                "0022600093",
+                "0022600094",
+                "0022600095",
+                "0022600096",
+                "0022600097",
+                "0022600098",
+                "0022600099",
+                "0022600100",
+                "0022600101",
+                "0022600102",
+                "0022600103",
+                "0022600104",
+                "0022600105",
+                "0022600106",
+                "0022600107",
+                "0022600108",
+                "0022600109",
+                "0022600110",
+                "0022600111",
+                "0022600112",
+                "0022600113",
+                "0022600114",
+                "0022600115",
+                "0022600116",
+                "0022600117",
+                "0022600118",
+                "0022600119",
+                "0022600120",
+                "0022600121",
+                "0022600122",
+                "0022600123",
+                "0022600124",
+                "0022600125",
+                "0022600126",
+                "0022600127",
+                "0022600128",
+                "0022600129",
+                "0022600130",
+                "0022600131",
+                "0022600132",
+                "0022600133",
+                "0022600134",
+                "0022600135",
+                "0022600136",
+                "0022600137",
+                "0022600138",
+                "0022600139",
+                "0022600140",
+                "0022600141",
+                "0022600142",
+                "0022600143",
+                "0022600144",
+                "0022600145",
+                "0022600146",
+                "0022600147",
+                "0022600148",
+                "0022600149",
+                "0022600150",
+                "0022600151",
+                "0022600152",
+                "0022600153",
+                "0022600154",
+                "0022600155",
+                "0022600156",
+                "0022600157"
+              ],
+              "daily_game_ids": [
+                "0022600154",
+                "0022600155",
+                "0022600156",
+                "0022600157"
+              ],
+              "game_date_pacific": "2026-11-01",
+              "input_data_sha256": "4a79de2a153df3bc8f21b6d07533c6e791e37b22947126a79d6288d6157c278d",
+              "input_data_uri": "artifact://daily-data/4a79de2a153df3bc8f21b6d07533c6e791e37b22947126a79d6288d6157c278d",
+              "model_provenance": {
+                "code_revision": "1459c83f82b1fa50d901048e65bb39c9fd678204",
+                "configuration_sha256": "558385560bbb2b2d518bceb847468e2f87900a33964191f54a4ecc2bd07534c3",
+                "model_version": "causal_hca_replacement_candidate_v2",
+                "prior_sha256": "2d92682a63b485d1e47111a31e42b2e2437d866cb97ba73318822feb057c693e"
+              },
+              "parent_game_date_pacific": "2026-10-31",
+              "parent_model_sha256": "8a4f833839e76ab6f369c343ccac8b4224eceae50b2d90226fe8050494b3271b",
+              "schema_version": 1,
+              "season": "2026-27",
+              "validation": {
+                "excluded_game_count": 0,
+                "excluded_games": [],
+                "status": "clean"
+              }
+            }
+          },
+          "component_checks": [
+            {
+              "component": "evaluation_metrics",
+              "matches_sha256": true
+            },
+            {
+              "component": "game_projections",
+              "matches_sha256": true
+            },
+            {
+              "component": "home_court_state",
+              "matches_sha256": true
+            },
+            {
+              "component": "lineup_values",
+              "matches_sha256": true
+            },
+            {
+              "component": "minute_allocations",
+              "matches_sha256": true
+            },
+            {
+              "component": "minutes_observations",
+              "matches_sha256": true
+            },
+            {
+              "component": "minutes_state",
+              "matches_sha256": true
+            },
+            {
+              "component": "player_ratings",
+              "matches_sha256": true
+            },
+            {
+              "component": "rating_gram",
+              "matches_sha256": true
+            },
+            {
+              "component": "rating_trajectory",
+              "matches_sha256": true
+            },
+            {
+              "component": "rating_vectors",
+              "matches_sha256": true
+            },
+            {
+              "component": "replay_state",
+              "matches_sha256": true
+            }
+          ]
+        },
+        "data": {
+          "path": "/var/lib/nba-gestalt-dev/daily-data-collection-v2/season=2026-27/game_date_pacific=2026-11-01/data_sha256=4a79de2a153df3bc8f21b6d07533c6e791e37b22947126a79d6288d6157c278d",
+          "manifest": {
+            "bundle_sha256": "4a79de2a153df3bc8f21b6d07533c6e791e37b22947126a79d6288d6157c278d",
+            "generated_at": "2026-11-02T16:57:21.952990Z",
+            "identity": {
+              "artifact_kind": "daily_data",
+              "components": {
+                "actual_minutes": {
+                  "path": "files/actual_minutes.parquet",
+                  "sha256": "7ce1553bd4f351b7fc5aa2b12bbe5dc539291b13a0736de5ceb186c02ae4fff5",
+                  "size_bytes": 6523
+                },
+                "final_games": {
+                  "path": "files/final_games.json",
+                  "sha256": "c37706c7268a2796ab3f221dbe01b70be99d32dc5aa7b23123b7bf3d896222f1",
+                  "size_bytes": 1436
+                },
+                "injuries": {
+                  "path": "files/injuries.json",
+                  "sha256": "3909fa1a61a6535dabf57cfd96fc6b206c575bd7d32fb649883b6ea7eb971b84",
+                  "size_bytes": 45834
+                },
+                "nba_boxscores": {
+                  "path": "files/nba_boxscores.json",
+                  "sha256": "5199cd47a85ef7004d8bec68f78ebc21b4b58afbcb385899e4354b9f6feb0ea3",
+                  "size_bytes": 214769
+                },
+                "nba_inactive_lists": {
+                  "path": "files/nba_inactive_lists.json",
+                  "sha256": "9bc1239abeca9e1f76f729a0032f0474fff10a365dbc9d9657791918377132c0",
+                  "size_bytes": 6885
+                },
+                "observed_lineups": {
+                  "path": "files/observed_lineups.parquet",
+                  "sha256": "4bcb05ec110d97d2cbd3c39c93f733158b1061d806543390741daf013dc124be",
+                  "size_bytes": 6139
+                },
+                "observed_stints": {
+                  "path": "files/observed_stints.parquet",
+                  "sha256": "24ac8ffa48e69315434f4e28b3ef3411f44200dc26bb9ba45b7a4f2168466a96",
+                  "size_bytes": 26432
+                },
+                "player_identity": {
+                  "path": "files/player_identity.parquet",
+                  "sha256": "3cdf9a0573e4cc7fe8e0cf050ba280d8665c3a7f351602f296d41c15f034f676",
+                  "size_bytes": 6904
+                },
+                "rosters": {
+                  "path": "files/rosters.json",
+                  "sha256": "9e27aff77ead856ce2fbec24d86a6fa0fbbae2c497170ee33163f90a39efe73d",
+                  "size_bytes": 37401
+                }
+              },
+              "game_count": 4,
+              "game_date_pacific": "2026-11-01",
+              "game_ids": [
+                "0022600154",
+                "0022600155",
+                "0022600156",
+                "0022600157"
+              ],
+              "game_quality": {
+                "0022600154": {
+                  "box_away_points": 108,
+                  "box_home_points": 97,
+                  "final_away_score": 108,
+                  "final_home_score": 97,
+                  "observed_stint_possessions": 91.50000000000001,
+                  "play_by_play_possessions": 91.5
+                },
+                "0022600155": {
+                  "box_away_points": 98,
+                  "box_home_points": 90,
+                  "final_away_score": 98,
+                  "final_home_score": 90,
+                  "observed_stint_possessions": 91.0,
+                  "play_by_play_possessions": 91.0
+                },
+                "0022600156": {
+                  "box_away_points": 112,
+                  "box_home_points": 124,
+                  "final_away_score": 112,
+                  "final_home_score": 124,
+                  "observed_stint_possessions": 99.0,
+                  "play_by_play_possessions": 99.0
+                },
+                "0022600157": {
+                  "box_away_points": 125,
+                  "box_home_points": 131,
+                  "final_away_score": 125,
+                  "final_home_score": 131,
+                  "observed_stint_possessions": 105.5,
+                  "play_by_play_possessions": 105.5
+                }
+              },
+              "game_sources": {
+                "0022600154": {
+                  "nba_box_score": {
+                    "sha256": "ad84b6168c01462c40ad2f57899b996ac32289e7c6d294ede94b1051706eb1c3",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/boxscore/season=2026-27/game_id=0022600154/ad84b6168c01462c40ad2f57899b996ac32289e7c6d294ede94b1051706eb1c3.json"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "c022dd2e39bc9b1d12d29db5837eee81e1539df8f2cb4d4938d5bf7492705fcf",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600154/c022dd2e39bc9b1d12d29db5837eee81e1539df8f2cb4d4938d5bf7492705fcf.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "0dba2d6c6a144c4f984c560be619361c919bfe843fb31022347a920af9020a9a",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/injury-reports/season=2026-27/report_date=2026-11-01/0dba2d6c6a144c4f984c560be619361c919bfe843fb31022347a920af9020a9a.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "d294baeb1191adf72c62b633944ee4ee297112a6507ffa2caa04d572fbcde53a",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600154/d294baeb1191adf72c62b633944ee4ee297112a6507ffa2caa04d572fbcde53a.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/games.parquet"
+                  }
+                },
+                "0022600155": {
+                  "nba_box_score": {
+                    "sha256": "d4fe1bb5d51eb2fb97e534a3eaedea67ace8b328fea72f6c6492fbf5f57eb202",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/boxscore/season=2026-27/game_id=0022600155/d4fe1bb5d51eb2fb97e534a3eaedea67ace8b328fea72f6c6492fbf5f57eb202.json"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "b4db914456880bf32de06ceaf16e0de5818126d345391ca9f131af200d69d399",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600155/b4db914456880bf32de06ceaf16e0de5818126d345391ca9f131af200d69d399.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "0dba2d6c6a144c4f984c560be619361c919bfe843fb31022347a920af9020a9a",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/injury-reports/season=2026-27/report_date=2026-11-01/0dba2d6c6a144c4f984c560be619361c919bfe843fb31022347a920af9020a9a.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "5239da8d2d07f216d1f7b3f0e57e1ef15347b628f65f422bd4651eb9a67548fa",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600155/5239da8d2d07f216d1f7b3f0e57e1ef15347b628f65f422bd4651eb9a67548fa.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/games.parquet"
+                  }
+                },
+                "0022600156": {
+                  "nba_box_score": {
+                    "sha256": "4dcef3aa123d3813597102be888f33729ccef92822aca72ff8279f22b77722c7",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/boxscore/season=2026-27/game_id=0022600156/4dcef3aa123d3813597102be888f33729ccef92822aca72ff8279f22b77722c7.json"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "1ce1b02f4dcbe01806b03621b724fe69f92a1291eacd5692595af42235d077f9",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600156/1ce1b02f4dcbe01806b03621b724fe69f92a1291eacd5692595af42235d077f9.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "0dba2d6c6a144c4f984c560be619361c919bfe843fb31022347a920af9020a9a",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/injury-reports/season=2026-27/report_date=2026-11-01/0dba2d6c6a144c4f984c560be619361c919bfe843fb31022347a920af9020a9a.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "e7b0dd6f921867c907d6d9f89bdccadabc698565d5f30cf7912590723b2d8205",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600156/e7b0dd6f921867c907d6d9f89bdccadabc698565d5f30cf7912590723b2d8205.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/games.parquet"
+                  }
+                },
+                "0022600157": {
+                  "nba_box_score": {
+                    "sha256": "60eac2f96c5ceadd7266862966be2a7f3312c5220b38f5289e2a800abc8ac8c8",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/boxscore/season=2026-27/game_id=0022600157/60eac2f96c5ceadd7266862966be2a7f3312c5220b38f5289e2a800abc8ac8c8.json"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "418b8bfe2201f8d0c371dd09ea8e8061a3d5b99d233cda259e5ff704e257e4f2",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600157/418b8bfe2201f8d0c371dd09ea8e8061a3d5b99d233cda259e5ff704e257e4f2.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "0dba2d6c6a144c4f984c560be619361c919bfe843fb31022347a920af9020a9a",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/injury-reports/season=2026-27/report_date=2026-11-01/0dba2d6c6a144c4f984c560be619361c919bfe843fb31022347a920af9020a9a.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "3d9d1e4119683eb757afb9597f84a4493d097f8901ae8863c7b54ed2067443c7",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600157/3d9d1e4119683eb757afb9597f84a4493d097f8901ae8863c7b54ed2067443c7.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/games.parquet"
+                  }
+                }
+              },
+              "report_sha256": "2c0381c3f27f670336a74e75c45f46de912b3e4338243602863dec9852099331",
+              "schema_version": 2,
+              "season": "2026-27",
+              "validation": {
+                "error_count": 0,
+                "errors": [],
+                "repairs": [
+                  {
+                    "action": "accepted 2 audited reconstruction warning(s): same_offense_consecutive_possessions, unexplained_possession_team_change",
+                    "game_id": "0022600155",
+                    "source": "NBA liveData play-by-play"
+                  },
+                  {
+                    "action": "accepted 2 audited reconstruction warning(s): same_offense_consecutive_possessions, unexplained_possession_team_change",
+                    "game_id": "0022600156",
+                    "source": "NBA liveData play-by-play"
+                  }
+                ],
+                "status": "clean"
+              }
+            }
+          },
+          "component_checks": [
+            {
+              "component": "actual_minutes",
+              "matches_sha256": true
+            },
+            {
+              "component": "final_games",
+              "matches_sha256": true
+            },
+            {
+              "component": "injuries",
+              "matches_sha256": true
+            },
+            {
+              "component": "nba_boxscores",
+              "matches_sha256": true
+            },
+            {
+              "component": "nba_inactive_lists",
+              "matches_sha256": true
+            },
+            {
+              "component": "observed_lineups",
+              "matches_sha256": true
+            },
+            {
+              "component": "observed_stints",
+              "matches_sha256": true
+            },
+            {
+              "component": "player_identity",
+              "matches_sha256": true
+            },
+            {
+              "component": "rosters",
+              "matches_sha256": true
+            }
+          ]
+        }
+      },
+      "model_available_date_directories": [
+        "2026-10-20",
+        "2026-10-21",
+        "2026-10-22",
+        "2026-10-23",
+        "2026-10-24",
+        "2026-10-25",
+        "2026-10-26",
+        "2026-10-27",
+        "2026-10-28",
+        "2026-10-29",
+        "2026-10-30",
+        "2026-10-31",
+        "2026-11-01"
+      ],
+      "data_available_date_directories": [
+        "2026-10-20",
+        "2026-10-21",
+        "2026-10-22",
+        "2026-10-23",
+        "2026-10-24",
+        "2026-10-25",
+        "2026-10-26",
+        "2026-10-27",
+        "2026-10-28",
+        "2026-10-29",
+        "2026-10-30",
+        "2026-10-31",
+        "2026-11-01"
+      ],
+      "home_court_state": {
+        "home_court_candidate_id": "causal_hca_replacement_candidate_v2",
+        "home_court_estimate": 1.5707818047038942,
+        "home_court_evidence_weight": 0.17827895907351135,
+        "home_court_information": 9304.0,
+        "home_court_prior_equivalent_possessions": 42883.87482466509,
+        "home_court_prior_mean": 1.6915705750166747,
+        "home_court_prior_source": "artifact://causal-hca-prior/b45c9c63f932d036c9e4ae0f59f5e83d1195f592788c78033928bc7668a86d75",
+        "home_court_prior_weight": 0.8217210409264887,
+        "home_court_standard_error": 0.5259803247557175
+      },
+      "frozen_inputs": {
+        "rankings_path": "/var/lib/nba-gestalt/live-release/preseason/rankings.parquet",
+        "minutes_path": "/var/lib/nba-gestalt/daily-pipeline-v2/prior/preseason_minutes.json",
+        "prior_sha256": "2d92682a63b485d1e47111a31e42b2e2437d866cb97ba73318822feb057c693e",
+        "players": 528,
+        "matches_manifest": true
+      }
+    },
+    "nba-gestalt-dev": {
+      "release_root": "/var/lib/nba-gestalt-dev/release-publisher/generations/generation=00000000000000000038",
+      "release_identity": {
+        "api_validation": {
+          "canonical_final_game_count": 125,
+          "evidence_game_count": 121,
+          "evidence_through_date": "2026-11-04",
+          "health": "ok",
+          "lineup_bundle_sha256": "2884da6b9bef78e3f3236d0aab2372c4601400177b1adcb45d402172fb2630cd",
+          "lineup_count": 2966,
+          "lineup_serving_bundle_sha256": "13974289039ef4e7084ce5672e50e9d60ee7aac7316a1b7113d7280bcb8c56dc",
+          "player_id": 201939,
+          "ranking_player_count": 529,
+          "rankings_bundle_sha256": "13974289039ef4e7084ce5672e50e9d60ee7aac7316a1b7113d7280bcb8c56dc",
+          "schedule_game_count": 14,
+          "schedule_game_ids": [
+            "0022600173",
+            "0022600174",
+            "0022600175",
+            "0022600176",
+            "0022600177",
+            "0022600178",
+            "0022600179",
+            "0022600180",
+            "0022600181",
+            "0022600182",
+            "0022600183",
+            "0022600184",
+            "0022600185",
+            "0022600186"
+          ],
+          "scheduled_game_count": 1200,
+          "season_performance_games": 125,
+          "serving_bundle_sha256": "13974289039ef4e7084ce5672e50e9d60ee7aac7316a1b7113d7280bcb8c56dc",
+          "status": "clean",
+          "team_player_count": 18,
+          "verified_missed_game_logs": 1624,
+          "verified_player_game_logs": 316,
+          "verified_player_opportunities": 4687,
+          "win_projection_as_of": "2026-11-04",
+          "win_projection_team_count": 30,
+          "wins_completed_team_games": 242,
+          "wins_record_team_games": 242
+        },
+        "artifact_kind": "dev_site_release",
+        "catalog": {
+          "path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/inputs/catalog.parquet",
+          "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419"
+        },
+        "code_revision": "a6895e49c554f8d63582703f3208089fec5fd920",
+        "data": {
+          "bundle_path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/daily-data/season=2026-27/game_date_pacific=2026-11-04/data_sha256=b98681c5193834a0e4db1329b1c8575b4b15a1f1b43aefb49484ef6693688ca7",
+          "bundle_sha256": "b98681c5193834a0e4db1329b1c8575b4b15a1f1b43aefb49484ef6693688ca7"
+        },
+        "evidence_through_date": "2026-11-04",
+        "game_count": 121,
+        "lineups": {
+          "bundle_path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/lineups/season=2026-27/through_date=2026-11-04/bundle_sha256=2884da6b9bef78e3f3236d0aab2372c4601400177b1adcb45d402172fb2630cd",
+          "bundle_sha256": "2884da6b9bef78e3f3236d0aab2372c4601400177b1adcb45d402172fb2630cd"
+        },
+        "model": {
+          "bundle_path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/daily-model/season=2026-27/game_date_pacific=2026-11-04/model_sha256=6821950c77eb9943f3fc8493f56313847a53d811fedd9a027e49c0080f1708f6",
+          "bundle_sha256": "6821950c77eb9943f3fc8493f56313847a53d811fedd9a027e49c0080f1708f6",
+          "model_provenance": {
+            "code_revision": "1459c83f82b1fa50d901048e65bb39c9fd678204",
+            "configuration_sha256": "558385560bbb2b2d518bceb847468e2f87900a33964191f54a4ecc2bd07534c3",
+            "model_version": "causal_hca_replacement_candidate_v2",
+            "prior_sha256": "641b187e08756ceab4adde6f170101bdca108094b6e1ef9fc7a2e5c78c5a3229"
+          }
+        },
+        "preseason_catalog": {
+          "player_count": 529,
+          "profiles_path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/reconciled-serving-inputs/profiles.parquet",
+          "profiles_sha256": "7829c33a30f2c36c0d1fbeb7161b0c5a24031f6530769f624aa85b8a96326a4e",
+          "rankings_path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/reconciled-serving-inputs/rankings.parquet",
+          "rankings_sha256": "d4a788dec1ffcbe2dd2a788c7318dc9dcd7fff37c1a14e597f02c120547451db"
+        },
+        "schedule": {
+          "attribution_audit": {
+            "actual_minutes_ledgers": 125,
+            "completed_games": 125,
+            "pregame_ledgers": 154,
+            "served_games": 154
+          },
+          "final_game_count": 125,
+          "observation_snapshot": {
+            "captured_files": {
+              "board:2026-10-20": "99d43ac0e5dc0492b3ffffa314483d00b714ac5b256f3020453b43674a912449",
+              "board:2026-10-21": "ea230c17f834f78dd9d2d44d2c33774eca159d8efbdc3f2a762e1eea271be82a",
+              "board:2026-10-22": "2cea88f7ba6b49423c2ee543df803b022e716583a3eff5470d197af77b5d6b26",
+              "board:2026-10-23": "f26c3c48788d7c081839ef9a313ba19853fc19ff817a3ccecce95c681d8f0856",
+              "board:2026-10-24": "c79929f4a39f9a95b927cbc75c121878a7fcf4e25f22de7b691994289f4f2225",
+              "board:2026-10-25": "977d08cc84cf761990ff83d0b62b32f876df3d185937a9b369534d70dbeca183",
+              "board:2026-10-26": "3d85bd0317fa50421ea2fa30cbcad3fe7fe7f847be8647da5c518ae73d4cf1e6",
+              "board:2026-10-27": "9cedb458d6ab7f536e0c9179bb4376c86873773d2892ceefbe627e1bd062f4e0",
+              "board:2026-10-28": "c491b6986b60751471e29ccb824019aa2fe005d6244c7a0ecd491a8e17fa98d0",
+              "board:2026-10-29": "d4c73842a65b2ef66cb4e2170a3c6bcc09ae531accf6b35d13231ebd51c92a8a",
+              "board:2026-10-30": "dc9e387faa1749c795d0b0f740c127967bd015f4ce10bae655fcc29760c9c459",
+              "board:2026-10-31": "d6f6ae95f522df2964d37faa9f17ecef21c675607cad7285e95a3142adb8a932",
+              "board:2026-11-01": "fe4c12459aa36d489cd691504e39570a859aba76e93af02e0cf320b74730d291",
+              "board:2026-11-02": "f86aa1510d47379ac0200561b0e9d7cecce4f51a63d6c50ffc8910ad3699f29e",
+              "board:2026-11-04": "1df514ee1fd5c268bc5f9a80568178b5182854ed0560f470fd6de3f656eb286c",
+              "board:2026-11-05": "e5d25b50650ff477b36a86201a732ca46958ba507ace36dfd9ae666118369713",
+              "board:2026-11-06": "b73c36ee99a26ab649c479e3f9316ecb0321fbd91cff1633a51fd335a0f48672",
+              "board:2026-11-07": "3868fa2b11aa2c3e7f61180c7176241eb5a217b63b89fdbc0d7b573cbea9da14",
+              "board:2026-11-08": "e2fc9e11ed907803b0b3df3d58509e06269414eb54651aea20bf9171b47baaf7",
+              "board:2026-11-09": "cbea228c2449c838cbc8bc6106a964691b06d3f93c87911d578d4b15efad96c5",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600001.nba.json": "b8cb43efb3ae043a9cca5888175f17399ae0bd36c4cf7d33902bd2c8af523115",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600001.summary.json": "8f6be6f62d0f3f6bbc1da15ca847f51ecce6d8e556935633b2706145dbf77111",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600002.nba.json": "cec794a7d3be13ae29c28b2c12912f09396353860c6e936ad63c94b2ea2073a5",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600002.summary.json": "22193bc9d144fc30c55ef0ae48a4654408d23619f660770335f681fb646ce076",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600003.nba.json": "df52ffa077e3c906dd5df80b7891eaa375f4bfd0c179d2781e9f19810541f734",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600003.summary.json": "03df59358dc7d572a83dedfe8ab668ff330f4f94a16a34813e694a264a67aac3",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600004.nba.json": "486ad892bc46f5a1fbe642324010eccb4c061b2abe9b3d05c5df440d0eecfb76",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600004.summary.json": "155c532a7c05cebbaadfac9dcb8bd92db212c2cbf2ef556d67b67f7404c29d57",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600005.nba.json": "38f46cbff5d65f3a59fc3c39570dd7028447351155dac6e763e21826a420b38b",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600005.summary.json": "858c1c5090e1251979f0b04323302ab35a9588aebdd51495003e59ca66a51b09",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600006.nba.json": "22793d542199c19733094bbc3bb8ade34a07eaed6c2cea5faa6ebcfce52363e6",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600006.summary.json": "d1721d6c171cb1b785325ee0f637e07b95a00378883d37fd6312e062588d5dba",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600007.nba.json": "1465c5502a3e0bed77ad86f05041108e7b90f3e40704ec324f4108ed69199403",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600007.summary.json": "297aa8e966ed73d773d6aa18f26fb41baa6aac32cc0c189a9a4f864c894726e0",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600008.nba.json": "454424d155834092fd93c7faf19a7f76d9ba3d2d3880f7ee6f1649ad880d7759",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600008.summary.json": "414e6f4e925feef53baf7723e7fd5dbe465e6b9a8a92295710f050b6a2a8635f",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600009.nba.json": "7f6a653d1208e6d386cb5685587780d4803bd877c981c7d0c283e2a3bfaf6669",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600009.summary.json": "c936067c0c2081c099e8890d82a93ee09ba89f2f2e0bdf53314a2941c3388e70",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600015.nba.json": "65b83d4e3aac2ba5bee43a311356c2ddfc25f08ecb6699ba46542d889e075b21",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600015.summary.json": "446a1741abc5052381b887d53735ff2f6ef90e7eb64a4967a75a9320404d2637",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600016.nba.json": "500001f06df4e3fac9140d4367bf38c3520254fefa64ee6c530852698c988a46",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600016.summary.json": "5946d995f990f162af9606e1fe2700b0e8cb33a85784c267bd8e411fb748b143",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600017.nba.json": "0cceb97bafbf6ce4b3e3d257e3e3b779d0721971b6047f67b5bd43bfd415428b",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600017.summary.json": "d10a8964d06836aa7ba803b9527a9c54aa8836e9de163130b4f28de68b00d185",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600018.nba.json": "2fec5a472dcbd7e558ba2f6bb4f59d30081f69d697658b281006f937c0b836e6",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600018.summary.json": "ba463a88b70ddc11e1003748fa939f96651fdba14fb4bb59202209f6f8ded577",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600019.nba.json": "33e584b6011233dbdb4107bc7e748a2e2b1ba4fcfefba08ba412420dc4a5a621",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600019.summary.json": "ee0698d2ce4e3615b44f774c686b4fcb45dffcdb1c480baa78b49a52f7b91680",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600020.nba.json": "5106eca79f7d496dea11d6c289ad8155cb7dac5f578fbe75eb7e4b29aa5d9d48",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600020.summary.json": "8f99f8742c68ed6511dd077fb1636bfbe54b2ab64ecdc7b73708f8ac4104c58e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600021.nba.json": "eb706f797b36a04b97be2c54e429fccaecfe5820857b7bdda923d86a2f043ada",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600021.summary.json": "621872256b389457a598419ecd425160361705c1e0d878aeb54a04ce72c66928",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600022.nba.json": "9668f989c3258e558c53ba21212670c8be5279ee181636bfc5400be824751f29",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600022.summary.json": "81507ab1db93b4f322f29018e296545c33729dab9cc4232b7678b5d53d0eb01a",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600023.nba.json": "b99f5866b63dd9ae374320e634c11098b9c350dc7428a1efdd430d507dd9998d",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600023.summary.json": "ac9807bede34991fb9643d75fe888623e2d4c87990b0ec57f6a86b147f3ed330",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600024.nba.json": "27d31cf526e15f9de605078e63bdfa2b69977bd6022d9c8a8e901c58fb71d311",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600024.summary.json": "012cba3db8e30b20c196c51172ad3d88b872d46f9c0d213c06c3f3c1ab2f1746",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600085.nba.json": "892152f0c960e82e8ba7d8af4aa74390f70eb0bc0c2fa5e03b4a5fbd76574018",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600085.summary.json": "5f15b10cfd2d717edc79d44eadd90995aeb9019d57a99cd796478bb914d8bf21",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600086.nba.json": "4709a0072495ac5ed54f6f8b15d892562e612da5e0049e5243c5a7b1d210da48",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600086.summary.json": "142bbdf8b880fcd93f5e9f94ffd2592980065f3729d2d30249d589beba7223a6",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600087.nba.json": "9c02df3150793b00d5be3a6a9b27b2d0f6d7ef7fe101fec7d8b43d12710d8e39",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600087.summary.json": "d5c88742ff46ffed9ba52a6590471fc139d2d949761a3d99f32626e67eab347f",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600088.nba.json": "8b11d04f3a706c17c8b08c5aa999ecafc9b15b38af9b9e23540208d68d15c301",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600088.summary.json": "0f1c3b5d6cff3a7d54ccf60e9cd46f3d2c564e95a98cd247550b43ead9da06cc",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600089.nba.json": "5806069114f9cbe8aeffde58b0b2087fa2922e1af4d52fd054d059a9a27ff6b7",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600089.summary.json": "752db7678cf9bf09a05ea0664d8453bd7e91a157b8936fd99b03d93993333818",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600090.nba.json": "befb65d3a5183e89335cbab876b9cb6a9ce77778dd490faa30f22ad7f08f6498",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600090.summary.json": "c4f2ed75465a408db792b5b043dfbddd4743ddb440e6bd4d515c3d2bca65aefd",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600091.nba.json": "e7931ca97640dec1c6f0d8514eda71c81eb33f5cbbd05b198cd1cdc347c2f6e3",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600091.summary.json": "def0bcc9b03700f0321065b4002f7d25049b987c76bef89b460f2ce31885e85f",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600092.nba.json": "e4df8075b5948aae8f0f14833213e534776693d7e4a4306623231c5bae238e64",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600092.summary.json": "9dd56f0089e200f3d2206e2a2ae7ac42eacb2b1c290554a55ceb12467f25027b",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600093.nba.json": "162e34f773e632c43ec860ed0c3669ec8fd7cb3946ebdb5e0012e7efbc56da80",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600093.summary.json": "9b34971db0d74f825265508b53097d126c0756a44022864436cdedd301071600",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600094.nba.json": "3927c9dac0227dfe1f8880ae72b2a1b3fca5dbefc683c3701ab1685a1b00b8ec",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600094.summary.json": "402ac48a3644dd6d14dfe273076bae1dfd1e764281b63acc61699fd2029a3847",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600095.nba.json": "028a5dc87566cf28b962eeac12b6305643da54795f4bb377bc6358902571c3fa",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600095.summary.json": "b22efdbb5515b4f3bc17fefc78a0d33f0b04ff96ae7d75886f35166a1e9fbe0a",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600096.nba.json": "8a08f609a67dee5f8c7faeb7f00823875a80ad5d02420e0f4a77e309f9f8da9f",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600096.summary.json": "4beecf96150b2d7f27baf0f66eec7bb2a3d65a21b4fd41e04246061a584278ed",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600097.nba.json": "02aa64b0a59fb877de371ea060b85abaa1f927bb2cabbf0c99a155ad31122a45",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600097.summary.json": "20ba092932064d7e9d31e70997a5e8dd6d004236276099bac1fc31931fdba085",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600098.nba.json": "c260239588c36a5b8df684005434b27c72cc7c69a49eba994f0a40130c525c86",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600098.summary.json": "a8b72851f47a63dc3f69bfdf51c77348a2b96d94b5d5865b2ca8ecc55285088e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600099.nba.json": "91f846f6cd09fb3ee67beabadc0839d8a9416571c4c7915adae46238b39c61c5",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600099.summary.json": "28b23a8159727692b1b8d521eb3db150d75e202c9c34a5f5b57580b89b96a361",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600100.nba.json": "38600ddfdd1041ca99ff38f8da0b5786aae654721c798beb9b102ccbdbc93c8e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600100.summary.json": "e141a95367f0b2e2a88ea854cb7fc0703bde07e417009172b65745564efe32e6",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600101.nba.json": "da6c29e4c964216da59a0870e9768cecfe29166a578124a0e11137734008a84b",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600101.summary.json": "fe1d07cfb3bf4b9621b2fe44a1bcec1432219313b13a3848ee4de78001ab89e7",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600102.nba.json": "6bc09dda0e687cd10de6f71779084ee8017df9eff149e14f889337411eb61b40",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600102.summary.json": "18ff8625c907ef4a337295e5ef39aa180d3b79eaf5ead3eed47a409e6704839e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600103.nba.json": "339bd12d6fcd69728e4b48c2f166d43354a45f7670ec8b70130474c1e73e67a1",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600103.summary.json": "59fc802887b1b8bfc57d913908df3f674d3adbdfad2b90475c0813b6f6e8caf9",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600104.nba.json": "7a678efcd1d0c973fa759f134ee2f5623f3b32257fbd3fb4ed0489ce9876c2c0",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600104.summary.json": "75e7762dab2072e61fb85978f30872981eec909bc998373d7f265983dbd81ce6",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600105.nba.json": "da9908cf2675f8cc796d5bc1795246146b4c4153c8dcddccfdd0d4210b7fba57",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600105.summary.json": "5146a776fbe95e2c8415e4a1d6e70d48ab9c5fc3707330616aba02d0db5771de",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600106.nba.json": "acb08abce72505c0f12c776e71d7fb734b215eedbe22a0f9ab5077414f1772db",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600106.summary.json": "712b63f2e4a6f92d3ee54ca5b6caef27b8976d10fca9d666e84355a3e1935b96",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600107.nba.json": "aeb0757cd48145fa0807c44bd2283c23fc5a785cd8020ada344e16274027e1da",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600107.summary.json": "7cb35fa59b27ca64a50bfafea35311d573238b9f0fa25d30ae81c0acf3436eae",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600108.nba.json": "a28bbbe62275865ee732a824cd5b2bca1411d90ba4d4831baa98add65cd7a055",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600108.summary.json": "a3cb50b142f1aaa62141813785f3fe8818c62ab0d86377a10a9718525e37a7d6",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600109.nba.json": "edb1be43536ad61a2b5e1de6e1bd1f82ef0045b2f91d3cf2f070e04047b51a4a",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600109.summary.json": "57333b557be1782b0470f7aed7142d5d335fb5e5e3fb40da7cb11e02601bbc17",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600110.nba.json": "588469bf24de3ab9e5f353e479d9dcbae6ee2405c2cf3eda0776ab75c0dcca33",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600110.summary.json": "f2c86375371e5a38c1209a91fd33c3a81dc849852b3a3d34a437bbe42f3e87d8",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600111.nba.json": "a303278a13cc60ed3088fa6f99951b7a791793b84d3d9b11fbc21b05ef64cd3e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600111.summary.json": "6576a9870b8efb461d6aeb1e314357cf5ef6b788b5f3d6d78f2320ea260c98ed",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600112.nba.json": "1c54fa65c245a36f6e9be6820a04036e5e0aa216d4c600f3759e7c841492755e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600112.summary.json": "fdbbb5bff694fa39d4066edc23712b15b68275a9ce1c6e966ff8c1be88a804f4",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600113.nba.json": "55c9d861cc7537b5a3dc8fff4e5e2522f20525b393c9a2ee0f8024226372e980",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600113.summary.json": "aa17f71a21c030bd1c749fed1442ef6f7428f46e2fe8c99a47b3d81b4f5cb3b7",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600114.nba.json": "3dc459b1a1a65adeda9fd31f34279929279348c725b262fdd6105fdca594c83d",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600114.summary.json": "363678a96b09c129dceee60a25e8ec20820298232f1159c34f1832e9220fd8b6",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600115.nba.json": "c16d52c4b072ccca038c06ee8b1333a422e2fe30c68165d2815edddf613d493f",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600115.summary.json": "9150312b3a5c4de7443e18494b86473d2949673eeb4585a9f6d72ca7384560bd",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600116.nba.json": "e70dd51726225834eb267c2f5c92d04b78fdffde3c41d3c383f0bb974ab3fda9",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600116.summary.json": "52557b1c21e06767718bb7e1669337724cfa71a190f9951b70d4752e98aae8de",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600117.nba.json": "f1f7d55b61ebcd2f2d812fd44b36bb409848827d51bbe8e42f6880e1e2ac8848",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600117.summary.json": "5f49e7ce43cb460406c45636574dc8e2417062854cb813c430942ee9c0d2098f",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600118.nba.json": "dc65e7ceb799c1b02f421b460f66835eb60e62eb9531b8180aec0c74d25f59f5",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600118.summary.json": "1aeba1d588467b1a5258fa136397a68cee7ec2d956a6c218148e2606bfb4e1eb",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600119.nba.json": "f730550d5ea5be5b8d701693051cec1c10615ac3e863662f458b66faeacca7ef",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600119.summary.json": "8f7363a198f5e60bdb5bb845f71fef3b7b24de87f6b2bee3cba17517a1a90f73",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600120.nba.json": "1044edc96718531ed8e969a1601a8caa33c7d61ec629f2fd0fb2465a60cbdb7c",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600120.summary.json": "ff8e60670663e5f9c9332e21d001a03b267c57dfbec52be241ca7b69d3af4f0d",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600121.nba.json": "cd1326ccb0f9cd7d4f508eebb51337945b06dce8e5c11a7b6b25f338a17d9beb",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600121.summary.json": "7198c4423dc11d539f6013795f6f20eca28eb91a4b043dc571d74bc3bb1b2b99",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600122.nba.json": "6c8c5fa11d89c77879b6aad290fa68eaaed939428b714c0f619456d4186c7bdf",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600122.summary.json": "18d663be66753adf21ea438e514d0374ab0420506887296a14f7392dacb2c9f7",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600123.nba.json": "29cb99ef3e89866beacd6de760586c3aa49ee398d79c10415c5c752c44b4e304",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600123.summary.json": "b514736d306a3cbca72cd4ce504840919bf86f9ca46e104b9d968a07d5eb7807",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600124.nba.json": "31c58d6bf8a8f4aa20265cf186e4b643ae12d0be7fa9f117dde96a3e8667b2de",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600124.summary.json": "b0d4c93bb90c28a9ed4b78a8786bf885823c6bb8644d828fb3c4d0b0a3bbee8e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600125.nba.json": "6b8387f811d1c1d1b5f44caac801c393608af48712c92a7be753cde8e8945df1",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600125.summary.json": "f3079cb4bb09ffedde3eb7f63c45a4abb48e8a21bc4bb03335e9e3615d44dcfd",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600126.nba.json": "d703f394eeab80c7d200754de6e64cb989f1b1f7c19935a8ffbfe082defd8dae",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600126.summary.json": "d162d907ab0372793ecd439755bac75ff9b15bb6bdc8e8b34918ad8970989664",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600127.nba.json": "57d527fd830d5aa9a6e17e3cf85f22205bdc24c825a1d5fb3b0eabf667cd629a",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600127.summary.json": "edaf1d705e79761afdaa647700ccf72ea22d20fc196a6c49749b0a7f0c2f5a58",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600128.nba.json": "f10129cb6ec3f83b98b5feb972abfafe1d0cd714341ce3f917900511221f434e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600128.summary.json": "3d0e4b6d1d1ac8518cafb8d5d4ab2090eff2aff6109a614f7a0c419217d144e3",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600129.nba.json": "e4b6186241f4e7aa6df70f7b284bf3a1707d3d441871ea58de8da3a60d682512",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600129.summary.json": "35c3b61448e01b44b0d775dab5c7750e2b9f3961347ffb571a3c8d155a997ee2",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600130.nba.json": "85c1f4ed8f9936e6a323561f9d7b42c7077046fb9388d66f8b451e6de134154b",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600130.summary.json": "60d91bcfa3f2af5276b4fd00f36fb419b36f3086aadb1e89071cf0ba24ec967a",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600131.nba.json": "eede57ebd1f16e5c2d57fa2973bcabe5b7875e4b91ab62e30f39c0031e854a96",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600131.summary.json": "de2159039ff0a3b00621bda20111e6027c3b5997f88adbaff0023f721763afa0",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600132.nba.json": "e7be7b1e535f4eaff2857e76e13cc9a9bdc43a4d307892604321b89d8985f8f7",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600132.summary.json": "3c52afb05d2307cc38791978aae9763ac9e402e823cd566c767153ebc785d3b8",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600133.nba.json": "9705b39e3e267cbd40a13b66f3c536f72d917754e71c76f56d8020bf7bc7b170",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600133.summary.json": "d84fa07746c761dfb2d1de47be535236915ad833576c9b7fd835cc0c1c1b6442",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600134.nba.json": "d58b4dd6eb3c4764e1d0dba86bc4fedd1ea6ff633b27570ac81630606af206bd",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600134.summary.json": "06fda9f9f7645e851138d265e7fd75b3e4838e941cebecc68cafb9ea2b3d7a52",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600135.nba.json": "10be1ac037165625068099db6487b8f7b805ccff132660c7696fbbd1c19020a9",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600135.summary.json": "a67d0c4bbe73479418dea59821638d52e36c1492f4fefd7602d430e9c22f4d3b",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600136.nba.json": "240b8fae46c9e87946555fd2387d60923820bf4724e01bd92ec6c95e7fae95ad",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600136.summary.json": "9325d81e31b5a47c0af7c9b0270e860d87cee359058a90c2c09a6d1e8a468e7d",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600137.nba.json": "32a0e30eded954d8cf22d5123eaa5e1b973dfd225abb3f2b22e3046bd27baeee",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600137.summary.json": "8e8243b9c3a6bed466fc6af5ba62b20686738f8e52d6347df75cf299148bbc6a",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600138.nba.json": "dedfbbc08a6ea1be0bc1a49ff34b56742e37055a947e90c8ad1f71f612e924f9",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600138.summary.json": "21b6b97619f5d0ac44022a8385ac444121931289e927f6aa83737bdfd6f3a0eb",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600139.nba.json": "b3af54949fdd70da89dc6072153d9a133a17ccaed13a2479d6d775b9f532b431",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600139.summary.json": "e1b9ebfafaa99ab01a6eb1704b52deb2c5ec71d5f822ae2cf90f5588a270067f",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600140.nba.json": "5b4b9be48f6b77f3821acb69da093ed7eaf3b4de727df3e65184a3ba6f97460b",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600140.summary.json": "ab72c10bde530e20f1ceacfb4313abd8b74463b1cc89a0ca6c66ebe75325fe90",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600141.nba.json": "105b8f8dce74fe67852f2bc9d983cfd1cf9f6e8ee45ab33a6e10dd64d14016e8",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600141.summary.json": "de65f9789bf9d102b80a54f688c48e0623afeac0431824745b1d0638b96f3786",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600142.nba.json": "54531f9e9b544736f79a3af2abc16620da771458772b40ccfd4f235e753ded5b",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600142.summary.json": "1ea6252c7e10304e5c47282a5117f10840e175df9e89f6fb68b58ec18a7889f9",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600143.nba.json": "0e903718e1785913e720c14923e48ecd261bdf36578669e34256ea2d2de36acb",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600143.summary.json": "aee1eeed4a884574006e816ea5170a06f4b7f8dbfbf2570ed96af2e06ed9d1ae",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600144.nba.json": "a6aea4d9e99b3bdc30853c151141effce239108ea833e3a17b727b23f07db33f",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600144.summary.json": "b07235b5fd1fc57e38cf60224874289f9d3b80c6f62ca36a890ea508c8acd7d2",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600145.nba.json": "948ad75d0da2f57c969f414dd97dce0c7525c44eb0778e8d5513b2502c6c3387",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600145.summary.json": "f84ca23517f578f0effd1c22c03f43dd7bf202694b046d20fca70b2383ba4429",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600146.nba.json": "6451b7b6d0e568b8a83c250c1f0b7fda2c37746a20f63012ff07df49db4458c2",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600146.summary.json": "c26463cafdb5b19ed20b71e7615302b0b51e5c3c9588404e0c2c54a3c3181bfb",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600147.nba.json": "c61372b6f4745baf043b4f615e517a4bf74f757f792d91c70a125c0635729838",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600147.summary.json": "ee7e787148c0430f9197ee6bc15528ef02c0cfb9ac66eb3b74fdbaa5ef185d35",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600148.nba.json": "4bbb2a4335f58b20c1d0cf9db691bbdc82e7062c350bcf554b9dd0caf45277dd",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600148.summary.json": "df3b96b412845439365f4a5487296417c670c3ae18afb71bf0a52e0e81c24632",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600149.nba.json": "94238a0d2d7d2402c9cbfaf6e69e620f3c6004304dfaba98972ccdab583d6b50",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600149.summary.json": "c0b519b0001e10e3e0a4e74e32eb618144a2cbcecf74b4e036bcbbacdd83d76c",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600150.nba.json": "5a082a7b727c2dce54adf9b8de3d0d07347b5b82f7dd0d0c7e8f0c133fc20af7",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600150.summary.json": "40d5ac09fb0ef00f187b90af772725d60accb1d1f9a792081d01d0fee78330c7",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600151.nba.json": "d1199212e876d3bea8b2af5d1a2574c9cc9a6baa90c24376d773d30238c56a96",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600151.summary.json": "3fd99dfea3fcf9c8d4d0ea357218b5ad811bdf4a1d52f3698c5ccca7f3fdc631",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600152.nba.json": "abed12a8aad6382cdf002388e8639543bb89a6253d08db71d80497a11e3159f6",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600152.summary.json": "2b082b9f7e606aef2fa63948cdc4aa9e2117e0abf57585299ce37dbdb79a1339",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600153.nba.json": "0868aea511973b5f32d45734c112f211e561d94c602dad84862af01addc4f9a2",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600153.summary.json": "8d5122613a4a3183f96db1ef98aa8dcf85cb671a376937c3cc35eea814b3ac33",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600154.nba.json": "f8bfdd72dccac28cc44f8eba71dd1603e30feedbf467e7194df38252f73ff8c8",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600154.summary.json": "f76e09dd897e8990800ddf983046a7ca0a0111f5b420674258667c1cd8726431",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600155.nba.json": "d9f495f69cf15496c72360ef86362afcac19ddc26bc2657f9d3163f54b78ee87",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600155.summary.json": "e3e90d91787a5b5b27c0b9110e152f70419713eaf33fe15366901d552875d126",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600156.nba.json": "de359d94f81d51fd061c16546abf5e05a908a632c7a1d6e1081f946d662a5c0a",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600156.summary.json": "9a6edde5f7575782d743b41de872e2810c04de781ff69fd8338264479b94d245",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600157.nba.json": "7200b8a06278d23ecf4c13d71a117dd444fbe592430ff1b93f92ba63529f40d1",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600157.summary.json": "5994d35246755042be0ec36543b6cbd1a8db553c4cfa53521634fff0b3f701fd",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600158.nba.json": "4dab90fa1dd949865a009519a5385606cf2608bd8b2a668e69039e029a2e5cef",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600158.summary.json": "ae1cfe46c3a369718bc423ef7ccd51428b4ad7cb507a1c3f25735e89aa21c22c",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600159.nba.json": "0f0d9b5f3247ea96163fba55c736234757280f76e835d55c8147863108255aff",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600159.summary.json": "b0cc4df3fe6fb874a5c12daacd017813e1ad8a8e772662061f9d45a447e15614",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600160.nba.json": "e2eb27bab6816e33562fadd1570a6b587272bb00c58711243af2ea0a7d274d8f",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600160.summary.json": "8795c2c9928e5fba6641a2ec56c46bf34e43bfca2a0c6d664dae869927970cfc",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600161.nba.json": "1e42d8eb2e2f167640d097f01ef358969d19aea4280600a8fc14766c860a04f7",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600161.summary.json": "57c5c6a3c74a0eb6e671acbfe5048ee45696a33a1effc8bfdd6238edb502d6c0",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600162.nba.json": "7cbbb951db45b09e679c766ad8ce26f15e5d87f0e7fed1d56d4cde9964a751ca",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600162.summary.json": "e694225b564b831512063fa5beabd39f6bf7cae24a0522d5ef14417ceee6d876",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600163.nba.json": "17116d06d61bfed68a497718fc486e87d1c4fbb6575ca4d20cf95a9b2a3226d8",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600163.summary.json": "4d2d40b026f5a3cc00b9e903b971f927fab1fae050b014cab968d3a12217f4c5",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600164.nba.json": "4b3b5a00251b368dd50070277042a6ed290ce844bedffccd20575ad3ce31e898",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600164.summary.json": "3e3b8e571c223f1c99d5ee4ed340a0fda4e682ad8063c7566b113c630c7c82f1",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600165.nba.json": "491ae53d77a524f9809c4c10a825770fee32686bb4870e52c80512dac6a1dadc",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600165.summary.json": "eab4ed359d55bea9c14884b0215c4ed7cf41a19c06d6b0fb3334725215a040f6",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600166.nba.json": "1035974c9a74cdf82c97633f62704ef19cf79aa83c191841d08b77a50b049352",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600166.summary.json": "85d8b9ab2eea106b829e45a8c1e00620a026bc133156417ef021ba548d9ad7cb",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600167.nba.json": "b0cfaf15bdb28b1164fa16586d42db4d419f216ff1896cd123091a76484bc99a",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600167.summary.json": "3b7bfa3771b900d707f694ebfcb17ac79661f1322ff6206840a0186aa213d01b",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600168.nba.json": "6d9152ef3719274c49de155604cb46dd8c4a4bb2253d55e515f584be003d45f7",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600168.summary.json": "04b6d1a0f2c94b2abc577a10967aa76ed05ebd5b032f8a69241fb5d7ef11a647",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600169.nba.json": "323af1e59cb99cea4607d93fa4fc09c4868926e4f18dd5b637622ef9a4f5044e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600169.summary.json": "86da9ed7bbb97a51ce0ef4ab7e8d37110d915c128e3608b73fa6343f3ac4d429",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600170.nba.json": "f007f3e18e65e0b6010bfcd3b5b177adeb2e9d0406a01243798c28ed502a3bbd",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600170.summary.json": "0af4179088d5b6cb5421af30a58ddcd5bb541a643b453aa8c2e06fb77b44ad4d",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600171.nba.json": "3fd14c88ee6f8133506fed45ae094c717a9dfe4bccbe82961e0719a02fdcce33",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600171.summary.json": "ab84ed4bc897bcd8f7a3ff460c4eb6d5b7b67284b72a1e3fc5d86235e9b89dae",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600172.nba.json": "9a9bcc2cb362aae2aca0a50f8ba963ff454659de22e0f5125eb3cf83d986eaa3",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/final/0022600172.summary.json": "fb1ab0a8079ba9e9bf1527adc58b0574d23b3d5b3d5347835d05d984d0fb5832",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-20.json": "2c7a9272409bc42aa00d1320eb9d58600774be1c52a3343e557efc3b7be0eb26",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-21.json": "9eea574951534fcf003dd2bad4da9ef6f26c0e641dfbff445ea32c8618bdbb83",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-22.json": "e9f9bc5cf98cc35af4c48575c16c74f696fd2eb599ccf98b11342977f0cf657e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-23.json": "48bd5f7c09397d9ea3ebe3f26a265593ef682fe8de44b84a476250e6abf07b96",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-24.json": "11b52426bbb24a107c90e7f138d8090d0b15626187c7f24bc08f4b04f21f8683",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-25.json": "476047c2e3e1e47e1d384a34db5737eb40ace012b6e5e140fe28f0b2f32a2b31",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-26.json": "9f592f755da8cd882fa1692c4d279b90c83c8c0ef9b42e230c63f7c13c1a1028",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-27.json": "65fe6c00cb0989904022c2cf6a8b03e48870f2ecc988a8336a9507a502c59c4e",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-28.json": "84c0fcbff20f788220f9314d86f12423eb2ef66df7a9aa24309dba4a0f910b2a",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-29.json": "5d5a6dd6636231fe13bb9efc5af2b67f8b49c99fb327c2c89bc11d40a1049456",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-30.json": "c7a274d4d607b41965db16b9794da7fec7c24f6e39341f406a3ef14af0f6f786",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-10-31.json": "7e7c7761d8f8cbe683949b017d37fda2928e436f4bde10348145f72974d7804d",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-11-01.json": "aacd493a68b9bda5b6a5cf4d37c0c0d8c4a1058b216170f2937ecb2b3a2b279b",
+              "s3://nba-gestalt-data/lake/artifacts/site_release/season=2026-27/game_date_pacific=2026-11-03/runtime_sha256=ef3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/selected-schedule/latest/2026-11-02.json": "ef1ff571183c18e9f86ac8da9419fd24bc5c932a406e4f86d6f5d82c6dfd288e",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600173.nba.json": "ed360240102149f5811c4f18dec06cc4d86a332cd6cbf40a6e745e14e5657793",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600173.summary.json": "6b0150077eaa2c31cbcacc2ac01e8e48454b7b24018de7fbf67bb80c241d7019",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600174.nba.json": "f398db392118bbbcc3decbd265b59f328103dfb35870478b4e00a2f84c07a07e",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600174.summary.json": "760962a4445bcff75aa5a56e656e2f822d5a87f60801a08858c0653e091a101d",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600175.nba.json": "ec32ffe4ece24b400d8f345c245ee03ded1e69fba86fb7055d4eccc5b0dc6098",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600175.summary.json": "9d389d16df02dd1e6065c43b2a6cb9fcadb8654d9520b9a9afcfb3042d9cfc06",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600176.nba.json": "fa3a556d3952515bca53e6a30b956e83c7ead39a4018f1ce3878bda3728af472",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600176.summary.json": "f2d3d34f20b87864bead232b009b6b9e23b9e97e59633223419c9d8b6e240fa4",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600177.nba.json": "0a0b0460610ba6e37be2cf11d5a84276f6a4960d1a1d668d68e12b250a7649b7",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600177.summary.json": "0fb7b43119ce7518e94986d08714630a77c6073e9d6590b5c4c4397f0217d7f6",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600178.nba.json": "a809622c4f087b4b1d7d7027d05e6ac9edc8e0f523e0f774e6bcfbb2ed918ba8",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600178.summary.json": "4ed110b1c4087733f230087e4af6f62a7961ac78e34382c1fd8f58ad9a8168cc",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600179.nba.json": "74e55dbe8db3cb035cbeaf5ea289823e54bf43f4c84db4f978b53dd87fdca98b",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600179.summary.json": "4d7010f7b48cd1d9057d15eef2db685ceaeb014c0f6acf6f572c7eee5dcd25c7",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600180.nba.json": "6bdaad9e9a82c5cdd9b5298f192cf8d2e3e6c696b3ba3669794c0322b9597caf",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600180.summary.json": "df0c84dce1dd5614c03d746c04391a9e545d555452405e0042bf9302b14e4186",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600181.nba.json": "e9a17692d724f3ffa2b3ab67241e08ef10a2a49587f4ad95226c2725f25e0e50",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600181.summary.json": "a7bec21c0ef25c4bdd125ebaea4a360cf200afed6479325a5d9e047d6ac3b5a6",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600182.nba.json": "a9168d52dfb655328fb3bfc484e37878af92aef4fdabacbc85ac5d725b322f21",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600182.summary.json": "2a5152aed55cb2b205231b76642812e9a2b921b409322608d465200783f978fa",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600183.nba.json": "f6637c24c41cdf2f1672a00b90b2d715006b8c32b8e3733afec27be5ca9a9348",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600183.summary.json": "1513f5525d3c5831d5b719da8f98315755db22804fed397ceaebc33f10e676ed",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600184.nba.json": "70b3e520ea559f0580d79289b76c8b2966e120e957c7cb85d747ea8715e2ce52",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600184.summary.json": "1c00fb50d336d72edb6e66d24c4d6f3a7c2431e92789af7819e4abc87d12a2c4",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600185.nba.json": "899467ae0ff2b4112db53bd6a3aa659114623f8ff78673d00de077068f8e4347",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600185.summary.json": "351ac9698952b591a1742e2f31acedef445f8655764f05c7e1418cbf01aeb864",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600186.nba.json": "9a1f6f8530c1cc3b7d927f65c73a7d38c2c38f681723317f80dde9af90062f8b",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/final/0022600186.summary.json": "562d6d105b983c6171d6371121b263a0b8c4727a54d4f55b3539002976d8628d",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-04/latest.json": "88c77b39ae2a669838c8ba3d89b8a13cdd4798f322c411e11d26634885286159",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-05/final/0022600187.nba.json": "e974b6957d158528a3a8e8f496f92a29f7ebea3b5cd1e0f1ce38f031b0f6a33a",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-05/final/0022600187.summary.json": "2a79108f4bcb770750e446489f099255fd3ffe2400e453945309901c9c097bcd",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-05/final/0022600188.nba.json": "cb21f63ca53216ef6507bbc1da307a42abc67ee8dab83d458dac50f01f3948d0",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-05/final/0022600188.summary.json": "14e19b112913dd93ee5de3b25bd24da3a856bbcfe8b1e0c5f628c1bdd2b8b0a7",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-05/latest.json": "e258571df8639224a4c0f60891b21c1f8f76296fdd6030f527eb35063dff0c5c",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-06/final/0022600025.nba.json": "4503aebc15316299aff6e24bc453ef435d554353456e459a04006832e1827718",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-06/final/0022600025.summary.json": "11788a1f430ffc7957a62a6f415ef481f133a0d24060fd572450d1203689b9a0",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-06/final/0022600026.nba.json": "4e58783edd559f856bbd7dfe392b528cdd2509d025330f45e1bbb566e259dd79",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-06/final/0022600026.summary.json": "a2590f81edc10aa617c7e09f1b054a980a3e46f2ac2db097fb488d4b5f5ee8dc",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-06/latest.json": "2f1fee8e10af09895ea8fc30289179812ccf21908f59e083aa8fde5202761e69",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-07/latest.json": "a12313587ee1291e4f102dead2eb1879325ee49c7281fe0970c549155cd8eb90",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-08/latest.json": "a4f7ee882355454f8b8f1406e12bdaeef69d8af3fd80758bba9b183dd1c79144",
+              "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/game_date=2026-11-09/latest.json": "b4597941f1cdc50e0323ae1904309a322af140fa22da81e514a97c9369a5a317"
+            },
+            "observation_id": "9ad6bd796d4eb1c774c542c7a4c4e4bf10eb8e6b6ebb99dfb8752aae1716501a"
+          },
+          "root_path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/forecast-refreshes/f36a40260ee0d4a90fc99fbb830882d5fe55845dc43a30e2e35b96298159fc83",
+          "tree_sha256": "d70a43309a3421f76e34c6d5d2657115eef1e03510483d31122d5865971fc292"
+        },
+        "schema_version": 1,
+        "season": "2026-27",
+        "serving": {
+          "bundle_path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/serving/season=2026-27/through_date=2026-11-04/bundle_sha256=13974289039ef4e7084ce5672e50e9d60ee7aac7316a1b7113d7280bcb8c56dc",
+          "bundle_sha256": "13974289039ef4e7084ce5672e50e9d60ee7aac7316a1b7113d7280bcb8c56dc"
+        }
+      },
+      "bundles": {
+        "model": {
+          "path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/daily-model/season=2026-27/game_date_pacific=2026-11-04/model_sha256=6821950c77eb9943f3fc8493f56313847a53d811fedd9a027e49c0080f1708f6",
+          "manifest": {
+            "bundle_sha256": "6821950c77eb9943f3fc8493f56313847a53d811fedd9a027e49c0080f1708f6",
+            "generated_at": "2026-11-07T02:32:45.041822Z",
+            "identity": {
+              "artifact_kind": "daily_model",
+              "components": {
+                "evaluation_metrics": {
+                  "path": "files/evaluation_metrics.json",
+                  "sha256": "625e81426093b710bc5e42635402dfb704d0706f23f86ce4b4d5bd05f1ab4497",
+                  "size_bytes": 1344
+                },
+                "game_projections": {
+                  "path": "files/game_projections.parquet",
+                  "sha256": "49373c9f557584196ea9c8ed8e25224f398e0018d6081ec205c246d3b619aa4b",
+                  "size_bytes": 9234
+                },
+                "home_court_state": {
+                  "path": "files/home_court_state.json",
+                  "sha256": "fc6a5f2276c9a0d3ef1d6f83b6bcaae41f1a7ac0ed5a0c7f8190fb449a1ff3d4",
+                  "size_bytes": 541
+                },
+                "lineup_values": {
+                  "path": "files/lineup_values.parquet",
+                  "sha256": "555e5ec90233a7f29a58c17d77babfac8a546666b190902749fb7f170e40757e",
+                  "size_bytes": 18850
+                },
+                "minute_allocations": {
+                  "path": "files/minute_allocations.parquet",
+                  "sha256": "60656044a6c1c659ef719a0e000899192b697b16b3d186aee9df89b83c30422f",
+                  "size_bytes": 104228
+                },
+                "minutes_observations": {
+                  "path": "files/minutes_observations.parquet",
+                  "sha256": "ebe24a8b16ae93214c78c385c5aa74eddc64337d8c23a8179c5d36cc14edda71",
+                  "size_bytes": 28144
+                },
+                "minutes_state": {
+                  "path": "files/minutes_state.parquet",
+                  "sha256": "aaf75d02c43f0dce18e9564cad2717e615f9ef12148b1a4fe821696c7843581d",
+                  "size_bytes": 77374
+                },
+                "player_introductions": {
+                  "path": "files/player_introductions.json",
+                  "sha256": "ba20b25c9a260ce81826a82b6d05b0a60d4319cf9f32d6f602a7963db5a9a9f5",
+                  "size_bytes": 369
+                },
+                "player_ratings": {
+                  "path": "files/player_ratings.parquet",
+                  "sha256": "9d6aa1ead153c73eaaf3208a1713d2664ce64b62aa534776ea40efdd674e0d9c",
+                  "size_bytes": 78484
+                },
+                "rating_gram": {
+                  "path": "files/rating_gram.npz",
+                  "sha256": "eb293c2b1c3b88c888cdd7b07ac47089073b8b962bb37fffabc439df77fb50f1",
+                  "size_bytes": 91171
+                },
+                "rating_trajectory": {
+                  "path": "files/rating_trajectory.parquet",
+                  "sha256": "9a6f218a0601eac926418c464c2a25aa58448570c83e0cc8eb90e1f6132b96e2",
+                  "size_bytes": 153366
+                },
+                "rating_vectors": {
+                  "path": "files/rating_vectors.npz",
+                  "sha256": "606880d0dff647bfdd45d990ab5c92d1c20cf254743cbccf51aa12b326c6bcb8",
+                  "size_bytes": 5599
+                },
+                "replay_state": {
+                  "path": "files/replay_state.json",
+                  "sha256": "0b371d323afb023434e1a302597e64fd1b23438707b3601ba449f77b0387ad7f",
+                  "size_bytes": 23346
+                }
+              },
+              "cumulative_game_count": 121,
+              "cumulative_game_ids": [
+                "0022600001",
+                "0022600002",
+                "0022600003",
+                "0022600004",
+                "0022600005",
+                "0022600006",
+                "0022600007",
+                "0022600008",
+                "0022600009",
+                "0022600015",
+                "0022600016",
+                "0022600017",
+                "0022600018",
+                "0022600019",
+                "0022600020",
+                "0022600021",
+                "0022600022",
+                "0022600023",
+                "0022600024",
+                "0022600085",
+                "0022600086",
+                "0022600087",
+                "0022600088",
+                "0022600089",
+                "0022600090",
+                "0022600091",
+                "0022600092",
+                "0022600093",
+                "0022600094",
+                "0022600095",
+                "0022600096",
+                "0022600097",
+                "0022600098",
+                "0022600099",
+                "0022600100",
+                "0022600101",
+                "0022600102",
+                "0022600103",
+                "0022600104",
+                "0022600105",
+                "0022600106",
+                "0022600107",
+                "0022600108",
+                "0022600109",
+                "0022600110",
+                "0022600111",
+                "0022600112",
+                "0022600113",
+                "0022600114",
+                "0022600115",
+                "0022600116",
+                "0022600117",
+                "0022600118",
+                "0022600119",
+                "0022600120",
+                "0022600121",
+                "0022600122",
+                "0022600123",
+                "0022600124",
+                "0022600125",
+                "0022600126",
+                "0022600127",
+                "0022600128",
+                "0022600129",
+                "0022600130",
+                "0022600131",
+                "0022600132",
+                "0022600133",
+                "0022600134",
+                "0022600135",
+                "0022600136",
+                "0022600137",
+                "0022600138",
+                "0022600139",
+                "0022600140",
+                "0022600141",
+                "0022600142",
+                "0022600143",
+                "0022600144",
+                "0022600145",
+                "0022600146",
+                "0022600147",
+                "0022600148",
+                "0022600149",
+                "0022600150",
+                "0022600151",
+                "0022600152",
+                "0022600153",
+                "0022600154",
+                "0022600155",
+                "0022600156",
+                "0022600157",
+                "0022600158",
+                "0022600159",
+                "0022600160",
+                "0022600161",
+                "0022600162",
+                "0022600163",
+                "0022600164",
+                "0022600165",
+                "0022600166",
+                "0022600167",
+                "0022600168",
+                "0022600169",
+                "0022600170",
+                "0022600171",
+                "0022600172",
+                "0022600173",
+                "0022600174",
+                "0022600175",
+                "0022600176",
+                "0022600177",
+                "0022600178",
+                "0022600179",
+                "0022600180",
+                "0022600181",
+                "0022600182",
+                "0022600183",
+                "0022600184",
+                "0022600185",
+                "0022600186"
+              ],
+              "daily_game_ids": [
+                "0022600173",
+                "0022600174",
+                "0022600175",
+                "0022600176",
+                "0022600177",
+                "0022600178",
+                "0022600179",
+                "0022600180",
+                "0022600181",
+                "0022600182",
+                "0022600183",
+                "0022600184",
+                "0022600185",
+                "0022600186"
+              ],
+              "game_date_pacific": "2026-11-04",
+              "input_data_sha256": "b98681c5193834a0e4db1329b1c8575b4b15a1f1b43aefb49484ef6693688ca7",
+              "input_data_uri": "artifact://daily-data/b98681c5193834a0e4db1329b1c8575b4b15a1f1b43aefb49484ef6693688ca7",
+              "model_provenance": {
+                "code_revision": "1459c83f82b1fa50d901048e65bb39c9fd678204",
+                "configuration_sha256": "558385560bbb2b2d518bceb847468e2f87900a33964191f54a4ecc2bd07534c3",
+                "model_version": "causal_hca_replacement_candidate_v2",
+                "prior_sha256": "641b187e08756ceab4adde6f170101bdca108094b6e1ef9fc7a2e5c78c5a3229"
+              },
+              "parent_game_date_pacific": "2026-11-03",
+              "parent_model_sha256": "deadeef14a06bb04eeb67329783cd59e47ab4959794f5b87054a318d3f561278",
+              "schema_version": 1,
+              "season": "2026-27",
+              "validation": {
+                "excluded_game_count": 0,
+                "excluded_games": [],
+                "status": "clean"
+              }
+            }
+          },
+          "component_checks": [
+            {
+              "component": "evaluation_metrics",
+              "matches_sha256": true
+            },
+            {
+              "component": "game_projections",
+              "matches_sha256": true
+            },
+            {
+              "component": "home_court_state",
+              "matches_sha256": true
+            },
+            {
+              "component": "lineup_values",
+              "matches_sha256": true
+            },
+            {
+              "component": "minute_allocations",
+              "matches_sha256": true
+            },
+            {
+              "component": "minutes_observations",
+              "matches_sha256": true
+            },
+            {
+              "component": "minutes_state",
+              "matches_sha256": true
+            },
+            {
+              "component": "player_introductions",
+              "matches_sha256": true
+            },
+            {
+              "component": "player_ratings",
+              "matches_sha256": true
+            },
+            {
+              "component": "rating_gram",
+              "matches_sha256": true
+            },
+            {
+              "component": "rating_trajectory",
+              "matches_sha256": true
+            },
+            {
+              "component": "rating_vectors",
+              "matches_sha256": true
+            },
+            {
+              "component": "replay_state",
+              "matches_sha256": true
+            }
+          ]
+        },
+        "data": {
+          "path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/daily-data/season=2026-27/game_date_pacific=2026-11-04/data_sha256=b98681c5193834a0e4db1329b1c8575b4b15a1f1b43aefb49484ef6693688ca7",
+          "manifest": {
+            "bundle_sha256": "b98681c5193834a0e4db1329b1c8575b4b15a1f1b43aefb49484ef6693688ca7",
+            "generated_at": "2026-11-07T02:31:43.924982Z",
+            "identity": {
+              "artifact_kind": "daily_data",
+              "components": {
+                "actual_minutes": {
+                  "path": "files/actual_minutes.parquet",
+                  "sha256": "9f566c899f0440d6dc2373c3d8216cb072f4d44315a031eb2beb5d70a64aa4c7",
+                  "size_bytes": 12343
+                },
+                "final_games": {
+                  "path": "files/final_games.json",
+                  "sha256": "bacaf106ef1fdc4a27aedd5b013c5b6e9cb9503882d8bd8982e736f6fd2d95a8",
+                  "size_bytes": 5029
+                },
+                "injuries": {
+                  "path": "files/injuries.json",
+                  "sha256": "4e2b20ad7db0db2082741a091e0a869699028d55c0f4049ee611ff7d630e1718",
+                  "size_bytes": 48575
+                },
+                "nba_boxscores": {
+                  "path": "files/nba_boxscores.json",
+                  "sha256": "c3936ad2b743ca13b761c0f4345d8be588785144695dc1b3456ef6e550aaef29",
+                  "size_bytes": 776244
+                },
+                "nba_inactive_lists": {
+                  "path": "files/nba_inactive_lists.json",
+                  "sha256": "d1c4dd32d88592abe4bb7a09196cde9bdf43c60d72b154db04ab38c117e25fda",
+                  "size_bytes": 22308
+                },
+                "observed_lineups": {
+                  "path": "files/observed_lineups.parquet",
+                  "sha256": "d7c12c63feef81bfdee1c0def8dd3428c1e4cd60fc63c0287c0b1249214ca1f4",
+                  "size_bytes": 12410
+                },
+                "observed_stints": {
+                  "path": "files/observed_stints.parquet",
+                  "sha256": "e4177b13b053898bbe4ecfa51be6c2a50bdf008ac33543da21037cd82bd9cae1",
+                  "size_bytes": 38886
+                },
+                "player_identity": {
+                  "path": "files/player_identity.parquet",
+                  "sha256": "84a683c61ae3563c677dcf1cccbd27638d1a3542cf8cc68bbab927b881b2c06a",
+                  "size_bytes": 13812
+                },
+                "rosters": {
+                  "path": "files/rosters.json",
+                  "sha256": "b5b4be1206eb78ebba2871cf8ba5f879fafff389c72c1365ba354653a5798b8d",
+                  "size_bytes": 129594
+                }
+              },
+              "game_count": 14,
+              "game_date_pacific": "2026-11-04",
+              "game_ids": [
+                "0022600173",
+                "0022600174",
+                "0022600175",
+                "0022600176",
+                "0022600177",
+                "0022600178",
+                "0022600179",
+                "0022600180",
+                "0022600181",
+                "0022600182",
+                "0022600183",
+                "0022600184",
+                "0022600185",
+                "0022600186"
+              ],
+              "game_quality": {
+                "0022600173": {
+                  "box_away_points": 112,
+                  "box_home_points": 106,
+                  "final_away_score": 112,
+                  "final_home_score": 106,
+                  "observed_stint_possessions": 101.5,
+                  "play_by_play_possessions": 101.5
+                },
+                "0022600174": {
+                  "box_away_points": 120,
+                  "box_home_points": 105,
+                  "final_away_score": 120,
+                  "final_home_score": 105,
+                  "observed_stint_possessions": 99.5,
+                  "play_by_play_possessions": 99.5
+                },
+                "0022600175": {
+                  "box_away_points": 102,
+                  "box_home_points": 109,
+                  "final_away_score": 102,
+                  "final_home_score": 109,
+                  "observed_stint_possessions": 93.5,
+                  "play_by_play_possessions": 93.5
+                },
+                "0022600176": {
+                  "box_away_points": 104,
+                  "box_home_points": 114,
+                  "final_away_score": 104,
+                  "final_home_score": 114,
+                  "observed_stint_possessions": 93.0,
+                  "play_by_play_possessions": 93.0
+                },
+                "0022600177": {
+                  "box_away_points": 105,
+                  "box_home_points": 135,
+                  "final_away_score": 105,
+                  "final_home_score": 135,
+                  "observed_stint_possessions": 99.5,
+                  "play_by_play_possessions": 99.5
+                },
+                "0022600178": {
+                  "box_away_points": 107,
+                  "box_home_points": 103,
+                  "final_away_score": 107,
+                  "final_home_score": 103,
+                  "observed_stint_possessions": 102.5,
+                  "play_by_play_possessions": 102.5
+                },
+                "0022600179": {
+                  "box_away_points": 113,
+                  "box_home_points": 120,
+                  "final_away_score": 113,
+                  "final_home_score": 120,
+                  "observed_stint_possessions": 108.00000000000001,
+                  "play_by_play_possessions": 108.0
+                },
+                "0022600180": {
+                  "box_away_points": 116,
+                  "box_home_points": 124,
+                  "final_away_score": 116,
+                  "final_home_score": 124,
+                  "observed_stint_possessions": 101.0,
+                  "play_by_play_possessions": 101.0
+                },
+                "0022600181": {
+                  "box_away_points": 117,
+                  "box_home_points": 107,
+                  "final_away_score": 117,
+                  "final_home_score": 107,
+                  "observed_stint_possessions": 97.5,
+                  "play_by_play_possessions": 97.5
+                },
+                "0022600182": {
+                  "box_away_points": 109,
+                  "box_home_points": 128,
+                  "final_away_score": 109,
+                  "final_home_score": 128,
+                  "observed_stint_possessions": 97.0,
+                  "play_by_play_possessions": 97.0
+                },
+                "0022600183": {
+                  "box_away_points": 132,
+                  "box_home_points": 119,
+                  "final_away_score": 132,
+                  "final_home_score": 119,
+                  "observed_stint_possessions": 103.50000000000001,
+                  "play_by_play_possessions": 103.5
+                },
+                "0022600184": {
+                  "box_away_points": 111,
+                  "box_home_points": 112,
+                  "final_away_score": 111,
+                  "final_home_score": 112,
+                  "observed_stint_possessions": 98.0,
+                  "play_by_play_possessions": 98.0
+                },
+                "0022600185": {
+                  "box_away_points": 116,
+                  "box_home_points": 103,
+                  "final_away_score": 116,
+                  "final_home_score": 103,
+                  "observed_stint_possessions": 98.0,
+                  "play_by_play_possessions": 98.0
+                },
+                "0022600186": {
+                  "box_away_points": 117,
+                  "box_home_points": 116,
+                  "final_away_score": 117,
+                  "final_home_score": 116,
+                  "observed_stint_possessions": 110.0,
+                  "play_by_play_possessions": 110.0
+                }
+              },
+              "game_sources": {
+                "0022600173": {
+                  "nba_box_score": {
+                    "sha256": "ed360240102149f5811c4f18dec06cc4d86a332cd6cbf40a6e745e14e5657793",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/ed360240102149f5811c4f18dec06cc4d86a332cd6cbf40a6e745e14e5657793"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "1b2d811c7e3b804771e6a97ced36ee66120c49e3fb7f39b271a184cc4c930546",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600173/1b2d811c7e3b804771e6a97ced36ee66120c49e3fb7f39b271a184cc4c930546.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "c248b1da2b8e89a45b341c90f11338c47de1ed31b8ec47e465e45fcc874c75d7",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600173/c248b1da2b8e89a45b341c90f11338c47de1ed31b8ec47e465e45fcc874c75d7.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600174": {
+                  "nba_box_score": {
+                    "sha256": "f398db392118bbbcc3decbd265b59f328103dfb35870478b4e00a2f84c07a07e",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/f398db392118bbbcc3decbd265b59f328103dfb35870478b4e00a2f84c07a07e"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "3840b8c84d16ef5a00084bddca337727c8489c260bf00358278ca0345f6252a7",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600174/3840b8c84d16ef5a00084bddca337727c8489c260bf00358278ca0345f6252a7.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "da8d5739fd92009a3efdaad8bfd779045b8ed4fa5da03e2a2073ae4e22ce0264",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600174/da8d5739fd92009a3efdaad8bfd779045b8ed4fa5da03e2a2073ae4e22ce0264.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600175": {
+                  "nba_box_score": {
+                    "sha256": "ec32ffe4ece24b400d8f345c245ee03ded1e69fba86fb7055d4eccc5b0dc6098",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/ec32ffe4ece24b400d8f345c245ee03ded1e69fba86fb7055d4eccc5b0dc6098"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "5ab4fa6469ef156f8b87157851081608a1fe04474146306a98ab1e60dde30e40",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600175/5ab4fa6469ef156f8b87157851081608a1fe04474146306a98ab1e60dde30e40.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "8061b43e824f7be6f85b84c6cca016c13abcb5ae73640c74255d56ad0cf60fb6",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600175/8061b43e824f7be6f85b84c6cca016c13abcb5ae73640c74255d56ad0cf60fb6.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600176": {
+                  "nba_box_score": {
+                    "sha256": "fa3a556d3952515bca53e6a30b956e83c7ead39a4018f1ce3878bda3728af472",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/fa3a556d3952515bca53e6a30b956e83c7ead39a4018f1ce3878bda3728af472"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "79ed9729e3ea8e1dfc6090c3252c8c110b7041fff001a51b526bb3bba9f9fb48",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600176/79ed9729e3ea8e1dfc6090c3252c8c110b7041fff001a51b526bb3bba9f9fb48.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "45fb00c2d45565d7a0906c1d12cc70b1ab7e8962adb4093c0014acbb39baa5c4",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600176/45fb00c2d45565d7a0906c1d12cc70b1ab7e8962adb4093c0014acbb39baa5c4.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600177": {
+                  "nba_box_score": {
+                    "sha256": "0a0b0460610ba6e37be2cf11d5a84276f6a4960d1a1d668d68e12b250a7649b7",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/0a0b0460610ba6e37be2cf11d5a84276f6a4960d1a1d668d68e12b250a7649b7"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "7a1ef93db1a3b6f9c80f1b334eb60c1d77f50b2f9f330e638da370b328497078",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600177/7a1ef93db1a3b6f9c80f1b334eb60c1d77f50b2f9f330e638da370b328497078.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "770435c9c14d7af674b6737f2c1631eb2144529547ef73e8065a5dd57f8eac22",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600177/770435c9c14d7af674b6737f2c1631eb2144529547ef73e8065a5dd57f8eac22.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600178": {
+                  "nba_box_score": {
+                    "sha256": "a809622c4f087b4b1d7d7027d05e6ac9edc8e0f523e0f774e6bcfbb2ed918ba8",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/a809622c4f087b4b1d7d7027d05e6ac9edc8e0f523e0f774e6bcfbb2ed918ba8"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "374e27f86ace4cc916a759f0ed381616f7c0bce3e239dae206ec71c296fe144d",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600178/374e27f86ace4cc916a759f0ed381616f7c0bce3e239dae206ec71c296fe144d.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "5c74b75461458dfdad4e6a19fc5c95bb417c2ee699c1f8861861d1901f75dffc",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600178/5c74b75461458dfdad4e6a19fc5c95bb417c2ee699c1f8861861d1901f75dffc.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600179": {
+                  "nba_box_score": {
+                    "sha256": "74e55dbe8db3cb035cbeaf5ea289823e54bf43f4c84db4f978b53dd87fdca98b",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/74e55dbe8db3cb035cbeaf5ea289823e54bf43f4c84db4f978b53dd87fdca98b"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "c2d999640b7b2cdb5d8633c9c3028e94155e482a0adcff0ca0069117735bbb36",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600179/c2d999640b7b2cdb5d8633c9c3028e94155e482a0adcff0ca0069117735bbb36.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "aa334b02e03885a589a080864830a20d6fa027ddb108407d2b7a39b21c265247",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600179/aa334b02e03885a589a080864830a20d6fa027ddb108407d2b7a39b21c265247.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600180": {
+                  "nba_box_score": {
+                    "sha256": "6bdaad9e9a82c5cdd9b5298f192cf8d2e3e6c696b3ba3669794c0322b9597caf",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/6bdaad9e9a82c5cdd9b5298f192cf8d2e3e6c696b3ba3669794c0322b9597caf"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "3196eb2748271f693fb2eed145cfc3d71f560cbc811bdafddde31123b0ca30a9",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600180/3196eb2748271f693fb2eed145cfc3d71f560cbc811bdafddde31123b0ca30a9.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "fdb1add98635cd0cdc2c5c159d0e09db109dc12a5716336340f37c2f35bf2314",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600180/fdb1add98635cd0cdc2c5c159d0e09db109dc12a5716336340f37c2f35bf2314.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600181": {
+                  "nba_box_score": {
+                    "sha256": "e9a17692d724f3ffa2b3ab67241e08ef10a2a49587f4ad95226c2725f25e0e50",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/e9a17692d724f3ffa2b3ab67241e08ef10a2a49587f4ad95226c2725f25e0e50"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "b9928a7178b7879837418d5e8361a62fc061a7a19c8833c5e63deaeea6294e82",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600181/b9928a7178b7879837418d5e8361a62fc061a7a19c8833c5e63deaeea6294e82.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "da354b97ef944dc5181f936fe645e2df17a7e1e8dfbe3aa65a7e8257d3be2e1d",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600181/da354b97ef944dc5181f936fe645e2df17a7e1e8dfbe3aa65a7e8257d3be2e1d.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600182": {
+                  "nba_box_score": {
+                    "sha256": "a9168d52dfb655328fb3bfc484e37878af92aef4fdabacbc85ac5d725b322f21",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/a9168d52dfb655328fb3bfc484e37878af92aef4fdabacbc85ac5d725b322f21"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "dd3e06fac989208f4bcc799842d8daab54d29e0323d0b8d7748303040798fa13",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600182/dd3e06fac989208f4bcc799842d8daab54d29e0323d0b8d7748303040798fa13.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "c335de138b3ada91e786ed88eefb7bda9bbbd3e44721d623e4c13cd86486d9d2",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600182/c335de138b3ada91e786ed88eefb7bda9bbbd3e44721d623e4c13cd86486d9d2.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600183": {
+                  "nba_box_score": {
+                    "sha256": "f6637c24c41cdf2f1672a00b90b2d715006b8c32b8e3733afec27be5ca9a9348",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/f6637c24c41cdf2f1672a00b90b2d715006b8c32b8e3733afec27be5ca9a9348"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "a5fcfd21083c4abac118d5bcb9d6fc52c48ef28fa64a1e8f9f219f6d3ebf9547",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600183/a5fcfd21083c4abac118d5bcb9d6fc52c48ef28fa64a1e8f9f219f6d3ebf9547.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "a84aea28622e634561d7ace0c50a5cf3aecf0cd0ee5fed4504ce13525eed4d93",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600183/a84aea28622e634561d7ace0c50a5cf3aecf0cd0ee5fed4504ce13525eed4d93.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600184": {
+                  "nba_box_score": {
+                    "sha256": "70b3e520ea559f0580d79289b76c8b2966e120e957c7cb85d747ea8715e2ce52",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/70b3e520ea559f0580d79289b76c8b2966e120e957c7cb85d747ea8715e2ce52"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "868f034f871a949859af901387e4419a93175c391559dcceee1f82297845d9f6",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600184/868f034f871a949859af901387e4419a93175c391559dcceee1f82297845d9f6.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "106f8dfd221fbc4c859e7b02adaefc5df9e55ce0b26a77a929cdf994c2978b3b",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600184/106f8dfd221fbc4c859e7b02adaefc5df9e55ce0b26a77a929cdf994c2978b3b.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600185": {
+                  "nba_box_score": {
+                    "sha256": "899467ae0ff2b4112db53bd6a3aa659114623f8ff78673d00de077068f8e4347",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/899467ae0ff2b4112db53bd6a3aa659114623f8ff78673d00de077068f8e4347"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "8a9855eb3647dac91cb7119853f6b1f2f186ae7317930df516f4da7ac39dabdd",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600185/8a9855eb3647dac91cb7119853f6b1f2f186ae7317930df516f4da7ac39dabdd.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "7f30690d2fbf86cc1bdd47a5dd258b6514f92f49a61567503cdaafb2136b9cc5",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600185/7f30690d2fbf86cc1bdd47a5dd258b6514f92f49a61567503cdaafb2136b9cc5.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                },
+                "0022600186": {
+                  "nba_box_score": {
+                    "sha256": "9a1f6f8530c1cc3b7d927f65c73a7d38c2c38f681723317f80dde9af90062f8b",
+                    "uri": "file:///var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/inputs/captures/captures/9a1f6f8530c1cc3b7d927f65c73a7d38c2c38f681723317f80dde9af90062f8b"
+                  },
+                  "nba_inactive_list": {
+                    "sha256": "0bbc93098015dfe630afeeb93a2a792a63917fcfd5163cb1faa1d9084a0fcb7f",
+                    "uri": "s3://nba-gestalt-data/lake/raw/nba/game-pages/season=2026-27/game_id=0022600186/0bbc93098015dfe630afeeb93a2a792a63917fcfd5163cb1faa1d9084a0fcb7f.html"
+                  },
+                  "nba_injury_report": {
+                    "sha256": "ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241",
+                    "uri": "s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2/season=2026-27/injury-reports/sha256=ca2ae8d52f3ec1595e98ec3fc697e026187ee5f9170a79940dbfddf158995241.pdf"
+                  },
+                  "nba_play_by_play": {
+                    "sha256": "44d361de14a6b7bd634bdf3fee1ed4503fe6cc54837ac5a11cdb61cbd2ec2c99",
+                    "uri": "s3://nba-gestalt-data/lake/raw/cdn/playbyplay/season=2026-27/game_id=0022600186/44d361de14a6b7bd634bdf3fee1ed4503fe6cc54837ac5a11cdb61cbd2ec2c99.json"
+                  },
+                  "nba_schedule": {
+                    "sha256": "bec70efa57512943ac6608f42cff3875babda8f9a6a7e9867fac9fd8672ac419",
+                    "uri": "file:///var/lib/nba-gestalt-dev/artifact-cache/releases/runtime_sha256%3Def3448eb149286b210dbed6a520c5a12f845a9a3fa8484692ae8056d2e2de886/catalog/games.parquet"
+                  }
+                }
+              },
+              "report_sha256": "147ce77c201943576082420ad90383882e1071ac466ca9643b0deff0bb4058a3",
+              "schema_version": 2,
+              "season": "2026-27",
+              "validation": {
+                "error_count": 0,
+                "errors": [],
+                "repairs": [
+                  {
+                    "action": "accepted 1 audited reconstruction warning(s): unexplained_possession_team_change",
+                    "game_id": "0022600173",
+                    "source": "NBA liveData play-by-play"
+                  },
+                  {
+                    "action": "accepted 1 audited reconstruction warning(s): same_offense_consecutive_possessions",
+                    "game_id": "0022600176",
+                    "source": "NBA liveData play-by-play"
+                  },
+                  {
+                    "action": "accepted 2 audited reconstruction warning(s): same_offense_consecutive_possessions, unexplained_possession_team_change",
+                    "game_id": "0022600181",
+                    "source": "NBA liveData play-by-play"
+                  },
+                  {
+                    "action": "accepted 1 audited reconstruction warning(s): same_offense_consecutive_possessions",
+                    "game_id": "0022600182",
+                    "source": "NBA liveData play-by-play"
+                  },
+                  {
+                    "action": "accepted 5 audited reconstruction warning(s): same_offense_consecutive_possessions, unexplained_possession_team_change",
+                    "game_id": "0022600183",
+                    "source": "NBA liveData play-by-play"
+                  },
+                  {
+                    "action": "accepted 1 audited reconstruction warning(s): primary_actor_not_on_court",
+                    "game_id": "0022600184",
+                    "source": "NBA liveData play-by-play"
+                  }
+                ],
+                "status": "clean"
+              }
+            }
+          },
+          "component_checks": [
+            {
+              "component": "actual_minutes",
+              "matches_sha256": true
+            },
+            {
+              "component": "final_games",
+              "matches_sha256": true
+            },
+            {
+              "component": "injuries",
+              "matches_sha256": true
+            },
+            {
+              "component": "nba_boxscores",
+              "matches_sha256": true
+            },
+            {
+              "component": "nba_inactive_lists",
+              "matches_sha256": true
+            },
+            {
+              "component": "observed_lineups",
+              "matches_sha256": true
+            },
+            {
+              "component": "observed_stints",
+              "matches_sha256": true
+            },
+            {
+              "component": "player_identity",
+              "matches_sha256": true
+            },
+            {
+              "component": "rosters",
+              "matches_sha256": true
+            }
+          ]
+        }
+      },
+      "model_available_date_directories": [
+        "2026-10-20",
+        "2026-10-21",
+        "2026-10-22",
+        "2026-10-23",
+        "2026-10-24",
+        "2026-10-25",
+        "2026-10-26",
+        "2026-10-27",
+        "2026-10-28",
+        "2026-10-29",
+        "2026-10-30",
+        "2026-10-31",
+        "2026-11-01",
+        "2026-11-02",
+        "2026-11-03",
+        "2026-11-04"
+      ],
+      "data_available_date_directories": [
+        "2026-10-20",
+        "2026-10-21",
+        "2026-10-22",
+        "2026-10-23",
+        "2026-10-24",
+        "2026-10-25",
+        "2026-10-26",
+        "2026-10-27",
+        "2026-10-28",
+        "2026-10-29",
+        "2026-10-30",
+        "2026-10-31",
+        "2026-11-01",
+        "2026-11-02",
+        "2026-11-03",
+        "2026-11-04"
+      ],
+      "home_court_state": {
+        "home_court_candidate_id": "causal_hca_replacement_candidate_v2",
+        "home_court_estimate": 1.516446759666651,
+        "home_court_evidence_weight": 0.22095006326466113,
+        "home_court_information": 12162.5,
+        "home_court_prior_equivalent_possessions": 42883.87482466509,
+        "home_court_prior_mean": 1.6915705750166747,
+        "home_court_prior_source": "artifact://causal-hca-prior/b45c9c63f932d036c9e4ae0f59f5e83d1195f592788c78033928bc7668a86d75",
+        "home_court_prior_weight": 0.7790499367353388,
+        "home_court_standard_error": 0.5124202075932959
+      },
+      "reconciliation_root": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/inputs/reconciliation",
+      "working_root": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working",
+      "frozen_inputs": {
+        "rankings_path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/inputs/rankings.parquet",
+        "minutes_path": "/var/lib/nba-gestalt-dev/daily-pipeline/forward/2026-11-04/cd5dd32a41543eda652763a18fdcec504b87cae6a8d97e1d276f2b1d986b486d/pipeline/partitions/2026-11-04/386eb4d42baec3d58f7e4ea8ad235aaddb6ebee44994eeb141b5000fa3d8307f/working/inputs/minutes.json",
+        "prior_sha256": "641b187e08756ceab4adde6f170101bdca108094b6e1ef9fc7a2e5c78c5a3229",
+        "players": 528,
+        "matches_manifest": true
+      }
+    }
+  }
+}

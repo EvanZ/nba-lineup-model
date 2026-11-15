@@ -41,12 +41,14 @@ def rosters_by_date(
         if opening["date"] >= day:
             raise ValueError("Opening roster observations must precede the selected date.")
         transactions, references = nba_roster_archive.transactions(
-            season, opening["date"] + timedelta(days=1), day,
+            season, opening["date"] + timedelta(days=1), day, allow_pending_today=day == today,
         )
         repairs, repair_reference = nba_roster_archive.repair_transactions(season)
         inputs = {
             "opening_rosters": opening["references"], "transactions": references,
             "repair_transactions": repair_reference,
+            "transactions_observed_through_date_pacific": max(references, default=opening["date"].isoformat()),
+            "current_date_transactions_pending": day == today and day.isoformat() not in references,
         }
         games = None
         signings = ten_day_signings(transactions)

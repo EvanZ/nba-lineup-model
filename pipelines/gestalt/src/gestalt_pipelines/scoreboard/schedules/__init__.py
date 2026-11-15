@@ -56,10 +56,10 @@ def scoreboard_poll(
             continue
         board = nba_scoreboard_archive.read_latest(nba_schedule.season, day)
         if board is None:
-            return RunRequest(run_key=tick_utc.isoformat())
+            return RunRequest(run_key=tick_utc.isoformat(), partition_key=day.isoformat())
         games = validate_games(board.get("games"), scheduled)
         if any(game["gameId"] in eligible and game["gameStatus"] != 3 for game in games):
-            return RunRequest(run_key=tick_utc.isoformat())
+            return RunRequest(run_key=tick_utc.isoformat(), partition_key=day.isoformat())
 
     return SkipReason("No unfinished games are inside the scoreboard capture window.")
 

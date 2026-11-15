@@ -42,7 +42,7 @@ class NBAScoreboardArchive(ConfigurableResource):
         )
         return {"uri": f"s3://{self.bucket}/{key}", "sha256": checksum.hexdigest()}
 
-    def read_latest(self, season: str, game_date: date) -> dict | None:
+    def load(self, season: str, game_date: date) -> tuple[dict, dict] | None:
         key = f"lake/raw/cdn/scoreboard/season={season}/game_date_pacific={game_date}/latest.json"
         try:
             response = boto3.client("s3").get_object(Bucket=self.bucket, Key=key)
@@ -57,4 +57,11 @@ class NBAScoreboardArchive(ConfigurableResource):
         board = parse_scoreboard(payload)
         if board["gameDate"] != game_date.isoformat():
             raise ValueError("Stored scoreboard belongs to a different date.")
-        return board
+        return board, {
+            "uri": f"s3://{self.bucket}/{key}", "sha256": sha256(payload).hexdigest(),
+            "fetched_at": response.get("Metadata", {}).get("fetched-at"),
+        }
+
+    def read_latest(self, season: str, game_date: date) -> dict | None:
+        saved = self.load(season, game_date)
+        return saved[0] if saved else None

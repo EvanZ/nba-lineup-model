@@ -1,6 +1,7 @@
 """S3 inputs, immutable initialization JSON, and ratings failure/recovery records."""
 
 import json
+import re
 from contextlib import closing
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
@@ -208,21 +209,32 @@ class RatingsArchive(ConfigurableResource):
         if reference is None:
             return None, None, None
         record = self._reference_json(reference, self.state_prefix+f"game_date_pacific={day}/")
+        # Old effective-date pointers remain archived, but are not completed states.
+        from datetime import date, timedelta
+        if (record.get("date_contract") is None
+                and record.get("game_date_pacific") == day
+                and record.get("observed_through_game_date_pacific") == str(date.fromisoformat(day)-timedelta(days=1))):
+            return None, None, None
         validate_state(record, self.season)
         if record["game_date_pacific"] != day:
             raise ValueError("Selected ratings state belongs to a different partition.")
         return record, reference, etag
 
-    def read_state(self, reference: dict, day: str) -> dict:
-        """Read an exact saved daily state without consulting its current selection."""
-        from datetime import date
+    def read_state(self, reference: dict, *, effective_date: str, observed_through: str) -> dict:
+        """Read a forecast's immutable source, preserving its recorded old or new date meaning."""
+        from datetime import date, timedelta
         from ..utils import validate_state
-        if date.fromisoformat(day).isoformat() != day:
-            raise ValueError("Invalid pinned ratings date.")
+        match = re.fullmatch(re.escape(f"s3://{self.bucket}/{self.state_prefix}")+
+                             r"game_date_pacific=(\d{4}-\d{2}-\d{2})/[a-f0-9]{64}\.json", reference["uri"])
+        if match is None:
+            raise ValueError("Invalid pinned ratings path.")
+        day = match.group(1)
         record = self._reference_json(reference, self.state_prefix+f"game_date_pacific={day}/")
-        validate_state(record, self.season)
-        if record["game_date_pacific"] != day:
-            raise ValueError("Pinned ratings state belongs to a different date.")
+        validate_state(record, self.season, allow_legacy_effective_date=True)
+        if (record["game_date_pacific"] != day
+                or record["observed_through_game_date_pacific"] != observed_through
+                or str(date.fromisoformat(observed_through)+timedelta(days=1)) != effective_date):
+            raise ValueError("Pinned ratings dates differ from the saved forecast.")
         return record
 
     def read_priors(self, reference: dict) -> dict:
@@ -247,7 +259,7 @@ class RatingsArchive(ConfigurableResource):
         _, reference = self.load_priors()
         if reference != inputs["priors"]:
             raise ValueError("Ratings initialization changed during this run.")
-        observed_day = str(date.fromisoformat(day)-timedelta(days=1))
+        observed_day = day
         for name in ("stints", "rosters"):
             if inputs[name] is None:
                 continue

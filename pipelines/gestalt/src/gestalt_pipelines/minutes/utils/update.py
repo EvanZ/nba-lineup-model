@@ -1,4 +1,4 @@
-"""Estimates effective on D, using observations only through D−1."""
+"""Estimates incorporating completed games through their partition date."""
 
 from collections import Counter
 from copy import deepcopy
@@ -12,7 +12,7 @@ from .model import (
 from .observations import game_observations
 from .priors import initialize_player, validate_priors
 
-from ...utils import NBA_TEAM_IDS, PACIFIC
+from ...utils import COMPLETED_GAME_DATE_CONTRACT, NBA_TEAM_IDS, PACIFIC
 
 
 
@@ -26,9 +26,11 @@ def estimate(start: float, history: list[dict]) -> float:
 def validate_state(record: dict, season: str, version: str = MODEL_VERSION) -> None:
     validate_model(record, season, version, kind="conditional_minutes_state")
     day = date.fromisoformat(record["game_date_pacific"])
-    observed_day = day-timedelta(days=1)
-    if record.get("observed_through_game_date_pacific") != observed_day.isoformat():
-        raise MinutesError("Minutes must declare a previous-day cutoff; rebuild old observation-date states before using them.")
+    observed_day = day
+    if (record.get("date_contract") != COMPLETED_GAME_DATE_CONTRACT
+            or record.get("observed_through_game_date_pacific") != observed_day.isoformat()
+            or record.get("effective_from_game_date_pacific") != str(day+timedelta(days=1))):
+        raise MinutesError("Minutes require the completed-game-date contract and a matching observation cutoff.")
     if record.get("validation", {}).get("complete") is not True:
         raise MinutesError("Previous minutes state did not pass full-slate validation.")
     players = record["players"]
@@ -71,7 +73,7 @@ def update_state(
     inputs: dict, version: str = MODEL_VERSION,
 ) -> dict:
     validate_priors(priors, season, version)
-    observed_day = day-timedelta(days=1)
+    observed_day = day
     if day < first_date:
         raise MinutesError("Minutes date precedes the configured season start.")
     if day == first_date:
@@ -161,6 +163,8 @@ def update_state(
         "schema_version": 1, "artifact_kind": "conditional_minutes_state",
         "purpose": "daily_model_state", "season": season, "game_date_pacific": day.isoformat(),
         "observed_through_game_date_pacific": observed_day.isoformat(),
+        "date_contract": COMPLETED_GAME_DATE_CONTRACT,
+        "effective_from_game_date_pacific": str(day+timedelta(days=1)),
         "model": model_metadata(version), "implementation": implementation_identity(),
         "inputs": inputs, "players": dict(sorted(players.items(), key=lambda kv: int(kv[0]))),
         "included_game_ids": sorted(included),

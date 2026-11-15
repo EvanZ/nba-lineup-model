@@ -10,7 +10,7 @@ from ...minutes.resources import MinutesArchive
 from ...minutes.utils import validate_game_projection
 from ...ratings.resources import RatingsArchive
 from ...resources import NBAScheduleResource
-from ...utils import PACIFIC
+from ...utils import PACIFIC, forecast_observed_date
 from ..partitions import game_prediction_dates
 from ..resources import GamePredictionArchive
 from ..utils import PredictionError, build_prediction, implementation_identity, prediction_fingerprint
@@ -42,7 +42,7 @@ def _report_summary(archive: MinutesArchive, allocation: dict) -> dict | None:
     deps=[
         AssetDep(AssetKey("game_minutes")),
         AssetDep(AssetKey("player_ratings"), partition_mapping=TimeWindowPartitionMapping(
-            start_offset=-1, end_offset=0, allow_nonexistent_upstream_partitions=True)),
+            start_offset=-2, end_offset=-1, allow_nonexistent_upstream_partitions=True)),
         AssetDep(AssetKey("nba_season_schedule")),
     ],
     code_version=implementation_identity()["source_sha256"],
@@ -86,13 +86,17 @@ def game_predictions(
         if missing_started:
             context.log.warning("Started games have no saved pregame prediction: %s", missing_started)
         if pending:
-            ratings_day = str(day if historical else today)
-            ratings, ratings_ref, _ = ratings_archive.state(ratings_day)
+            ratings_day = str(forecast_observed_date(day, today))
+            bootstrap = date.fromisoformat(ratings_day) < game_prediction_dates.start.date()
+            if bootstrap:
+                ratings, ratings_ref = ratings_archive.load_priors()
+            else:
+                ratings, ratings_ref, _ = ratings_archive.state(ratings_day)
             if ratings is None:
                 raise PredictionError(f"No accepted player_ratings for {ratings_day}.")
             inputs = {"player_ratings": ratings_ref, "schedule": schedule}
             daily_ids = {p["player_id"] for p in ratings["players"]}
-            priors, prior_ref = None, None
+            priors, prior_ref = (ratings, ratings_ref) if bootstrap else (None, None)
             records = []
             for game, selected, etag, accepted in pending:
                 current_gid = game["game_id"]
@@ -107,7 +111,7 @@ def game_predictions(
                     if prior_ref != ratings["inputs"]["priors"]:
                         raise PredictionError("Fallback priors differ from the selected ratings initialization.")
                 game_inputs = {"player_ratings": ratings_ref, "game_minutes": _reference(minutes_pointer), "schedule": schedule}
-                if missing_ids:
+                if missing_ids and not bootstrap:
                     game_inputs["rating_priors"] = prior_ref
                 inputs = game_inputs
                 fingerprint = prediction_fingerprint(game, game_inputs, version=archive.model_version)
@@ -115,7 +119,7 @@ def game_predictions(
                     record = accepted
                 else:
                     record = build_prediction(
-                        game=game, day=str(day), season=archive.season, ratings=ratings, minutes=allocation,
+                        game=game, day=str(day), first_date=str(game_prediction_dates.start.date()), season=archive.season, ratings=ratings, minutes=allocation,
                         priors=priors, report=_report_summary(minutes_archive, allocation),
                         b2b={side: game[side+"_team_id"] in yesterday_teams for side in ("home", "away")},
                         inputs=game_inputs, generated_at=now, version=archive.model_version,
@@ -126,7 +130,8 @@ def game_predictions(
             for record, etag in records:
                 current_gid = record["game_id"]
                 inputs = record["inputs"]
-                if ratings_archive.state_selection(ratings_day)[0] != ratings_ref or nba_schedule.load()[1] != schedule:
+                current_ratings = ratings_archive.selection()[0] if bootstrap else ratings_archive.state_selection(ratings_day)[0]
+                if current_ratings != ratings_ref or nba_schedule.load()[1] != schedule:
                     raise PredictionError("Accepted ratings or schedule changed during prediction.")
                 current_minutes, _ = minutes_archive.game_selection(str(day), current_gid)
                 if current_minutes is None or _reference(current_minutes) != inputs["game_minutes"]:

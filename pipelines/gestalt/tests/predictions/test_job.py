@@ -36,7 +36,7 @@ def job(archive, data, monkeypatch, clock):
                 return deepcopy(record)
         raise AssertionError("Attempt to read an unselected source")
     def state(self, day):
-        assert day == DAY
+        assert day == data["ratings"]["game_date_pacific"]
         return deepcopy(data["ratings"]), data["inputs"]["player_ratings"], "ratings-etag"
     previous = {**data["game"], "game_id": "0022600001", "game_time_utc": data["game"]["game_time_utc"]-timedelta(days=1),
                 "away_team_id": 1610612750}
@@ -143,19 +143,24 @@ def test_changed_input_selection_prevents_publication(job, archive, monkeypatch)
     assert not any(k.endswith("latest.json") for k in archive[1].objects)
 
 
-def test_tomorrow_uses_todays_ratings(job, archive, data, clock, monkeypatch):
+def test_tomorrow_uses_latest_completed_state_available_today(job, archive, data, clock, monkeypatch):
+    from gestalt_pipelines.minutes.utils import projection_fingerprint
+    from datetime import date
     executable, _ = job
-    clock.value -= timedelta(days=1)
-    data["ratings"]["game_date_pacific"] = "2026-10-20"
-    data["ratings"]["observed_through_game_date_pacific"] = "2026-10-19"
+    target = str(date.fromisoformat(DAY)+timedelta(days=1))
+    data["game"]["game_time_utc"] += timedelta(days=1)
+    allocation = data["minutes"]
+    allocation["game_date_pacific"] = target
+    allocation["scheduled_start_utc"] = data["game"]["game_time_utc"].isoformat()
+    allocation["input_fingerprint"] = projection_fingerprint(data["game"], allocation["inputs"], implementation=allocation["implementation"])
     calls = []
     def state(self, day):
         calls.append(day)
         return data["ratings"], data["inputs"]["player_ratings"], "etag"
     monkeypatch.setattr(RatingsArchive, "state", state)
     with DagsterInstance.ephemeral() as instance:
-        assert executable.execute_in_process(partition_key=DAY, instance=instance).success
+        assert executable.execute_in_process(partition_key=target, instance=instance).success
     assert calls == ["2026-10-20"]
     store, _ = archive
-    selected, _ = store.selection(DAY, data["game"]["game_id"])
-    assert store.load(selected)["ratings_effective_date_pacific"] == "2026-10-20"
+    selected, _ = store.selection(target, data["game"]["game_id"])
+    assert store.load(selected)["ratings_effective_date_pacific"] == "2026-10-21"

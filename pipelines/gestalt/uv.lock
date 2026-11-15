@@ -339,6 +339,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pypdf" },
+    { name = "python-dotenv" },
     { name = "requests" },
     { name = "scipy" },
 ]
@@ -356,6 +357,7 @@ requires-dist = [
     { name = "pandas", specifier = "==2.3.3" },
     { name = "pyarrow", specifier = "==24.0.0" },
     { name = "pypdf", specifier = "==6.18.0" },
+    { name = "python-dotenv", specifier = "==1.2.4" },
     { name = "requests", specifier = "==2.34.2" },
     { name = "scipy", specifier = "==1.18.0" },
 ]

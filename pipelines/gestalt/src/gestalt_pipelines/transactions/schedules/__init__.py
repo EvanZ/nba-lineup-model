@@ -13,16 +13,19 @@ from ...utils import PACIFIC
 
 @schedule(
     job=capture_nba_transactions,
-    cron_schedule=["0 8-20 * * *", "59 23 * * *"],
+    cron_schedule=["0 8-20 * * *", "59 23 * * *", "15 3 * * *"],
     execution_timezone=transaction_dates.timezone,
     default_status=DefaultScheduleStatus.STOPPED,
-    description="Refresh today's transactions hourly from 8 a.m. through 8 p.m. Pacific.",
+    description="Poll transactions from 8 a.m. through 8 p.m., at 23:59, and check yesterday at 03:15 Pacific.",
 )
 def transactions_hourly(context: ScheduleEvaluationContext):
     tick = context.scheduled_execution_time.astimezone(PACIFIC)
     if datetime.now(UTC) - tick.astimezone(UTC) >= timedelta(hours=1):
         return SkipReason("This transaction poll was missed. The next poll checks today and yesterday.")
-    return RunRequest(run_key=tick.astimezone(UTC).isoformat(), partition_key=tick.date().isoformat())
+    day = tick.date() - timedelta(days=1) if tick.hour == 3 else tick.date()
+    if day < transaction_dates.start.date():
+        return SkipReason("The requested date precedes the configured NBA season start.")
+    return RunRequest(run_key=tick.astimezone(UTC).isoformat(), partition_key=day.isoformat())
 
 
 __all__ = ["transactions_hourly"]

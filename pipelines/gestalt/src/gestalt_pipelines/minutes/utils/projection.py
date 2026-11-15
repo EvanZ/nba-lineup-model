@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from hashlib import sha256
 from math import isclose
 
-from ...utils import NBA_TEAM_IDS, PACIFIC
+from ...utils import COMPLETED_GAME_DATE_CONTRACT, NBA_TEAM_IDS, PACIFIC
 from .model import MinutesError, implementation_identity, json_bytes, number, player_id
 from .priors import initialize_player
 
@@ -49,8 +49,8 @@ def build_game_projection(
         game["game_time_utc"].astimezone(PACIFIC).date().isoformat() != day
         or (baseline is not None and baseline["season"] != season) or rosters["season"] != season
         or injuries["season"] != season or injuries["game_date_pacific"] != day
-        or (baseline is not None and date.fromisoformat(baseline["game_date_pacific"]) > date.fromisoformat(day))
-        or (baseline is not None and baseline.get("observed_through_game_date_pacific") != str(date.fromisoformat(baseline["game_date_pacific"])-timedelta(days=1)))
+        or (baseline is not None and date.fromisoformat(baseline["game_date_pacific"]) >= date.fromisoformat(day))
+        or (baseline is not None and (baseline.get("observed_through_game_date_pacific") != baseline["game_date_pacific"] or baseline.get("date_contract") != COMPLETED_GAME_DATE_CONTRACT))
         or rosters["game_date_pacific"] > day
         or set(rosters["teams"]) != set(map(str, NBA_TEAM_IDS))
     ):

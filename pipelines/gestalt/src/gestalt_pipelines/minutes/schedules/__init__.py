@@ -1,4 +1,4 @@
-"""Update today's player minutes from yesterday's games each morning."""
+"""Update the previous completed game date each morning."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -14,13 +14,13 @@ from ..partitions import minutes_dates
     cron_schedule="0 4 * * *",
     execution_timezone=PACIFIC.key,
     default_status=DefaultScheduleStatus.STOPPED,
-    description="Update today's player minutes at 4 a.m. Pacific using games through yesterday; failures require manual repair.",
+    description="Update yesterday's completed-date minutes at 4 a.m. Pacific; failures require manual repair.",
 )
 def update_player_minutes_schedule(context: ScheduleEvaluationContext):
     tick = context.scheduled_execution_time.astimezone(PACIFIC)
     if datetime.now(UTC) - tick.astimezone(UTC) >= timedelta(days=1):
         return SkipReason("This morning run was missed. Use a manual backfill for older dates.")
-    day = tick.date()
+    day = tick.date()-timedelta(days=1)
     if day < minutes_dates.start.date():
         return SkipReason("No completed season game date is available yet; opening day uses frozen priors.")
     return RunRequest(

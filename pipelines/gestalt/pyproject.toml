@@ -10,6 +10,7 @@ dependencies = [
     "pandas==2.3.3",
     "pyarrow==24.0.0",
     "pypdf==6.18.0",
+    "python-dotenv==1.2.4",
     "requests==2.34.2",
     "scipy==1.18.0",
 ]

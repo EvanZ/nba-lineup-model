@@ -1,4 +1,4 @@
-"""Publish today's ratings from completed games through yesterday."""
+"""Publish the previous completed game date each morning."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -14,18 +14,18 @@ from ..partitions import ratings_dates
     cron_schedule="15 4 * * *",
     execution_timezone=PACIFIC.key,
     default_status=DefaultScheduleStatus.STOPPED,
-    description="Update today's player ratings/HCA at 4:15 a.m. Pacific using games through yesterday.",
+    description="Update yesterday's completed-date ratings/HCA at 4:15 a.m. Pacific.",
 )
 def update_player_ratings_schedule(context: ScheduleEvaluationContext):
     tick = context.scheduled_execution_time.astimezone(PACIFIC)
     if datetime.now(UTC) - tick.astimezone(UTC) >= timedelta(days=1):
         return SkipReason("This morning run was missed. Use a manual backfill for older dates.")
-    day = tick.date()
+    day = tick.date()-timedelta(days=1)
     if day < ratings_dates.start.date():
         return SkipReason("The ratings date is before the configured NBA season start.")
     return RunRequest(
         run_key=tick.astimezone(UTC).isoformat(), partition_key=day.isoformat(),
-        tags={"dagster/priority": "-1", "ratings/morning_date": day.isoformat()},
+        tags={"dagster/priority": "-1", "ratings/morning_date": tick.date().isoformat()},
     )
 
 

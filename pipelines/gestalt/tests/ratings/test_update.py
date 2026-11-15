@@ -9,8 +9,8 @@ import pytest
 from gestalt_pipelines.ratings.utils import json_bytes, update_state
 
 FIRST = date(2026, 10, 20)
-DAY = FIRST+timedelta(days=1)
-OBSERVED_DAY = DAY-timedelta(days=1)
+DAY = FIRST
+OBSERVED_DAY = DAY
 
 
 @pytest.fixture
@@ -41,12 +41,6 @@ def daily(record):
                    "parent": None, "stints": {"sha256": "b"*64}, "rosters": {"sha256": "c"*64},
                    "schedule": {"sha256": "d"*64}},
     }
-    data["parent"] = update_state(
-        day=FIRST, first_date=FIRST, season="2026-27", priors=priors, parent=None,
-        games=[], previous_games=[], stints=None, rosters=None,
-        inputs={"priors": data["inputs"]["priors"], "parent": None, "stints": None, "rosters": None, "schedule": None},
-    )
-    data["inputs"]["parent"] = {"sha256": "e"*64}
     return data
 
 
@@ -55,7 +49,7 @@ def next_date(daily, parent, *, no_games=False):
     data = deepcopy(daily); data["day"] += timedelta(days=1); data["parent"] = parent
     data["inputs"]["parent"] = {"sha256": "e"*64}
     for key in ("stints", "rosters"):
-        data[key]["game_date_pacific"] = str(data["day"]-timedelta(days=1))
+        data[key]["game_date_pacific"] = str(data["day"])
     if no_games:
         data["games"] = []; data["stints"]["rows"] = []
         data["stints"]["validation"].update(expected_game_ids=[], processed_game_ids=[])
@@ -183,12 +177,6 @@ def manual_job(daily, archive, monkeypatch, record):
     resource, s3 = archive
     saved = resource.save_priors(record, prior=None, expected_etag=None)
     reference = {key: saved[key] for key in ("uri", "sha256")}
-    opening = update_state(
-        day=FIRST, first_date=FIRST, season="2026-27", priors=record, parent=None,
-        games=[], previous_games=[], stints=None, rosters=None,
-        inputs={"priors": reference, "parent": None, "schedule": None, "stints": None, "rosters": None},
-    )
-    resource.save_state(opening, prior=None, expected_etag=None)
     for name in ("stints", "rosters"):
         prefix = f"lake/artifacts/{name}/season=2026-27/game_date_pacific={OBSERVED_DAY}/"
         raw = json_bytes(daily[name]); digest = sha256(raw).hexdigest()
@@ -363,73 +351,60 @@ def test_warning_write_failure_does_not_publish_unreviewable_assignment(manual_j
     assert any(key.endswith(".failure.json") for key in s3.objects)
 
 
-def test_opening_day_is_exactly_initialization(record):
-    result = update_state(
-        day=FIRST, first_date=FIRST, season="2026-27", priors=record, parent=None,
-        games=[], previous_games=[], stints=None, rosters=None,
-        inputs={"priors": {"sha256": "a"*64}, "parent": None, "stints": None, "rosters": None, "schedule": None},
-    )
-    expected = {p["player_id"]: p["rapm"] for p in record["players"]}
-    assert {p["player_id"]:p["nail"] for p in result["players"]} == expected
-    assert len(result["players"]) == 524
-    assert result["hca"]["estimate"] == record["settings"]["hca"]["prior_mean"]
-    assert result["included_game_ids"] == []
-    assert not np.any(result["statistics"]["gram"])
-    assert result["observed_through_game_date_pacific"] == "2026-10-19"
-    assert result["validation"]["initialization_only"]
-    assert result["validation"]["rostered_player_count"] is None
-
-
-def test_effective_date_uses_previous_day(daily):
+def test_first_completed_date_includes_games_and_retains_the_entire_catalog(daily, record):
+    daily["priors"] = record
     result = update_state(**daily)
-    assert result["game_date_pacific"] == "2026-10-21"
-    assert result["observed_through_game_date_pacific"] == "2026-10-20"
+    assert len(result["players"]) == 524
+    assert result["included_game_ids"] == ["0022600001"]
+    assert result["statistics"]["exposure"][-1] == 15.75
     assert not result["validation"]["initialization_only"]
+    unused = next(p for p in result["players"] if p["player_id"] == 12)
+    assert unused["nail"] == unused["starting_nail"]
+
+
+def test_completed_date_uses_its_own_observations(daily):
+    result = update_state(**daily)
+    assert result["game_date_pacific"] == result["observed_through_game_date_pacific"] == "2026-10-20"
+    assert result["effective_from_game_date_pacific"] == "2026-10-21"
 
 
 @pytest.mark.parametrize("wrong", ["stints", "rosters", "game"])
-def test_same_day_evidence_is_rejected(daily, wrong):
+def test_other_day_evidence_is_rejected(daily, wrong):
     if wrong == "game":
         daily["games"][0]["game_time_utc"] += timedelta(days=1)
     else:
-        daily[wrong]["game_date_pacific"] = str(DAY)
-    with pytest.raises(ValueError, match="previous Pacific game date|effective date"):
+        daily[wrong]["game_date_pacific"] = str(DAY+timedelta(days=1))
+    with pytest.raises(ValueError, match="selected completed game date|another game date"):
         update_state(**daily)
 
 
-def test_opening_day_rejects_current_season_games(daily):
-    daily.update(day=FIRST, parent=None)
-    with pytest.raises(ValueError, match="initialization only"):
+def test_first_completed_day_requires_observations(daily):
+    daily["stints"] = None
+    with pytest.raises(ValueError, match="selected completed game date"):
         update_state(**daily)
 
 
-def test_partition_includes_today_but_not_tomorrow():
-    from zoneinfo import ZoneInfo
+def test_partition_includes_yesterday_but_not_today():
     from gestalt_pipelines.ratings.partitions import ratings_dates
-    keys = ratings_dates.get_partition_keys(current_time=datetime(2026,11,13,4,15,tzinfo=ZoneInfo("America/Los_Angeles")))
+    from gestalt_pipelines.utils import PACIFIC
+    keys = ratings_dates.get_partition_keys(current_time=datetime(2026,11,14,4,15,tzinfo=PACIFIC))
     assert keys[-1] == "2026-11-13" and keys[0] == "2026-10-20"
 
 
-def test_opening_day_job_reads_no_game_or_roster_inputs(manual_job, monkeypatch):
+def test_first_completed_job_reads_same_day_game_inputs(manual_job):
     from dagster import DagsterInstance
-    from gestalt_pipelines.ratings.resources import RatingsArchive
-    from gestalt_pipelines.resources import NBAScheduleResource
     job, resource, _ = manual_job
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Opening-day ratings must read initialization only")
-    monkeypatch.setattr(RatingsArchive, "day_inputs", forbidden)
-    monkeypatch.setattr(NBAScheduleResource, "games_between", forbidden)
-    monkeypatch.setattr(NBAScheduleResource, "load", forbidden)
     with DagsterInstance.ephemeral() as instance:
         assert job.execute_in_process(instance=instance, partition_key=str(FIRST)).success
     state,_,_ = resource.state(str(FIRST))
-    assert state["validation"]["initialization_only"] and len(state["players"]) == 524
+    assert not state["validation"]["initialization_only"] and len(state["players"]) == 524
+    assert state["included_game_ids"] == ["0022600001"]
 
 
-def install_old_date_selection(resource, s3, day):
+def install_old_date_selection(resource, s3, day, template):
     import json
     from hashlib import sha256
-    record,_,_ = resource.state(str(FIRST))
+    record = deepcopy(template)
     record["game_date_pacific"] = str(day)
     del record["observed_through_game_date_pacific"]
     raw = json_bytes(record); digest = sha256(raw).hexdigest()
@@ -441,20 +416,20 @@ def install_old_date_selection(resource, s3, day):
     })
 
 
-def test_old_observation_date_parent_is_rejected(manual_job):
+def test_old_observation_date_parent_is_rejected(manual_job, daily):
     from dagster import DagsterInstance
     job, resource, s3 = manual_job
-    install_old_date_selection(resource, s3, FIRST)
+    install_old_date_selection(resource, s3, FIRST, update_state(**daily))
     with DagsterInstance.ephemeral() as instance:
-        failed = job.execute_in_process(instance=instance, partition_key=str(DAY), raise_on_error=False)
+        failed = job.execute_in_process(instance=instance, partition_key=str(DAY+timedelta(days=1)), raise_on_error=False)
         assert not failed.success
-    assert resource.state_selection(str(DAY))[0] is None
+    assert resource.state_selection(str(DAY+timedelta(days=1)))[0] is None
 
 
-def test_normal_publication_can_replace_old_current_date_after_parent_is_corrected(manual_job):
+def test_normal_publication_can_replace_old_current_date_after_parent_is_corrected(manual_job, daily):
     from dagster import DagsterInstance
     job, resource, s3 = manual_job
-    install_old_date_selection(resource, s3, DAY)
+    install_old_date_selection(resource, s3, DAY, update_state(**daily))
     with DagsterInstance.ephemeral() as instance:
         assert job.execute_in_process(instance=instance, partition_key=str(DAY)).success
     state,_,_ = resource.state(str(DAY))
@@ -513,9 +488,41 @@ def test_fixed_b2b_sign_and_unchanged_coefficient(daily, side, sign):
 
 @pytest.mark.parametrize("marker", [None, "old_profile_correction"])
 def test_previous_calculation_cannot_supply_cumulative_evidence(daily, marker):
+    daily = next_date(daily, update_state(**daily))
     if marker is None:
         del daily["parent"]["calculation_contract"]
     else:
         daily["parent"]["calculation_contract"] = marker
     with pytest.raises(ValueError, match="another calculation"):
         update_state(**daily)
+
+
+def test_saved_forecast_can_read_exact_old_state_after_date_migration(daily, archive):
+    from hashlib import sha256
+    from gestalt_pipelines.ratings.utils import validate_state
+    resource, s3 = archive
+    old = update_state(**daily)
+    old['game_date_pacific'] = str(DAY+timedelta(days=1))
+    del old['date_contract']
+    del old['effective_from_game_date_pacific']
+    raw = json_bytes(old)
+    digest = sha256(raw).hexdigest()
+    key = resource.state_prefix+f"game_date_pacific={old['game_date_pacific']}/{digest}.json"
+    s3.objects[key] = raw
+    reference = {'uri': f's3://{resource.bucket}/{key}', 'sha256': digest}
+    pointer_key=resource.state_prefix+f"game_date_pacific={old['game_date_pacific']}/latest.json"
+    s3.objects[pointer_key]=json_bytes({'schema_version':1,'season':resource.season,'model_version':'v1',
+        'game_date_pacific':old['game_date_pacific'],**reference})
+    saved_objects=dict(s3.objects)
+    assert resource.state(old['game_date_pacific'])==(None,None,None)
+    # New daily predecessors reject it; a frozen forecast can read its pinned source.
+    with pytest.raises(ValueError, match='date contract'):
+        validate_state(old, resource.season)
+    restored = resource.read_state(reference, effective_date=str(DAY+timedelta(days=1)), observed_through=str(DAY))
+    assert restored == old
+    assert s3.objects == saved_objects
+    with pytest.raises(ValueError, match='saved forecast'):
+        resource.read_state(reference, effective_date=str(DAY+timedelta(days=2)), observed_through=str(DAY+timedelta(days=1)))
+    s3.objects[key] = raw+b' '
+    with pytest.raises(ValueError, match='checksum'):
+        resource.read_state(reference, effective_date=str(DAY+timedelta(days=1)), observed_through=str(DAY))

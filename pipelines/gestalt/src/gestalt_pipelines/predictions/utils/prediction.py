@@ -2,11 +2,11 @@
 
 import json
 import math
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 
-from ...utils import PACIFIC
+from ...utils import COMPLETED_GAME_DATE_CONTRACT, PACIFIC
 
 MODEL_VERSION = "v1"
 PROBABILITY_CONVERSION = {
@@ -48,16 +48,27 @@ def prediction_fingerprint(game: dict, inputs: dict, *, version=MODEL_VERSION, i
 
 def build_prediction(*, game: dict, day: str, season: str, ratings: dict, minutes: dict,
                      priors: dict | None, report: dict | None, b2b: dict, inputs: dict,
-                     generated_at: datetime, purpose: str, version=MODEL_VERSION) -> dict:
+                     generated_at: datetime, purpose: str, version=MODEL_VERSION, first_date: str | None = None) -> dict:
+    bootstrap = ratings.get("artifact_kind") == "player_rating_priors"
     if (ratings["season"] != season or minutes["season"] != season
             or minutes["game_date_pacific"] != day or minutes["game_id"] != game["game_id"]
             or datetime.fromisoformat(minutes["scheduled_start_utc"]) != game["game_time_utc"]
-            or game["game_time_utc"].astimezone(PACIFIC).date().isoformat() != day
-            or ratings["game_date_pacific"] > day
-            or ratings["observed_through_game_date_pacific"] >= day):
-        raise PredictionError("Prediction inputs have mismatched identities or future evidence.")
-    rating_by_id = {p["player_id"]: p for p in ratings["players"]}
-    catalog = {p["player_id"]: p for p in priors["players"]} if priors is not None else {}
+            or game["game_time_utc"].astimezone(PACIFIC).date().isoformat() != day):
+        raise PredictionError("Prediction inputs have mismatched identities.")
+    if bootstrap:
+        if first_date is None or not first_date <= day <= str(date.fromisoformat(first_date)+timedelta(days=1)):
+            raise PredictionError("Only the opening-day forecast window may use season priors without a completed state.")
+        effective_date, observed_through = first_date, None
+    else:
+        observed_through = ratings["observed_through_game_date_pacific"]
+        effective_date = ratings["effective_from_game_date_pacific"]
+        if (ratings.get("date_contract") != COMPLETED_GAME_DATE_CONTRACT
+                or ratings["game_date_pacific"] != observed_through or observed_through >= day
+                or effective_date != str(date.fromisoformat(observed_through)+timedelta(days=1))):
+            raise PredictionError("Prediction ratings have a mismatched date contract or future evidence.")
+    rating_by_id = {} if bootstrap else {p["player_id"]: p for p in ratings["players"]}
+    prior_source = ratings if bootstrap else priors
+    catalog = {p["player_id"]: p for p in prior_source["players"]} if prior_source is not None else {}
     sides, totals = {}, {}
     for side in ("home", "away"):
         team_id = game[side+"_team_id"]
@@ -86,7 +97,7 @@ def build_prediction(*, game: dict, day: str, season: str, ratings: dict, minute
                        "total_projected_minutes": source["total_projected_minutes"]}
     coefficient = ratings["settings"]["fixed_back_to_back"]
     adjustment = (int(b2b["home"])-int(b2b["away"]))*coefficient
-    hca = ratings["hca"]["estimate"]
+    hca = ratings["settings"]["hca"]["prior_mean"] if bootstrap else ratings["hca"]["estimate"]
     margin = totals["home"]-totals["away"]+hca+adjustment
     implementation = implementation_identity()
     record = {
@@ -96,8 +107,9 @@ def build_prediction(*, game: dict, day: str, season: str, ratings: dict, minute
         "generated_at_utc": generated_at.isoformat(), "assumed_possessions": 100,
         "predicted_home_margin": margin, "home_win_probability": win_probability(margin),
         "win_probability_conversion": dict(PROBABILITY_CONVERSION),
-        "ratings_effective_date_pacific": ratings["game_date_pacific"],
-        "ratings_observed_through_game_date_pacific": ratings["observed_through_game_date_pacific"],
+        "ratings_effective_date_pacific": effective_date,
+        "ratings_observed_through_game_date_pacific": observed_through,
+        "ratings_baseline_kind": "frozen_priors" if bootstrap else "daily_state",
         "minutes_observed_through_game_date_pacific": minutes["baseline_through_date"],
         "components": {"home_player_total": totals["home"], "away_player_total": totals["away"],
                        "hca": hca, "home_is_b2b": b2b["home"], "away_is_b2b": b2b["away"],
@@ -123,10 +135,14 @@ def validate_prediction(record: dict, season: str, version=MODEL_VERSION) -> Non
             or start.astimezone(PACIFIC).date().isoformat() != day
             or (record["purpose"] == "pregame_projection" and generated >= start)
             or record["ratings_effective_date_pacific"] > day
-            or record["ratings_observed_through_game_date_pacific"] >= record["ratings_effective_date_pacific"]
+            or (record["ratings_observed_through_game_date_pacific"] is not None
+                and record["ratings_observed_through_game_date_pacific"] >= record["ratings_effective_date_pacific"])
             or (record["minutes_observed_through_game_date_pacific"] is not None
                 and record["minutes_observed_through_game_date_pacific"] >= day)):
         raise PredictionError("Prediction dates include future evidence or a late pregame calculation.")
+    kind = record.get("ratings_baseline_kind", "daily_state")
+    if kind not in {"daily_state", "frozen_priors"} or (record["ratings_observed_through_game_date_pacific"] is None and kind != "frozen_priors"):
+        raise PredictionError("Prediction rating cutoff requires an explicit frozen-prior baseline.")
     if "espn" in json.dumps(record).casefold():
         raise PredictionError("Prohibited basketball source in prediction inputs.")
     json_bytes(record)

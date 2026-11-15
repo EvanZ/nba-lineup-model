@@ -40,12 +40,13 @@ def build_actual_minutes_prediction(*, prediction: dict, box: dict, inputs: dict
     if box["gameId"] != prediction["game_id"] or box["gameStatus"] != 3:
         raise PredictionError("Counterfactual requires the same game's final NBA box score.")
     if ratings is not None and (ratings["season"] != season
-            or ratings["game_date_pacific"] != prediction["ratings_effective_date_pacific"]
+            or ratings.get("effective_from_game_date_pacific", ratings["game_date_pacific"]) != prediction["ratings_effective_date_pacific"]
             or ratings["observed_through_game_date_pacific"] != prediction["ratings_observed_through_game_date_pacific"]
             or inputs.get("player_ratings") != prediction["inputs"]["player_ratings"]):
         raise PredictionError("Counterfactual rating input differs from the baseline prediction.")
     daily = {p["player_id"]: p for p in ratings["players"]} if ratings else {}
     catalog = {p["player_id"]: p for p in priors["players"]} if priors else {}
+    settings = ratings["settings"] if ratings is not None else priors["settings"] if priors is not None else None
     teams = {}
     seen = set()
     for side in ("home", "away"):
@@ -77,8 +78,8 @@ def build_actual_minutes_prediction(*, prediction: dict, box: dict, inputs: dict
                 nail, source = daily[pid]["nail"], "daily_state"
             elif pid in catalog:
                 nail, source = catalog[pid]["rapm"], "frozen_prior"
-            elif ratings is not None:
-                nail, source = ratings["settings"]["replacement_prior"], "replacement"
+            elif settings is not None:
+                nail, source = settings["replacement_prior"], "replacement"
             else:
                 raise PredictionError(f"Actual player {pid} needs the baseline prediction's saved rating input.")
             minutes = observed["minutes"] if observed else 0.0
@@ -105,7 +106,8 @@ def build_actual_minutes_prediction(*, prediction: dict, box: dict, inputs: dict
               "purpose": "postgame_actual_minutes_counterfactual", "season": season, "model_version": version,
               **{k: prediction[k] for k in ("game_id", "game_date_pacific", "scheduled_start_utc", "assumed_possessions",
                      "ratings_effective_date_pacific", "ratings_observed_through_game_date_pacific", "win_probability_conversion")},
-              "baseline_prediction_purpose": prediction["purpose"], "generated_at_utc": generated_at.isoformat(),
+              "baseline_prediction_purpose": prediction["purpose"],
+              "ratings_baseline_kind": prediction.get("ratings_baseline_kind", "daily_state"), "generated_at_utc": generated_at.isoformat(),
               "original_predicted_home_margin": prediction["predicted_home_margin"],
               "original_home_win_probability": prediction["home_win_probability"],
               "counterfactual_home_margin": margin, "counterfactual_home_win_probability": win_probability(margin),
@@ -130,7 +132,8 @@ def validate_actual_minutes_prediction(record: dict, season: str, version=MODEL_
     generated = datetime.fromisoformat(record["generated_at_utc"])
     if start.tzinfo is None or generated.tzinfo is None or generated < start:
         raise PredictionError("Counterfactual timestamps must describe a postgame calculation.")
-    if (record["ratings_observed_through_game_date_pacific"] >= record["ratings_effective_date_pacific"]
+    if ((record["ratings_observed_through_game_date_pacific"] is not None
+                and record["ratings_observed_through_game_date_pacific"] >= record["ratings_effective_date_pacific"])
             or record["ratings_effective_date_pacific"] > record["game_date_pacific"]):
         raise PredictionError("Counterfactual contains future ratings evidence.")
     json_bytes(record)

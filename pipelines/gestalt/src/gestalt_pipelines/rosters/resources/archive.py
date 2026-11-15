@@ -71,12 +71,22 @@ class NBARosterArchive(ConfigurableResource):
             raise ValueError("Opening rosters do not describe a single Pacific baseline date.")
         return {"teams": teams, "date": next(iter(dates)), "references": references}
 
-    def transactions(self, season: str, first: date, last: date) -> tuple[list, dict]:
+    def transactions(self, season: str, first: date, last: date, *, allow_pending_today: bool = False) -> tuple[list, dict]:
         days = [first + timedelta(days=i) for i in range((last-first).days+1)]
         keys = [f"lake/raw/nba/transactions/season={season}/game_date_pacific={day}/latest.json" for day in days]
-        saved = self._read_many(boto3.client("s3"), keys)
+        client = boto3.client("s3")
+        pending_today = allow_pending_today and last == datetime.now(PACIFIC).date()
+        saved = self._read_many(client, keys[:-1] if pending_today else keys)
+        if pending_today:
+            try:
+                saved[keys[-1]] = self._read(client, keys[-1])
+            except FileNotFoundError:
+                # Initialize today's roster from known evidence; do not invent a poll.
+                pass
         rows, references = [], {}
         for day, key in zip(days, keys):
+            if key not in saved:
+                continue
             raw, reference = saved[key]
             record = official_json(raw)
             if (

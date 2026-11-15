@@ -63,11 +63,17 @@ def game_predictions_actual_minutes(
             ratings, priors = None, None
             extra = extra_actual_player_ids(prediction, box)
             if extra:
-                inputs["player_ratings"] = prediction["inputs"]["player_ratings"]
-                ratings = ratings_archive.read_state(inputs["player_ratings"], prediction["ratings_effective_date_pacific"])
-                if extra-{p["player_id"] for p in ratings["players"]}:
-                    inputs["rating_priors"] = ratings["inputs"]["priors"]
+                if prediction.get("ratings_baseline_kind") == "frozen_priors":
+                    inputs["rating_priors"] = prediction["inputs"]["player_ratings"]
                     priors = ratings_archive.read_priors(inputs["rating_priors"])
+                else:
+                    inputs["player_ratings"] = prediction["inputs"]["player_ratings"]
+                    ratings = ratings_archive.read_state(inputs["player_ratings"],
+                        effective_date=prediction["ratings_effective_date_pacific"],
+                        observed_through=prediction["ratings_observed_through_game_date_pacific"])
+                    if extra-{p["player_id"] for p in ratings["players"]}:
+                        inputs["rating_priors"] = ratings["inputs"]["priors"]
+                        priors = ratings_archive.read_priors(inputs["rating_priors"])
             accepted_pointer, etag = archive.selection(day, current_gid, actual_minutes=True)
             accepted = archive.load(accepted_pointer, actual_minutes=True) if accepted_pointer else None
             unchanged = accepted is not None and accepted["input_fingerprint"] == actual_minutes_fingerprint(inputs, version=archive.model_version)

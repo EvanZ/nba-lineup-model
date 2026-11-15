@@ -70,3 +70,29 @@ def test_invalid_inputs_or_changed_outputs_are_rejected(data, bad):
     if bad == "nan": r["home"]["players"][0]["nail"] = float("nan")
     with pytest.raises(ValueError):
         validate_prediction(r, data["season"])
+
+
+def test_opening_night_and_next_day_preview_use_real_frozen_priors(data):
+    # This fixture's game is Oct 21: use it both as opening night and a preview.
+    from copy import deepcopy
+    priors = deepcopy(data['ratings'])
+    priors['artifact_kind'] = 'player_rating_priors'
+    priors['settings']['hca'] = {'prior_mean': 1.75}
+    priors['players'] = [{'player_id': p['player_id'], 'rapm': p['nail']} for p in priors['players']]
+    for first in ['2026-10-21', '2026-10-20']:
+        result = build_prediction(**{**data, 'ratings': priors, 'first_date': first})
+        assert result['ratings_baseline_kind'] == 'frozen_priors'
+        assert result['ratings_observed_through_game_date_pacific'] is None
+        assert result['components']['hca'] == 1.75
+        assert all(p['rating_source'] == 'frozen_prior' for side in ['home', 'away'] for p in result[side]['players'])
+    with pytest.raises(PredictionError, match='opening-day forecast window'):
+        build_prediction(**{**data, 'ratings': priors, 'first_date': '2026-10-19'})
+
+
+def test_forecast_cutoffs_distinguish_historical_and_tomorrow_preview():
+    from datetime import date
+    from gestalt_pipelines.utils import forecast_observed_date
+    today = date(2026, 11, 14)
+    assert forecast_observed_date(date(2026, 11, 4), today) == date(2026, 11, 3)
+    assert forecast_observed_date(today, today) == date(2026, 11, 13)
+    assert forecast_observed_date(date(2026, 11, 15), today) == date(2026, 11, 13)
