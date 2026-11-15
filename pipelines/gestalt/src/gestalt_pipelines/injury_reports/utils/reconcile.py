@@ -4,7 +4,7 @@ import re
 import unicodedata
 from datetime import datetime
 
-RESOLVER_VERSION = "v5"
+RESOLVER_VERSION = "v6"
 
 
 def normalize_player_name(value: str) -> str:

@@ -49,6 +49,8 @@ def slate(day=FIRST, gid="0022600001"):
     return {
         "day": day, "first_date": FIRST_STATE, "season": SEASON, "games": [game],
         "rosters": {"season": SEASON, "game_date_pacific": str(day), "teams": teams},
+        "game_rosters": {gid: {"teams": teams, "cutoff_selection": {"scheduled_start_utc": game["game_time_utc"].isoformat(),
+            "rule": "scheduled_tipoff_roster_v1", "selection_kind": "test_fixture"}}},
         "injuries": {"season": SEASON, "game_date_pacific": str(day), "cutoff_source": "nba_scheduled_start",
                      "games": {gid: {"teams": reports, "report_used": True,
                                      "scheduled_start_utc": game["game_time_utc"].isoformat()}}},
@@ -57,6 +59,7 @@ def slate(day=FIRST, gid="0022600001"):
             "priors": reference("priors"), "parent": None, "schedule": reference("schedule"),
             "stints": reference("stints"), "rosters": reference("rosters"),
             "injuries": reference("injuries"),
+            "roster_cutoffs": {gid: {"scheduled_start_utc": game["game_time_utc"].isoformat(), "rule": "scheduled_tipoff_roster_v1"}},
         },
     }
 

@@ -51,8 +51,13 @@ def project_game_minutes_sensor(context: SensorEvaluationContext):
         changed = False
         for g in slate:
             identity = projection_fingerprint(g,inputs,archive.projection_version)
-            identities[g["game_id"]] = identity
             selected,_ = archive.game_selection(day,g["game_id"])
+            if selected and selected["input_fingerprint"] != identity:
+                accepted = archive.read_reference(selected, archive.game_prefix)
+                cutoff = accepted["inputs"].get("roster_cutoff")
+                if cutoff is not None:
+                    identity = projection_fingerprint(g, {**inputs, "roster_cutoff": cutoff}, archive.projection_version)
+            identities[g["game_id"]] = identity
             if selected is None or selected["input_fingerprint"] != identity:
                 changed = True
         if changed:

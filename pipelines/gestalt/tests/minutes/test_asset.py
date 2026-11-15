@@ -18,6 +18,8 @@ from gestalt_pipelines.minutes.utils import PRIOR_REFERENCES, json_bytes
 from gestalt_pipelines.resources import NBAScheduleResource
 from gestalt_pipelines.rosters.resources import NBARosterArchive
 
+from gestalt_pipelines.utils import PACIFIC
+
 from .helpers import FIRST, FIRST_STATE, SEASON, priors, reference, slate
 
 
@@ -39,7 +41,7 @@ def minutes_job(monkeypatch):
         if kw["Key"] not in objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
         raw = objects[kw["Key"]]
-        return {"Body": BytesIO(raw), "ETag": sha256(raw).hexdigest()}
+        return {"Body": BytesIO(raw), "ETag": sha256(raw).hexdigest(), "LastModified": times.get(kw["Key"], datetime(2026, 11, 12, tzinfo=UTC))}
     def pages(**kw):
         return iter([{"Contents": [
             {"Key": key, "LastModified": times[key]} for key in objects if key.startswith(kw["Prefix"])
@@ -71,6 +73,22 @@ def minutes_job(monkeypatch):
     NBARosterArchive().publish(data["rosters"], expected_etag=None)
     monkeypatch.setattr(NBAScheduleResource, "games_for_date", lambda *a, **k: (data["games"], reference("schedule")))
     monkeypatch.setattr(NBAScheduleResource, "load", lambda *a, **k: (b"schedule", reference("schedule")))
+    def for_games(self, season, games, nba_schedule, *, pregame=None, evidence=None, box_archive=None):
+        from gestalt_pipelines.rosters.utils import saved_pregame_roster
+        result = {}
+        for game in games:
+            gid = game["game_id"]
+            if gid in (pregame or {}):
+                result[gid] = saved_pregame_roster(season=season, game=game, **pregame[gid])
+                continue
+            day, ref = self.latest_selection(season, game["game_time_utc"].astimezone(PACIFIC).date())
+            roster, _ = self.load(season, day)
+            result[gid] = {**roster, "cutoff_selection": {"rule": "scheduled_tipoff_roster_v1", "selection_kind": "reconstructed",
+                "game_id": gid, "scheduled_start_utc": game["game_time_utc"].isoformat(), "teams": roster["teams"],
+                "inputs": {"catalog": ref}, "assumptions": []}}
+        return result
+    monkeypatch.setattr(NBARosterArchive, "for_games", for_games)
+    monkeypatch.setattr(NBARosterArchive, "assert_game_selections_current", lambda *a: None)
     return defs.resolve_job_def("update_player_minutes"), a, objects, writes, sp
 
 

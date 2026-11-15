@@ -536,6 +536,18 @@ def test_live_sensors_follow_committed_objects_and_pin_reconciliation_inputs(cap
     monkeypatch.setattr(NBARosterArchive, "load", lambda *_: (
         {"game_date_pacific": day.isoformat(), "teams": {str(game["away_team_id"]): [1], str(game["home_team_id"]): [2]}}, roster_refs[0],
     ))
+    def for_games(self, season, games, nba_schedule, **kwargs):
+        result = {}
+        for selected_game in games:
+            selected_day, ref = self.latest_selection(season, selected_game["game_time_utc"].date())
+            roster, _ = self.load(season, selected_day)
+            result[selected_game["game_id"]] = {**roster, "cutoff_selection": {
+                "rule": "scheduled_tipoff_roster_v1", "selection_kind": "reconstructed", "assumptions": [],
+                "game_id": selected_game["game_id"], "scheduled_start_utc": selected_game["game_time_utc"].isoformat(),
+                "teams": roster["teams"], "inputs": {"catalog": ref}}}
+        return result
+    monkeypatch.setattr(NBARosterArchive, "for_games", for_games)
+    monkeypatch.setattr(NBARosterArchive, "assert_game_selections_current", lambda *a: None)
     monkeypatch.setattr(NBAPlayerNamesResource, "load", lambda _: (
         {1: "Fixture One", 2: "Fixture Two"}, {"uri": "s3://fixture/names", "sha256": "b"*64},
     ))

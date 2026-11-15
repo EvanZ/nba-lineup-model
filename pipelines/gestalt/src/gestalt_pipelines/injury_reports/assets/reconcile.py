@@ -8,6 +8,7 @@ from dagster import (
     AllPartitionMapping, AssetDep, AssetExecutionContext, AssetKey, Config, Failure, MaterializeResult, asset,
 )
 
+from ...box_scores.resources import NBABoxScoreArchive
 from ...resources import NBAPlayerNamesResource, NBAScheduleResource
 from ...rosters.resources import NBARosterArchive
 from ..partitions import injury_game_dates, injury_publication_dates
@@ -67,7 +68,7 @@ def _select_inputs(
 def _advance_latest(
     archive: InjuryReportArchive,
     nba_schedule: NBAScheduleResource,
-    nba_roster_archive: NBARosterArchive,
+    nba_roster_archive: NBARosterArchive, nba_box_score_archive: NBABoxScoreArchive,
     nba_player_names: NBAPlayerNamesResource,
     games: list[dict],
     status_record: dict,
@@ -93,6 +94,8 @@ def _advance_latest(
         _, current_roster = nba_roster_archive.latest_selection(archive.season, date.fromisoformat(day))
         if current_roster != inputs["rosters"]:
             return {"latest_update": "roster_changed"}
+        nba_roster_archive.assert_game_selections_current(archive.season,
+            {gid: {"cutoff_selection": selected} for gid, selected in inputs["roster_cutoffs"].items()}, nba_box_score_archive, games)
         _, current_names = nba_player_names.load()
         if current_names != inputs["player_names"]:
             return {"latest_update": "player_names_changed"}
@@ -126,6 +129,7 @@ def _advance_latest(
     deps=[
         AssetDep(injury_report_extractions, partition_mapping=AllPartitionMapping()),
         AssetDep(AssetKey("rosters_by_date"), partition_mapping=AllPartitionMapping()),
+        AssetDep(AssetKey("nba_box_scores")),
     ],
     group_name="injury_reports",
     partitions_def=injury_game_dates,
@@ -136,7 +140,7 @@ def injury_status_by_game_date(
     config: ReconciliationSelection,
     injury_report_archive: InjuryReportArchive,
     nba_schedule: NBAScheduleResource,
-    nba_roster_archive: NBARosterArchive,
+    nba_roster_archive: NBARosterArchive, nba_box_score_archive: NBABoxScoreArchive,
     nba_player_names: NBAPlayerNamesResource,
 ) -> MaterializeResult:
     day = date.fromisoformat(context.partition_key)
@@ -183,16 +187,19 @@ def injury_status_by_game_date(
     player_names, names_input = nba_player_names.load()
     if required - set(map(int, roster_record["teams"])):
         raise ValueError("The dated roster is missing a team in the official slate.")
-    rosters = {
-        team: {pid: player_names[pid] for value in roster_record["teams"][str(team)]
-               if (pid := int(value)) in player_names}
-        for team in required
-    }
+    game_rosters = nba_roster_archive.for_games(season, games, nba_schedule, box_archive=nba_box_score_archive)
+    cutoff_warning = nba_roster_archive.save_cutoff_warning(season=season, day=day.isoformat(), selections=game_rosters,
+        run_id=context.run_id, consumer="reconcile_injury_date", occurred_at=datetime.now(UTC))
+    if cutoff_warning:
+        context.log.warning("Date-only roster timing uses D+1 assumptions: %s", cutoff_warning["uri"])
 
     repairs = injury_report_archive.read_player_repairs()
     statuses = {}
     for game in games:
         report, _ = reports.get(game["game_id"], (None, None))
+        teams = game_rosters[game["game_id"]]["teams"]
+        rosters = {team: {pid: player_names[pid] for value in teams[str(team)] if (pid := int(value)) in player_names}
+                   for team in (game["home_team_id"], game["away_team_id"])}
         statuses.update(reconcile_games([game], rosters, report, repairs["entries"], player_names))
     rows = identity_rows(statuses)
     for row in rows.values():
@@ -215,6 +222,7 @@ def injury_status_by_game_date(
         "inputs": {
             "schedule": schedule_ref,
             "rosters": roster_inputs,
+            "roster_cutoffs": {gid: value["cutoff_selection"] for gid, value in game_rosters.items()},
             "player_names": names_input,
             **extraction_inputs,
             "player_repairs": repairs,
@@ -258,6 +266,7 @@ def injury_status_by_game_date(
         "roster_dates_pacific": roster_dates,
         "open_failures": failures,
         "warnings": warnings,
+        "roster_cutoff_warning": cutoff_warning,
         "warning_count": len(warnings),
         "recoveries": recoveries,
     }
@@ -273,7 +282,7 @@ def injury_status_by_game_date(
         metadata["latest_update"] = "incomplete_coverage"
     else:
         metadata.update(_advance_latest(
-            injury_report_archive, nba_schedule, nba_roster_archive, nba_player_names,
+            injury_report_archive, nba_schedule, nba_roster_archive, nba_box_score_archive, nba_player_names,
             games, status_record, status_ref, extraction_refs,
         ))
     return MaterializeResult(metadata=metadata)

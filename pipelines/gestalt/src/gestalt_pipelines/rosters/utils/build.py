@@ -1,12 +1,12 @@
 """Reconstruct each date independently from dated NBA evidence."""
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 
 from .inputs import nba_id, roster_hash
 from .contracts import contract_ledger, ten_day_signings
 
-from ...utils import NBA_TEAM_IDS
+from ...utils import NBA_TEAM_IDS, PACIFIC
 
 ADDITIONS = {"Signing", "Trade", "AwardOnWaivers", "ContractConverted"}
 
@@ -15,6 +15,26 @@ class RosterError(ValueError):
     def __init__(self, message: str, details: dict):
         super().__init__(message)
         self.details = details
+
+
+def repair_date(row, baseline_date):
+    try:
+        required = {"effective_date", "action", "team_id", "player_id"}
+        if not isinstance(row, dict) or not required <= set(row) <= required | {"effective_at"}:
+            raise ValueError("Expected effective_date, action, team_id, player_id, and optional effective_at.")
+        effective_date = date.fromisoformat(row["effective_date"])
+        if effective_date.isoformat() != row["effective_date"] or effective_date < baseline_date:
+            raise ValueError("Repair date must be on or after the opening roster date.")
+        if row["action"] not in {"add", "remove"} or nba_id(row["team_id"]) not in NBA_TEAM_IDS:
+            raise ValueError("Expected add/remove and an NBA team ID.")
+        nba_id(row["player_id"])
+        if "effective_at" in row:
+            stamp = datetime.fromisoformat(row["effective_at"])
+            if stamp.tzinfo is None or stamp.astimezone(PACIFIC).date() != effective_date:
+                raise ValueError("Confirmed repair time must be timezone-aware and on its effective Pacific date.")
+        return effective_date
+    except (ValueError, TypeError) as error:
+        raise RosterError(f"Invalid roster repair transaction: {error}", {"repair": row}) from error
 
 
 def build_rosters(
@@ -51,17 +71,7 @@ def build_rosters(
 
     repair_dates = defaultdict(list)
     for row in repair_transactions or []:
-        try:
-            if not isinstance(row, dict) or set(row) != {"effective_date", "action", "team_id", "player_id"}:
-                raise ValueError("Expected effective_date, action, team_id, and player_id.")
-            effective_date = date.fromisoformat(row["effective_date"])
-            if effective_date.isoformat() != row["effective_date"] or effective_date < baseline_date:
-                raise ValueError("Repair date must be on or after the opening roster date.")
-            if row["action"] not in {"add", "remove"} or nba_id(row["team_id"]) not in teams:
-                raise ValueError("Expected add/remove and an NBA team ID.")
-            nba_id(row["player_id"])
-        except (ValueError, TypeError) as error:
-            raise RosterError(f"Invalid roster repair transaction: {error}", {"repair": row}) from error
+        effective_date = repair_date(row, baseline_date)
         if effective_date <= day:
             repair_dates[effective_date].append(row)
 

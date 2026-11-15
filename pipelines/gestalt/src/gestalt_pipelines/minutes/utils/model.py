@@ -90,6 +90,9 @@ def implementation_identity() -> dict:
     }
     shared = root.parent/"utils/__init__.py"
     inventory["../utils/__init__.py"] = sha256(shared.read_bytes()).hexdigest()
+    for path in sorted((root.parent/"rosters/utils").glob("*.py")):
+        inventory["../rosters/utils/"+path.name] = sha256(path.read_bytes()).hexdigest()
+    inventory["../rosters/resources/archive.py"] = sha256((root.parent/"rosters/resources/archive.py").read_bytes()).hexdigest()
     return {"package": "gestalt_pipelines.minutes", "source_sha256": sha256(json_bytes(inventory)).hexdigest()}
 
 

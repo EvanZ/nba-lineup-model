@@ -7,6 +7,7 @@ from dagster import (
     BackfillPolicy, TimeWindowPartitionMapping, MaterializeResult, MetadataValue, asset,
 )
 
+from ...box_scores.resources import NBABoxScoreArchive
 from ...resources import NBAScheduleResource
 from ...rosters.resources import NBARosterArchive
 from ...utils import PACIFIC
@@ -23,6 +24,7 @@ from ..utils import MinutesError, build_game_projection, implementation_identity
             start_offset=-2,end_offset=-1,allow_nonexistent_upstream_partitions=True,
         )),
         AssetDep(AssetKey("rosters_by_date"),partition_mapping=AllPartitionMapping()),
+        AssetDep(AssetKey("nba_box_scores")),
         AssetDep(AssetKey("injury_status_by_game_date")),
         AssetDep(AssetKey("nba_season_schedule")),
     ],
@@ -31,7 +33,7 @@ from ..utils import MinutesError, build_game_projection, implementation_identity
 )
 def game_minutes(
     context: AssetExecutionContext, nba_schedule: NBAScheduleResource,
-    minutes_archive: MinutesArchive, nba_roster_archive: NBARosterArchive,
+    minutes_archive: MinutesArchive, nba_roster_archive: NBARosterArchive, nba_box_score_archive: NBABoxScoreArchive,
 ) -> MaterializeResult:
     day = date.fromisoformat(context.partition_key)
     now = datetime.now(UTC)
@@ -69,15 +71,23 @@ def game_minutes(
             inputs = archive.projection_selections(str(day),today=today,roster_archive=nba_roster_archive)
             inputs["schedule"] = schedule
             data = archive.projection_data(str(day),inputs)
+            game_rosters = nba_roster_archive.for_games(archive.season, upcoming, nba_schedule, box_archive=nba_box_score_archive)
+            warning = nba_roster_archive.save_cutoff_warning(season=archive.season, day=str(day), selections=game_rosters,
+                run_id=context.run.run_id, consumer="project_game_minutes", occurred_at=datetime.now(UTC))
+            if warning:
+                metadata["roster_cutoff_warning"] = MetadataValue.json(warning)
+                context.log.warning("Date-only roster timing uses D+1 assumptions: %s", warning["uri"])
             records = []
             for game in upcoming:
                 current_gid = game["game_id"]
                 _,etag = archive.game_selection(str(day),current_gid)
                 record = build_game_projection(
-                    game=game,day=str(day),season=archive.season,inputs=inputs,
-                    version=archive.projection_version,**data,
+                    game=game,day=str(day),season=archive.season,
+                    inputs={**inputs, "roster_cutoff": game_rosters[current_gid]["cutoff_selection"]},
+                    version=archive.projection_version,**{**data, "rosters": game_rosters[current_gid]},
                 )
                 records.append((record,etag))
+            nba_roster_archive.assert_game_selections_current(archive.season, game_rosters, nba_box_score_archive, upcoming)
             for record,etag in records:
                 current_gid = record["game_id"]
                 _,current_schedule = nba_schedule.load()

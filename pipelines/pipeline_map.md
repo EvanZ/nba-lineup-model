@@ -248,6 +248,18 @@ The `rosters_by_date` asset and `build_nba_rosters` job produce all 30 teams as 
 
 This builder reads no box scores or box-score sidecars. Opening memberships persist through days off until a dated transaction, repair, or contract expiration changes them. Unsupported operations, invalid IDs, or ambiguous destination teams fail visibly. The output records exact input references/checksums and per-team roster hashes/evidence dates.
 
+### Game roster selection at scheduled tipoff (#81)
+
+The ordinary `rosters_by_date` file remains an end-of-day catalog. Game eligibility is selected by the existing shared `NBARosterArchive.for_games`, used by `reconcile_injury_date`, `update_player_minutes` and `project_game_minutes`. It records per-game source checksums and the scheduled tipoff. This does not change the roster output path or add a collector, code location, model version or external source.
+
+A transaction observed strictly before tipoff can apply that day. A historical date-only transaction, or one first observed too late to establish pregame availability, applies on the next Pacific date and is labeled as a D+1 timing assumption. Existing date-only operator repairs remain supported; an optional timezone-aware `effective_at` on the repair's Pacific `effective_date` can establish a confirmed same-day time. Contract expiration dates retain their existing calculation.
+
+For historical games only, a player in an NBA transaction reported on that same game date can instead have membership confirmed by an already saved final NBA box. Listed on a game's team means included, even with zero minutes; absent means excluded. This includes a player's prior team for a trade. Ordinary rostered players without a transaction that day are untouched. Only relevant team games require this optional box read. A missing final box retains the timing rule above; an invalid, nonfinal or mismatched saved box fails visibly. The record identifies this as a historical timing assumption confirmed by the final box, with the exact box and transaction checksums. It does not invent a pregame observation time. A saved genuine pregame allocation can supply the original roster; historical confirmation does not overwrite that allocation or its frozen forecast.
+
+D+1 assumptions create nonfatal warnings at the existing path `lake/artifacts/errors/pipeline=rosters/season=<season>/occurred_date_pacific=<processing-date>/<event-id>.warning.json`, with transaction/player/team, reported and observed dates, game/tipoff, assumed application date, consumer/run and source references. Dagster links the warning. Failure to save a required warning is visible. Mutable inputs are rechecked before a consumer advances its selection.
+
+Historical repair requires an in-memory comparison against the exact previously selected inputs first. Review every affected date/team/player, distinguish timing-policy changes from existing repair/source changes, and approve data repair separately from any causal minutes replay. Genuine frozen pregame selections remain protected. No historical repair or replay is launched as an incidental consequence of this change.
+
 ### Operator membership repairs
 
 The season's repair file is an editable JSON list. For example, the approved Nance repair is:
@@ -369,10 +381,10 @@ Conditional estimates describe how much a player plays when available. Completed
 | Input | Selection |
 | --- | --- |
 | Official slate | `NBAScheduleResource`, including its immutable schedule reference |
-| First-44-minute exposure | Accepted `nba_stints` JSON for D−1 |
-| Actual participation/minutes | Full-game playing time from the same validated stints; no direct box-score reads |
-| Membership | D−1 roster `latest.json` selects the accepted `rosters_by_date` JSON for all 30 teams |
-| Injury labels | D−1 accepted `injury_status_by_game_date/latest.json` selection, using resolved NBA IDs and each game’s scheduled-tipoff cutoff |
+| First-44-minute exposure | Accepted `nba_stints` JSON for completed date D |
+| Actual participation/minutes | Full-game playing time from the same validated stints; optional historical box confirmation changes only transaction-affected game membership |
+| Membership | Date D catalog plus the shared game roster selector; per-game cutoff evidence and narrowly scoped historical box confirmations are recorded |
+| Injury labels | Date D accepted `injury_status_by_game_date/latest.json` selection, using resolved NBA IDs and each game’s scheduled-tipoff cutoff |
 | Historical initialization | Verified conditional-only priors below; no refitting or seasonal injury overrides |
 | Previous state | Immediately preceding Pacific date of `player_minutes`, same season/model version |
 

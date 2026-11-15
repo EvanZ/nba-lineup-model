@@ -172,6 +172,19 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     roster_record = {"game_date_pacific": DAY.isoformat(), "teams": {"1": [101, 102], "2": [201]}}
     monkeypatch.setattr(NBARosterArchive, "load", lambda _, season, day: (roster_record, roster_ref))
     monkeypatch.setattr(NBARosterArchive, "latest_selection", lambda _, season, day: (DAY.isoformat(), roster_ref))
+    def for_games(self, season, games, nba_schedule, **kwargs):
+        result = {}
+        for selected_game in games:
+            selected_day, ref = self.latest_selection(season, selected_game["game_time_utc"].date())
+            roster, _ = self.load(season, selected_day)
+            result[selected_game["game_id"]] = {**roster, "cutoff_selection": {
+                "rule": "scheduled_tipoff_roster_v1", "selection_kind": "reconstructed", "assumptions": [],
+                "game_id": selected_game["game_id"], "scheduled_start_utc": selected_game["game_time_utc"].isoformat(),
+                "teams": roster["teams"], "inputs": {"catalog": ref}}}
+        return result
+    monkeypatch.setattr(NBARosterArchive, "for_games", for_games)
+    monkeypatch.setattr(NBARosterArchive, "assert_game_selections_current", lambda *a: None)
+
     monkeypatch.setattr(NBAPlayerNamesResource, "load", lambda _: (
         {101: "Original Name", 102: "Roster Spelling", 201: "Other Player", 301: "Known Waived Player"},
         {"uri": "s3://fixture/playerindex", "sha256": "b"*64},

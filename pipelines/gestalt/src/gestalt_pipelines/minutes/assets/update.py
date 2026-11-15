@@ -1,17 +1,19 @@
 """Conditional minutes incorporating the selected completed game date."""
 
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 from dagster import (
     AssetDep, AssetExecutionContext, AssetKey, BackfillPolicy, Failure,
     MaterializeResult, MetadataValue, TimeWindowPartitionMapping, DagsterRunStatus, RunsFilter, asset,
 )
 
+from ...box_scores.resources import NBABoxScoreArchive
 from ...resources import NBAScheduleResource
+from ...rosters.resources import NBARosterArchive
 from ...utils import PACIFIC
 from ..partitions import minutes_dates
 from ..resources import MinutesArchive
-from ..utils import MinutesError, implementation_identity, update_state
+from ..utils import MinutesError, implementation_identity, update_state, validate_game_projection
 
 
 def _require_morning_inputs(context: AssetExecutionContext, day: str) -> None:
@@ -41,6 +43,7 @@ def _require_morning_inputs(context: AssetExecutionContext, day: str) -> None:
             start_offset=-1, end_offset=-1, allow_nonexistent_upstream_partitions=True,
         )),
         AssetDep(AssetKey("nba_stints")),
+        AssetDep(AssetKey("nba_box_scores")),
         AssetDep(AssetKey("rosters_by_date")),
         AssetDep(AssetKey("injury_status_by_game_date")),
     ],
@@ -49,7 +52,7 @@ def _require_morning_inputs(context: AssetExecutionContext, day: str) -> None:
 )
 def player_minutes(
     context: AssetExecutionContext, nba_schedule: NBAScheduleResource,
-    minutes_archive: MinutesArchive,
+    minutes_archive: MinutesArchive, nba_roster_archive: NBARosterArchive, nba_box_score_archive: NBABoxScoreArchive,
 ) -> MaterializeResult:
     day = date.fromisoformat(context.partition_key)
     archive = minutes_archive
@@ -74,14 +77,30 @@ def player_minutes(
         games, inputs["schedule"] = nba_schedule.games_for_date(observed_day, allow_empty=True)
         data, refs = archive.load_day(str(observed_day))
         inputs.update(refs)
+        pregame = {}
+        for game in games:
+            pointer, _ = archive.game_selection(str(day), game["game_id"])
+            if pointer is not None:
+                projection = archive.read_reference(pointer, archive.game_prefix)
+                validate_game_projection(projection, archive.season, archive.projection_version)
+                if projection["purpose"] == "pregame_projection":
+                    pregame[game["game_id"]] = {"projection": projection, "reference": {key: pointer[key] for key in ("uri", "sha256")}}
+        game_rosters = nba_roster_archive.for_games(archive.season, games, nba_schedule, pregame=pregame, box_archive=nba_box_score_archive)
+        inputs["roster_cutoffs"] = {gid: value["cutoff_selection"] for gid, value in game_rosters.items()}
+        warning = nba_roster_archive.save_cutoff_warning(season=archive.season, day=str(day), selections=game_rosters,
+            run_id=context.run.run_id, consumer="update_player_minutes", occurred_at=datetime.now(UTC))
+        if warning:
+            metadata["roster_cutoff_warning"] = MetadataValue.json(warning)
+            context.log.warning("Date-only roster timing uses D+1 assumptions: %s", warning["uri"])
         record = update_state(
             day=day, first_date=minutes_dates.start.date(), season=archive.season,
             priors=priors, parent=parent, games=games, inputs=inputs,
-            version=archive.model_version, **data,
+            version=archive.model_version, game_rosters=game_rosters, **data,
         )
         _, current_schedule = nba_schedule.load()
         if current_schedule != inputs["schedule"]:
             raise MinutesError("The official schedule selection changed during this run.")
+        nba_roster_archive.assert_game_selections_current(archive.season, game_rosters, nba_box_score_archive, games)
         saved = archive.save_state(record, prior=prior, expected_etag=etag)
     except Exception as error:
         message = str(error)

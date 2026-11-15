@@ -69,7 +69,7 @@ def validate_state(record: dict, season: str, version: str = MODEL_VERSION) -> N
 
 def update_state(
     *, day: date, first_date: date, season: str, priors: dict, parent: dict | None,
-    rosters: dict, injuries: dict, stints: dict, games: list[dict],
+    rosters: dict, injuries: dict, stints: dict, games: list[dict], game_rosters: dict,
     inputs: dict, version: str = MODEL_VERSION,
 ) -> dict:
     validate_priors(priors, season, version)
@@ -137,9 +137,12 @@ def update_state(
         if game["game_time_utc"].astimezone(PACIFIC).date() != observed_day:
             raise MinutesError("Official game belongs to a different Pacific date.")
         game_rows = [r for r in stints["rows"] if r["game_id"] == gid]
-        rows = game_observations(game, rosters["teams"], injuries["games"][gid], game_rows)
+        selected_roster = game_rosters.get(gid)
+        if selected_roster is None or selected_roster["cutoff_selection"]["scheduled_start_utc"] != game["game_time_utc"].isoformat():
+            raise MinutesError("Missing game roster selected at its scheduled tipoff.")
+        rows = game_observations(game, selected_roster["teams"], injuries["games"][gid], game_rows)
         game_inputs[gid] = {
-            "stints": inputs["stints"], "rosters": inputs["rosters"],
+            "stints": inputs["stints"], "rosters": inputs["rosters"], "roster_cutoff": inputs["roster_cutoffs"][gid],
             "injuries": inputs["injuries"],
             "schedule": inputs["schedule"],
         }

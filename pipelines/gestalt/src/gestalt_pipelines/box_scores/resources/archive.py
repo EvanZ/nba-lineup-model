@@ -108,7 +108,7 @@ class NBABoxScoreArchive(ConfigurableResource):
         return max(candidates, key=lambda item: (item["LastModified"], item["Key"]), default=None)
 
 
-    def read_saved(self, season: str, game: dict) -> tuple[bytes, dict]:
+    def read_saved(self, season: str, game: dict, *, allow_missing: bool = False) -> tuple[bytes, dict] | None:
         """Read a saved final box and sidecar, without downloading or writing."""
         if not re.fullmatch(r"[0-9]{10}", game["game_id"]):
             raise ValueError("Expected a 10-digit NBA game ID.")
@@ -116,6 +116,8 @@ class NBABoxScoreArchive(ConfigurableResource):
         prefix = f"lake/raw/cdn/boxscore/season={season}/game_id={game['game_id']}/"
         selected = self._select_saved(client, prefix)
         if selected is None:
+            if allow_missing:
+                return None
             raise FileNotFoundError(f"No saved final box score for {game['game_id']}.")
         key = selected["Key"]
         digest = key.removeprefix(prefix).removesuffix(".json")

@@ -5,7 +5,7 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from urllib.parse import urlsplit
 
@@ -13,7 +13,8 @@ import boto3
 from botocore.exceptions import ClientError
 from dagster import ConfigurableResource
 
-from ..utils import NBA_TEAM_IDS, nba_id, official_json, opening_ids
+from ..utils import (NBA_TEAM_IDS, build_rosters, confirm_same_day_box_roster, game_roster, nba_id, official_json, opening_ids,
+                     saved_pregame_roster, ten_day_signings)
 
 from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC
 
@@ -255,3 +256,124 @@ class NBARosterArchive(ConfigurableResource):
                     raise ValueError("The accepted roster changed during publication; rerun the date.") from error
                 raise
         return {**reference, "reused": reused, "latest_uri": f"s3://{self.bucket}/{pointer_key}"}
+
+    def game_evidence(self, season, games, nba_schedule):
+        """Read the existing sources once for a slate or an in-memory season comparison."""
+        if not games:
+            return None
+        opening = self.opening_rosters(season)
+        last = max(game["game_time_utc"].astimezone(PACIFIC).date() for game in games)
+        through = min(last, datetime.now(PACIFIC).date())
+        transactions, references = self.transactions(season, opening["date"]+timedelta(days=1), through, allow_pending_today=True)
+        repairs, repair_reference = self.repair_transactions(season)
+        inputs = {"opening_rosters": opening["references"], "transactions": references, "repair_transactions": repair_reference}
+        signings = ten_day_signings(transactions)
+        contract_games = None
+        if signings:
+            first = min(date.fromisoformat(row["TRANSACTION_DATE"][:10]) for row in signings)
+            contract_games, inputs["schedule"] = nba_schedule.games_between(first, last, allow_empty=True)
+        return {"opening": opening, "transactions": transactions, "repairs": repairs, "inputs": inputs, "contract_games": contract_games,
+                "repair_observed_at": repair_reference.get("archived_at") if repair_reference else None}
+
+    def for_games(self, season, games, nba_schedule, *, pregame=None, evidence=None, box_archive=None):
+        pregame = pregame or {}
+        reconstruct = [game for game in games if game["game_id"] not in pregame]
+        if reconstruct and evidence is None:
+            evidence = self.game_evidence(season, reconstruct, nba_schedule)
+        historical = [game for game in games if game["game_time_utc"].astimezone(PACIFIC).date() < datetime.now(PACIFIC).date()]
+        if evidence is not None:
+            moves, transaction_refs = evidence["transactions"], evidence["inputs"]["transactions"]
+        elif box_archive is not None and historical:
+            dates = [game["game_time_utc"].astimezone(PACIFIC).date() for game in historical]
+            moves, transaction_refs = self.transactions(season, min(dates), max(dates))
+            if moves:
+                evidence = self.game_evidence(season, historical, nba_schedule)
+                moves, transaction_refs = evidence["transactions"], evidence["inputs"]["transactions"]
+        else:
+            moves, transaction_refs = [], {}
+        result, prior_days = {}, {}
+        for game in games:
+            gid = game["game_id"]
+            if gid in pregame:
+                result[gid] = saved_pregame_roster(season=season, game=game, **pregame[gid])
+            else:
+                result[gid] = game_roster(season=season, game=game, **evidence)
+            day = game["game_time_utc"].astimezone(PACIFIC).date()
+            same_day = [row for row in moves if row["TRANSACTION_DATE"][:10] == str(day)]
+            if box_archive is not None and day < datetime.now(PACIFIC).date() and same_day:
+                if day not in prior_days:
+                    prior_days[day] = build_rosters(season=season, day=day-timedelta(days=1), opening=evidence["opening"],
+                        transactions=[row for row in moves if row["TRANSACTION_DATE"][:10] < str(day)],
+                        repair_transactions=evidence["repairs"], inputs=evidence["inputs"], games=evidence["contract_games"])
+                teams = {str(game[side+"_team_id"]) for side in ("home", "away")}
+                affected = {int(row["PLAYER_ID"]) for row in same_day if str(int(row["TEAM_ID"])) in teams}
+                affected.update(pid for team in teams for pid in prior_days[day]["teams"][team])
+                affected.update(pid for team in teams for pid in result[gid]["teams"][team])
+                same_day = [row for row in same_day if int(row["PLAYER_ID"]) in affected]
+                if not same_day:
+                    continue
+                saved = box_archive.read_saved(season, game, allow_missing=True)
+                if saved is None:
+                    result[gid]["cutoff_selection"]["inputs"]["final_box_score"] = None
+                    result[gid]["cutoff_selection"]["inputs"]["box_confirmation_transactions"] = {str(day): transaction_refs[str(day)]}
+                    result[gid]["cutoff_selection"]["historical_box_confirmation"] = {"rule": "same_day_transaction_final_box_v1", "status": "unavailable"}
+                else:
+                    raw, box_reference = saved
+                    result[gid] = confirm_same_day_box_roster(result[gid], game=game, transactions=same_day,
+                        box=official_json(raw)["game"], box_reference=box_reference,
+                        transaction_reference=transaction_refs[str(day)])
+        return result
+
+    def save_cutoff_warning(self, *, season, day, selections, run_id, consumer, occurred_at):
+        cases = [case for selection in selections.values() for case in selection["cutoff_selection"]["assumptions"]]
+        if not cases:
+            return None
+        event_id = sha256(f"{run_id}:game_roster_cutoff".encode()).hexdigest()
+        key = (f"{ERRORS_PREFIX}/pipeline=rosters/season={season}/"
+               f"occurred_date_pacific={occurred_at.astimezone(PACIFIC).date()}/{event_id}.warning.json")
+        event = {"schema_version": 1, "event_id": event_id, "pipeline": "rosters", "stage": "game_roster_cutoff",
+                 "status": "warning", "warning_type": "date_only_transaction_d_plus_1", "season": season,
+                 "game_date_pacific": day, "timestamp": occurred_at.isoformat(), "dagster_run_id": run_id, "consumer": consumer,
+                 "message": "Game roster timing uses explicit D+1 assumptions; no exact publication time was inferred.",
+                 "assumptions": cases, "inputs": {gid: value["cutoff_selection"] for gid, value in selections.items()}}
+        raw = json.dumps(event, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        official_json(raw)
+        client = boto3.client("s3")
+        try:
+            client.put_object(Bucket=self.bucket, Key=key, Body=raw, ContentType="application/json", IfNoneMatch="*")
+        except ClientError as error:
+            if error.response["Error"]["Code"] not in {"412", "PreconditionFailed"}:
+                raise
+            raw, _ = self._read(client, key)
+            if {k: v for k, v in json.loads(raw).items() if k != "timestamp"} != {k: v for k, v in event.items() if k != "timestamp"}:
+                raise ValueError("Saved cutoff warning differs from this run.") from error
+        return {"uri": f"s3://{self.bucket}/{key}", "sha256": sha256(raw).hexdigest()}
+
+    def assert_game_selections_current(self, season, selections, box_archive=None, games=None):
+        """Check mutable reconstruction evidence without replacing an immutable pregame selection."""
+        refs = {}
+        repair_refs = []
+        for record in selections.values():
+            selection = record["cutoff_selection"]
+            inputs = selection["inputs"]
+            refs.update({value["uri"]: value for value in inputs.get("transactions", {}).values()})
+            refs.update({value["uri"]: value for value in inputs.get("box_confirmation_transactions", {}).values()})
+            if "repair_transactions" in inputs:
+                repair_refs.append(inputs["repair_transactions"])
+            if "final_box_score" in inputs:
+                if box_archive is None or games is None:
+                    raise ValueError("Historical box confirmation needs its source guard.")
+                game = next(g for g in games if g["game_id"] == selection["game_id"])
+                current = box_archive.read_saved(season, game, allow_missing=True)
+                if (current[1] if current is not None else None) != inputs["final_box_score"]:
+                    raise ValueError("Final box evidence changed during game roster selection.")
+        client = boto3.client("s3")
+        if refs:
+            loaded = self._read_many(client, [uri.removeprefix(f"s3://{self.bucket}/") for uri in refs])
+            for uri, reference in refs.items():
+                if loaded[uri.removeprefix(f"s3://{self.bucket}/")][1]["sha256"] != reference["sha256"]:
+                    raise ValueError("Transaction evidence changed during game roster selection.")
+        if repair_refs:
+            _, current = self.repair_transactions(season)
+            if any(current != reference for reference in repair_refs):
+                raise ValueError("Roster repair evidence changed during game roster selection.")
