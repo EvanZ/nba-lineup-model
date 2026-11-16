@@ -1,0 +1,7 @@
+gestalt-daily-code-server.service
+gestalt-daily-daemon.service
+gestalt-daily-webserver.service
+gestalt-daily-dev@code.service
+gestalt-daily-dev@daemon.service
+gestalt-daily-dev@web.service
+gestalt-collection-code-server.service

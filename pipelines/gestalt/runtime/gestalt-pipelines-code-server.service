@@ -1,0 +1,15 @@
+[Unit]
+Description=NBA GESTALT pipelines code location
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/nba-lineup-model
+Environment=DAGSTER_HOME=/var/lib/nba-gestalt/collection-dagster
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/nba-lineup-model/pipelines/gestalt/.venv/bin/dagster code-server start --host 127.0.0.1 --port 4003 --location-name nba_gestalt_pipelines --module-name gestalt_pipelines.definitions --attribute defs --working-directory /home/ubuntu/nba-lineup-model
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,32 @@
+[Unit]
+Description=NBA GESTALT protected collectors Dagster daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/nba-gestalt-collectors/current
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/nba-gestalt-collectors/current/src
+Environment=DAGSTER_HOME=/var/lib/nba-gestalt/collection-dagster
+Environment=AWS_REGION=us-west-1
+Environment=GESTALT_AUTOMATIONS_DEFAULT_RUNNING=1
+Environment=GESTALT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
+Environment=GESTALT_MODEL_INPUT_SCHEDULE_STATE_DIR=/var/lib/nba-gestalt/schedule-serving/current
+Environment=GESTALT_SCHEDULE_S3_URI=s3://nba-gestalt-data/nba-gestalt/schedule/model_track=causal_hca_replacement_candidate_v2
+Environment=GESTALT_GAME_CATALOG_PATH=/var/lib/nba-gestalt/catalog/games.parquet
+Environment=GESTALT_SCHEDULE_API_URL=http://127.0.0.1:8010/api/win-projections
+EnvironmentFile=-/etc/nba-gestalt/dagster.env
+ExecStartPre=/bin/bash -c 'for i in {1..30}; do timeout 1 bash -c "</dev/tcp/127.0.0.1/4003" && exit 0; sleep 1; done; exit 1'
+ExecStart=/opt/nba-gestalt/current/.venv/bin/dagster-daemon run --workspace /var/lib/nba-gestalt/collection-dagster/workspace.yaml
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+MemoryHigh=300M
+MemoryMax=450M
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
