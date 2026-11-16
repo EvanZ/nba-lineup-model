@@ -220,6 +220,45 @@ These instructions apply to every task in this repository.
   as "can you update this file?" also authorize that specific action; questions
   such as "why is this broken?" or "what job does this?" do not.
 
+## Parallel Dagster and Gestalt app agents
+
+- The **Dagster agent** works in `/home/ubuntu/nba-lineup-model`. It owns
+  `gestalt_pipelines`, assets, jobs, schedules, sensors, partitions, shared
+  pipeline resources, S3 producers, pipeline documentation, and Dagster runtime
+  configuration and operations.
+- The **Gestalt app agent** works in
+  `/home/ubuntu/nba-lineup-model-web-api`. It owns the website, web API, S3
+  consumers, app caching, and app deployments, following the release workflow
+  and dev-first approval rules above.
+- Work may proceed in parallel. Each agent uses its own branch in its assigned
+  worktree and commits only its own approved work. Do not edit, switch branches
+  in, reset, clean, stash, or otherwise alter the other agent's worktree. Git
+  branch references are shared between worktrees; do not move or delete a
+  branch checked out by the other agent.
+- Agree through the user or the shared ticket on changes to producer/consumer
+  contracts before implementing them. Record exact S3 paths, JSON schemas,
+  partition-date meanings, data cutoffs, and which agent owns each part. Apply
+  the same ownership coordination to shared files such as `AGENTS.md`, shared
+  utilities, and dependency files. Do not silently change the other side's
+  contract or expand into its implementation.
+- Merge approved branches into `main` in the agreed order. After one branch is
+  merged and pushed, the other agent fetches the updated `origin/main` and
+  rebases its own branch when its worktree is clean. Preserve uncommitted work
+  first, following the user's commit instructions. Resolve conflicts only in
+  the agent's own worktree, and report conflicts affecting shared contracts.
+- The Dagster agent keeps its checkout current with approved merges. This
+  checkout supplies the running Dagster code: branch switches, pulls, rebases,
+  and code-location reloads must preserve the running pipelines and protected
+  collectors. Do not reload code or restart services as an incidental Git step.
+- The Dagster agent owns Dagster reloads, schedules, and services; the Gestalt
+  app agent owns app deployments. Coordinate operations affecting both runtimes
+  on the shared EC2 instance. An app deployment must not stop or restart Dagster
+  or protected collectors as a side effect.
+- Report which branch and commit were merged and what the other agent needs to
+  incorporate. This arrangement does not itself authorize messaging another
+  task, committing, pushing, merging, deploying, or rewriting historical data;
+  follow the user's authorization for the current work.
+
 ## Collaboration
 
 - Surface actual findings and failures to the user; do not bury them in files.
