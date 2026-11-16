@@ -10,12 +10,14 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from nba_lineup_model.web_api.market_performance import router
+from nba_lineup_model.web_api.schedule import router as schedule_router
 
 
 class MarketGateway:
     def __init__(self, legacy_factory):
         self.market = FastAPI(title="NBA GESTALT saved-data API")
         self.market.include_router(router)
+        self.market.include_router(schedule_router)
         self.legacy_factory = legacy_factory
         self.legacy = None
         self.legacy_failed = False
@@ -34,10 +36,11 @@ class MarketGateway:
             return self.legacy
 
     async def __call__(self, scope, receive, send):
-        if (
-            scope["type"] == "lifespan"
-            or scope.get("path", "").rstrip("/") == "/api/market-performance"
-        ):
+        if scope["type"] == "lifespan" or scope.get("path", "").rstrip("/") in {
+            "/api/market-performance",
+            "/api/schedule-view",
+            "/api/schedule",
+        }:
             await self.market(scope, receive, send)
             return
         legacy = await run_in_threadpool(self._legacy)

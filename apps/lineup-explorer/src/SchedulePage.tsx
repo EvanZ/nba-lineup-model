@@ -2,7 +2,6 @@ import { releaseFetch as fetch } from "./releaseFetch";
 import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, CircleAlert, Radio, TrendingUp } from "lucide-react";
 
-import type { MinutesProjectionPayload, WinProjectionPayload, WinProjectionScheduledGame } from "./types";
 import { teamLogoUrl } from "./teamLogos";
 import { MarketPerformanceReport } from "./MarketPerformanceReport";
 
@@ -63,23 +62,13 @@ type PredictionMarket = {
   bid_ask_spread: number | null;
 };
 
-type InjuryAssumption = {
-  player_id: number;
-  player_name: string;
-  team: string;
-  status: string;
-  reason: string | null;
-  play_probability: number;
-  projected_minutes: number;
-};
-
 type ProjectedMinute = {
   player_id: number;
-  player_name: string;
-  status: string;
+  player_name: string | null;
+  status: string | null;
   play_probability: number | null;
-  conditional_minutes: number;
-  projected_minutes: number;
+  conditional_minutes: number | null;
+  projected_minutes: number | null;
   projected_nail?: number | null;
   expected_contribution?: number | null;
   reason: string | null;
@@ -89,10 +78,7 @@ type ProjectionProvenance = {
   schema_version: number;
   rating_as_of: string | null;
   as_of_cutoff_time: string | null;
-  serving_bundle_sha256: string | null;
-  rating_state_sha256: string | null;
-  minutes_state_sha256: string | null;
-  injury_report_sha256: string | null;
+  inputs: Record<string, unknown>;
 };
 
 type SpreadLedgerTeam = {
@@ -104,8 +90,9 @@ type SpreadLedgerTeam = {
 
 type SpreadLedger = {
   schema_version: number;
-  artifact_kind?: "immutable_game_prediction_attribution" | "retrospective_actual_minutes_attribution";
+  artifact_kind?: "saved_pipeline_prediction_attribution" | "immutable_game_prediction_attribution" | "retrospective_actual_minutes_attribution";
   contract: string;
+  assumed_possessions?: number;
   away: SpreadLedgerTeam;
   home: SpreadLedgerTeam;
   team_strength_difference: number;
@@ -138,7 +125,9 @@ type FinalAudit = {
 };
 
 type ArchivedGame = {
-  game_id: string | null;
+  game_id: string;
+  game_date: string;
+  prediction_purpose: "pregame_projection" | "historical_replay" | null;
   start_time: string;
   home_team: string;
   away_team: string;
@@ -156,18 +145,16 @@ type ArchivedGame = {
     fair_home_spread?: number | null;
     input_provenance?: ProjectionProvenance;
     ledger?: SpreadLedger;
-  };
+  } | null;
   market: MarketLine | null;
   prediction_market?: PredictionMarket | null;
   injury_report: {
     source: string;
-    source_url: string;
-    published_at: string;
-    status_probabilities: Record<string, number>;
+    source_url: string | null;
+    published_at: string | null;
     team_reports?: Record<string, { status: string }>;
-    assumptions: InjuryAssumption[];
-  };
-  projected_minutes: { away: ProjectedMinute[]; home: ProjectedMinute[] };
+  } | null;
+  projected_minutes: { away: ProjectedMinute[]; home: ProjectedMinute[] } | null;
   retrospective?: {
     computed_at: string;
     method: string;
@@ -177,21 +164,22 @@ type ArchivedGame = {
     ledger?: SpreadLedger;
   };
   final_audit?: FinalAudit;
-  pregame?: ArchivedGame;
   frozen_at?: string;
   data_quality_errors?: string[];
-  latest_observations?: { injury_report?: ArchivedGame["injury_report"]; market?: MarketLine | null; prediction_market?: PredictionMarket | null };
 };
 
 type ScheduleDay = {
   available: boolean;
   game_date: string;
-  collected_at?: string;
-  live_score_collected_at?: string;
+  collected_at?: string | null;
+  live_score_collected_at?: string | null;
   source: string;
   forecast_version?: { model_track?: string; evaluation_cell?: string; mode?: string; through_date?: string; identity?: string };
   games: ArchivedGame[];
+  coverage: { missing_prediction_game_ids: string[]; missing_observation_game_ids: string[] };
 };
+
+type CalendarDay = { game_date: string; game_count: number; record: DailyRecord | null };
 
 type DailyRecord = {
   wins: number;
@@ -284,24 +272,9 @@ function gameTime(value?: string) {
   }).format(new Date(value));
 }
 
-function archiveAge(value?: string) {
+function archiveAge(value?: string | null) {
   if (!value) return "Awaiting first archive";
   return `Updated ${new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(value))}`;
-}
-
-function dailyRecord(scheduleDay: ScheduleDay | null | undefined): DailyRecord | null {
-  const audits = (scheduleDay?.games ?? []).flatMap((game) => game.final_audit ? [game.final_audit] : []);
-  if (!audits.length) return null;
-  const record: DailyRecord = { wins: 0, losses: 0, atsWins: 0, atsLosses: 0, atsPushes: 0 };
-  audits.forEach((audit) => {
-    if (audit.grading.model_favorite_won) record.wins += 1;
-    else record.losses += 1;
-    const atsResult = audit.grading.market?.model_ats_result;
-    if (atsResult === "win") record.atsWins += 1;
-    if (atsResult === "loss") record.atsLosses += 1;
-    if (atsResult === "push") record.atsPushes += 1;
-  });
-  return record;
 }
 
 function dailyRecordLabel(record: DailyRecord) {
@@ -312,7 +285,7 @@ function dailyRecordLabel(record: DailyRecord) {
   return `W-L ${record.wins}-${record.losses} · ATS ${ats}`;
 }
 
-function reportTime(value?: string) {
+function reportTime(value?: string | null) {
   if (!value) return "Report time unavailable";
   return new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
@@ -344,51 +317,6 @@ function liveStatus(game: ArchivedGame | undefined) {
   return `${periodText} · ${formatGameClock(game.status.display_clock)}`.replace(/ · $/, "");
 }
 
-function playersWithLatestStatuses(
-  players: ProjectedMinute[],
-  team: string,
-  injuryReport: ArchivedGame["injury_report"] | undefined,
-) {
-  if (!injuryReport) return players;
-  const teamStatus = injuryReport.team_reports?.[team]?.status;
-  const listedById = new Map(
-    injuryReport.assumptions
-      .filter((assumption) => assumption.team === team)
-      .map((assumption) => [assumption.player_id, assumption]),
-  );
-  const playerIds = new Set(players.map((player) => player.player_id));
-  const updated = players.map((player) => {
-    const listed = listedById.get(player.player_id);
-    if (listed) {
-      return {
-        ...player,
-        status: listed.status,
-        play_probability: listed.play_probability,
-        reason: listed.reason === "-" ? null : listed.reason,
-      };
-    }
-    if (teamStatus === "submitted") {
-      return { ...player, status: "Available", play_probability: 1, reason: null };
-    }
-    return player;
-  });
-  return [
-    ...updated,
-    ...injuryReport.assumptions
-      .filter((assumption) => assumption.team === team && !playerIds.has(assumption.player_id))
-      .map((assumption) => ({
-        player_id: assumption.player_id,
-        player_name: assumption.player_name,
-        status: assumption.status,
-        play_probability: assumption.play_probability,
-        conditional_minutes: 0,
-        projected_minutes: 0,
-        projected_nail: null,
-        expected_contribution: null,
-        reason: assumption.reason === "-" ? null : assumption.reason,
-      })),
-  ];
-}
 
 function signedValue(value: number | null | undefined, digits = 2) {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
@@ -451,9 +379,9 @@ function RotationTable({
         {actualPlayers && <><small>Act. min.</small><small>Act. contrib.</small><small>Δ contrib.</small><small>Δ min.</small></>}
       </div>}
       {rows.map((player) => {
-        const actual = actualByPlayer.get(player.player_id) ?? actualByPlayer.get(player.player_name);
+        const actual = actualByPlayer.get(player.player_id) ?? (player.player_name ? actualByPlayer.get(player.player_name) : undefined);
         const difference = actualPlayers
-          ? (actual?.actual_minutes ?? 0) - player.projected_minutes
+          ? (actual?.actual_minutes ?? 0) - (player.projected_minutes ?? 0)
           : null;
         const actualContribution = actualPlayers ? actual?.actual_contribution ?? 0 : null;
         const contributionDifference = actualContribution != null && player.expected_contribution != null
@@ -462,15 +390,15 @@ function RotationTable({
         const displayedRating = player.projected_nail ?? actual?.frozen_nail;
         const availability = player.status === "Report pending"
           ? "Status unknown — team report pending"
-          : `${player.status}${player.reason ? ` · ${player.reason}` : ""}`;
+          : `${player.status ?? "Unknown"}${player.reason ? ` · ${player.reason}` : ""}`;
         return <div key={player.player_id} className={player.status !== "Available" ? "injury-listed" : ""}>
-        <span className="schedule-rotation-player">{player.player_id > 0 ? <a className="schedule-player-link" href={playerHref(player.player_id)}>{player.player_name}</a> : player.player_name}<small>{availability}</small></span>
+        <span className="schedule-rotation-player">{player.player_id > 0 ? <a className="schedule-player-link" href={playerHref(player.player_id)}>{player.player_name ?? `NBA player ${player.player_id}`}</a> : player.player_name ?? "Name unavailable"}<small>{availability}</small></span>
         {hasAttribution && <>
           <strong data-label="NAIL">{signedValue(displayedRating)}</strong>
-          <strong data-label="Minutes">{player.projected_minutes.toFixed(1)}</strong>
+          <strong data-label="Minutes">{player.projected_minutes?.toFixed(1) ?? "—"}</strong>
           <strong data-label="Contribution" className={player.expected_contribution != null && player.expected_contribution < 0 ? "negative" : "positive"}>{signedValue(player.expected_contribution)}</strong>
         </>}
-        {!hasAttribution && <strong data-label="Predicted">{player.projected_minutes.toFixed(1)}</strong>}
+        {!hasAttribution && <strong data-label="Predicted">{player.projected_minutes?.toFixed(1) ?? "—"}</strong>}
         {actualPlayers && <><strong data-label="Actual minutes">{actual?.actual_minutes.toFixed(1) ?? "0.0"}</strong><strong data-label="Actual contribution" className={actualContribution !== null && actualContribution < 0 ? "negative" : "positive"}>{signedValue(actualContribution)}</strong><strong data-label="Contribution delta" className={contributionDifference !== null && contributionDifference < 0 ? "negative" : "positive"}>{signedValue(contributionDifference)}</strong><strong data-label="Minutes delta" className={difference !== null && difference < 0 ? "negative" : "positive"}>{difference === null ? "—" : `${difference > 0 ? "+" : ""}${difference.toFixed(1)}`}</strong></>}
       </div>;})}
       {hasAttribution && teamLedger && <div className="schedule-rotation-total">
@@ -497,7 +425,7 @@ function SpreadLedgerView({ ledger, actualLedger }: { ledger: SpreadLedger; actu
   return <section className={`schedule-spread-ledger ${actualLedger ? "has-actual" : ""}`} aria-label="Model spread ledger">
     <div className="schedule-spread-ledger-heading">
       <div><span>Model spread ledger</span><strong>From player value to the line</strong></div>
-      <small>assuming 100 possessions per game</small>
+      <small>{ledger.assumed_possessions == null ? "Possessions unavailable" : `${ledger.assumed_possessions} possessions per game`}</small>
     </div>
     <div className="schedule-spread-ledger-rows">
       {actualLedger && <div className="columns"><span></span><small>Projected</small><small>Actual minutes</small></div>}
@@ -508,7 +436,7 @@ function SpreadLedgerView({ ledger, actualLedger }: { ledger: SpreadLedger; actu
       <div><span>Back-to-back adjustment<small>{backToBackNote}</small></span><strong>{signedValue(ledger.back_to_back.adjustment)}</strong>{actualLedger && <strong>{signedValue(actualLedger.back_to_back.adjustment)}</strong>}</div>
       <div className="result final"><span>Model spread</span><strong>{homeTeam} {formatSpread(ledger.fair_home_spread)}</strong>{actualLedger && <strong>{homeTeam} {formatSpread(actualLedger.fair_home_spread)}</strong>}</div>
     </div>
-    <p>Frozen pregame ratings and minutes{actualLedger ? " · actual column uses final NBA minutes with the same frozen ratings and context" : ""}</p>
+    <p>Saved prediction ratings and minutes{actualLedger ? " · actual column uses final NBA minutes with the same frozen ratings and context" : ""}</p>
   </section>;
 }
 
@@ -553,11 +481,14 @@ function BookmakerAvatars({ market, awayTeam, homeTeam }: { market?: MarketLine 
 }
 
 
-function ScheduleGameCard({ game, archived }: { game: WinProjectionScheduledGame; forecast: WinProjectionPayload; archived?: ArchivedGame }) {
-  const pregame = archived?.pregame ?? archived;
+export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
+  const archived = game;
+  const pregame = game;
   if (!pregame?.projection) return <article className="schedule-game-card">
     <div className="schedule-game-context">
       <a href={`https://www.nba.com/game/${game.away_team.toLowerCase()}-vs-${game.home_team.toLowerCase()}-${game.game_id}`} target="_blank" rel="noreferrer">NBA ↗</a>
+      <span>{gameTime(game.start_time)}</span>
+      <span>{game.broadcasts.join(" · ") || "Broadcast unavailable"}</span>
       <span>{liveStatus(archived)}</span>
     </div>
     <div className="schedule-matchup">
@@ -565,24 +496,16 @@ function ScheduleGameCard({ game, archived }: { game: WinProjectionScheduledGame
       <span>at</span>
       <a className="schedule-team home" href={teamHref(game.home_team)}><img alt="" src={teamLogoUrl(game.home_team)} /><strong>{game.home_team} {archived?.home_score ?? ""}</strong></a>
     </div>
-    <div className="schedule-projection-panel"><p>Forecast unavailable</p><small>No eligible forecast is published for this game. It is not included in model scoring.</small></div>
+    <div className="schedule-projection-panel"><p>Forecast unavailable</p><small>No saved forecast is available for this game.</small></div>
   </article>;
   const projection = { margin: pregame.projection.home_margin, winProbability: pregame.projection.home_win_probability };
-  const market = (archived?.status.state === "pre" ? archived.latest_observations?.market : null) ?? pregame.market ?? null;
+  const market = pregame.market;
   const marketProbability = market ? marketProbabilities(market) : null;
-  const predictionMarket = (archived?.status.state === "pre" ? archived.latest_observations?.prediction_market : null) ?? pregame?.prediction_market ?? null;
-  const injuryReport = archived?.status.state === "pre" ? archived.latest_observations?.injury_report ?? pregame.injury_report : pregame.injury_report;
+  const predictionMarket = pregame.prediction_market;
+  const injuryReport = pregame.injury_report;
   const projectedMinutes = pregame?.projected_minutes ?? archived?.projected_minutes;
-  const spreadLedger = pregame?.projection.ledger ?? archived?.projection.ledger;
-  const reportUpdatedAfterFreeze = Boolean(
-    pregame
-    && injuryReport
-    && injuryReport.published_at !== pregame.injury_report.published_at,
-  );
-  const displayedMinutes = projectedMinutes && {
-    away: playersWithLatestStatuses(projectedMinutes.away, game.away_team, injuryReport),
-    home: playersWithLatestStatuses(projectedMinutes.home, game.home_team, injuryReport),
-  };
+  const spreadLedger = pregame.projection.ledger;
+  const displayedMinutes = projectedMinutes;
   const pendingReportTeams = [game.away_team, game.home_team].filter((team) => (
     injuryReport?.team_reports?.[team]?.status !== undefined
     && injuryReport.team_reports[team].status !== "submitted"
@@ -617,7 +540,7 @@ function ScheduleGameCard({ game, archived }: { game: WinProjectionScheduledGame
           <span>{gameTime(archived?.start_time)}</span>
           <span className="schedule-nba-game-link-label" aria-hidden="true">NBA ↗</span>
         </a>
-        <span>{(archived?.broadcasts ?? []).join(" · ") || "League Pass"}</span>
+        <span>{(archived?.broadcasts ?? []).join(" · ") || "Broadcast unavailable"}</span>
         <span className="schedule-game-status"><Radio size={11} aria-hidden="true" /> {statusLabel}</span>
         {archived?.status.completed && finalAudit && <div className="schedule-result-badges" aria-label="Model results">
           <span className={finalAudit.grading.model_favorite_won ? "win" : "loss"} title="Whether the model selected the winning team">
@@ -642,7 +565,7 @@ function ScheduleGameCard({ game, archived }: { game: WinProjectionScheduledGame
       </div>
 
       <div className="schedule-projection-panel">
-        <p>GESTALT projection{pregame?.projection.model_track === "updated_ratings_updated_minutes" || pregame?.projection.state_kind === "in_season_updated" ? " · Updated" : ""}</p>
+        <p>GESTALT projection{game.prediction_purpose === "historical_replay" ? " · Historical replay" : ""}{pregame?.projection.model_track === "updated_ratings_updated_minutes" || pregame?.projection.state_kind === "in_season_updated" ? " · Updated" : ""}</p>
         <div className="schedule-probability-bar" aria-label={`${game.home_team} ${(projection.winProbability * 100).toFixed(0)} percent win probability`}>
           <span style={{ width: `${(1 - projection.winProbability) * 100}%` }} />
           <span style={{ width: `${projection.winProbability * 100}%` }} />
@@ -670,7 +593,7 @@ function ScheduleGameCard({ game, archived }: { game: WinProjectionScheduledGame
             <div><span>{game.away_team}</span><strong>{market.away_spread == null ? "—" : formatSpread(market.away_spread)}</strong><small>{marketProbability ? `${(marketProbability.away * 100).toFixed(1)}%` : formatMoneyline(market.away_moneyline)}</small></div>
             <div><span>{game.home_team}</span><strong>{market.home_spread == null ? "—" : formatSpread(market.home_spread)}</strong><small>{marketProbability ? `${(marketProbability.home * 100).toFixed(1)}%` : formatMoneyline(market.home_moneyline)}</small></div>
           </div>
-        </> : <p className="schedule-market-empty">No market line yet</p>}
+        </> : <p className="schedule-market-empty">Market data unavailable</p>}
         {predictionMarket && <a className="schedule-polymarket-row" href={predictionMarket.url} target="_blank" rel="noreferrer" aria-label={`Open Polymarket for ${game.away_team} at ${game.home_team}`}>
           <span>Polymarket</span>
           <small>{game.away_team} {(predictionMarket.away_probability * 100).toFixed(1)}%</small>
@@ -680,27 +603,26 @@ function ScheduleGameCard({ game, archived }: { game: WinProjectionScheduledGame
 
       <div className={`schedule-edge ${modelEdge === null || Math.abs(modelEdge) < 1 ? "muted" : ""}`}>
         <TrendingUp size={15} aria-hidden="true" />
-        <span>{modelEdge === null ? "Awaiting line" : `${edgeTeam} edge`}</span>
+        <span>{modelEdge === null ? "Market unavailable" : `${edgeTeam} edge`}</span>
         <strong>{modelEdge === null ? "—" : `${Math.abs(modelEdge).toFixed(1)} pts`}</strong>
       </div>
 
       {archived?.data_quality_errors?.length ? <p className="error schedule-error" role="alert">Data quality: {archived.data_quality_errors.join("; ")}</p> : null}
+      {game.status.state === "post" && !retrospective && <p className="schedule-market-empty">Postgame detail unavailable</p>}
       {injuryReport && displayedMinutes && <details className="schedule-assumptions">
         <summary>
           <span>{spreadLedger ? "Rotation, ratings & spread ledger" : "Rotation & injury assumptions"}</span>
-          <small>{pendingReportTeams.length ? `${pendingReportTeams.join(" & ")} pending · ${injuryReport.assumptions.length} listed` : `${injuryReport.assumptions.length} listed`} · NBA report {reportTime(injuryReport.published_at)}{spreadLedger ? " · ledger available" : ""}</small>
+          <small>{pendingReportTeams.length ? `${pendingReportTeams.join(" & ")} pending · saved prediction input` : `saved prediction input`} · NBA report {reportTime(injuryReport.published_at)}{spreadLedger ? " · ledger available" : ""}</small>
         </summary>
         <div className="schedule-assumptions-body">
-          {pendingReportTeams.length > 0 && <p className="schedule-report-warning"><strong>{pendingReportTeams.join(" & ")} report coverage is incomplete.</strong> Filed player statuses are preserved below; players not listed in the report remain unknown and retain their frozen baseline estimates.</p>}
-          {reportUpdatedAfterFreeze && <p className="schedule-assumption-policy">Player statuses use the latest official report captured for this matchup. Predicted minutes and the model line remain the immutable pregame values.</p>}
-          <p className="schedule-assumption-policy">Submitted reports: Out 0% · Doubtful 25% · Questionable 50% · Probable 75% · Unlisted 100%. Expected minutes are renormalized to 240 per team.</p>
-          {!spreadLedger && <p className="schedule-attribution-unavailable">Frozen NAIL attribution is unavailable for this legacy pregame snapshot. Its archived minutes and model line remain unchanged.</p>}
+          {pendingReportTeams.length > 0 && <p className="schedule-report-warning"><strong>{pendingReportTeams.join(" & ")} report coverage is incomplete.</strong> Statuses and projected minutes are shown exactly as saved with this prediction.</p>}
+          {!spreadLedger && <p className="schedule-attribution-unavailable">Saved rating attribution is unavailable.</p>}
           {spreadLedger && <SpreadLedgerView ledger={spreadLedger} actualLedger={retrospective?.ledger} />}
           <div className="schedule-rotations">
             <RotationTable team={game.away_team} players={displayedMinutes.away} teamLedger={spreadLedger?.away} actualTeamLedger={retrospective?.ledger?.away} actualPlayers={retrospective?.actual_minutes.away} reportStatus={injuryReport.team_reports?.[game.away_team]?.status} />
             <RotationTable team={game.home_team} players={displayedMinutes.home} teamLedger={spreadLedger?.home} actualTeamLedger={retrospective?.ledger?.home} actualPlayers={retrospective?.actual_minutes.home} reportStatus={injuryReport.team_reports?.[game.home_team]?.status} />
           </div>
-          <a href={injuryReport.source_url} target="_blank" rel="noreferrer">Open official NBA injury report</a>
+          {injuryReport.source_url && <a href={injuryReport.source_url} target="_blank" rel="noreferrer">Open official NBA injury report</a>}
         </div>
       </details>}
     </article>
@@ -708,9 +630,9 @@ function ScheduleGameCard({ game, archived }: { game: WinProjectionScheduledGame
 }
 
 export function SchedulePage({ initialDate }: { initialDate?: string }) {
-  const [forecast, setForecast] = useState<WinProjectionPayload | null>(null);
+  const [calendar, setCalendar] = useState<Record<string, CalendarDay>>({});
+  const [teams, setTeams] = useState<string[]>([]);
   const [scheduleDay, setScheduleDay] = useState<ScheduleDay | null>(null);
-  const [dateRecords, setDateRecords] = useState<Record<string, DailyRecord>>({});
   const [selectedDate, setSelectedDate] = useState(
     isDateKey(initialDate) ? initialDate : dateKey(new Date()),
   );
@@ -734,61 +656,41 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
     const controller = new AbortController();
     let timer: number | undefined;
     setScheduleDay(null);
+    setCalendar({});
     setError(null);
     async function refresh() {
       try {
         const response = await fetch(`/api/schedule-view?date=${selectedDate}`, { signal: controller.signal });
         const payload = await response.json() as {
           day: ScheduleDay;
-          calendar: Record<string, ScheduleDay>;
-          forecast: MinutesProjectionPayload;
+          calendar: Record<string, CalendarDay>;
+          teams: { team: string; team_id: number }[];
         };
-        if (!response.ok || !payload.forecast.win_projection) {
-          throw new Error("The selected schedule release is unavailable. No substitute projections are being shown.");
+        if (!response.ok || !payload.day.available) {
+          throw new Error("Saved Schedule data is unavailable for this date.");
         }
         if (controller.signal.aborted) return;
-        // Legacy game cards remain separate from the migrated market report.
-        setForecast(payload.forecast.win_projection);
         setScheduleDay(payload.day);
-        setDateRecords(Object.fromEntries(Object.entries(payload.calendar).flatMap(([date, day]) => {
-          const record = dailyRecord(day);
-          return record ? [[date, record]] : [];
-        })));
+        setCalendar(payload.calendar);
+        setTeams(payload.teams.map((team) => team.team).sort());
         setError(null);
         if (payload.day.games.some((game) => game.status.state !== "post")) {
-          timer = window.setTimeout(refresh, 30_000);
+          timer = window.setTimeout(refresh, 60_000);
         }
       } catch (reason) {
-        if (!controller.signal.aborted) setError((reason as Error).message);
+        if (!controller.signal.aborted) {
+          setError((reason as Error).message);
+          timer = window.setTimeout(refresh, 60_000);
+        }
       }
     }
     void refresh();
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [selectedDate]);
-  const gamesByDate = useMemo(() => {
-    const counts = new Map<string, number>();
-    forecast?.scheduled_games.forEach((game) => counts.set(game.game_date, (counts.get(game.game_date) ?? 0) + 1));
-    return counts;
-  }, [forecast]);
-  const archivedGames = useMemo(() => new Map((scheduleDay?.games ?? []).map((game) => [
-    game.game_id ?? `${game.away_team}-${game.home_team}`,
-    game,
-  ])), [scheduleDay]);
-  const games = useMemo(() => {
-    const archivedGame = (game: WinProjectionScheduledGame) => (
-      archivedGames.get(game.game_id) ?? archivedGames.get(`${game.away_team}-${game.home_team}`)
-    );
-    return (forecast?.scheduled_games ?? []).filter((game) => (
-      game.game_date === selectedDate
-      && (teamFilter === "all" || game.home_team === teamFilter || game.away_team === teamFilter)
-    )).sort((left, right) => {
-      const leftTime = Date.parse(archivedGame(left)?.start_time ?? "") || Number.POSITIVE_INFINITY;
-      const rightTime = Date.parse(archivedGame(right)?.start_time ?? "") || Number.POSITIVE_INFINITY;
-      if (leftTime !== rightTime) return leftTime - rightTime;
-      return left.away_team.localeCompare(right.away_team) || left.home_team.localeCompare(right.home_team);
-    });
-  }, [archivedGames, forecast, selectedDate, teamFilter]);
-  const teams = forecast?.teams.map((team) => team.team).sort() ?? [];
+  const gamesByDate = useMemo(() => new Map(Object.entries(calendar).map(([day, value]) => [day, value.game_count])), [calendar]);
+  const games = useMemo(() => (scheduleDay?.games ?? []).filter((game) => (
+    teamFilter === "all" || game.home_team === teamFilter || game.away_team === teamFilter
+  )).sort((left, right) => Date.parse(left.start_time) - Date.parse(right.start_time) || left.game_id.localeCompare(right.game_id)), [scheduleDay, teamFilter]);
 
   return (
     <section className="schedule-page">
@@ -822,11 +724,11 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
         {dateRail.map((date) => {
           const active = date === selectedDate;
           const today = date === dateKey(new Date());
-          const record = active ? dailyRecord(scheduleDay) ?? dateRecords[date] : dateRecords[date];
+          const record = calendar[date]?.record;
           return <button className={active ? "active" : ""} type="button" key={date} onClick={() => selectDate(date)} aria-current={active ? "date" : undefined}>
             <span>{today ? "Today" : shortDay(date)}</span>
             <strong>{parseDate(date).getDate()}</strong>
-            <small>{shortMonth(date)} · {gameCountLabel(gamesByDate.get(date) ?? 0)}</small>
+            <small>{shortMonth(date)} · {gamesByDate.has(date) ? gameCountLabel(gamesByDate.get(date)!) : "—"}</small>
             {record && <small className="schedule-date-record">{dailyRecordLabel(record)}</small>}
           </button>;
         })}
@@ -837,20 +739,19 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
           <p className="eyebrow">Daily board</p>
           <h2>{longDate(selectedDate)}</h2>
         </div>
-        <div className="schedule-source-note"><span>Scores &amp; market</span><strong>NBA official · Multi-book consensus</strong><small>{archiveAge(scheduleDay?.live_score_collected_at ?? scheduleDay?.collected_at)}</small></div>
+        <div className="schedule-source-note"><span>Schedule &amp; scores</span><strong>NBA official</strong><small>{archiveAge(scheduleDay?.live_score_collected_at ?? scheduleDay?.collected_at)}</small></div>
       </div>
 
-      {error ? <p className="error schedule-error"><CircleAlert size={16} /> {error}</p> : !forecast ? <p className="schedule-loading">Loading the schedule…</p> : games.length ? <div className="schedule-games">
+      {scheduleDay && !error && (scheduleDay.coverage.missing_prediction_game_ids.length > 0 || scheduleDay.coverage.missing_observation_game_ids.length > 0) && <p className="schedule-report-warning" role="status">Some saved forecasts or scores are unavailable. All scheduled games remain visible.</p>}
+      {error ? <p className="error schedule-error"><CircleAlert size={16} /> {error}</p> : !scheduleDay ? <p className="schedule-loading">Loading the schedule…</p> : games.length ? <div className="schedule-games">
         {games.map((game) => <ScheduleGameCard
           game={game}
-          forecast={forecast}
-          archived={archivedGames.get(game.game_id) ?? archivedGames.get(`${game.away_team}-${game.home_team}`)}
           key={game.game_id}
         />)}
       </div> : <div className="schedule-empty">
         <CalendarDays size={28} aria-hidden="true" />
-        <h3>No games on this date.</h3>
-        <p>Past dates will keep the final score, the frozen pregame projection, and the closing line together for review.</p>
+        <h3>{scheduleDay.games.length ? "No games for this team." : "No games on this date."}</h3>
+        <p>Choose another date or team to view the schedule.</p>
       </div>}
     </section>
   );
