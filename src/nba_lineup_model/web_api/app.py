@@ -94,6 +94,9 @@ def _headshot_png(player_id: int) -> bytes:
 
 def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     """Create the API, loading the published model state only once per process."""
+    disable_legacy_schedule_api = (
+        os.environ.get("GESTALT_DISABLE_LEGACY_SCHEDULE_API") == "1"
+    )
     loaded_release = load_process_activation_identity(os.environ.get("GESTALT_ACTIVE_RELEASE_ROOT"))
 
     serving = ReleaseServing.load(os.environ.get("GESTALT_ACTIVE_RELEASE_ROOT"))
@@ -121,6 +124,8 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
         yield
 
     app = FastAPI(title="NBA GESTALT API", version="0.1.0", lifespan=lifespan)
+    from nba_lineup_model.web_api.market_performance import router as market_router
+    app.include_router(market_router)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5174", "http://127.0.0.1:5174"],
@@ -194,6 +199,20 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def cached_consistent_serving(request: Request, call_next):
+        # Legacy Schedule reads can publish forecast locks and failure records.
+        # Block before observation capture or any handler runs in browsing-only dev.
+        if disable_legacy_schedule_api and request.url.path.rstrip("/") in {
+            "/api/schedule",
+            "/api/schedule-view",
+            "/api/schedule-performance",
+            "/api/current-season-records",
+            "/api/win-projections",
+        }:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Schedule data is temporarily unavailable."},
+                headers={"Cache-Control": "no-store"},
+            )
         expected = request.headers.get("X-Gestalt-Release")
         if (serving is not None and request.method == "GET"
                 and request.url.path == "/api/schedule-view"
@@ -762,7 +781,11 @@ def create_app(evaluator: LineupEvaluator | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+from nba_lineup_model.web_api.gateway import MarketGateway
+
+app = MarketGateway(
+    create_app if os.environ.get("GESTALT_LEGACY_API_ENABLED", "1") == "1" else None
+)
 
 
 def main() -> None:

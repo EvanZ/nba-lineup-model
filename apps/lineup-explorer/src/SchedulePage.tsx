@@ -4,6 +4,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, CircleAlert, Radio, TrendingUp
 
 import type { MinutesProjectionPayload, WinProjectionPayload, WinProjectionScheduledGame } from "./types";
 import { teamLogoUrl } from "./teamLogos";
+import { MarketPerformanceReport } from "./MarketPerformanceReport";
 
 type MarketLine = {
   provider: string;
@@ -200,71 +201,6 @@ type DailyRecord = {
   atsPushes: number;
 };
 
-type ProbabilityScore = {
-  accuracy: number | null;
-  brier: number | null;
-};
-
-type AtsEdgeBucket = {
-  key: "under_2" | "2_to_under_4" | "4_plus";
-  label: string;
-  minimum_edge: number;
-  maximum_edge: number | null;
-  n: number;
-  wins: number;
-  losses: number;
-  pushes: number;
-  cover_rate: number | null;
-  units_at_minus_110: number;
-};
-
-type PerformanceWindow = {
-  key: string;
-  label: string;
-  start_date: string | null;
-  end_date: string;
-  games: number;
-  market_sources?: {
-    draftkings: number;
-    market_consensus: number;
-  };
-  probability: {
-    n: number;
-    gestalt: ProbabilityScore & { n: number };
-    market_consensus: ProbabilityScore & { n: number };
-    polymarket: ProbabilityScore & { n: number };
-    actual_minutes: ProbabilityScore & { n: number };
-  };
-  spread: {
-    n: number;
-    gestalt_mae: number | null;
-    market_consensus_mae: number | null;
-    gestalt_advantage: number | null;
-    actual_minutes_n: number;
-    actual_minutes_mae: number | null;
-  };
-  ats: {
-    n: number;
-    wins: number;
-    losses: number;
-    pushes: number;
-    cover_rate: number | null;
-    units_at_minus_110: number;
-    edge_buckets?: AtsEdgeBucket[];
-  };
-};
-
-type SchedulePerformance = {
-  season: string;
-  as_of: string | null;
-  updated_at: string | null;
-  source: string;
-  model_track?: string | null;
-  evaluation_cell?: string | null;
-  replay_through_date?: string | null;
-  windows: PerformanceWindow[];
-};
-
 function dateKey(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -311,11 +247,6 @@ function shortDay(value: string) {
 function shortMonth(value: string) {
   return new Intl.DateTimeFormat("en-US", { month: "short" }).format(parseDate(value));
 }
-
-function shortMonthDay(value: string) {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(parseDate(value));
-}
-
 
 
 function formatSpread(value: number) {
@@ -585,17 +516,8 @@ function gameCountLabel(count: number) {
   return `${count} ${count === 1 ? "game" : "games"}`;
 }
 
-function metricPercent(value: number | null) {
-  return value === null ? "—" : `${(value * 100).toFixed(1)}%`;
-}
 
-function metricNumber(value: number | null, digits = 3) {
-  return value === null ? "—" : value.toFixed(digits).replace(/^0/, "");
-}
 
-function metricSigned(value: number | null, suffix = "") {
-  return value === null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(1)}${suffix}`;
-}
 
 function bookmakerTooltip(line: BookmakerLineDetail | undefined, awayTeam: string, homeTeam: string, fallbackLabel: string) {
   if (!line) return fallbackLabel;
@@ -630,65 +552,6 @@ function BookmakerAvatars({ market, awayTeam, homeTeam }: { market?: MarketLine 
   </div>;
 }
 
-function atsRecord(bucket: AtsEdgeBucket) {
-  return `${bucket.wins}-${bucket.losses}${bucket.pushes ? `-${bucket.pushes}` : ""}`;
-}
-
-function PerformanceSummary({ window, asOf, modelTrack }: { window: PerformanceWindow; asOf: string | null; modelTrack?: string | null }) {
-  const brierScores = [
-    window.probability.gestalt.brier,
-    window.probability.market_consensus.brier,
-    window.probability.polymarket.brier,
-  ].filter((value): value is number => value !== null);
-  const bestBrier = brierScores.length ? Math.min(...brierScores) : null;
-  const brierClass = (value: number | null) => value !== null && value === bestBrier ? "best" : "";
-  const advantage = window.spread.gestalt_advantage;
-  const ats = window.ats;
-  const edgeBuckets = ats.edge_buckets ?? [];
-  const record = `${ats.wins}-${ats.losses}${ats.pushes ? `-${ats.pushes}` : ""}`;
-  const draftKingsGames = window.market_sources?.draftkings ?? 0;
-  const consensusGames = window.market_sources?.market_consensus ?? 0;
-  return <aside className="schedule-performance-card" aria-labelledby="schedule-performance-title">
-    <div className="schedule-performance-card-heading">
-      <div><span>Model check · {window.label}</span><strong id="schedule-performance-title">How we’re doing</strong></div>
-      <small>{modelTrack === "updated_ratings_updated_minutes" ? "Updated model replay" : window.games < 30 ? "Early sample" : "Published model"}</small>
-    </div>
-    <div className="schedule-performance-section">
-      <div className="schedule-performance-label"><span>{window.games} finals{asOf ? ` · through ${shortMonthDay(asOf)}` : ""}</span><small>Available frozen observations</small></div>
-      <div className="schedule-performance-columns schedule-performance-columns-header"><span></span><span>Gestalt<small>n={window.probability.gestalt.n}</small></span><span>Market*<small>n={window.probability.market_consensus.n}</small></span><span>Poly<small>n={window.probability.polymarket.n}</small></span><span className="retrospective">Actual mins†<small>n={window.probability.actual_minutes.n}</small></span></div>
-      <div className="schedule-performance-columns"><span>Accuracy</span><strong>{metricPercent(window.probability.gestalt.accuracy)}</strong><strong>{metricPercent(window.probability.market_consensus.accuracy)}</strong><strong>{metricPercent(window.probability.polymarket.accuracy)}</strong><strong className="retrospective">{metricPercent(window.probability.actual_minutes.accuracy)}</strong></div>
-      <div className="schedule-performance-columns"><span>Brier ↓</span><strong className={brierClass(window.probability.gestalt.brier)}>{metricNumber(window.probability.gestalt.brier)}</strong><strong className={brierClass(window.probability.market_consensus.brier)}>{metricNumber(window.probability.market_consensus.brier)}</strong><strong className={brierClass(window.probability.polymarket.brier)}>{metricNumber(window.probability.polymarket.brier)}</strong><strong className="retrospective">{metricNumber(window.probability.actual_minutes.brier)}</strong></div>
-    </div>
-    <div className="schedule-performance-section schedule-performance-bottom">
-      <div>
-        <span>Margin MAE</span>
-        <strong>{metricNumber(window.spread.gestalt_mae, 1)} <small>pts</small></strong>
-        <small>Market {metricNumber(window.spread.market_consensus_mae, 1)} · actual mins {metricNumber(window.spread.actual_minutes_mae, 1)}</small>
-      </div>
-      <div>
-        <span>vs market</span>
-        <strong className={advantage !== null && advantage >= 0 ? "positive" : "negative"}>{metricSigned(advantage, " pts")}</strong>
-        <small>Positive is better</small>
-      </div>
-      <div>
-        <span>ATS</span>
-        <strong>{record}</strong>
-        <small>{metricPercent(ats.cover_rate)} · {metricSigned(ats.units_at_minus_110, "u")} @ −110</small>
-      </div>
-    </div>
-    {edgeBuckets.length > 0 && <div className="schedule-performance-section schedule-performance-edge-buckets">
-      <span className="schedule-performance-edge-title">ATS by frozen model edge</span>
-      <div className="schedule-performance-edge-grid">
-        {edgeBuckets.map((bucket) => <div key={bucket.key}>
-          <span>{bucket.label}</span>
-          <strong>{atsRecord(bucket)}</strong>
-          <small>{metricPercent(bucket.cover_rate)} · n={bucket.n}</small>
-        </div>)}
-      </div>
-    </div>}
-    <p className="schedule-performance-footnote">{modelTrack === "updated_ratings_updated_minutes" ? "Gestalt uses the strict-forward updated-ratings + updated-minutes replay; every prediction uses only evidence available before that game. Original published forecasts remain archived separately. " : "Probability metrics use every immutable observation available for each source; "}Sample sizes are shown by column. * Market uses DraftKings for earlier games (n={draftKingsGames}) and multi-book consensus once available (n={consensusGames}). † Actual mins is a postgame hindsight diagnostic, not a pregame forecast. Lower Brier and margin MAE are better. ATS units assume −110.</p>
-  </aside>;
-}
 
 function ScheduleGameCard({ game, archived }: { game: WinProjectionScheduledGame; forecast: WinProjectionPayload; archived?: ArchivedGame }) {
   const pregame = archived?.pregame ?? archived;
@@ -848,7 +711,6 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
   const [forecast, setForecast] = useState<WinProjectionPayload | null>(null);
   const [scheduleDay, setScheduleDay] = useState<ScheduleDay | null>(null);
   const [dateRecords, setDateRecords] = useState<Record<string, DailyRecord>>({});
-  const [performance, setPerformance] = useState<SchedulePerformance | null>(null);
   const [selectedDate, setSelectedDate] = useState(
     isDateKey(initialDate) ? initialDate : dateKey(new Date()),
   );
@@ -879,17 +741,15 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
         const payload = await response.json() as {
           day: ScheduleDay;
           calendar: Record<string, ScheduleDay>;
-          performance: SchedulePerformance;
           forecast: MinutesProjectionPayload;
         };
         if (!response.ok || !payload.forecast.win_projection) {
           throw new Error("The selected schedule release is unavailable. No substitute projections are being shown.");
         }
         if (controller.signal.aborted) return;
-        // One response and one observation snapshot supply every part of the page.
+        // Legacy game cards remain separate from the migrated market report.
         setForecast(payload.forecast.win_projection);
         setScheduleDay(payload.day);
-        setPerformance(payload.performance);
         setDateRecords(Object.fromEntries(Object.entries(payload.calendar).flatMap(([date, day]) => {
           const record = dailyRecord(day);
           return record ? [[date, record]] : [];
@@ -929,7 +789,6 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
     });
   }, [archivedGames, forecast, selectedDate, teamFilter]);
   const teams = forecast?.teams.map((team) => team.team).sort() ?? [];
-  const seasonPerformance = performance?.windows.find((window) => window.key === "season") ?? null;
 
   return (
     <section className="schedule-page">
@@ -939,7 +798,7 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
           <h1>The slate.</h1>
           <p>Every game, our pregame projection, and the market on one timeline. Move backward to audit results or forward to scout the week.</p>
         </div>
-        {seasonPerformance ? <PerformanceSummary window={seasonPerformance} asOf={performance?.as_of ?? null} modelTrack={performance?.model_track} /> : null}
+        <MarketPerformanceReport />
       </div>
 
       <div className="schedule-toolbar">
