@@ -2,7 +2,7 @@
 from datetime import UTC, date, datetime, timedelta
 
 from dagster import (
-    AssetDep, AssetExecutionContext, AssetKey, BackfillPolicy, Failure,
+    AssetDep, AssetExecutionContext, AssetKey, BackfillPolicy, Failure, Field,
     MaterializeResult, MetadataValue, TimeWindowPartitionMapping, asset,
 )
 
@@ -38,6 +38,7 @@ def _report_summary(archive: MinutesArchive, allocation: dict) -> dict | None:
 
 @asset(
     group_name="predictions", partitions_def=game_prediction_dates,
+    config_schema={"allow_historical_correction": Field(bool, default_value=False, is_required=False)},
     backfill_policy=BackfillPolicy.multi_run(max_partitions_per_run=1),
     deps=[
         AssetDep(AssetKey("game_minutes")),
@@ -57,11 +58,14 @@ def game_predictions(
     now = datetime.now(UTC)
     today = now.astimezone(PACIFIC).date()
     historical = day < today
+    allow_correction = (context.op_config or {}).get("allow_historical_correction", False)
     archive = game_prediction_archive
     inputs, outputs, frozen, missing_started, warnings = {}, {}, [], [], []
     current_gid = None
     metadata = {"game_date_pacific": str(day), "model_version": archive.model_version}
     try:
+        if allow_correction and not historical:
+            raise PredictionError("Historical correction requires a past Pacific date partition.")
         if day > today+timedelta(days=1):
             raise PredictionError("Forecast date lies beyond tomorrow's report window.")
         if (len({archive.season, minutes_archive.season, ratings_archive.season, nba_schedule.season}) != 1
@@ -77,7 +81,7 @@ def game_predictions(
             current_gid = game["game_id"]
             selected, etag = archive.selection(str(day), current_gid)
             accepted = archive.load(selected) if selected else None
-            if accepted and accepted["purpose"] == "pregame_projection" and (historical or game["game_time_utc"] <= now):
+            if accepted and accepted["purpose"] == "pregame_projection" and not allow_correction and (historical or game["game_time_utc"] <= now):
                 frozen.append(current_gid)
             elif not historical and game["game_time_utc"] <= now:
                 missing_started.append(current_gid)
@@ -147,7 +151,7 @@ def game_predictions(
                                 details={"player_id": player["player_id"], "name": player["name"]})
                             context.log.warning(message)
                             warnings.append(warning)
-                result = archive.save(record, expected_etag=etag)
+                result = archive.save(record, expected_etag=etag, allow_historical_correction=allow_correction)
                 if result["frozen"]:
                     frozen.append(current_gid)
                 else:
@@ -155,6 +159,7 @@ def game_predictions(
         metadata.update({
             "game_count": len(games), "predicted_game_count": len(outputs),
             "projection_mode": "historical_replay" if historical else "pregame_projection",
+            "allow_historical_correction": allow_correction,
             "predictions": MetadataValue.json(outputs), "frozen_game_ids": MetadataValue.json(frozen),
             "unprojected_started_game_ids": MetadataValue.json(missing_started),
             "warnings": MetadataValue.json(warnings),

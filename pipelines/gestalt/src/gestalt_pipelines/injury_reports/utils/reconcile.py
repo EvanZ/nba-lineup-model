@@ -4,7 +4,7 @@ import re
 import unicodedata
 from datetime import datetime
 
-RESOLVER_VERSION = "v6"
+RESOLVER_VERSION = "v7"
 
 
 def normalize_player_name(value: str) -> str:
@@ -78,7 +78,10 @@ def reconcile_games(
                     raise ValueError(f"Multiple injury rows match player {player_id} in game {game['game_id']}.")
                 players[player_id] = source
 
-            submission_status = submitted.get(tricode, {}).get("status", "missing")
+            # A listed matchup omits teams with no reported injuries. Only an
+            # explicit NOT YET SUBMITTED entry makes that team's report pending.
+            default_submission = "submitted" if eligible else "missing"
+            submission_status = submitted.get(tricode, {}).get("status", default_submission)
             if submission_status not in {"submitted", "not_yet_submitted", "missing"}:
                 raise ValueError(f"Unsupported submission status for {tricode} in {report_key}.")
             teams[str(team_id)] = {

@@ -384,20 +384,23 @@ class MinutesArchive(ConfigurableResource):
             raise MinutesError("Invalid accepted game-minutes pointer.")
         return pointer,response["ETag"]
 
-    def save_game(self, record: dict, *, expected_etag: str | None, roster_archive) -> dict:
+    def save_game(self, record: dict, *, expected_etag: str | None, roster_archive,
+                  allow_historical_correction: bool = False) -> dict:
         validate_game_projection(record,self.season,self.projection_version)
         day,gid = record["game_date_pacific"],record["game_id"]
         start = datetime.fromisoformat(record["scheduled_start_utc"])
         if start.tzinfo is None:
             raise MinutesError("Game projection tipoff must be timezone-aware.")
         historical = record["purpose"] == "historical_replay"
+        if allow_historical_correction and (not historical or date.fromisoformat(day) >= datetime.now(UTC).astimezone(PACIFIC).date()):
+            raise MinutesError("Historical correction requires a replay for a past Pacific date.")
         if not historical and datetime.now(UTC) >= start:
             return {"frozen":True}
         selected,etag = self.game_selection(day,gid)
         if historical and selected is not None:
             accepted = self.read_reference(selected,self.game_prefix)
             validate_game_projection(accepted,self.season,self.projection_version)
-            if accepted["purpose"] == "pregame_projection":
+            if accepted["purpose"] == "pregame_projection" and not allow_historical_correction:
                 return {"frozen":True}
         if etag != expected_etag:
             raise MinutesError("Game projection selection changed during this run.")

@@ -164,3 +164,35 @@ def test_tomorrow_uses_latest_completed_state_available_today(job, archive, data
     store, _ = archive
     selected, _ = store.selection(target, data["game"]["game_id"])
     assert store.load(selected)["ratings_effective_date_pacific"] == "2026-10-21"
+
+
+def test_explicit_historical_prediction_correction_preserves_original_and_cutoffs(job,archive,data,clock):
+    executable,_ = job
+    store,s3 = archive
+    with DagsterInstance.ephemeral() as instance:
+        assert executable.execute_in_process(partition_key=DAY,instance=instance).success
+        original,_ = store.selection(DAY,data["game"]["game_id"])
+        original_key = original["uri"].removeprefix("s3://nba-gestalt-data/")
+        original_bytes = s3.objects[original_key]
+        clock.value += timedelta(days=2)
+        data["inputs"]["game_minutes"]["sha256"] = "e"*64
+        assert executable.execute_in_process(partition_key=DAY,instance=instance).success
+        assert store.selection(DAY,data["game"]["game_id"])[0] == original
+        config = {"ops":{"game_predictions":{"config":{"allow_historical_correction":True}}}}
+        assert executable.execute_in_process(partition_key=DAY,instance=instance,run_config=config).success
+    corrected,_ = store.selection(DAY,data["game"]["game_id"])
+    assert corrected["uri"] != original["uri"]
+    assert s3.objects[original_key] == original_bytes
+    output = store.load(corrected)
+    assert output["purpose"] == "historical_replay"
+    assert output["ratings_effective_date_pacific"] == DAY
+    assert output["inputs"]["player_ratings"] == data["inputs"]["player_ratings"]
+    assert output["inputs"]["game_minutes"] == data["inputs"]["game_minutes"]
+
+
+def test_historical_correction_cannot_override_live_predictions(job,archive,data,clock):
+    executable,_ = job
+    config = {"ops":{"game_predictions":{"config":{"allow_historical_correction":True}}}}
+    with DagsterInstance.ephemeral() as instance:
+        assert not executable.execute_in_process(partition_key=DAY,instance=instance,run_config=config,raise_on_error=False).success
+    assert not any(k.endswith("latest.json") for k in archive[1].objects)

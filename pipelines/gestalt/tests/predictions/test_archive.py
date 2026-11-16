@@ -76,3 +76,20 @@ def test_conditional_s3_write_cannot_overwrite_competing_publication(archive, re
     with pytest.raises(ClientError):
         store.save(record, expected_etag=None)
     assert not any(k.endswith("latest.json") for k in s3.objects)
+
+
+def test_correction_still_rejects_stale_writer_and_nonhistorical_date(archive,record,clock):
+    store,s3 = archive
+    store.save(record,expected_etag=None)
+    _,etag = store.selection(record["game_date_pacific"],record["game_id"])
+    original = dict(s3.objects)
+    record["purpose"] = "historical_replay"
+    with pytest.raises(PredictionError,match="past Pacific date"):
+        store.save(record,expected_etag=etag,allow_historical_correction=True)
+    clock.value += timedelta(days=2)
+    with pytest.raises(PredictionError,match="Another run"):
+        store.save(record,expected_etag=None,allow_historical_correction=True)
+    record["purpose"] = "pregame_projection"
+    with pytest.raises(PredictionError,match="past Pacific date"):
+        store.save(record,expected_etag=etag,allow_historical_correction=True)
+    assert s3.objects == original

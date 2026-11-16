@@ -747,3 +747,30 @@ def test_extraction_failure_recovery_keeps_the_exact_pdf(capture, monkeypatch, u
     assert recovery["reported_game_dates"] == ["2026-11-07"]
     version = "v3" if upgrade_parser else "v2"
     assert f"/parser_version={version}/report.json" in recovery["artifact_path"]
+
+
+@pytest.mark.parametrize("page_count", [9, 10, 12])
+def test_numbered_page_footers_preserve_team_across_pages(page_count):
+    pages = []
+    for number in range(1, page_count + 1):
+        header = "" if number > 1 else """
+            BT 1 0 0 1 20 100 Tm /F1 10 Tf (11/15/2026) Tj ET
+            BT 1 0 0 1 200 100 Tm /F1 10 Tf (LAL@PHX) Tj ET
+            BT 1 0 0 1 265 100 Tm /F1 10 Tf (Los Angeles Lakers) Tj ET
+        """
+        # Actual NBA footer positions shift left when the total reaches 10 pages.
+        page_x, number_x = (398.534, 420.433) if page_count < 10 else (395.999, 417.899)
+        pages.append((header + f"""
+            BT 1 0 0 1 425 100 Tm /F1 10 Tf (Player{number}, Example) Tj ET
+            BT 1 0 0 1 586 100 Tm /F1 10 Tf (Available) Tj ET
+            BT 1 0 0 1 667 100 Tm /F1 10 Tf (Test injury reason) Tj ET
+            BT 1 0 0 1 {page_x} 550 Tm /F1 10 Tf (Page) Tj ET
+            BT 1 0 0 1 {number_x} 550 Tm /F1 10 Tf ({number}) Tj ET
+            BT 1 0 0 1 427.762 550 Tm /F1 10 Tf (of) Tj ET
+            BT 1 0 0 1 438.348 550 Tm /F1 10 Tf ({page_count}) Tj ET
+        """).encode("ascii"))
+    report = parse_pdf(_injury_pdf(*pages))
+    assert len(report["players"]) == page_count
+    assert all(row["team"] == "LAL" and row["matchup"] == "LAL@PHX" for row in report["players"])
+    assert all(row["reason"] == "Test injury reason" for row in report["players"])
+    assert set(report["game_team_reports"]["2026-11-15|LAL@PHX"]) == {"LAL"}

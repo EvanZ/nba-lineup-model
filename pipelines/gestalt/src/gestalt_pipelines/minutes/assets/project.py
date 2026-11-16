@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from dagster import (
     AllPartitionMapping, AssetDep, AssetExecutionContext, AssetKey, Failure,
-    BackfillPolicy, TimeWindowPartitionMapping, MaterializeResult, MetadataValue, asset,
+    BackfillPolicy, Field, TimeWindowPartitionMapping, MaterializeResult, MetadataValue, asset,
 )
 
 from ...box_scores.resources import NBABoxScoreArchive
@@ -18,6 +18,7 @@ from ..utils import MinutesError, build_game_projection, implementation_identity
 
 @asset(
     group_name="minutes", partitions_def=game_minutes_dates,
+    config_schema={"allow_historical_correction": Field(bool, default_value=False, is_required=False)},
     backfill_policy=BackfillPolicy.multi_run(max_partitions_per_run=1),
     deps=[
         AssetDep(AssetKey("player_minutes"),partition_mapping=TimeWindowPartitionMapping(
@@ -39,6 +40,7 @@ def game_minutes(
     now = datetime.now(UTC)
     today = now.astimezone(PACIFIC).date()
     archive = minutes_archive
+    allow_correction = (context.op_config or {}).get("allow_historical_correction", False)
     inputs = {}
     current_gid = None
     metadata = {"game_date_pacific":str(day),"model_version":archive.projection_version}
@@ -46,6 +48,8 @@ def game_minutes(
         if day > today+timedelta(days=1):
             raise MinutesError("Projection date lies beyond the injury-report window.")
         historical = day < today
+        if allow_correction and not historical:
+            raise MinutesError("Historical correction requires a past Pacific date partition.")
         if archive.season != nba_schedule.season or archive.bucket != nba_roster_archive.bucket:
             raise MinutesError("Projection resources use different seasons or data buckets.")
         games, schedule = nba_schedule.games_for_date(day,allow_empty=True)
@@ -56,7 +60,7 @@ def game_minutes(
                 if selected is not None:
                     accepted = archive.read_reference(selected,archive.game_prefix)
                     validate_game_projection(accepted,archive.season,archive.projection_version)
-                    if accepted["purpose"] == "pregame_projection":
+                    if accepted["purpose"] == "pregame_projection" and not allow_correction:
                         frozen.append(g["game_id"])
                         continue
                 upcoming.append(g)
@@ -93,7 +97,8 @@ def game_minutes(
                 _,current_schedule = nba_schedule.load()
                 if current_schedule != schedule:
                     raise MinutesError("The schedule selection changed during projection.")
-                result = archive.save_game(record,expected_etag=etag,roster_archive=nba_roster_archive)
+                result = archive.save_game(record,expected_etag=etag,roster_archive=nba_roster_archive,
+                    allow_historical_correction=allow_correction)
                 if result["frozen"]:
                     frozen.append(current_gid)
                 else:
@@ -101,6 +106,7 @@ def game_minutes(
         metadata.update({
             "game_count":len(games),"projected_game_count":len(saved),
             "projection_mode":"historical_replay" if historical else "pregame_projection",
+            "allow_historical_correction":allow_correction,
             "projections":MetadataValue.json(saved),
             "frozen_game_ids":MetadataValue.json(frozen),
             "unprojected_started_game_ids":MetadataValue.json(missing_started),"inputs":MetadataValue.json(inputs),

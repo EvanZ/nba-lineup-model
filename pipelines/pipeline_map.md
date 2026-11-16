@@ -320,6 +320,12 @@ Reconciliation selects a report separately for each game. Its original publicati
 
 Each extraction selector takes one input. Failures and recoveries use the same season-scoped S3 error folder. The occurrence date is Pacific. The JSON carries the exact timestamp, run ID, and input references. A recovery links to its original failure.
 
+### Approved corrections to historical game projections
+
+Normal runs preserve accepted pregame projections after tipoff. For an explicitly approved correction to a past Pacific date, set `allow_historical_correction: true` under `ops.game_minutes.config` for `project_game_minutes`, then under `ops.game_predictions.config` for `predict_game_margins`. The option defaults to false and is rejected for today or future dates. It changes publication permission only: injury and roster tipoff cutoffs and the D−1 learned-state selection stay unchanged. New immutable files are saved and `latest.json` advances; original files remain intact. Corrections are labeled `historical_replay`.
+
+After both jobs succeed, run `predict_game_margins_actual_minutes`, then `evaluate_market_performance` for the same game-date partition so their recorded input references follow the corrected selections. These last two jobs need no correction flag.
+
 ## S3 locations
 
 All keys below are in s3://nba-gestalt-data. The publication date is Eastern, the game date and error occurrence date are Pacific, and `published_at` in an object key is UTC.

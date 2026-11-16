@@ -87,6 +87,17 @@ def parse_pdf(pdf: bytes) -> dict[str, object]:
         for y, x, text in chunks:
             rows.setdefault(y, []).append((x, text))
         ordered_rows = [(y, sorted(parts)) for y, parts in sorted(rows.items())]
+        # A centered page footer can overlap data columns as page counts grow.
+        # Remove the complete footer before interpreting any columns or reasons.
+        ordered_rows = [
+            (y, parts)
+            for y, parts in ordered_rows
+            if not re.fullmatch(
+                r"Page\s+\d+\s+of\s+\d+",
+                " ".join(text for _x, text in parts),
+                flags=re.IGNORECASE,
+            )
+        ]
         player_row_ys: list[float] = []
         for y, ordered_parts in ordered_rows:
             status = next(

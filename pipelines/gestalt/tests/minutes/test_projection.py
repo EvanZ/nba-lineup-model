@@ -338,3 +338,49 @@ def test_legacy_pregame_pointer_without_purpose_remains_frozen(projection_job):
     assert objects[key]==before
     selected,_=a.game_selection(str(DAY),data['game']['game_id'])
     assert a.read_reference(selected,a.game_prefix)['purpose']=='pregame_projection'
+
+
+def test_explicit_historical_correction_updates_selection_and_retains_original(projection_job):
+    job,a,objects,_,data,_,save = projection_job
+    gid = data["game"]["game_id"]
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    original,_ = a.game_selection(str(DAY),gid)
+    original_key = original["uri"].removeprefix("s3://nba-gestalt-data/")
+    original_bytes = objects[original_key]
+    roster_ref = a._roster_ref(str(FIRST))
+    roster = json.loads(objects[roster_ref["uri"].removeprefix("s3://nba-gestalt-data/")])
+    roster["game_date_pacific"] = str(DAY)
+    NBARosterArchive().publish(roster,expected_etag=None)
+    injuries = deepcopy(data["injuries"])
+    team = injuries["games"][gid]["teams"][str(HOME)]
+    team["submission_status"] = "submitted"
+    team["players"] = {}
+    save(injuries)
+    Clock.value = NOW+timedelta(days=2)
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    assert a.game_selection(str(DAY),gid)[0] == original
+    config = {"ops":{"game_minutes":{"config":{"allow_historical_correction":True}}}}
+    assert job.execute_in_process(partition_key=str(DAY),run_config=config).success
+    corrected,etag = a.game_selection(str(DAY),gid)
+    assert corrected["uri"] != original["uri"]
+    assert objects[original_key] == original_bytes
+    record = a.read_reference(corrected,a.game_prefix)
+    assert record["purpose"] == "historical_replay"
+    assert record["baseline_through_date"] == str(FIRST)
+    assert all(p["injury_status"] == "Available" for p in record["teams"][str(HOME)]["players"])
+    with pytest.raises(MinutesError,match="selection changed"):
+        a.save_game(record,expected_etag=None,roster_archive=NBARosterArchive(),allow_historical_correction=True)
+
+
+def test_historical_correction_cannot_override_live_minutes(projection_job):
+    job,a,objects,_,data,_,_ = projection_job
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    selected,etag = a.game_selection(str(DAY),data["game"]["game_id"])
+    original = dict(objects)
+    config = {"ops":{"game_minutes":{"config":{"allow_historical_correction":True}}}}
+    assert not job.execute_in_process(partition_key=str(DAY),run_config=config,raise_on_error=False).success
+    record = a.read_reference(selected,a.game_prefix)
+    record["purpose"] = "historical_replay"
+    with pytest.raises(MinutesError,match="past Pacific date"):
+        a.save_game(record,expected_etag=etag,roster_archive=NBARosterArchive(),allow_historical_correction=True)
+    assert all(objects[k] == v for k,v in original.items())

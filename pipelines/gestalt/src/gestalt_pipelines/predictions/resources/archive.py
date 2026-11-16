@@ -74,12 +74,14 @@ class GamePredictionArchive(ConfigurableResource):
             raise PredictionError("Selected prediction has a different game identity.")
         return record
 
-    def save(self, record: dict, *, expected_etag: str | None) -> dict:
+    def save(self, record: dict, *, expected_etag: str | None, allow_historical_correction: bool = False) -> dict:
         validate_prediction(record, self.season, self.model_version)
         day, gid = record["game_date_pacific"], record["game_id"]
+        if allow_historical_correction and (record["purpose"] != "historical_replay" or date.fromisoformat(day) >= datetime.now(UTC).astimezone(PACIFIC).date()):
+            raise PredictionError("Historical correction requires a replay for a past Pacific date.")
         selected, etag = self.selection(day, gid)
         accepted = self.load(selected) if selected else None
-        if accepted and accepted["purpose"] == "pregame_projection" and (
+        if accepted and accepted["purpose"] == "pregame_projection" and not allow_historical_correction and (
                 record["purpose"] == "historical_replay"
                 or datetime.now(UTC) >= datetime.fromisoformat(accepted["scheduled_start_utc"])):
             return {"frozen": True}

@@ -68,6 +68,49 @@ def test_reconcile_applies_game_cutoffs_and_keeps_unresolved_names():
     assert all(row["pdf_uri"] == report["pdf_uri"] for row in away["unresolved_players"])
 
 
+@pytest.mark.parametrize("team_entry, expected", [
+    (None, "submitted"),
+    ({"status": "submitted"}, "submitted"),
+    ({"status": "not_yet_submitted"}, "not_yet_submitted"),
+])
+def test_listed_matchup_omitted_team_has_no_reported_injuries(team_entry, expected):
+    teams = {"BBB": {"status": "submitted"}}
+    if team_entry is not None:
+        teams["AAA"] = team_entry
+    report = {
+        "published_at": "2026-11-08T17:45:00Z",
+        "pdf_uri": "s3://source/report.pdf",
+        "game_team_reports": {"2026-11-08|AAA@BBB": teams},
+        "players": [{
+            "game_date": "2026-11-08", "matchup": "AAA@BBB", "team": "BBB",
+            "player_name": "Opponent Player", "status": "Out", "reason": "Injury",
+        }],
+    }
+    result = reconcile_games([EARLY_GAME], {1: {10: "Healthy Player"}, 2: {20: "Opponent Player"}}, report)["early"]
+    omitted = result["teams"]["1"]
+    assert result["report_used"]
+    assert omitted["submission_status"] == expected
+    assert omitted["players"] == {}
+    assert omitted["complete"] == (expected == "submitted")
+    assert result["complete"] == (expected == "submitted")
+    assert result["teams"]["2"]["players"]["20"]["status"] == "Out"
+
+
+@pytest.mark.parametrize("kind", ["no_report", "absent_matchup", "at_tipoff"])
+def test_omitted_team_rule_requires_matchup_and_pregame_report(kind):
+    report = {
+        "published_at": "2026-11-08T18:00:00Z" if kind == "at_tipoff" else "2026-11-08T17:45:00Z",
+        "pdf_uri": "s3://source/report.pdf",
+        "game_team_reports": {} if kind == "absent_matchup" else {"2026-11-08|AAA@BBB": {}},
+        "players": [],
+    }
+    result = reconcile_games([EARLY_GAME], {1: {10: "First Player"}, 2: {20: "Second Player"}},
+                             None if kind == "no_report" else report)["early"]
+    assert not result["report_used"]
+    assert not result["complete"]
+    assert all(team["submission_status"] == "missing" for team in result["teams"].values())
+
+
 def test_select_extractions_uses_latest_eligible_report_per_game(monkeypatch):
     from gestalt_pipelines.injury_reports.utils import reconciliation_inputs
 
