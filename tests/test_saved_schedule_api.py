@@ -223,7 +223,7 @@ def test_saved_precision_pending_identity_and_calendar():
         )
         == 1
     )
-    assert game["market"] is None and game["availability"]["postgame_details"] == "not_migrated"
+    assert game["market"] is None and game["availability"]["postgame_details"] == "not_applicable"
 
 
 def test_missing_prediction_does_not_remove_official_game():

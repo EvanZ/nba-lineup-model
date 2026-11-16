@@ -1321,6 +1321,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-games { display: grid; }
 .schedule-game-card { display: grid; grid-template-columns: minmax(230px, 1.25fr) minmax(220px, 1fr) minmax(190px, 0.8fr) 116px; align-items: stretch; border-bottom: 1px solid #d9d6ce; background: rgb(255 254 250 / 0.32); }
 .schedule-game-card:hover { background: #fffefa; }
+.schedule-game-card > p { grid-column: 1 / -1; margin: 0; padding: 8px 12px; }
 .schedule-game-context { grid-column: 1 / -1; min-height: 31px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid #e2dfd7; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .schedule-game-context > span + span::before { margin-right: 10px; color: #b5bab5; content: "/"; }
 .schedule-game-time { color: #17201c; }

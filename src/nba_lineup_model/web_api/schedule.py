@@ -130,6 +130,14 @@ class ScheduleReader:
                     "game_date": str(start.astimezone(PACIFIC).date() if start else reported_day),
                     "home_team": home["teamTricode"],
                     "away_team": away["teamTricode"],
+                    "home_team_name": (
+                        home.get("teamCity", "") + " " + home.get("teamName", "")
+                    ).strip()
+                    or None,
+                    "away_team_name": (
+                        away.get("teamCity", "") + " " + away.get("teamName", "")
+                    ).strip()
+                    or None,
                     "home_team_id": int(home["teamId"]),
                     "away_team_id": int(away["teamId"]),
                     "broadcasts": broadcasts,
@@ -198,14 +206,38 @@ class ScheduleReader:
         selected = max(candidates, key=lambda item: (item["LastModified"], item["Key"]))
         key = selected["Key"]
         sha = key[len(root) : -5]
+        game, reference = self._read_final_box(season, scheduled, key, sha)
+        return game, {**reference, "captured_at": selected["LastModified"].isoformat()}
+
+    def pinned_final_box(self, season, scheduled, reference):
+        """Verify the exact published input; never replace it with a newer capture."""
+        root = f"lake/raw/cdn/boxscore/season={season}/game_id={scheduled['game_id']}/"
+        sha, metadata_sha = reference["sha256"], reference["metadata_sha256"]
+        if not all(
+            isinstance(v, str) and re.fullmatch(r"[a-f0-9]{64}", v) for v in (sha, metadata_sha)
+        ):
+            raise ValueError("Invalid pinned final-box checksums")
+        key = root + sha + ".json"
+        if (
+            reference["uri"] != f"s3://{BUCKET}/{key}"
+            or reference["metadata_uri"] != f"s3://{BUCKET}/{root}{sha}.meta.json"
+        ):
+            raise ValueError("Pinned final-box reference escapes its season/game")
+        return self._read_final_box(season, scheduled, key, sha, metadata_sha)
+
+    def _read_final_box(self, season, scheduled, key, sha, metadata_sha=None):
         document = self.immutable(key, sha)
         game = document["game"]
         if str(game["gameId"]) != scheduled["game_id"] or str(game["gameStatus"]) != "3":
             raise ValueError("Saved NBA box score is mismatched or not final")
         self.validate_teams(game, scheduled)
         metadata_key = key[:-5] + ".meta.json"
-        raw_metadata, _ = self._get(metadata_key)
-        metadata = json.loads(raw_metadata)
+        if metadata_sha is None:
+            raw_metadata, _ = self._get(metadata_key)
+            metadata_sha = hashlib.sha256(raw_metadata).hexdigest()
+            metadata = json.loads(raw_metadata)
+        else:
+            metadata = self.immutable(metadata_key, metadata_sha)
         expected = {"season": season, "game_id": game["gameId"], "box_score_sha256": sha}
         for side in ("home", "away"):
             team = game[side + "Team"]
@@ -236,13 +268,11 @@ class ScheduleReader:
             expected[side + "_roster_sha256"] = hashlib.sha256(encoded).hexdigest()
         if metadata != expected:
             raise ValueError("Final-box sidecar differs from its saved box score")
-        archived = selected["LastModified"].isoformat()
         return game, {
             "uri": f"s3://{BUCKET}/{key}",
             "sha256": sha,
             "metadata_uri": f"s3://{BUCKET}/{metadata_key}",
-            "metadata_sha256": hashlib.sha256(raw_metadata).hexdigest(),
-            "captured_at": archived,
+            "metadata_sha256": metadata_sha,
         }
 
     def prediction(self, season, day, scheduled):
@@ -367,6 +397,9 @@ class ScheduleReader:
                 pool.map(lambda g: self.game_view(season, day, g, board, board_ref, now), slate)
             )
         games = sorted([g for g, _ in results], key=lambda g: (g["start_time"], g["game_id"]))
+        from .schedule_details import DetailsReader
+
+        DetailsReader(self, season, day, now).enrich(games)
         coverage = {
             "scheduled_game_ids": [g["game_id"] for g in games],
             "prediction_game_ids": [g["game_id"] for g in games if g["projection"] is not None],
@@ -383,6 +416,18 @@ class ScheduleReader:
             not coverage["missing_prediction_game_ids"]
             and not coverage["missing_observation_game_ids"]
         )
+        coverage["markets"] = {
+            state: [g["game_id"] for g in games if g["availability"]["market"] == state]
+            for state in ("available", "missing", "stale", "invalid")
+        }
+        coverage["grading"] = {
+            state: [g["game_id"] for g in games if g["availability"]["grading"] == state]
+            for state in ("available", "missing", "stale", "invalid", "not_applicable")
+        }
+        coverage["postgame_details"] = {
+            state: [g["game_id"] for g in games if g["availability"]["postgame_details"] == state]
+            for state in ("available", "missing", "stale", "invalid", "not_applicable")
+        }
         captures = [
             g["sources"]["observation"]["captured_at"] for g in games if g["sources"]["observation"]
         ]

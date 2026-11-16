@@ -8,6 +8,11 @@ import { MarketPerformanceReport } from "./MarketPerformanceReport";
 type MarketLine = {
   provider: string;
   provider_key?: string;
+  selection: string;
+  spread_captured_at: string | null;
+  moneyline_captured_at: string | null;
+  spread_bookmaker_count: number;
+  moneyline_bookmaker_count: number;
   bookmaker_keys?: string[];
   bookmaker_count?: number;
   bookmakers?: BookmakerLineDetail[];
@@ -47,19 +52,13 @@ const BOOKMAKER_ORDER = Object.keys(BOOKMAKER_BADGES);
 
 type PredictionMarket = {
   provider: string;
-  event_id: string;
-  market_id: string;
-  url: string;
-  captured_at: string;
-  pricing_method: string;
-  away_probability: number;
-  home_probability: number;
-  away_probability_raw: number;
-  home_probability_raw: number;
-  raw_probability_sum: number;
-  volume: number | null;
-  liquidity: number | null;
-  bid_ask_spread: number | null;
+  selection: string;
+  home_spread?: number;
+  away_spread?: number;
+  home_win_probability?: number;
+  away_win_probability?: number;
+  spreads_captured_at?: string;
+  h2h_captured_at?: string;
 };
 
 type ProjectedMinute = {
@@ -109,8 +108,13 @@ type SpreadLedger = {
 };
 
 type ActualMinute = {
-  player_id: number | null;
-  player_name: string;
+  player_id: number;
+  player_name: string | null;
+  projected_minutes: number;
+  projected_contribution: number;
+  contribution_delta: number;
+  in_baseline_prediction: boolean;
+  rating_source: string;
   actual_minutes: number;
   frozen_nail?: number | null;
   actual_contribution?: number | null;
@@ -118,6 +122,8 @@ type ActualMinute = {
 };
 
 type FinalAudit = {
+  recorded_outcome: { home_score: number; away_score: number };
+  inputs: Record<string, unknown>;
   grading: {
     model_favorite_won: boolean;
     market: { model_ats_result: "win" | "loss" | "push" } | null;
@@ -134,6 +140,8 @@ type ArchivedGame = {
   home_score: number | null;
   away_score: number | null;
   broadcasts: string[];
+  availability: { market: string; grading: string; postgame_details: string };
+  detail_errors?: Record<string, string>;
   status: { state: string; completed: boolean; description: string; detail: string | null; display_clock?: string | null; period?: number | null };
   projection: {
     model: string;
@@ -156,6 +164,7 @@ type ArchivedGame = {
   } | null;
   projected_minutes: { away: ProjectedMinute[]; home: ProjectedMinute[] } | null;
   retrospective?: {
+    recorded_outcome: { home_score: number; away_score: number };
     computed_at: string;
     method: string;
     home_margin: number;
@@ -163,7 +172,7 @@ type ArchivedGame = {
     actual_minutes: { away: ActualMinute[]; home: ActualMinute[] };
     ledger?: SpreadLedger;
   };
-  final_audit?: FinalAudit;
+  final_audit?: FinalAudit | null;
   frozen_at?: string;
   data_quality_errors?: string[];
 };
@@ -345,20 +354,20 @@ function RotationTable({
     teamLedger
     && players.some((player) => player.projected_nail != null && player.expected_contribution != null),
   );
-  const actualByPlayer = new Map((actualPlayers ?? []).map((player) => [player.player_id ?? player.player_name, player]));
+  const actualByPlayer = new Map((actualPlayers ?? []).map((player) => [player.player_id, player]));
   const predictedIds = new Set(players.map((player) => player.player_id));
   const rows = [
     ...players,
-    ...(actualPlayers ?? []).filter((player) => player.player_id === null || !predictedIds.has(player.player_id)).map((player) => ({
-      player_id: player.player_id ?? -Math.abs(player.player_name.split("").reduce((total, character) => total + character.charCodeAt(0), 0)),
+    ...(actualPlayers ?? []).filter((player) => !predictedIds.has(player.player_id)).map((player) => ({
+      player_id: player.player_id,
       player_name: player.player_name,
-      status: "Available",
-      play_probability: 1,
-      conditional_minutes: 0,
-      projected_minutes: 0,
+      status: null,
+      play_probability: null,
+      conditional_minutes: null,
+      projected_minutes: player.projected_minutes,
       projected_nail: player.frozen_nail ?? null,
-      expected_contribution: 0,
-      reason: null,
+      expected_contribution: player.projected_contribution,
+      reason: player.rating_source === "replacement" ? "Not in baseline prediction · saved replacement rating" : "Not in baseline prediction",
     })),
   ];
   const teamContributionDifference = actualTeamLedger
@@ -369,7 +378,7 @@ function RotationTable({
     ? actualTeamLedger.actual_minutes - teamLedger.projected_minutes
     : null;
   return <div className="schedule-rotation-team">
-    <h4><a href={teamHref(team)}>{team}</a> projected rotation</h4>
+    <h4><a href={teamHref(team)}>{team}</a> {actualPlayers ? "rotation: projected & actual" : "projected rotation"}</h4>
     {hasUnknownPlayers && <p className="schedule-report-pending">Unlisted availability remains unknown — team report coverage is incomplete. Listed statuses are shown below.</p>}
     <div className={`schedule-rotation-table ${hasAttribution ? "has-attribution" : ""} ${actualPlayers ? "has-actual" : ""}`}>
       {(hasAttribution || actualPlayers) && <div className="schedule-rotation-header">
@@ -379,14 +388,10 @@ function RotationTable({
         {actualPlayers && <><small>Act. min.</small><small>Act. contrib.</small><small>Δ contrib.</small><small>Δ min.</small></>}
       </div>}
       {rows.map((player) => {
-        const actual = actualByPlayer.get(player.player_id) ?? (player.player_name ? actualByPlayer.get(player.player_name) : undefined);
-        const difference = actualPlayers
-          ? (actual?.actual_minutes ?? 0) - (player.projected_minutes ?? 0)
-          : null;
-        const actualContribution = actualPlayers ? actual?.actual_contribution ?? 0 : null;
-        const contributionDifference = actualContribution != null && player.expected_contribution != null
-          ? actualContribution - player.expected_contribution
-          : null;
+        const actual = actualByPlayer.get(player.player_id);
+        const difference = actual && player.projected_minutes != null ? actual.actual_minutes - player.projected_minutes : null;
+        const actualContribution = actual?.actual_contribution ?? null;
+        const contributionDifference = actual?.contribution_delta ?? null;
         const displayedRating = player.projected_nail ?? actual?.frozen_nail;
         const availability = player.status === "Report pending"
           ? "Status unknown — team report pending"
@@ -399,7 +404,7 @@ function RotationTable({
           <strong data-label="Contribution" className={player.expected_contribution != null && player.expected_contribution < 0 ? "negative" : "positive"}>{signedValue(player.expected_contribution)}</strong>
         </>}
         {!hasAttribution && <strong data-label="Predicted">{player.projected_minutes?.toFixed(1) ?? "—"}</strong>}
-        {actualPlayers && <><strong data-label="Actual minutes">{actual?.actual_minutes.toFixed(1) ?? "0.0"}</strong><strong data-label="Actual contribution" className={actualContribution !== null && actualContribution < 0 ? "negative" : "positive"}>{signedValue(actualContribution)}</strong><strong data-label="Contribution delta" className={contributionDifference !== null && contributionDifference < 0 ? "negative" : "positive"}>{signedValue(contributionDifference)}</strong><strong data-label="Minutes delta" className={difference !== null && difference < 0 ? "negative" : "positive"}>{difference === null ? "—" : `${difference > 0 ? "+" : ""}${difference.toFixed(1)}`}</strong></>}
+        {actualPlayers && <><strong data-label="Actual minutes">{actual?.actual_minutes.toFixed(1) ?? "—"}</strong><strong data-label="Actual contribution" className={actualContribution !== null && actualContribution < 0 ? "negative" : "positive"}>{signedValue(actualContribution)}</strong><strong data-label="Contribution delta" className={contributionDifference !== null && contributionDifference < 0 ? "negative" : "positive"}>{signedValue(contributionDifference)}</strong><strong data-label="Minutes delta" className={difference !== null && difference < 0 ? "negative" : "positive"}>{difference === null ? "—" : `${difference > 0 ? "+" : ""}${difference.toFixed(1)}`}</strong></>}
       </div>;})}
       {hasAttribution && teamLedger && <div className="schedule-rotation-total">
         <span>Team total</span>
@@ -412,7 +417,12 @@ function RotationTable({
   </div>;
 }
 
-function SpreadLedgerView({ ledger, actualLedger }: { ledger: SpreadLedger; actualLedger?: SpreadLedger }) {
+function SpreadLedgerView({ ledger, actualLedger, postgame, homeWinProbability }: {
+  ledger: SpreadLedger;
+  actualLedger?: SpreadLedger;
+  postgame?: ArchivedGame["retrospective"];
+  homeWinProbability: number;
+}) {
   const awayTeam = ledger.away.team;
   const homeTeam = ledger.home.team;
   const backToBackTeams = [
@@ -428,15 +438,16 @@ function SpreadLedgerView({ ledger, actualLedger }: { ledger: SpreadLedger; actu
       <small>{ledger.assumed_possessions == null ? "Possessions unavailable" : `${ledger.assumed_possessions} possessions per game`}</small>
     </div>
     <div className="schedule-spread-ledger-rows">
-      {actualLedger && <div className="columns"><span></span><small>Projected</small><small>Actual minutes</small></div>}
+      {actualLedger && <div className="columns"><span></span><small>Projected</small><small title={postgame ? `Postgame actual-minutes counterfactual · Saved ${quoteTime(postgame.computed_at)}` : undefined}>Actual minutes</small></div>}
       <div><span><a href={teamHref(awayTeam)}>{awayTeam}</a> player contributions</span><strong>{signedValue(ledger.away.team_strength)}</strong>{actualLedger && <strong>{signedValue(actualLedger.away.team_strength)}</strong>}</div>
       <div><span><a href={teamHref(homeTeam)}>{homeTeam}</a> player contributions</span><strong>{signedValue(ledger.home.team_strength)}</strong>{actualLedger && <strong>{signedValue(actualLedger.home.team_strength)}</strong>}</div>
       <div><span>{homeTeam} minus {awayTeam}</span><strong>{signedValue(ledger.team_strength_difference)}</strong>{actualLedger && <strong>{signedValue(actualLedger.team_strength_difference)}</strong>}</div>
       <div><span>Home court</span><strong>{signedValue(ledger.home_court_adjustment)}</strong>{actualLedger && <strong>{signedValue(actualLedger.home_court_adjustment)}</strong>}</div>
       <div><span>Back-to-back adjustment<small>{backToBackNote}</small></span><strong>{signedValue(ledger.back_to_back.adjustment)}</strong>{actualLedger && <strong>{signedValue(actualLedger.back_to_back.adjustment)}</strong>}</div>
       <div className="result final"><span>Model spread</span><strong>{homeTeam} {formatSpread(ledger.fair_home_spread)}</strong>{actualLedger && <strong>{homeTeam} {formatSpread(actualLedger.fair_home_spread)}</strong>}</div>
+      {postgame && <div className="result"><span>{homeTeam} win probability</span><strong>{(homeWinProbability * 100).toFixed(1)}%</strong><strong>{(postgame.home_win_probability * 100).toFixed(1)}%</strong></div>}
     </div>
-    <p>Saved prediction ratings and minutes{actualLedger ? " · actual column uses final NBA minutes with the same frozen ratings and context" : ""}</p>
+    <p>{postgame ? "Actual-minutes column: saved postgame counterfactual." : "Saved prediction ratings and minutes."}{postgame?.recorded_outcome && <> Recorded outcome: {awayTeam} {postgame.recorded_outcome.away_score} · {homeTeam} {postgame.recorded_outcome.home_score}</>}</p>
   </section>;
 }
 
@@ -476,10 +487,44 @@ function BookmakerAvatars({ market, awayTeam, homeTeam }: { market?: MarketLine 
       const badge = BOOKMAKER_BADGES[key] ?? { short: key.slice(0, 2).toUpperCase(), label: key };
       return <span key={key} className="schedule-bookmaker-avatar" data-bookmaker={key} title={bookmakerTooltip(linesByKey.get(key), awayTeam, homeTeam, badge.label)}>{badge.short}</span>;
     })}
-    {orderedKeys.length > visibleKeys.length && <span className="schedule-bookmaker-avatar overflow" title={names.slice(visibleKeys.length).join(", ")}>+{orderedKeys.length - visibleKeys.length}</span>}
+    {orderedKeys.length > visibleKeys.length && <span className="schedule-bookmaker-avatar overflow" title={orderedKeys.slice(visibleKeys.length).map((key) => bookmakerTooltip(linesByKey.get(key), awayTeam, homeTeam, BOOKMAKER_BADGES[key]?.label ?? key)).join("\n\n")}>+{orderedKeys.length - visibleKeys.length}</span>}
   </div>;
 }
 
+
+function quoteTime(value?: string | null) {
+  if (!value) return "Unavailable";
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Los_Angeles", timeZoneName: "short" }).format(new Date(value));
+}
+
+function ScheduleMarketPanel({ game }: { game: ArchivedGame }) {
+  const market = game.market;
+  const poly = game.prediction_market;
+  const probability = market ? marketProbabilities(market) : null;
+  const percent = (value?: number | null) => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+  return <div className="schedule-market-panel">
+    <div className="schedule-market-heading">
+      <p>{market?.provider ?? "Market line"}</p>
+      <div className="schedule-market-meta">
+        <span className="schedule-market-tag" title={market ? `Spread · ${market.spread_bookmaker_count} books · ${quoteTime(market.spread_captured_at)}
+Moneyline · ${market.moneyline_bookmaker_count} books · ${quoteTime(market.moneyline_captured_at)}` : undefined}>{market?.selection ?? poly?.selection ?? "Pregame"}</span>
+        <BookmakerAvatars market={market} awayTeam={game.away_team} homeTeam={game.home_team} />
+      </div>
+    </div>
+    {market ? <>
+      <div className="schedule-market-teams">
+        <div><span>{game.away_team}</span><strong>{market.away_spread == null ? "—" : formatSpread(market.away_spread)}</strong><small>{percent(probability?.away)}</small></div>
+        <div><span>{game.home_team}</span><strong>{market.home_spread == null ? "—" : formatSpread(market.home_spread)}</strong><small>{percent(probability?.home)}</small></div>
+      </div>
+    </> : <p className="schedule-market-empty">Market data unavailable</p>}
+    {poly && <div className="schedule-polymarket-row" title={`Spread · ${quoteTime(poly.spreads_captured_at)}
+Moneyline · ${quoteTime(poly.h2h_captured_at)}`} aria-label={`Polymarket for ${game.away_team} at ${game.home_team}`}>
+      <span>Polymarket</span>
+      <small>{game.away_team} {poly.away_spread == null ? "—" : formatSpread(poly.away_spread)} · {percent(poly.away_win_probability)}</small>
+      <small>{game.home_team} {poly.home_spread == null ? "—" : formatSpread(poly.home_spread)} · {percent(poly.home_win_probability)}</small>
+    </div>}
+  </div>;
+}
 
 export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
   const archived = game;
@@ -497,11 +542,10 @@ export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
       <a className="schedule-team home" href={teamHref(game.home_team)}><img alt="" src={teamLogoUrl(game.home_team)} /><strong>{game.home_team} {archived?.home_score ?? ""}</strong></a>
     </div>
     <div className="schedule-projection-panel"><p>Forecast unavailable</p><small>No saved forecast is available for this game.</small></div>
+    <ScheduleMarketPanel game={game} />
   </article>;
   const projection = { margin: pregame.projection.home_margin, winProbability: pregame.projection.home_win_probability };
   const market = pregame.market;
-  const marketProbability = market ? marketProbabilities(market) : null;
-  const predictionMarket = pregame.prediction_market;
   const injuryReport = pregame.injury_report;
   const projectedMinutes = pregame?.projected_minutes ?? archived?.projected_minutes;
   const spreadLedger = pregame.projection.ledger;
@@ -542,11 +586,11 @@ export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
         </a>
         <span>{(archived?.broadcasts ?? []).join(" · ") || "Broadcast unavailable"}</span>
         <span className="schedule-game-status"><Radio size={11} aria-hidden="true" /> {statusLabel}</span>
-        {archived?.status.completed && finalAudit && <div className="schedule-result-badges" aria-label="Model results">
-          <span className={finalAudit.grading.model_favorite_won ? "win" : "loss"} title="Whether the model selected the winning team">
+        {archived?.status.completed && finalAudit && <div className="schedule-result-badges" aria-label="Saved model results">
+          <span className={finalAudit.grading.model_favorite_won ? "win" : "loss"} title={finalAudit.recorded_outcome ? `Saved result: ${game.away_team} ${finalAudit.recorded_outcome.away_score}, ${game.home_team} ${finalAudit.recorded_outcome.home_score}` : "Saved model winner result"}>
             Winner {finalAudit.grading.model_favorite_won ? "✓" : "✕"}
           </span>
-          <span className={atsResult ?? "unavailable"} title="Whether the model's pregame selection covered the archived spread">
+          <span className={atsResult ?? "unavailable"} title="Saved ATS result against the report’s pinned final score and pregame spread">
             {atsResult === "win" ? "ATS ✓" : atsResult === "loss" ? "ATS ✕" : atsResult === "push" ? "ATS push" : "ATS n/a"}
           </span>
         </div>}
@@ -580,26 +624,7 @@ export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
         </div>
       </div>
 
-      <div className="schedule-market-panel">
-        <div className="schedule-market-heading">
-          <p>{market?.provider ?? "Market line"}</p>
-          <div className="schedule-market-meta">
-            <span className="schedule-market-tag">{pregame ? "Pregame" : "Live"}{market?.bookmaker_count ? ` · ${market.bookmaker_count} books` : ""}</span>
-            <BookmakerAvatars market={market} awayTeam={game.away_team} homeTeam={game.home_team} />
-          </div>
-        </div>
-        {market ? <>
-          <div className="schedule-market-teams">
-            <div><span>{game.away_team}</span><strong>{market.away_spread == null ? "—" : formatSpread(market.away_spread)}</strong><small>{marketProbability ? `${(marketProbability.away * 100).toFixed(1)}%` : formatMoneyline(market.away_moneyline)}</small></div>
-            <div><span>{game.home_team}</span><strong>{market.home_spread == null ? "—" : formatSpread(market.home_spread)}</strong><small>{marketProbability ? `${(marketProbability.home * 100).toFixed(1)}%` : formatMoneyline(market.home_moneyline)}</small></div>
-          </div>
-        </> : <p className="schedule-market-empty">Market data unavailable</p>}
-        {predictionMarket && <a className="schedule-polymarket-row" href={predictionMarket.url} target="_blank" rel="noreferrer" aria-label={`Open Polymarket for ${game.away_team} at ${game.home_team}`}>
-          <span>Polymarket</span>
-          <small>{game.away_team} {(predictionMarket.away_probability * 100).toFixed(1)}%</small>
-          <small>{game.home_team} {(predictionMarket.home_probability * 100).toFixed(1)}%</small>
-        </a>}
-      </div>
+      <ScheduleMarketPanel game={game} />
 
       <div className={`schedule-edge ${modelEdge === null || Math.abs(modelEdge) < 1 ? "muted" : ""}`}>
         <TrendingUp size={15} aria-hidden="true" />
@@ -608,6 +633,8 @@ export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
       </div>
 
       {archived?.data_quality_errors?.length ? <p className="error schedule-error" role="alert">Data quality: {archived.data_quality_errors.join("; ")}</p> : null}
+      {game.detail_errors && <p className="schedule-report-warning" role="status">{Object.entries(game.detail_errors).map(([key, value]) => `${key === "market" ? "Market" : key === "grading" ? "Results" : "Postgame"}: ${value}`).join(" ")}</p>}
+      {game.status.state === "post" && !finalAudit && <p className="schedule-market-empty">Saved result grades unavailable</p>}
       {game.status.state === "post" && !retrospective && <p className="schedule-market-empty">Postgame detail unavailable</p>}
       {injuryReport && displayedMinutes && <details className="schedule-assumptions">
         <summary>
@@ -617,7 +644,7 @@ export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
         <div className="schedule-assumptions-body">
           {pendingReportTeams.length > 0 && <p className="schedule-report-warning"><strong>{pendingReportTeams.join(" & ")} report coverage is incomplete.</strong> Statuses and projected minutes are shown exactly as saved with this prediction.</p>}
           {!spreadLedger && <p className="schedule-attribution-unavailable">Saved rating attribution is unavailable.</p>}
-          {spreadLedger && <SpreadLedgerView ledger={spreadLedger} actualLedger={retrospective?.ledger} />}
+          {spreadLedger && <SpreadLedgerView ledger={spreadLedger} actualLedger={retrospective?.ledger} postgame={retrospective} homeWinProbability={pregame.projection.home_win_probability} />}
           <div className="schedule-rotations">
             <RotationTable team={game.away_team} players={displayedMinutes.away} teamLedger={spreadLedger?.away} actualTeamLedger={retrospective?.ledger?.away} actualPlayers={retrospective?.actual_minutes.away} reportStatus={injuryReport.team_reports?.[game.away_team]?.status} />
             <RotationTable team={game.home_team} players={displayedMinutes.home} teamLedger={spreadLedger?.home} actualTeamLedger={retrospective?.ledger?.home} actualPlayers={retrospective?.actual_minutes.home} reportStatus={injuryReport.team_reports?.[game.home_team]?.status} />
