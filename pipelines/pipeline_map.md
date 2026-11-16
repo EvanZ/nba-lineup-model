@@ -102,8 +102,9 @@ flowchart LR
     ratingsJSON --> predictions
     catalog --> predictions
     predictions --> predictionFiles["Per-game prediction JSON and latest.json"]
-    predictionFiles --> actualMinutesPredictions["game_predictions_actual_minutes: daily 04:30 Pacific"]
+    predictionFiles --> actualMinutesPredictions["game_predictions_actual_minutes: after final-box refresh"]
     boxArchive --> actualMinutesPredictions
+    boxScores -->|"Successful completed-date refresh"| actualMinutesPredictions
     catalog --> actualMinutesPredictions
     actualMinutesPredictions --> counterfactualFiles["Postgame counterfactual JSON and latest.json"]
     predictionFiles --> marketPerformance["market_performance_by_date"]
@@ -126,7 +127,7 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | Job | Schedule or sensor | When it requests work |
 | --- | --- | --- |
 | `capture_nba_season_schedule` | On demand | Normally once per season |
-| `predict_game_margins_actual_minutes` | `predict_game_margins_actual_minutes_schedule`, 04:30 Pacific | Yesterday's completed game date; use each saved prediction and final box-score minutes |
+| `predict_game_margins_actual_minutes` | `predict_game_margins_actual_minutes_sensor` | Same completed Pacific date after successful final-box refresh; uses the saved prediction's pregame ratings and actual minutes |
 | `evaluate_market_performance` | `evaluate_market_performance_sensor` | Same completed date after its actual-minutes counterfactual job succeeds; manual date jobs/backfills use the same asset |
 | `predict_game_margins` | `predict_game_margins_sensor` | About every minute; seed or refresh open games today/tomorrow when accepted ratings, game minutes or schedule change |
 | `initialize_player_ratings` | On demand | Prepare approved frozen initialization |
@@ -144,9 +145,9 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | `update_player_minutes` | `update_player_minutes_schedule` | 04:00 completes yesterday's learned state; requires successful same-date parser and roster runs that morning |
 | `project_game_minutes` | `project_game_minutes_sensor` | About every minute; eligible games today/tomorrow when accepted inputs differ |
 
-The existing automation and both prediction triggers are enabled in the permanent instance. The prediction sensor and 04:30 counterfactual schedule were enabled on November 14, 2026; the first overnight counterfactual run is still future. The former `minutes_ready` / `update_player_minutes_sensor` is retired; `game_minutes_ready` was renamed `project_game_minutes_sensor`. Definition defaults may be STOPPED; the table describes enabled instance state. Manual partition runs and backfills remain available alongside automation.
+The existing automation and both prediction triggers are enabled in the permanent instance. The prediction sensor and former 04:30 counterfactual schedule were enabled on November 14, 2026. On November 16 the independent counterfactual timer was replaced by the final-box-refresh success trigger. The former `minutes_ready` / `update_player_minutes_sensor` is retired; `game_minutes_ready` was renamed `project_game_minutes_sensor`. Definition defaults may be STOPPED; the table describes enabled instance state. Manual partition runs and backfills remain available alongside automation.
 
-The morning sequence is 02:45 yesterday's final box-score refresh; 03:00 yesterday's PBP → successful capture triggers same-date parsing; 03:15 yesterday's transaction check; 03:30 yesterday's final roster and today's starting roster; 04:00 yesterday's learned minutes; 04:15 yesterday's ratings/HCA; 04:30 yesterday's actual-minute counterfactuals. Both learned states are used for today's games. The counterfactual uses its saved prediction's exact ratings and final boxes, independently of that morning's new learned states. The updater fails visibly if the scheduled parser/roster prerequisites are missing, failed, still running, or stale. Repair them and re-execute the updater manually. Injury reconciliation and game allocation read their approved accepted inputs; neither requires the injury artifact and allocation roster to reference an identical roster version.
+The morning sequence is 02:45 yesterday's final box-score refresh → successful same-date actual-minutes counterfactual → market-performance report; 03:00 yesterday's PBP → successful capture triggers same-date parsing; 03:15 yesterday's transaction check; 03:30 yesterday's final roster and today's starting roster; 04:00 yesterday's learned minutes; 04:15 yesterday's ratings/HCA. Both learned states are used for today's games. The counterfactual uses its saved prediction's exact ratings and final boxes, independently of that morning's new learned states. The updater fails visibly if the scheduled parser/roster prerequisites are missing, failed, still running, or stale. Repair them and re-execute the updater manually. Injury reconciliation and game allocation read their approved accepted inputs; neither requires the injury artifact and allocation roster to reference an identical roster version.
 
 ## Season preparation
 
@@ -634,7 +635,9 @@ The JSON uses `artifact_kind=game_prediction_actual_minutes` and `purpose=postga
 
 The resource reuses immutable files, checksum/read-back verification and conditional pointer writes. An identical input fingerprint preserves the original generation time and accepted pointer. A changed final box creates another immutable counterfactual version and can advance only the separate postgame latest.json. Baseline prediction files/pointers remain unchanged. All required games are calculated before publishing new selections; source selections are checked again before publication. Repair a failed input and choose Re-execute from failure to obtain a stage-scoped recovery record; unrelated successful runs do not claim recovery.
 
-`predict_game_margins_actual_minutes_schedule` is enabled at **04:30 America/Los_Angeles for yesterday's Pacific game date**. It uses the same job as manual runs and backfills. Missed ticks older than a day are left for an explicit backfill. A missing baseline or non-final box fails visibly rather than substituting an input. Website integration remains separate work.
+`predict_game_margins_actual_minutes_sensor` monitors successful `capture_nba_box_scores` runs. It requests the same completed Pacific date only when the run materialized the full slate with `refresh_existing: true`; ordinary live polls, incomplete observations, failed refreshes and current/future dates do not trigger postgame jobs. Each successful refresh can request a counterfactual run, including an operator retry with unchanged boxes; the counterfactual itself reuses identical outputs. The existing `evaluate_market_performance_sensor` follows that success and suppresses unchanged output versions. This replaces the independent 04:30 timer and also covers later manual refreshes of older dates. The sensor reads run history, not a large S3 scan. No new S3 paths are introduced.
+
+The counterfactual uses only the ratings, HCA and fixed B2B stored in the accepted pregame prediction. Extra actual players use the prediction's exact pinned historical rating/prior inputs. It never selects the morning's updated ratings and has no dependency on `update_player_ratings`. Original forecasts remain unchanged. A missing baseline or non-final box fails visibly rather than substituting an input. Website integration remains separate work.
 
 Initial read-only validation covered complete saved slates for Oct 20 (3 games), Nov 4 (14) and Nov 13 (9), including three overtime games. Evan then accepted the real manual output; the complete season backfill and fresh S3 readback are recorded below.
 

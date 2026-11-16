@@ -122,3 +122,33 @@ def test_no_game_date_succeeds_without_writing_counterfactuals(counter_job, arch
     with DagsterInstance.ephemeral() as instance:
         assert job.execute_in_process(partition_key=DAY, instance=instance).success
     assert archive[1].objects == baseline
+
+
+@pytest.mark.parametrize("change",["unrelated_stats","score","minutes"])
+def test_later_box_refresh_uses_pregame_ratings_only(change,counter_job,archive,box,clock,record,monkeypatch):
+    job,baseline,refs,reads = counter_job
+    store,s3 = archive
+    for name in ("state_selection","selection"):
+        monkeypatch.setattr(RatingsArchive,name,lambda *a,**k:pytest.fail("Must not select newer ratings"))
+    with DagsterInstance.ephemeral() as instance:
+        assert job.execute_in_process(instance=instance,partition_key=DAY).success
+        pointer,_ = store.selection(DAY,record["game_id"],actual_minutes=True)
+        before = store.load(pointer,actual_minutes=True)
+        clock.value += timedelta(days=30)
+        refs["box"]["sha256"] = "e"*64
+        if change == "unrelated_stats":box["homeTeam"]["players"][0]["statistics"]["reboundsTotal"] = 99
+        elif change == "score":box["homeTeam"]["score"] += 2
+        else:box["homeTeam"]["players"][0]["statistics"]["minutes"] = "PT47M00.00S"
+        assert job.execute_in_process(instance=instance,partition_key=DAY).success
+    pointer,_ = store.selection(DAY,record["game_id"],actual_minutes=True)
+    after = store.load(pointer,actual_minutes=True)
+    assert all(s3.objects[k] == value for k,value in baseline.items()) and reads == []
+    assert after["inputs"]["prediction"] == before["inputs"]["prediction"]
+    assert after["inputs"]["box_score"] == refs["box"]
+    for side in ("home","away"):
+        ratings = {p["player_id"]:p["nail"] for p in record[side]["players"]}
+        assert all(p["nail"] == ratings[p["player_id"]] for p in after[side]["players"])
+    if change == "minutes":assert after["counterfactual_home_margin"] != before["counterfactual_home_margin"]
+    else:assert after["counterfactual_home_margin"] == before["counterfactual_home_margin"]
+    if change == "score":assert after["actual_home_score"] == before["actual_home_score"]+2
+    else:assert after["actual_home_score"] == before["actual_home_score"]

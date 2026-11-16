@@ -33,8 +33,7 @@ from .play_by_play.sensors import play_by_play_ready_for_stints
 from .predictions.assets import game_predictions, game_predictions_actual_minutes
 from .predictions.jobs import predict_game_margins, predict_game_margins_actual_minutes
 from .predictions.resources import GamePredictionArchive
-from .predictions.schedules import predict_game_margins_actual_minutes_schedule
-from .predictions.sensors import predict_game_margins_sensor
+from .predictions.sensors import predict_game_margins_sensor, predict_game_margins_actual_minutes_sensor
 from .ratings.assets import player_rating_priors, player_ratings
 from .ratings.jobs import initialize_player_ratings, update_player_ratings
 from .ratings.resources import RatingsArchive
@@ -68,8 +67,8 @@ defs = Definitions(
         capture_nba_season_schedule, archive_nba_market_odds, capture_nba_box_scores, capture_nba_scoreboard,
         capture_nba_transactions, capture_nba_play_by_play, parse_nba_games, build_nba_rosters,
     ],
-    schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, box_scores_morning_refresh, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning, update_player_minutes_schedule, update_player_ratings_schedule, predict_game_margins_actual_minutes_schedule],
-    sensors=[new_injury_pdf, injury_report_dates_ready, roster_transactions_ready, play_by_play_ready_for_stints, project_game_minutes_sensor, predict_game_margins_sensor, evaluate_market_performance_sensor],
+    schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, box_scores_morning_refresh, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning, update_player_minutes_schedule, update_player_ratings_schedule],
+    sensors=[new_injury_pdf, injury_report_dates_ready, roster_transactions_ready, play_by_play_ready_for_stints, project_game_minutes_sensor, predict_game_margins_sensor, predict_game_margins_actual_minutes_sensor, evaluate_market_performance_sensor],
     resources={
         "official_injury_reports": OfficialInjuryReports(),
         "injury_report_archive": InjuryReportArchive(season=INJURY_REPORT_SEASON),

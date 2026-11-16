@@ -1,18 +1,16 @@
 """Real sensor/schedule evaluation against isolated Dagster history and saved fixtures."""
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from dagster import AssetKey, DagsterInstance, DagsterRunStatus, build_sensor_context, build_schedule_context
+from dagster import AssetKey, DagsterInstance, DagsterRunStatus, build_sensor_context
 
 from gestalt_pipelines.definitions import defs
 from gestalt_pipelines.minutes.resources import MinutesArchive
-from gestalt_pipelines.predictions import schedules
 from gestalt_pipelines.predictions.sensors import margins
 from gestalt_pipelines.ratings.resources import RatingsArchive
 from gestalt_pipelines.resources import NBAScheduleResource
-from gestalt_pipelines.utils import PACIFIC
 from .conftest import DAY, NOW
 from .test_job import job
 
@@ -133,31 +131,3 @@ def test_missing_one_allocation_waits_for_the_entire_date(job,archive,data,clock
     with DagsterInstance.ephemeral() as instance:
         result=tick(instance,store)
         assert not result.run_requests and second['game_id'] in result.skip_message
-
-
-@pytest.mark.parametrize('date',['2026-11-15','2027-03-14','2027-11-07'])
-def test_actual_minutes_schedule_targets_yesterday_at_0430_pacific(date,monkeypatch):
-    scheduled=datetime.fromisoformat(date).replace(hour=4,minute=30,tzinfo=PACIFIC)
-    monkeypatch.setattr(schedules,'datetime',SimpleNamespace(now=lambda _:scheduled.astimezone(UTC)))
-    definition=defs.get_schedule_def('predict_game_margins_actual_minutes_schedule')
-    assert definition.cron_schedule=='30 4 * * *'
-    assert definition.execution_timezone==PACIFIC.key
-    with DagsterInstance.ephemeral() as instance:
-        with build_schedule_context(instance=instance,repository_def=defs.get_repository_def(),scheduled_execution_time=scheduled) as context:
-            result=definition.evaluate_tick(context)
-            assert len(result.run_requests)==1
-            request=result.run_requests[0]
-            assert request.partition_key==str(scheduled.date()-timedelta(days=1))
-            assert request.run_key==scheduled.astimezone(UTC).isoformat()
-            assert request.run_config=={}
-
-
-@pytest.mark.parametrize('reason',['missed','before_season'])
-def test_actual_minutes_schedule_skips_stale_or_preseason_dates(monkeypatch,reason):
-    scheduled=datetime(2026,10,20,4,30,tzinfo=PACIFIC)
-    now=scheduled+timedelta(days=2) if reason=='missed' else scheduled
-    monkeypatch.setattr(schedules,'datetime',SimpleNamespace(now=lambda _:now.astimezone(UTC)))
-    with DagsterInstance.ephemeral() as instance:
-        with build_schedule_context(instance=instance,repository_def=defs.get_repository_def(),scheduled_execution_time=scheduled) as context:
-            result=defs.get_schedule_def('predict_game_margins_actual_minutes_schedule').evaluate_tick(context)
-            assert not result.run_requests and result.skip_message
