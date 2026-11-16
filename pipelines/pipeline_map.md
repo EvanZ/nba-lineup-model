@@ -54,6 +54,7 @@ flowchart LR
     nbaBoxes["Official NBA CDN box scores"] --> boxScores["nba_box_scores"]
     catalog --> boxScores
     boxScores --> boxArchive["Final box-score JSON in S3"]
+    boxMorning["02:45 Pacific: yesterday, refresh_existing=true"] --> boxScores
     nbaPlays["Official NBA CDN play-by-play"] --> playByPlay["nba_play_by_play"]
     catalog --> playByPlay
     playByPlay --> playArchive["Versioned final play-by-play JSON and sidecars"]
@@ -135,7 +136,7 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | `reconcile_injury_date` | `injury_report_dates_ready` | About every minute; changed accepted inputs for open games today/tomorrow |
 | `archive_nba_market_odds` | `nba_market_odds_game_day` | 08:20, 12:20, and 15:20–19:20; source/window and quota checks apply |
 | `capture_nba_scoreboard` | `scoreboard_poll` | Every minute during the configured game window until final scores are saved |
-| `capture_nba_box_scores` | `box_score_poll` | Every five minutes during the game window until final boxes are saved |
+| `capture_nba_box_scores` | `box_score_poll`; `box_scores_morning_refresh` | Every five minutes during game windows, reusing saved finals; 02:45 Pacific re-fetches every final for yesterday |
 | `capture_nba_play_by_play` | `play_by_play_morning` | 03:00 for yesterday |
 | `parse_nba_games` | `play_by_play_ready_for_stints` | After that scheduled PBP capture succeeds, for the same date |
 | `capture_nba_transactions` | `transactions_hourly` | Hourly 08:00–20:00 and 23:59 for today; 03:15 explicitly checks yesterday; daytime polls also check yesterday |
@@ -145,7 +146,7 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 
 The existing automation and both prediction triggers are enabled in the permanent instance. The prediction sensor and 04:30 counterfactual schedule were enabled on November 14, 2026; the first overnight counterfactual run is still future. The former `minutes_ready` / `update_player_minutes_sensor` is retired; `game_minutes_ready` was renamed `project_game_minutes_sensor`. Definition defaults may be STOPPED; the table describes enabled instance state. Manual partition runs and backfills remain available alongside automation.
 
-The morning sequence is 03:00 yesterday's PBP → successful capture triggers same-date parsing; 03:15 yesterday's transaction check; 03:30 yesterday's final roster and today's starting roster; 04:00 yesterday's learned minutes; 04:15 yesterday's ratings/HCA; 04:30 yesterday's actual-minute counterfactuals. Both learned states are used for today's games. The counterfactual uses its saved prediction's exact ratings and final boxes, independently of that morning's new learned states. The updater fails visibly if the scheduled parser/roster prerequisites are missing, failed, still running, or stale. Repair them and re-execute the updater manually. Injury reconciliation and game allocation read their approved accepted inputs; neither requires the injury artifact and allocation roster to reference an identical roster version.
+The morning sequence is 02:45 yesterday's final box-score refresh; 03:00 yesterday's PBP → successful capture triggers same-date parsing; 03:15 yesterday's transaction check; 03:30 yesterday's final roster and today's starting roster; 04:00 yesterday's learned minutes; 04:15 yesterday's ratings/HCA; 04:30 yesterday's actual-minute counterfactuals. Both learned states are used for today's games. The counterfactual uses its saved prediction's exact ratings and final boxes, independently of that morning's new learned states. The updater fails visibly if the scheduled parser/roster prerequisites are missing, failed, still running, or stale. Repair them and re-execute the updater manually. Injury reconciliation and game allocation read their approved accepted inputs; neither requires the injury artifact and allocation roster to reference an identical roster version.
 
 ## Season preparation
 
@@ -189,6 +190,25 @@ Each final box has a visible JSON sidecar at the same S3 prefix: the box is name
 To populate sidecars for older boxes, materialize the desired Pacific partitions of nba_box_scores in Dagster. Existing box-score JSON remains unchanged. A metadata mismatch fails visibly and leaves the existing sidecar intact.
 
 The enabled box-score schedule checks every five minutes. It launches the same job when a game has reached scheduled tipoff and still needs a final box. The capture window runs through six hours after tipoff and can continue past midnight under the original Pacific date. Complete slates and dates with an active run are skipped.
+
+### Morning final-box refresh (#84)
+
+`box_scores_morning_refresh` runs the same `capture_nba_box_scores` job at **02:45 America/Los_Angeles**, with yesterday's Pacific game-date partition and `refresh_existing: true`. It checks every scheduled game's official final response, even when a saved final exists. Identical bytes reuse both JSON and sidecar without rewriting them. A changed checksum creates a new immutable JSON/sidecar pair and a warning containing the previous/current references. Previous versions remain intact. The existing reader selects the newest saved version; a response matching an older version fails visibly if it cannot become the current selection, rather than silently reporting success.
+
+Manual refresh: select the Pacific date and use:
+
+```yaml
+ops:
+  nba_box_scores:
+    config:
+      refresh_existing: true
+```
+
+The flag defaults to false, preserving normal live collection and backfill reuse. Refresh source failures fail the run and save a failure record; cached finals do not hide an unavailable, nonfinal or invalid NBA response. Verified downloads for other games remain saved. Changed responses emit warnings. Both use `s3://nba-gestalt-data/lake/artifacts/errors/pipeline=box_scores/season={season}/occurred_date_pacific={date}/{event_id}.{failure|warning}.json`, with the exact timestamp, run ID, game date, official source URLs and input/artifact references. Box-score and sidecar S3 paths are unchanged.
+
+Verified November 16: manual refresh of November 15 succeeded for all nine games (run `9104763e-5b03-4062-8c82-21d6cc5a516a`). Seven games had stat corrections; two changed only the source timestamp. Scores, player minutes, roster identities, starters and availability designations were unchanged. Nine new JSON/sidecar pairs and warning records were saved; all 18 original files retained their bytes and timestamps. No model replay or forecast rewrite ran.
+
+This schedule normally precedes 03:00 play-by-play. On the spring DST transition, 02:45 does not exist and Dagster runs this daily schedule at 03:00 Pacific; on the fall transition it runs once at 02:45 Pacific. Missed refreshes older than a day and pre-season dates are skipped. A refresh does not launch historical model replay or rewrite saved forecasts.
 
 ## Play-by-play
 

@@ -1,7 +1,7 @@
 import base64
 import json
 from contextlib import nullcontext
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
 from types import SimpleNamespace
@@ -47,15 +47,17 @@ def box_score_job(monkeypatch):
     def paginate(*, Bucket, Prefix):
         assert Bucket == "nba-gestalt-data"
         return [{"Contents": [
-            {"Key": key, "LastModified": datetime(2026, 11, 5, tzinfo=UTC)}
-            for key in objects if key.startswith(Prefix)
+            {"Key": key, "LastModified": datetime(2026, 11, 5, tzinfo=UTC)+timedelta(microseconds=index)}
+            for index, key in enumerate(objects) if key.startswith(Prefix)
         ]}]
 
     def put_object(*, Bucket, Key, Body, IfNoneMatch, ChecksumSHA256, **_):
         assert Bucket == "nba-gestalt-data"
-        assert IfNoneMatch == "*" and Key not in objects
+        assert IfNoneMatch == "*"
+        if Key in objects:
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         checksum = sha256(Body)
-        if not Key.endswith(".meta.json"):
+        if Key.startswith("lake/raw/cdn/boxscore/") and not Key.endswith(".meta.json"):
             assert Key.endswith(f"/{checksum.hexdigest()}.json")
         assert ChecksumSHA256 == base64.b64encode(checksum.digest()).decode("ascii")
         objects[Key] = Body
@@ -280,3 +282,163 @@ def test_roster_hash_tracks_identity_and_ignores_order_and_game_statistics():
     team["players"].append(dict(team["players"][0]))
     with pytest.raises(ValueError, match="duplicate"):
         archive._roster_hash(team)
+
+
+REFRESH_CONFIG = {"ops": {"nba_box_scores": {"config": {"refresh_existing": True}}}}
+
+
+def test_morning_refresh_fetches_all_games_and_preserves_unchanged_files(box_score_job):
+    job, objects, final_ids, requested = box_score_job
+    final_ids.update(game["game_id"] for game in GAMES)
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    before = dict(objects)
+    requested.clear()
+    result = job.execute_in_process(partition_key=str(DAY), run_config=REFRESH_CONFIG)
+    assert result.success and requested == [g["game_id"] for g in GAMES]
+    assert objects == before
+    meta = result.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
+    assert meta["refresh_existing"].value and meta["refreshed_game_count"].value == 2
+    assert meta["reused_count"].value == 2 and meta["changed_count"].value == 0
+
+
+def test_morning_refresh_saves_correction_sidecar_and_warning(monkeypatch, box_score_job):
+    job, objects, final_ids, requested = box_score_job
+    final_ids.update(game["game_id"] for game in GAMES)
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    before = dict(objects)
+    original_get = archive.requests.get
+    changed = json.loads(_box(GAMES[0], 3))
+    changed["game"]["homeTeam"]["score"] = 106
+    payload = json.dumps(changed).encode()
+    def get(url, **kwargs):
+        if GAMES[0]["game_id"] in url:
+            requested.append(GAMES[0]["game_id"])
+            return nullcontext(SimpleNamespace(status_code=200, raise_for_status=lambda: None, content=payload))
+        return original_get(url, **kwargs)
+    monkeypatch.setattr(archive.requests, "get", get)
+    requested.clear()
+    result = job.execute_in_process(partition_key=str(DAY), run_config=REFRESH_CONFIG)
+    assert result.success and requested == [g["game_id"] for g in GAMES]
+    assert all(objects[key] == value for key, value in before.items())
+    raw, ref = archive.NBABoxScoreArchive().read_saved("2026-27", GAMES[0])
+    assert raw == payload and ref["sha256"] == sha256(payload).hexdigest()
+    assert ref["metadata_uri"].removeprefix("s3://nba-gestalt-data/") in objects
+    warnings = [(key,json.loads(body)) for key,body in objects.items() if key.endswith(".warning.json")]
+    assert len(warnings) == 1
+    key, warning = warnings[0]
+    assert key.startswith("lake/artifacts/errors/pipeline=box_scores/season=2026-27/occurred_date_pacific=")
+    assert warning["game_date_pacific"] == str(DAY) and warning["dagster_run_id"] == result.run_id
+    assert warning["details"]["previous"]["sha256"] == sha256(_box(GAMES[0],3)).hexdigest()
+    assert warning["details"]["current"]["sha256"] == ref["sha256"]
+    before_rerun = dict(objects)
+    assert job.execute_in_process(partition_key=str(DAY),run_config=REFRESH_CONFIG).success
+    assert objects == before_rerun
+
+
+@pytest.mark.parametrize("problem", ["missing", "timeout", "nonfinal", "wrong_game", "invalid_json"])
+def test_refresh_failure_does_not_silently_reuse_cached_finals(problem, monkeypatch, box_score_job):
+    job, objects, final_ids, requested = box_score_job
+    final_ids.update(g["game_id"] for g in GAMES)
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    before = dict(objects)
+    original_get = archive.requests.get
+    def get(url, **kwargs):
+        if GAMES[0]["game_id"] not in url:
+            return original_get(url, **kwargs)
+        requested.append(GAMES[0]["game_id"])
+        if problem == "missing":
+            raise archive.requests.HTTPError("NBA CDN returned 404")
+        if problem == "timeout":
+            raise archive.requests.Timeout("NBA CDN timed out")
+        payload = _box(GAMES[0], 2 if problem == "nonfinal" else 3)
+        if problem == "wrong_game":
+            document = json.loads(payload)
+            document["game"]["gameId"] = "0022600999"
+            payload = json.dumps(document).encode()
+        if problem == "invalid_json":
+            payload = b"not NBA JSON"
+        return nullcontext(SimpleNamespace(status_code=200, raise_for_status=lambda: None, content=payload))
+    monkeypatch.setattr(archive.requests, "get", get)
+    result = job.execute_in_process(partition_key=str(DAY),run_config=REFRESH_CONFIG,raise_on_error=False)
+    assert not result.success and not result.get_asset_materialization_events()
+    assert all(objects[key] == value for key,value in before.items())
+    errors = [json.loads(v) for k,v in objects.items() if k.endswith(".failure.json")]
+    assert len(errors) == 1
+    event = errors[0]
+    assert event["status"] == "failed" and event["dagster_run_id"] == result.run_id
+    assert set(event["details"]["failed_games"]) == {GAMES[0]["game_id"]}
+    assert set(event["details"]["box_scores"]) == {GAMES[1]["game_id"]}
+    assert event["input"]["schedule"] == SCHEDULE
+
+
+def test_morning_refresh_with_partial_missing_archive_keeps_valid_downloads(box_score_job):
+    job, objects, _, _ = box_score_job
+    result = job.execute_in_process(partition_key=str(DAY),run_config=REFRESH_CONFIG,raise_on_error=False)
+    assert not result.success
+    raw = [v for k,v in objects.items() if k.startswith("lake/raw/") and not k.endswith(".meta.json")]
+    assert raw == [_box(GAMES[0],3)]
+    assert any(k.endswith(".failure.json") for k in objects)
+
+
+@pytest.mark.parametrize("day,hour", [("2026-11-16",2),("2027-03-14",3),("2027-11-07",2)])
+def test_morning_schedule_uses_previous_pacific_date_including_dst(day, hour, monkeypatch):
+    from zoneinfo import ZoneInfo
+    from dagster._utils.schedules import schedule_execution_time_iterator
+    zone = ZoneInfo("America/Los_Angeles")
+    schedule = defs.get_schedule_def("box_scores_morning_refresh")
+    assert schedule.cron_schedule == "45 2 * * *" and schedule.execution_timezone == zone.key
+    start = datetime.fromisoformat(day).replace(tzinfo=zone).timestamp()
+    tick = next(schedule_execution_time_iterator(start,schedule.cron_schedule,execution_timezone=zone.key))
+    assert tick.hour == hour
+    assert tick.minute == (0 if hour == 3 else 45)
+    monkeypatch.setattr(schedules,"datetime",SimpleNamespace(now=lambda _:tick.astimezone(UTC)))
+    with build_schedule_context(scheduled_execution_time=tick,repository_def=defs.get_repository_def()) as context:
+        [request] = schedule.evaluate_tick(context).run_requests
+    assert request.partition_key == str(tick.date()-timedelta(days=1))
+    assert request.run_config == REFRESH_CONFIG
+
+
+@pytest.mark.parametrize("case",["missed","preseason"])
+def test_morning_schedule_skips_missed_and_preseason_dates(case,monkeypatch):
+    from zoneinfo import ZoneInfo
+    tick = datetime(2026,11,5,2,45,tzinfo=ZoneInfo("America/Los_Angeles"))
+    if case == "preseason":
+        tick = tick.replace(year=schedules.box_score_game_dates.start.year,
+                            month=schedules.box_score_game_dates.start.month,
+                            day=schedules.box_score_game_dates.start.day)
+    now = tick.astimezone(UTC)+(timedelta(days=2) if case == "missed" else timedelta())
+    monkeypatch.setattr(schedules,"datetime",SimpleNamespace(now=lambda _:now))
+    with build_schedule_context(scheduled_execution_time=tick,repository_def=defs.get_repository_def()) as context:
+        assert not defs.get_schedule_def("box_scores_morning_refresh").evaluate_tick(context).run_requests
+
+
+def test_refresh_rejects_response_that_would_leave_an_older_version_unselected(monkeypatch, box_score_job):
+    job, objects, final_ids, _ = box_score_job
+    final_ids.update(g["game_id"] for g in GAMES)
+    assert job.execute_in_process(partition_key=str(DAY)).success
+    original_get = archive.requests.get
+    changed = json.loads(_box(GAMES[0],3))
+    changed["game"]["homeTeam"]["score"] = 106
+    payload = json.dumps(changed).encode()
+    def get(url, **kwargs):
+        if GAMES[0]["game_id"] in url:
+            return nullcontext(SimpleNamespace(status_code=200, raise_for_status=lambda:None, content=payload))
+        return original_get(url, **kwargs)
+    monkeypatch.setattr(archive.requests,"get",get)
+    assert job.execute_in_process(partition_key=str(DAY),run_config=REFRESH_CONFIG).success
+    before = dict(objects)
+    monkeypatch.setattr(archive.requests,"get",original_get)
+    result = job.execute_in_process(partition_key=str(DAY),run_config=REFRESH_CONFIG,raise_on_error=False)
+    assert not result.success
+    assert all(objects[key] == value for key,value in before.items())
+    assert archive.NBABoxScoreArchive().read_saved("2026-27",GAMES[0])[0] == payload
+    error = next(json.loads(v) for k,v in objects.items() if k.endswith(".failure.json"))
+    assert "older archived version" in error["details"]["failed_games"][GAMES[0]["game_id"]]
+
+
+def test_explicit_refresh_requires_final_coverage_even_for_current_date(monkeypatch,box_score_job):
+    job,objects,_,_ = box_score_job
+    monkeypatch.setattr(capture,"datetime",SimpleNamespace(now=lambda _:datetime(2026,11,4,23,30,tzinfo=UTC)))
+    result = job.execute_in_process(partition_key=str(DAY),run_config=REFRESH_CONFIG,raise_on_error=False)
+    assert not result.success and not result.get_asset_materialization_events()
+    assert any(key.endswith(".failure.json") for key in objects)

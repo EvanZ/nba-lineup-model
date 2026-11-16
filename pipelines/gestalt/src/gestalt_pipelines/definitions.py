@@ -5,7 +5,7 @@ from dagster import Definitions, EnvVar
 from .box_scores.assets import nba_box_scores
 from .box_scores.jobs import capture_nba_box_scores
 from .box_scores.resources import NBABoxScoreArchive
-from .box_scores.schedules import box_score_poll
+from .box_scores.schedules import box_score_poll, box_scores_morning_refresh
 from .injury_reports.assets import injury_pdf_archive, injury_report_extractions, injury_status_by_game_date
 from .injury_reports.jobs import capture_injury_pdfs, extract_injury_pdf, reconcile_injury_date
 from .injury_reports.partitions import INJURY_REPORT_SEASON
@@ -68,7 +68,7 @@ defs = Definitions(
         capture_nba_season_schedule, archive_nba_market_odds, capture_nba_box_scores, capture_nba_scoreboard,
         capture_nba_transactions, capture_nba_play_by_play, parse_nba_games, build_nba_rosters,
     ],
-    schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning, update_player_minutes_schedule, update_player_ratings_schedule, predict_game_margins_actual_minutes_schedule],
+    schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, box_scores_morning_refresh, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning, update_player_minutes_schedule, update_player_ratings_schedule, predict_game_margins_actual_minutes_schedule],
     sensors=[new_injury_pdf, injury_report_dates_ready, roster_transactions_ready, play_by_play_ready_for_stints, project_game_minutes_sensor, predict_game_margins_sensor, evaluate_market_performance_sensor],
     resources={
         "official_injury_reports": OfficialInjuryReports(),

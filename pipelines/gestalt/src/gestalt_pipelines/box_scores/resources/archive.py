@@ -4,6 +4,7 @@ import base64
 import json
 import re
 from contextlib import closing
+from datetime import UTC, datetime
 from hashlib import sha256
 
 import boto3
@@ -11,7 +12,7 @@ import requests
 from botocore.exceptions import BotoCoreError, ClientError
 from dagster import ConfigurableResource
 
-from ...utils import DATA_BUCKET
+from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC
 
 CDN_URL = "https://cdn.nba.com/static/json/liveData/boxscore"
 CHECKSUM_FILENAME = re.compile(r"[0-9a-f]{64}\.json")
@@ -82,14 +83,51 @@ def _json_bytes(value: object) -> bytes:
 class NBABoxScoreArchive(ConfigurableResource):
     bucket: str = DATA_BUCKET
 
-    def capture_slate(self, season: str, games: list[dict], *, allow_pending: bool) -> tuple[dict, dict]:
+    def save_event(self, *, season: str, day: str, run_id: str, status: str,
+                   message: str, schedule: dict, details: dict, game_id: str | None = None) -> dict:
+        """Save a source-refresh event using the shared warning/failure envelope."""
+        if status not in {"failed", "warning"}:
+            raise ValueError("Unsupported box-score event status.")
+        now = datetime.now(UTC)
+        event_id = sha256(_json_bytes([run_id, "nba_box_scores", status, game_id])).hexdigest()
+        event = {
+            "schema_version": 1, "event_id": event_id, "stage": "nba_box_scores",
+            "season": season, "game_date_pacific": day, "game_id": game_id,
+            "status": status, "timestamp": now.isoformat(), "dagster_run_id": run_id,
+            "message": message, "input": {"schedule": schedule}, "details": details,
+            "artifact_path": f"s3://{self.bucket}/lake/raw/cdn/boxscore/season={season}/",
+            "source_urls": {gid: f"{CDN_URL}/boxscore_{gid}.json"
+                            for gid in ([game_id] if game_id else details.get("failed_games", {}))},
+        }
+        suffix = "failure" if status == "failed" else "warning"
+        key = (f"{ERRORS_PREFIX}/pipeline=box_scores/season={season}/"
+               f"occurred_date_pacific={now.astimezone(PACIFIC).date()}/{event_id}.{suffix}.json")
+        payload = _json_bytes(event)
+        client = boto3.client("s3")
+        try:
+            client.put_object(Bucket=self.bucket, Key=key, Body=payload, ContentType="application/json",
+                IfNoneMatch="*", ChecksumAlgorithm="SHA256",
+                ChecksumSHA256=base64.b64encode(sha256(payload).digest()).decode("ascii"))
+        except ClientError as error:
+            if error.response["Error"]["Code"] not in {"412", "PreconditionFailed"}:
+                raise
+            saved = self._read(client, key)
+            prior = json.loads(saved)
+            if {k:v for k,v in prior.items() if k != "timestamp"} != {k:v for k,v in event.items() if k != "timestamp"}:
+                raise ValueError("Saved box-score event differs from this run.") from error
+            payload = saved
+        if self._read(client, key) != payload:
+            raise ValueError("Saved box-score event failed read-back verification.")
+        return {"uri": f"s3://{self.bucket}/{key}", "sha256": sha256(payload).hexdigest()}
+
+    def capture_slate(self, season: str, games: list[dict], *, allow_pending: bool, refresh_existing: bool = False) -> tuple[dict, dict]:
         """Archive each game independently and report any missing coverage."""
         client = boto3.client("s3")
         references, failures = {}, {}
         for game in games:
             game_id = game["game_id"]
             try:
-                reference = self._capture_game(client, season, game, allow_pending=allow_pending)
+                reference = self._capture_game(client, season, game, allow_pending=allow_pending, refresh_existing=refresh_existing)
                 if reference is not None:
                     references[game_id] = reference
             except (ValueError, requests.RequestException, BotoCoreError, ClientError) as error:
@@ -131,7 +169,7 @@ class NBABoxScoreArchive(ConfigurableResource):
             **{k:metadata[k] for k in ("metadata_uri", "metadata_sha256")},
         }
 
-    def _capture_game(self, client, season: str, game: dict, *, allow_pending: bool) -> dict | None:
+    def _capture_game(self, client, season: str, game: dict, *, allow_pending: bool, refresh_existing: bool = False) -> dict | None:
         game_id = game["game_id"]
         if not re.fullmatch(r"[0-9]{10}", game_id):
             raise ValueError("Expected a 10-digit NBA game ID.")
@@ -139,6 +177,7 @@ class NBABoxScoreArchive(ConfigurableResource):
         url = f"{CDN_URL}/boxscore_{game_id}.json"
         saved = self._select_saved(client, prefix)
         reused = saved is not None
+        previous = None
         if saved:
             key = saved["Key"]
             digest = key.removeprefix(prefix).removesuffix(".json")
@@ -146,7 +185,8 @@ class NBABoxScoreArchive(ConfigurableResource):
             if sha256(payload).hexdigest() != digest:
                 raise ValueError(f"Archived box score failed checksum validation at s3://{self.bucket}/{key}.")
             _validate_box(payload, game)
-        else:
+            previous = {"uri": f"s3://{self.bucket}/{key}", "sha256": digest}
+        if saved is None or refresh_existing:
             with requests.get(
                 url, headers={"User-Agent": "nba-gestalt/1.0", "Referer": "https://www.nba.com/"},
                 timeout=30, allow_redirects=False,
@@ -158,9 +198,17 @@ class NBABoxScoreArchive(ConfigurableResource):
             if not _validate_box(payload, game, allow_pending=allow_pending):
                 return None
 
+            downloaded = json.loads(payload)["game"]
+            for side in ("homeTeam", "awayTeam"):
+                _roster_hash(downloaded[side])
             checksum = sha256(payload)
             digest = checksum.hexdigest()
             key = f"{prefix}{digest}.json"
+            if saved is not None and key == saved["Key"]:
+                metadata = self._ensure_metadata(client, key, season, payload, digest)
+                return {"uri": f"s3://{self.bucket}/{key}", "sha256": digest,
+                        "source_url": url, "reused": True, **metadata}
+            reused = False
             try:
                 client.put_object(
                     Bucket=self.bucket, Key=key, Body=payload,
@@ -174,11 +222,16 @@ class NBABoxScoreArchive(ConfigurableResource):
                 if self._read(client, key) != payload:
                     raise ValueError(f"Different bytes already exist at s3://{self.bucket}/{key}.") from error
                 reused = True
+            if self._read(client, key) != payload:
+                raise ValueError("Saved NBA box-score bytes differ from the downloaded response.")
+            if refresh_existing and self._select_saved(client, prefix)["Key"] != key:
+                raise ValueError("NBA response matches an older archived version; the latest saved selection differs.")
 
         metadata = self._ensure_metadata(client, key, season, payload, digest)
         return {
             "uri": f"s3://{self.bucket}/{key}", "sha256": digest, "source_url": url, "reused": reused,
             **metadata,
+            **({"previous_box_score": previous} if previous and previous["sha256"] != digest else {}),
         }
 
     def _ensure_metadata(self, client, key: str, season: str, payload: bytes, digest: str, *, create: bool = True) -> dict:

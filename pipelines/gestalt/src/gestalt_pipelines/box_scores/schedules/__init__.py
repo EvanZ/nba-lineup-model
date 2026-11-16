@@ -95,4 +95,22 @@ def box_score_poll(context: ScheduleEvaluationContext, nba_schedule: NBASchedule
         yield SkipReason("No games need a final box score in an active capture window.")
 
 
-__all__ = ["box_score_poll"]
+@schedule(
+    job=capture_nba_box_scores,
+    cron_schedule="45 2 * * *",
+    execution_timezone=PACIFIC.key,
+    default_status=DefaultScheduleStatus.STOPPED,
+    description="Re-fetch yesterday's final box scores at 02:45 Pacific before morning play-by-play.",
+)
+def box_scores_morning_refresh(context: ScheduleEvaluationContext):
+    tick = context.scheduled_execution_time.astimezone(PACIFIC)
+    if datetime.now(UTC) - tick.astimezone(UTC) >= timedelta(days=1):
+        return SkipReason("This morning refresh was missed. Use a manual refresh for older dates.")
+    day = tick.date() - timedelta(days=1)
+    if day < box_score_game_dates.start.date():
+        return SkipReason("The preceding date is before the configured NBA season start.")
+    return RunRequest(run_key=tick.astimezone(UTC).isoformat(), partition_key=day.isoformat(),
+        run_config={"ops": {"nba_box_scores": {"config": {"refresh_existing": True}}}})
+
+
+__all__ = ["box_score_poll", "box_scores_morning_refresh"]
