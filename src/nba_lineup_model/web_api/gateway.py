@@ -1,0 +1,55 @@
+"""Route migrated reads independently of the legacy model-backed application."""
+
+from __future__ import annotations
+
+import logging
+import threading
+
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
+
+from nba_lineup_model.web_api.market_performance import router
+from nba_lineup_model.web_api.schedule import router as schedule_router
+
+
+class MarketGateway:
+    def __init__(self, legacy_factory):
+        self.market = FastAPI(title="NBA GESTALT saved-data API")
+        self.market.include_router(router)
+        self.market.include_router(schedule_router)
+        self.legacy_factory = legacy_factory
+        self.legacy = None
+        self.legacy_failed = False
+        self.lock = threading.Lock()
+
+    def _legacy(self):
+        if self.legacy_factory is None:
+            return None
+        with self.lock:
+            if self.legacy is None and not self.legacy_failed:
+                try:
+                    self.legacy = self.legacy_factory()
+                except Exception:
+                    self.legacy_failed = True
+                    logging.getLogger(__name__).exception("Legacy API initialization failed")
+            return self.legacy
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan" or scope.get("path", "").rstrip("/") in {
+            "/api/market-performance",
+            "/api/schedule-view",
+            "/api/schedule",
+        }:
+            await self.market(scope, receive, send)
+            return
+        legacy = await run_in_threadpool(self._legacy)
+        if legacy is None:
+            response = JSONResponse(
+                {"detail": "This legacy API is currently unavailable."},
+                status_code=503,
+                headers={"Cache-Control": "no-store"},
+            )
+            await response(scope, receive, send)
+            return
+        await legacy(scope, receive, send)
