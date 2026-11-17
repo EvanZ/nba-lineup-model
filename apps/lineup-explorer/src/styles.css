@@ -1514,3 +1514,8 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .schedule-spread-ledger { margin-top: 18px; }
   .schedule-spread-ledger-heading { align-items: start; flex-direction: column; gap: 4px; }
 }
+
+.player-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 720px) {
+  .player-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

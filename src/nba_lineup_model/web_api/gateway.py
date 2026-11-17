@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from nba_lineup_model.web_api.market_performance import router
+from nba_lineup_model.web_api.player_discovery import router as discovery_router
+from nba_lineup_model.web_api.player_summary import router as player_router
 from nba_lineup_model.web_api.schedule import router as schedule_router
 
 
@@ -18,6 +20,8 @@ class MarketGateway:
         self.market = FastAPI(title="NBA GESTALT saved-data API")
         self.market.include_router(router)
         self.market.include_router(schedule_router)
+        self.market.include_router(player_router)
+        self.market.include_router(discovery_router)
         self.legacy_factory = legacy_factory
         self.legacy = None
         self.legacy_failed = False
@@ -36,11 +40,22 @@ class MarketGateway:
             return self.legacy
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "lifespan" or scope.get("path", "").rstrip("/") in {
-            "/api/market-performance",
-            "/api/schedule-view",
-            "/api/schedule",
-        }:
+        path = scope.get("path", "").rstrip("/")
+        is_player = (
+            path.startswith("/api/players/") and path.removeprefix("/api/players/").isdigit()
+        )
+        if (
+            scope["type"] == "lifespan"
+            or is_player
+            or (path.startswith("/api/headshots/") and path.endswith(".png"))
+            or path
+            in {
+                "/api/market-performance",
+                "/api/search",
+                "/api/schedule-view",
+                "/api/schedule",
+            }
+        ):
             await self.market(scope, receive, send)
             return
         legacy = await run_in_threadpool(self._legacy)

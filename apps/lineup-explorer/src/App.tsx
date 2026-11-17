@@ -7,6 +7,7 @@ import { RosterMovesPage } from "./RosterMovesPage";
 import { WinProjectionsPage } from "./WinProjectionsPage";
 import { ComparePage } from "./ComparePage";
 import { SchedulePage } from "./SchedulePage";
+import { PlayerSummaryView, type SavedPlayerSummary } from "./PlayerSummary";
 import { teamLogoUrl } from "./teamLogos";
 import {
   ArrowLeft,
@@ -396,7 +397,7 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
         <header className="global-search-dialog-header">
           <div>
             <p className="section-kicker">NBA GESTALT archive</p>
-            <h2 id="global-search-title">Find a player or team.</h2>
+            <h2 id="global-search-title">Find a player.</h2>
           </div>
           <button className="global-search-close" type="button" onClick={onClose} aria-label="Close search" title="Close search">
             <X size={19} aria-hidden="true" />
@@ -404,17 +405,17 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
         </header>
         <label className="global-search-input">
           <Search size={19} aria-hidden="true" />
-          <span className="sr-only">Search the player and team archive</span>
+          <span className="sr-only">Search current and historical players</span>
           <input
             ref={inputRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Player, city, team, or tricode"
+            placeholder="Player name or NBA ID"
           />
           {isLoading && <LoaderCircle className="spin" size={17} aria-label="Searching" />}
         </label>
         {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
-        {!error && query.trim() && !isLoading && !hasResults && <p className="global-search-empty">No published player or team matches that search.</p>}
+        {!error && query.trim() && !isLoading && !hasResults && <p className="global-search-empty">No player matches that search.</p>}
         {teams.length > 0 && <section className="global-search-group" aria-labelledby="global-search-teams">
           <h3 id="global-search-teams">Teams</h3>
           <div className="global-search-results">
@@ -435,17 +436,21 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
           <div className="global-search-results">
             {players.map((player) => (
               <a key={player.player_id} href={playerProfileHref(player.player_id)} onClick={onClose}>
-                <img src={playerHeadshotUrl(player.player_id)} alt="" />
+                <PlayerHeadshot player={player} />
                 <span>
                   <strong>{player.player_name}</strong>
-                  <small>{player.latest_team} · latest {player.latest_season} · {player.history_seasons > 0 ? `${player.history_seasons} historical ${player.history_seasons === 1 ? "season" : "seasons"}` : "cold-start player"}</small>
+                  <small>{player.summary_available === true
+                    ? `${player.latest_team ?? "Team unavailable"} · current-season summary`
+                    : player.summary_available === false
+                      ? "No current-season summary"
+                      : `${player.latest_team ?? ""} · latest ${player.latest_season ?? "—"} · ${(player.history_seasons ?? 0) > 0 ? `${player.history_seasons} historical seasons` : "cold-start player"}`}</small>
                 </span>
                 <ArrowUpRight size={16} aria-hidden="true" />
               </a>
             ))}
           </div>
         </section>}
-        <p className="global-search-hint"><kbd>Esc</kbd> closes search</p>
+        <p className="global-search-hint"><kbd>Esc</kbd> closes search · Team pages will be restored separately.</p>
       </section>
     </div>
   );
@@ -737,7 +742,7 @@ const PLAYER_HISTORY_COLUMNS: readonly PlayerHistoryColumnDefinition[] = [
 
 function PlayerProfilePage({ playerId }: { playerId: number }) {
   const isCompact = useMediaQuery("(max-width: 720px)");
-  const [player, setPlayer] = useState<Player | null>(null);
+  const [player, setPlayer] = useState<Player | SavedPlayerSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draggedHistoryColumn, setDraggedHistoryColumn] = useState<PlayerHistoryColumn | null>(null);
   const [dropHistoryColumn, setDropHistoryColumn] = useState<PlayerHistoryColumn | null>(null);
@@ -756,8 +761,8 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
     void (async () => {
       try {
         const response = await fetch(`/api/players/${playerId}`, { signal: controller.signal });
-        if (!response.ok) throw new Error("Player profile is unavailable.");
-        setPlayer((await response.json()) as Player);
+        if (!response.ok) throw new Error(response.status === 404 ? "Player not found." : "Saved player data is unavailable. Please try again later.");
+        setPlayer((await response.json()) as Player | SavedPlayerSummary);
       } catch (profileError) {
         if ((profileError as Error).name !== "AbortError") setError((profileError as Error).message);
       }
@@ -767,6 +772,7 @@ function PlayerProfilePage({ playerId }: { playerId: number }) {
 
   if (error) return <p className="error profile-error"><CircleAlert size={16} /> {error}</p>;
   if (!player) return <div className="profile-loading"><LoaderCircle className="spin" size={20} /> Loading player profile</div>;
+  if ("kind" in player) return <PlayerSummaryView player={player} />;
   const additiveProfileInputs = [
     player.three_pa_per_100,
     player.three_pm_per_100,

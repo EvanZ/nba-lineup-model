@@ -224,9 +224,10 @@ export type RankedLineup = {
 export type GlobalSearchPlayer = {
   player_id: number;
   player_name: string;
-  latest_season: string;
-  latest_team: string;
-  history_seasons: number;
+  latest_season?: string;
+  latest_team?: string | null;
+  history_seasons?: number;
+  summary_available?: boolean;
 };
 
 export type GlobalSearchTeam = {
