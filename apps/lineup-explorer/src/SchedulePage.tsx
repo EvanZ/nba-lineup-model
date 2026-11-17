@@ -385,7 +385,7 @@ function RotationTable({
       expected_contribution: player.projected_contribution,
       reason: player.rating_source === "replacement" ? "Not in baseline prediction · saved replacement rating" : "Not in baseline prediction",
     })),
-  ];
+  ].sort((a, b) => (b.projected_minutes ?? -1) - (a.projected_minutes ?? -1));
   const teamContributionDifference = actualTeamLedger
     ? actualTeamLedger.team_strength - (teamLedger?.team_strength ?? 0)
     : null;
@@ -542,6 +542,20 @@ Moneyline · ${quoteTime(poly.h2h_captured_at)}`} aria-label={`Polymarket for ${
   </div>;
 }
 
+function ScheduleOddsWarning({ game }: { game: ArchivedGame }) {
+  const started = game.status.state === "in" || game.status.state === "post"
+    || Date.parse(game.start_time) <= Date.now();
+  if (!started || game.availability.market === "available") return null;
+  return <p className="schedule-report-warning schedule-odds-warning" role="status">
+    <CircleAlert size={15} aria-hidden="true" />
+    <span><strong>Pregame odds unavailable after tipoff.</strong>{" "}
+      {game.availability.market === "invalid"
+        ? "The saved odds failed validation."
+        : "No valid saved pregame odds are available for this game."}
+    </span>
+  </p>;
+}
+
 export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
   const archived = game;
   const pregame = game;
@@ -552,6 +566,7 @@ export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
       <span>{game.broadcasts.join(" · ") || "Broadcast unavailable"}</span>
       <span>{liveStatus(archived)}</span>
     </div>
+    <ScheduleOddsWarning game={game} />
     <div className="schedule-matchup">
       <a className="schedule-team away" href={teamHref(game.away_team)}><img alt="" src={teamLogoUrl(game.away_team)} /><strong>{game.away_team} {archived?.away_score ?? ""}</strong></a>
       <span>at</span>
@@ -612,6 +627,7 @@ export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
         </div>}
       </div>
 
+      <ScheduleOddsWarning game={game} />
       <div className="schedule-matchup">
         <a className="schedule-team away" href={teamHref(game.away_team)} aria-label={`Open ${game.away_team} team page`}>
           <img alt="" src={teamLogoUrl(game.away_team)} />

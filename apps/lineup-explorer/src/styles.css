@@ -1399,6 +1399,8 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-assumptions-body { padding: 0 12px 18px; border-top: 1px solid #e2dfd7; }
 .schedule-report-warning { margin: 12px 0; padding: 10px 12px; border-left: 3px solid #c27a22; background: #f6ead5; color: #695024; font-size: 10px; line-height: 1.5; }
 .schedule-report-warning strong { color: #6c470d; }
+.schedule-odds-warning { display: flex; align-items: flex-start; gap: 8px; }
+.schedule-odds-warning > svg { flex: 0 0 auto; margin-top: 1px; }
 .schedule-assumption-policy { margin: 12px 0; color: #69716b; font-size: 10px; line-height: 1.5; }
 .schedule-attribution-unavailable { margin: 12px 0; padding: 9px 11px; border-left: 3px solid #8a918b; background: #efede7; color: #69716b; font-size: 9px; line-height: 1.5; }
 .schedule-player-link { color: #17201c; font-weight: 800; text-decoration: none; }
