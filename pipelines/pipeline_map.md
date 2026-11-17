@@ -51,6 +51,10 @@ flowchart LR
     catalog -->|Upcoming games| odds
     odds --> oddsArchive["Immutable odds snapshots in S3"]
     odds --> oddsLatest["Season odds latest.json in S3"]
+    oddsArchive --> gameOdds["game_odds: publish_game_odds"]
+    catalog --> gameOdds
+    gameOdds --> gameOddsPointers["Per-game latest.json: raw reference, event ID, cutoff and frozen state"]
+    oddsLatest -->|"New capture or game cutoff: publish_game_odds_sensor"| gameOdds
     nbaBoxes["Official NBA CDN box scores"] --> boxScores["nba_box_scores"]
     catalog --> boxScores
     boxScores --> boxArchive["Final box-score JSON in S3"]
@@ -775,3 +779,80 @@ The first sensor-created run, `0ba26f6c-42e0-4a62-b23e-f8db6f91c887`, succeeded 
 All **355 tests passed**, including **19 new automation checks** for source changes, opening-day priors, missing prerequisites, duplicate suppression, today/tomorrow scope, scheduled-tipoff freezing, unchanged fallback inputs, and Pacific daily schedule dates across both DST transitions. The next real counterfactual tick is **Nov 15 at 04:30 Pacific**, targeting **Nov 14 games**. Its overnight execution is still to be observed; it was not run early or recorded as a past success.
 
 At 19:31 Pacific, protected collection remained healthy: injury capture succeeded at 19:17 (one new report, three reused, zero unavailable; next 19:32), Odds API capture succeeded at 19:20 (eight events; next scheduled Nov 15 at 08:20), and scoreboard capture succeeded at 19:31 (all five games, one still live; next 19:32). No recent collector failures were found. Existing automation states were verified unchanged after the code-location reload. Validation records remain on EC2 in `/tmp/prediction-automation-validation.json`, `/tmp/prediction-automation-runs.json`, and `/tmp/prediction-automation-collector-check.json`. Code remains uncommitted pending review.
+
+
+## Per-game pregame odds pointers (#85)
+
+The odds pipeline also publishes `game_odds` through `publish_game_odds`. Its
+partition is the Pacific **game date**, from `GESTALT_NBA_SEASON_START_DATE`
+through today + seven days (`end_offset=8`). It reads the shared official NBA
+schedule and genuine saved Odds API snapshots; it has no dependency on final
+boxes, predictions, ratings, or postgame reports and makes no provider requests.
+
+The only new S3 output is:
+
+```
+s3://nba-gestalt-data/lake/artifacts/game_odds/season=<season>/game_date_pacific=<YYYY-MM-DD>/game_id=<NBA-game-id>/latest.json
+```
+
+Each direct pointer contains schema/selection-rule version, game/season/date,
+team IDs/names, `scheduled_start_utc`, `cutoff_utc`, `selected_at`, `frozen`,
+optional `frozen_at`, `purpose`, `snapshot: {uri, sha256, collected_at}`,
+`provider_event_id`, and the exact official schedule reference under
+`inputs.schedule`. Prices stay at the immutable raw snapshot URI. There are no
+second selection files, copied prices, consensus values or grades in this output.
+
+For each game, choose the newest eligible saved event with approved spreads or
+moneylines. Polymarket is optional; the approved ten-book list includes
+Odds API-supplied `espnbet`. Match the official teams and Pacific date, require
+capture and quote update times strictly before the earlier of official scheduled
+start and provider commence time, and verify the selected raw bytes/checksum.
+Malformed or ambiguous selected inputs fail visibly; no eligible quote is
+reported in Dagster's `missing_game_ids` rather than invented or taken in play.
+
+`publish_game_odds_sensor` checks approximately every minute for a changed raw
+season `latest.json` identity or an open game's cutoff. It checks saved pointers
+and the schedule, without scanning capture bodies on each tick. It requests the
+same partitioned job for today through seven dates ahead and only finishes an
+existing unfrozen pointer for yesterday. Older missing dates require explicit
+backfill. New captures can advance unfrozen pointers; cutoff finalizes the last
+valid pregame source even when no later capture arrives. A missing event in a
+newer league snapshot does not erase its saved selection. Ordinary reruns verify
+and preserve frozen pointers byte-for-byte. Conditional S3 writes reject races.
+
+To backfill, select `publish_game_odds`/`game_odds` in the existing Dagster code
+location and choose Pacific game-date partitions. No run config or API key is
+required by this publisher. It selects only real archived pregame captures and
+labels a newly created after-cutoff selection `historical_replay`; it does not
+change existing frozen pointers, raw captures, forecasts or performance reports.
+Only November 16, 2026 is authorized for the initial backfill. The app consumer
+handoff is separate (#83). Postgame grades must retain exact immutable raw
+references/event IDs and observed selection metadata rather than treating the
+mutable pointer as an immutable source; this slice does not change existing
+market-performance selection or grading policy.
+
+
+### Missing odds at tipoff
+
+Before scheduled tipoff, an unquoted game is listed in `missing_game_ids` and
+waits for later captures. At or after scheduled tipoff, `publish_game_odds` also
+writes one warning per missing game per Dagster run, using the existing envelope:
+
+```
+s3://nba-gestalt-data/lake/artifacts/errors/pipeline=odds/season=<season>/occurred_date_pacific=<YYYY-MM-DD>/<event_id>.warning.json
+```
+
+The JSON records `pipeline=odds`, `stage=game_odds`, `status=warning`,
+`warning_type=missing_pregame_odds_at_tipoff`, season, Pacific game date, game ID,
+observation timestamp, Dagster run ID, scheduled start, teams, the exact schedule
+reference and searched raw snapshot prefix. The path date is when the warning
+was observed; `game_date_pacific` remains the actual game date during a replay.
+`artifact_path` is null because no odds selection exists. The expected pointer
+location is included in `details.expected_pointer_uri`.
+
+Dagster materialization metadata exposes warning URI/checksum references under
+`warnings`. Missing odds remain a warning and do not stop other games publishing.
+A failed warning write or verification fails the run visibly. Conditional writes
+preserve a same-run warning on retry and verify the saved bytes. The sensor still
+checks cutoff times when the raw season `latest.json` is absent. This does not
+add an external notification service or change odds selection/freeze rules.

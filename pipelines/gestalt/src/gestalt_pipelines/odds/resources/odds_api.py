@@ -15,12 +15,8 @@ from dagster import ConfigurableResource
 from ...utils import DATA_BUCKET, PACIFIC
 
 SPORTS_URL = "https://api.the-odds-api.com/v4/sports"
-SPORT_KEY = "basketball_nba"
-BOOKMAKERS = (
-    "draftkings", "fanduel", "betmgm", "betrivers", "hardrockbet",
-    "betparx", "ballybet", "betonlineag", "polymarket", "espnbet",
-)
-MARKETS = ("spreads", "h2h")
+from .. import BOOKMAKERS, MARKETS, SPORT_KEY
+
 MINIMUM_REMAINING_CREDITS = 50
 
 

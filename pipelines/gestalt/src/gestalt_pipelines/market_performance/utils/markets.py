@@ -1,26 +1,15 @@
 """The pre-tipoff Polymarket selection and same-snapshot book median used by the audited reports."""
 import math
-from datetime import datetime
 from statistics import median
 
 from ...utils import PACIFIC
+from ...odds.utils import instant, matches as _matches
 
 
 def probability(price):
     if isinstance(price, bool) or not isinstance(price, (int, float)) or not math.isfinite(price) or price == 0:
         raise ValueError("Invalid American moneyline.")
     return -price / (100-price) if price < 0 else 100 / (price+100)
-
-
-def instant(value):
-    result = datetime.fromisoformat(value)
-    if result.tzinfo is None:
-        raise ValueError("Market timestamps must include a timezone.")
-    return result
-
-
-def _matches(name, nickname):
-    return name.casefold() == nickname.casefold() or name.casefold().endswith(" "+nickname.casefold())
 
 
 def _quote(book, kind, event, collected, cutoff, reference):
