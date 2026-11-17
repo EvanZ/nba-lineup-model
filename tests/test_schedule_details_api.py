@@ -64,8 +64,8 @@ def latest(s3, events=None, captured="2026-11-15T20:00:00Z"):
                 "away_team": "Away Team",
                 "commence_time": START,
                 "bookmakers": [
-                    book("a", -2, -150),
-                    book("b", -4, -200),
+                    book("draftkings", -2, -150),
+                    book("fanduel", -4, -200),
                     book("polymarket", -10, -400),
                 ],
             }
@@ -85,12 +85,47 @@ def latest(s3, events=None, captured="2026-11-15T20:00:00Z"):
     return doc
 
 
-def test_latest_market_medians_exclude_polymarket_and_preserve_quotes():
+def pointer(s3, game, doc=None, frozen=False):
+    doc = doc or latest(s3)
+    stamp = datetime.fromisoformat(doc["collected_at"]).strftime("%Y%m%dT%H%M%SZ")
+    raw_key = f"lake/raw/odds-api/season={SEASON}/snapshots/{stamp}.json"
+    selected = {
+        "schema_version": 1,
+        "selection_rule": "latest_saved_pregame_event_v1",
+        "season": SEASON,
+        "game_date_pacific": DAY,
+        "game_id": GID,
+        "scheduled_start_utc": START,
+        "cutoff_utc": START,
+        "selected_at": START if frozen else doc["collected_at"],
+        "purpose": "historical_replay" if frozen else "pregame_selection",
+        "frozen": frozen,
+        "provider_event_id": "provider-123",
+        "snapshot": {
+            "uri": "s3://nba-gestalt-data/" + raw_key,
+            "sha256": hashlib.sha256(s3.objects[raw_key][0]).hexdigest(),
+            "collected_at": doc["collected_at"],
+        },
+    }
+    for side in ("home", "away"):
+        selected[side + "_team_id"] = game[side + "_team_id"]
+        selected[side + "_team"] = game[side + "_team_name"]
+    if frozen:
+        selected["frozen_at"] = START
+    key = (
+        f"lake/artifacts/game_odds/season={SEASON}/"
+        f"game_date_pacific={DAY}/game_id={GID}/latest.json"
+    )
+    s3.put_fixture(key, selected)
+    return key, selected
+
+
+def test_pointer_market_medians_exclude_polymarket_and_preserve_quotes():
     s3, r, g, _ = setup_game()
-    latest(s3)
+    pointer(s3, g)
     s3.calls.clear()
     d = DetailsReader(r, SEASON, DAY, NOW)
-    market, poly, ref = d.upcoming(g, d.latest_odds())
+    market, poly, ref = d.game_odds(g)
     assert market["home_spread"] == -3 and market["away_spread"] == 3
     assert market["home_win_probability"] == pytest.approx((0.6 + 2 / 3) / 2)
     assert market["home_moneyline"] is None
@@ -98,10 +133,7 @@ def test_latest_market_medians_exclude_polymarket_and_preserve_quotes():
     assert market["bookmakers"][0]["home_moneyline"] == -150
     assert poly["home_spread"] == -10 and poly["home_win_probability"] == 0.8
     assert ref["provider_event_id"] == "provider-123"
-    assert (
-        len([key for op, key in s3.calls if key.endswith("odds-api/season=2026-27/latest.json")])
-        == 1
-    )
+    assert len([key for op, key in s3.calls if "/game_odds/" in key]) == 1
 
 
 @pytest.mark.parametrize(
@@ -120,16 +152,17 @@ def test_upcoming_input_safety(damage):
     if damage == "wrongdate":
         events[0]["commence_time"] = "2026-11-17T00:00:00Z"
     captured = START if damage == "posttip" else "2026-11-15T20:00:00Z"
-    latest(s3, events, captured)
+    doc = latest(s3, events, captured)
+    if damage == "ambiguous":
+        events[-1]["id"] = "provider-123"
+        doc = latest(s3, events, captured)
+    pointer(s3, g, doc, frozen=True)
     if damage == "checksum":
         key = "lake/raw/odds-api/season=2026-27/snapshots/20261115T200000Z.json"
         s3.put_fixture(key, {})
     d = DetailsReader(r, SEASON, DAY, datetime(2026, 11, 16, 1, tzinfo=UTC))
-    if damage in ("posttip", "wrongdate"):
-        assert d.upcoming(g, d.latest_odds()) is None
-    else:
-        with pytest.raises(ValueError):
-            d.upcoming(g, d.latest_odds())
+    with pytest.raises(ValueError):
+        d.game_odds(g)
 
 
 def actual_fixture(s3, g, baseline):
@@ -264,7 +297,7 @@ def test_actual_stale_or_corrupt_inputs_remain_unavailable_without_hiding_game(d
     d = DetailsReader(r, SEASON, DAY, NOW)
     d.pinned_box = stub_pinned_box(boxref)
     g["status"]["state"] = "post"
-    d.enrich_game(g, None, None)
+    d.enrich_game(g, None)
     assert g["game_id"] == GID and g["projection"] is not None
     assert g.get("retrospective") is None
     assert g["availability"]["postgame_details"] == ("stale" if damage == "baseline" else "invalid")
@@ -362,10 +395,11 @@ def test_started_game_never_uses_latest_as_pregame_fallback():
     assert not any("odds-api" in key for op, key in s3.calls[before:])
 
 
-def test_invalid_latest_is_component_error_and_game_stays_visible():
+def test_invalid_pointer_is_component_error_and_game_stays_visible():
     s3, r, g, _ = setup_game()
     latest(s3)
-    s3.put_fixture("lake/raw/odds-api/season=2026-27/latest.json", {})
+    key, _ = pointer(s3, g)
+    s3.put_fixture(key, {})
     DetailsReader(r, SEASON, DAY, NOW).enrich([g])
     assert g["availability"]["market"] == "invalid" and g["game_id"] == GID
 

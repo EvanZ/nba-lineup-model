@@ -88,6 +88,7 @@ class SavedS3:
                         "comparisons": {
                             "model": {
                                 "predicted_home_margin": 1,
+                                "winner_correct": True,
                                 "ats": {"benchmark": "bookmaker_consensus", "result": "win"},
                             },
                             "bookmaker_consensus": {"predicted_home_margin": 0},

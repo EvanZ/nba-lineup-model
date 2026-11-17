@@ -1277,7 +1277,9 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .schedule-date-rail span { font-size: 9px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
 .schedule-date-rail strong { font-family: Georgia, "Times New Roman", serif; font-size: 29px; font-weight: 400; line-height: 1; }
 .schedule-date-rail small { overflow: hidden; max-width: 100%; color: #8a918b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; font-weight: 700; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-.schedule-date-rail small.schedule-date-record { margin-top: 3px; color: #315f43; font-size: 9px; font-weight: 900; }
+.schedule-date-rail small.schedule-date-record { margin-top: 3px; color: #315f43; font-size: 9px; font-weight: 900; white-space: normal; overflow: visible; line-height: 1.4; }
+.schedule-date-rail .schedule-date-record span { font: inherit; letter-spacing: inherit; white-space: nowrap; }
+.schedule-date-rail small.schedule-date-record.unavailable { color: #7d857f; }
 .schedule-performance-card { min-width: 0; padding: 18px 22px; border: 1px solid #d9d6ce; border-top: 2px solid #17201c; background: rgb(255 254 250 / 0.5); }
 .schedule-performance-card-heading { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 0 14px; border-bottom: 1px solid #d9d6ce; }
 .schedule-performance-card-heading > div { display: grid; gap: 2px; }

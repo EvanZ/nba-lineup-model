@@ -384,7 +384,6 @@ class ScheduleReader:
                 "game_count": sum(
                     g["game_date"] == str(target + timedelta(days=offset)) for g in scheduled
                 ),
-                "record": None,
             }
             for offset in range(-3, 4)
         }
@@ -545,7 +544,7 @@ def _reader():
     return ScheduleReader(boto3.client("s3"))
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=1)
 def _cached_view(season, day, _minute):
     return _reader().view(season, day)
 

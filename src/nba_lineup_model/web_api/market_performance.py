@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
+from .market_calendar import calendar_summaries
+
 BUCKET = "nba-gestalt-data"
 SERIES = ("model", "actual_minutes_counterfactual", "polymarket", "bookmaker_consensus")
 ATS_FIELDS = ("wins", "losses", "pushes", "no_picks", "not_applicable", "unavailable")
@@ -270,6 +272,7 @@ def read_market_performance(client, *, season, through):
         "updated_at": max(d["generated_at"] for d in days),
         "source": "market_performance",
         "windows": windows,
+        "calendar": calendar_summaries(days, scheduled, through),
         "coverage": {
             "saved_dates": dates,
             "dates_without_saved_reports": missing_dates,

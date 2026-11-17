@@ -14,7 +14,25 @@ type EdgeBin = {
   wins: number; losses: number; pushes: number; no_picks: number; unavailable: number;
   cover_rate: number | null;
 };
-type Report = {
+export type CalendarSummary = {
+  game_date: string;
+  game_count: number;
+  record: DailyRecord | null;
+  record_status: "available" | "partial" | "pending" | "missing" | "invalid" | "no_games" | "unavailable";
+  record_coverage?: { model_graded_game_count: number; ats_graded_game_count: number; ats_no_pick_game_count: number };
+};
+
+export type DailyRecord = {
+  wins: number;
+  losses: number;
+  atsWins: number;
+  atsLosses: number;
+  atsPushes: number;
+};
+
+export type Report = {
+  through: string;
+  calendar: Record<string, CalendarSummary>;
   as_of: string;
   windows: { key: string; game_count: number; comparison_game_count: number; series: Record<Series, Score>; edge_bins: { bins: EdgeBin[]; paired_games: number; missing_pairs: number } }[];
   coverage: { expected_game_count: number; dates_without_saved_reports: string[]; missing_market_fields: Record<string, unknown> };
@@ -26,7 +44,7 @@ const columns: [Series, string][] = [
 const number = (value: number | null, digits = 3) => value === null ? "—" : value.toFixed(digits);
 const percent = (value: number | null) => value === null ? "—" : `${(value * 100).toFixed(1)}%`;
 
-export function MarketPerformanceReport() {
+export function useMarketPerformanceReport() {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -36,10 +54,11 @@ export function MarketPerformanceReport() {
       try {
         // Pipeline selections are independent of the legacy site-release pin.
         const response = await globalThis.fetch("/api/market-performance?season=2026-27", {
-          signal: controller.signal, cache: "default",
+          signal: controller.signal, cache: "no-cache",
         });
         if (!response.ok) throw new Error("The saved market report is unavailable.");
         const next = await response.json() as Report;
+        if (!next.calendar || typeof next.calendar !== "object" || Array.isArray(next.calendar)) throw new Error("The market report calendar is unavailable.");
         if (controller.signal.aborted) return;
         setReport(next);
         setError(null);
@@ -55,6 +74,11 @@ export function MarketPerformanceReport() {
     void refresh();
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, []);
+  return { report, error };
+}
+
+export function MarketPerformanceReport() {
+  const { report, error } = useMarketPerformanceReport();
   return <MarketPerformanceView report={report} error={error} />;
 }
 

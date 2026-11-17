@@ -130,7 +130,7 @@ def fixture():
 def serve(reader, game):
     g = deepcopy(game)
     d = DetailsReader(reader, SEASON, DAY, NOW)
-    d.enrich_game(g, None, d.historical([g]))
+    d.enrich_game(g, d.historical([g]))
     return g
 
 

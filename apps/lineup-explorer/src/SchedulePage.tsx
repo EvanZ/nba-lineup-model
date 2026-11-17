@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, CircleAlert, Radio, TrendingUp } from "lucide-react";
 
 import { teamLogoUrl } from "./teamLogos";
-import { MarketPerformanceReport } from "./MarketPerformanceReport";
+import { MarketPerformanceView, useMarketPerformanceReport, type CalendarSummary, type DailyRecord, type Report } from "./MarketPerformanceReport";
 
 type MarketLine = {
   provider: string;
@@ -188,15 +188,8 @@ type ScheduleDay = {
   coverage: { missing_prediction_game_ids: string[]; missing_observation_game_ids: string[] };
 };
 
-type CalendarDay = { game_date: string; game_count: number; record: DailyRecord | null };
-
-type DailyRecord = {
-  wins: number;
-  losses: number;
-  atsWins: number;
-  atsLosses: number;
-  atsPushes: number;
-};
+type CalendarDay = CalendarSummary;
+type CalendarCount = Pick<CalendarSummary, "game_date" | "game_count">;
 
 function dateKey(date: Date) {
   const year = date.getFullYear();
@@ -291,7 +284,30 @@ function dailyRecordLabel(record: DailyRecord) {
   const ats = atsGames
     ? `${record.atsWins}-${record.atsLosses}${record.atsPushes ? `-${record.atsPushes}` : ""}`
     : "—";
-  return `W-L ${record.wins}-${record.losses} · ATS ${ats}`;
+  const winners = record.wins + record.losses ? `${record.wins}-${record.losses}` : "—";
+  return `W-L ${winners} · ATS ${ats}`;
+}
+
+export function CalendarResult({ day }: { day?: CalendarDay }) {
+  if (!day || day.record_status === "pending" || day.record_status === "no_games") return null;
+  if (!day.record) {
+    const reason = day.record_status === "invalid" ? "Saved report failed validation." : "No saved model results are available.";
+    return <small className="schedule-date-record unavailable" title={reason}>Results unavailable</small>;
+  }
+  const coverage = day.record_coverage;
+  const detail = `${day.record_status === "partial" ? "Partial saved results" : "Saved results"}: winner grades ${coverage?.model_graded_game_count ?? "—"}/${day.game_count}; ATS grades ${coverage?.ats_graded_game_count ?? "—"}/${day.game_count}${coverage?.ats_no_pick_game_count ? `; ${coverage.ats_no_pick_game_count} no pick` : ""}.`;
+  const [winner, ats] = dailyRecordLabel(day.record).split(" · ");
+  return <small className="schedule-date-record" title={detail} aria-label={`${dailyRecordLabel(day.record)}. ${detail}`}><span>{winner}</span>{" · "}<span>{ats}{day.record_status === "partial" ? " *" : ""}</span></small>;
+}
+
+export function calendarSummary(day: CalendarCount | undefined, report: Report | null, error: string | null): CalendarSummary | undefined {
+  if (!day) return undefined;
+  const empty = { ...day, record: null };
+  if (!day.game_count) return { ...empty, record_status: "no_games" };
+  if (!report) return error ? { ...empty, record_status: "unavailable" } : undefined;
+  const saved = report.calendar[day.game_date];
+  if (saved) return saved.game_count === day.game_count ? saved : { ...empty, record_status: "invalid" };
+  return { ...empty, record_status: day.game_date > report.through ? "pending" : "missing" };
 }
 
 function reportTime(value?: string | null) {
@@ -657,7 +673,8 @@ export function ScheduleGameCard({ game }: { game: ArchivedGame }) {
 }
 
 export function SchedulePage({ initialDate }: { initialDate?: string }) {
-  const [calendar, setCalendar] = useState<Record<string, CalendarDay>>({});
+  const [calendar, setCalendar] = useState<Record<string, CalendarCount>>({});
+  const { report: marketReport, error: marketError } = useMarketPerformanceReport();
   const [teams, setTeams] = useState<string[]>([]);
   const [scheduleDay, setScheduleDay] = useState<ScheduleDay | null>(null);
   const [selectedDate, setSelectedDate] = useState(
@@ -690,7 +707,7 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
         const response = await fetch(`/api/schedule-view?date=${selectedDate}`, { signal: controller.signal });
         const payload = await response.json() as {
           day: ScheduleDay;
-          calendar: Record<string, CalendarDay>;
+          calendar: Record<string, CalendarCount>;
           teams: { team: string; team_id: number }[];
         };
         if (!response.ok || !payload.day.available) {
@@ -727,7 +744,7 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
           <h1>The slate.</h1>
           <p>Every game, our pregame projection, and the market on one timeline. Move backward to audit results or forward to scout the week.</p>
         </div>
-        <MarketPerformanceReport />
+        <MarketPerformanceView report={marketReport} error={marketError} />
       </div>
 
       <div className="schedule-toolbar">
@@ -751,12 +768,11 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
         {dateRail.map((date) => {
           const active = date === selectedDate;
           const today = date === dateKey(new Date());
-          const record = calendar[date]?.record;
           return <button className={active ? "active" : ""} type="button" key={date} onClick={() => selectDate(date)} aria-current={active ? "date" : undefined}>
             <span>{today ? "Today" : shortDay(date)}</span>
             <strong>{parseDate(date).getDate()}</strong>
             <small>{shortMonth(date)} · {gamesByDate.has(date) ? gameCountLabel(gamesByDate.get(date)!) : "—"}</small>
-            {record && <small className="schedule-date-record">{dailyRecordLabel(record)}</small>}
+            <CalendarResult day={calendarSummary(calendar[date], marketReport, marketError)} />
           </button>;
         })}
       </div>

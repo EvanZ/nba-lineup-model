@@ -11,6 +11,7 @@ from statistics import median
 
 from botocore.exceptions import BotoCoreError, ClientError
 
+from .market_calendar import saved_ats_result
 from .schedule import BUCKET, PACIFIC, _instant, _number
 
 SOURCE_ERRORS = (OSError, ValueError, KeyError, TypeError, BotoCoreError, ClientError)
@@ -193,100 +194,166 @@ def market_view(markets, game, label):
     )
 
 
+def selected_event_view(event, game, snapshot):
+    """Format exactly the event selected by the pipeline, without selecting a capture."""
+    books = event["bookmakers"]
+    if len({b["key"] for b in books}) != len(books):
+        raise ValueError("Duplicate selected bookmaker")
+    # Published #85 contract. No pipeline imports or external-provider calls.
+    approved = {
+        "draftkings",
+        "fanduel",
+        "betmgm",
+        "betrivers",
+        "hardrockbet",
+        "betparx",
+        "ballybet",
+        "betonlineag",
+        "polymarket",
+        "espnbet",
+    }
+    cutoff = min(_instant(game["start_time"]), _instant(event["commence_time"]))
+    markets = {}
+    for kind in ("spreads", "h2h"):
+        quotes = []
+        for book in books:
+            if book["key"] not in approved:
+                continue
+            rows = [m for m in book["markets"] if m["key"] == kind]
+            if len(rows) > 1:
+                raise ValueError("Duplicate selected bookmaker market")
+            if not rows:
+                continue
+            market = rows[0]
+            updated = market.get("last_update") or book["last_update"]
+            if _instant(updated) >= cutoff:
+                raise ValueError("Selected provider update is not pregame")
+            if any(_number(row["price"]) == 0 for row in market["outcomes"]):
+                raise ValueError("Invalid selected American odds")
+            quotes.append(
+                {
+                    "bookmaker_key": book["key"],
+                    "title": book.get("title") or book["key"],
+                    "market": kind,
+                    "value": _quote_value(kind, market["outcomes"], game),
+                    "outcomes": market["outcomes"],
+                    "last_updated_at": updated,
+                    "observed_at": snapshot["collected_at"],
+                    "provider_commence_time": event["commence_time"],
+                    "snapshot": _ref(snapshot),
+                }
+            )
+        others = [q for q in quotes if q["bookmaker_key"] != "polymarket"]
+        markets[kind] = {
+            "books": others,
+            "polymarket": next((q for q in quotes if q["bookmaker_key"] == "polymarket"), None),
+            "consensus": median(q["value"] for q in others) if others else None,
+        }
+    market, poly = market_view(markets, game, "Saved pregame")
+    if market is None and poly is None:
+        raise ValueError("Selected odds event has no approved quotes")
+    return market, poly
+
+
 class DetailsReader:
     def __init__(self, reader, season, day, now):
         self.reader, self.season, self.day, self.now = reader, season, day, now
         self.boxes = {}
 
-    def latest_odds(self):
-        root = f"lake/raw/odds-api/season={self.season}/"
-        result = self.reader._get(root + "latest.json", missing=True)
+    def game_odds(self, game):
+        """Consume the pipeline's selection; never search or freeze raw captures."""
+        import hashlib
+
+        key = (
+            f"lake/artifacts/game_odds/season={self.season}/"
+            f"game_date_pacific={self.day}/game_id={game['game_id']}/latest.json"
+        )
+        result = self.reader._get(key, missing=True)
         if result is None:
             return None
         raw, _ = result
-        doc = json.loads(raw)
+        pointer = json.loads(raw)
+        if (
+            type(pointer["schema_version"]) is not int
+            or pointer["schema_version"] != 1
+            or pointer["selection_rule"] != "latest_saved_pregame_event_v1"
+            or pointer["season"] != self.season
+            or pointer["game_date_pacific"] != self.day
+            or pointer["game_id"] != game["game_id"]
+            or _instant(pointer["scheduled_start_utc"]) != _instant(game["start_time"])
+            or pointer["purpose"] not in {"pregame_selection", "historical_replay"}
+            or type(pointer["frozen"]) is not bool
+        ):
+            raise ValueError("Invalid per-game odds selection identity/version")
+        for side, name in zip(("home", "away"), _names(game), strict=True):
+            if (
+                pointer[side + "_team_id"] != game[side + "_team_id"]
+                or pointer[side + "_team"] != name
+            ):
+                raise ValueError("Per-game odds team identity mismatch")
+        selected_at = _instant(pointer["selected_at"])
+        cutoff = _instant(pointer["cutoff_utc"])
+        if selected_at > self.now or (self.now >= cutoff and not pointer["frozen"]):
+            raise ValueError("Per-game odds selection is not finalized or is in the future")
+        if pointer["frozen"]:
+            frozen_at = _instant(pointer["frozen_at"])
+            if not cutoff <= frozen_at <= self.now or frozen_at < selected_at:
+                raise ValueError("Invalid per-game odds freeze time")
+        elif pointer.get("frozen_at") is not None or selected_at >= cutoff:
+            raise ValueError("Invalid unfrozen per-game odds metadata")
+        snapshot = pointer["snapshot"]
+        captured = _instant(snapshot["collected_at"])
+        stamp = captured.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+        snapshot_key = f"lake/raw/odds-api/season={self.season}/snapshots/{stamp}.json"
+        if (
+            snapshot["uri"] != f"s3://{BUCKET}/{snapshot_key}"
+            or not re.fullmatch(r"[a-f0-9]{64}", snapshot["sha256"])
+            or not captured <= selected_at <= self.now
+            or captured >= cutoff
+        ):
+            raise ValueError("Invalid per-game odds immutable snapshot reference")
+        doc = self.reader.immutable(snapshot_key, snapshot["sha256"])
         if (
             doc["schema_version"] != 1
             or doc["provider"] != "The Odds API"
             or doc["season"] != self.season
             or doc["sport_key"] != "basketball_nba"
+            or doc["collected_at"] != snapshot["collected_at"]
         ):
-            raise ValueError("Wrong saved odds provider/season/sport")
-        captured = _instant(doc["collected_at"])
-        if captured > self.now:
-            raise ValueError("Odds capture is in the future")
-        key = root + "snapshots/" + captured.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ") + ".json"
-        import hashlib
-
-        sha = hashlib.sha256(raw).hexdigest()
-        self.reader.immutable(key, sha)
-        events = doc["events"]
-        if len({e["id"] for e in events}) != len(events):
-            raise ValueError("Duplicate odds event IDs")
-        return doc, {
-            "uri": f"s3://{BUCKET}/{key}",
-            "sha256": sha,
-            "captured_at": doc["collected_at"],
-        }
-
-    def upcoming(self, game, latest):
-        if latest is None:
-            return None
-        doc, reference = latest
-        home, away = _names(game)
-        events = [
-            e
-            for e in doc["events"]
-            if e["home_team"] == home
-            and e["away_team"] == away
-            and str(_instant(e["commence_time"]).astimezone(PACIFIC).date()) == self.day
-        ]
-        if len(events) > 1:
-            raise ValueError("Ambiguous provider event for official NBA game")
-        if not events:
-            return None
+            raise ValueError("Wrong selected odds snapshot identity")
+        events = [e for e in doc["events"] if e["id"] == pointer["provider_event_id"]]
+        if len(events) != 1:
+            raise ValueError("Missing or duplicate selected odds event")
         event = events[0]
-        cutoff = min(_instant(game["start_time"]), _instant(event["commence_time"]))
-        if _instant(doc["collected_at"]) >= cutoff:
-            return None
-        if event["sport_key"] != "basketball_nba":
-            raise ValueError("Wrong provider event sport")
-        books = event["bookmakers"]
-        if len({b["key"] for b in books}) != len(books):
-            raise ValueError("Duplicate provider bookmaker")
-        markets = {}
-        for kind in ("spreads", "h2h"):
-            quotes = []
-            for b in books:
-                rows = [m for m in b["markets"] if m["key"] == kind]
-                if len(rows) > 1:
-                    raise ValueError("Duplicate bookmaker market")
-                if not rows:
-                    continue
-                m = rows[0]
-                updated = m.get("last_update") or b["last_update"]
-                if _instant(updated) >= cutoff:
-                    continue
-                q = {
-                    "bookmaker_key": b["key"],
-                    "title": b.get("title") or b["key"],
-                    "market": kind,
-                    "value": _quote_value(kind, m["outcomes"], game),
-                    "outcomes": m["outcomes"],
-                    "last_updated_at": updated,
-                    "observed_at": doc["collected_at"],
-                    "provider_commence_time": event["commence_time"],
-                    "snapshot": _ref(reference),
-                }
-                quotes.append(q)
-            others = [q for q in quotes if q["bookmaker_key"] != "polymarket"]
-            markets[kind] = {
-                "books": others,
-                "polymarket": next((q for q in quotes if q["bookmaker_key"] == "polymarket"), None),
-                "consensus": median(q["value"] for q in others) if others else None,
-            }
-        market, poly = market_view(markets, game, "Latest pregame")
-        return market, poly, {**reference, "provider_event_id": event["id"]}
+        home, away = _names(game)
+        provider_start = _instant(event["commence_time"])
+        if (
+            event["home_team"] != home
+            or event["away_team"] != away
+            or event["sport_key"] != "basketball_nba"
+            or str(provider_start.astimezone(PACIFIC).date()) != self.day
+            or cutoff != min(_instant(game["start_time"]), provider_start)
+        ):
+            raise ValueError("Selected odds event identity/cutoff mismatch")
+        reference = {**_ref(snapshot), "captured_at": snapshot["collected_at"]}
+        market, poly = selected_event_view(event, game, snapshot)
+        label = "Frozen pregame" if pointer["frozen"] else "Latest pregame"
+        for view in (market, poly):
+            if view is not None:
+                view["selection"] = label
+        return (
+            market,
+            poly,
+            {
+                **reference,
+                "provider_event_id": pointer["provider_event_id"],
+                "selection": {
+                    "uri": f"s3://{BUCKET}/{key}",
+                    "observed_sha256": hashlib.sha256(raw).hexdigest(),
+                    "document": pointer,
+                },
+            },
+        )
 
     def historical(self, games):
         root = (
@@ -360,9 +427,7 @@ class DetailsReader:
                 raise StaleSelection("Historical grading baseline values changed")
             if type(comparison["winner_correct"]) is not bool:
                 raise ValueError("Invalid saved winner grade")
-            ats = comparison.get("ats")
-            if ats is not None and ats["result"] not in ("win", "loss", "push"):
-                raise ValueError("Invalid saved ATS grade")
+            ats_result = saved_ats_result(comparison)
             audit = {
                 "inputs": deepcopy(row["inputs"]),
                 "recorded_outcome": {
@@ -370,7 +435,9 @@ class DetailsReader:
                 },
                 "grading": {
                     "model_favorite_won": comparison["winner_correct"],
-                    "market": {"model_ats_result": ats["result"]} if ats else None,
+                    "market": {"model_ats_result": ats_result}
+                    if ats_result in {"win", "loss", "push"}
+                    else None,
                 },
             }
         return (audit, ref) if audit is not None else None
@@ -525,20 +592,20 @@ class DetailsReader:
         )
         logging.getLogger(__name__).warning("Schedule %s %s: %s", game["game_id"], component, error)
 
-    def enrich_game(self, game, latest, historical):
-        upcoming = game["status"]["state"] == "pre" and _instant(game["start_time"]) > self.now
+    def enrich_game(self, game, historical):
         game["availability"].update(
             market="missing",
             postgame_details="missing" if game["status"]["state"] == "post" else "not_applicable",
             grading="missing" if game["status"]["state"] == "post" else "not_applicable",
         )
         try:
-            source = latest if upcoming else historical
-            if isinstance(source, Exception):
-                raise source
-            selected = (
-                self.upcoming(game, source) if upcoming else self.historical_game(game, source)
-            )
+            selected = self.game_odds(game)
+            # Existing published reports retain original odds/provenance for
+            # historical games without pointers. Invalid pointers never fall through.
+            if selected is None:
+                if isinstance(historical, Exception):
+                    raise historical
+                selected = self.historical_game(game, historical)
             if selected is not None:
                 game["market"], game["prediction_market"], game["sources"]["market"] = selected[:3]
                 game["availability"]["market"] = (
@@ -575,18 +642,10 @@ class DetailsReader:
             except SOURCE_ERRORS as error:
                 return error
 
-        latest = (
-            safely(self.latest_odds)
-            if any(
-                g["status"]["state"] == "pre" and _instant(g["start_time"]) > self.now
-                for g in games
-            )
-            else None
-        )
         historical = (
             safely(lambda: self.historical(games))
             if any(_instant(g["start_time"]) <= self.now for g in games)
             else None
         )
         with ThreadPoolExecutor(max_workers=4) as pool:
-            list(pool.map(lambda g: self.enrich_game(g, latest, historical), games))
+            list(pool.map(lambda g: self.enrich_game(g, historical), games))
