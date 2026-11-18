@@ -31,18 +31,38 @@ These instructions apply to every task in this repository.
   implementation, and never place local commands after a remote heredoc or
   closing SSH boundary.
 
-## Release workflow
+## Dev app deployment
 
-- Deploy every site change to `gestalt-dev.toplines.app` first.
+- Dev app deployments are simple code deployments from the app worktree on EC2:
+  `/home/ubuntu/nba-lineup-model-web-api`.
+- Build `apps/lineup-explorer` with the existing frontend build, copy its output
+  into `/var/www/nba-gestalt-dev-code`, and restart only
+  `gestalt-web-dev.service` when API code changes. Keep the dev static root at
+  `/var/www/nba-gestalt-dev-code` and the API running from the app checkout.
+- Do not create versioned code packages, release manifests, release/data bundles,
+  deployment generations, or release pointers for dev app changes. Do not use
+  `scripts/deploy_gestalt_code.py` or the data-release publisher for dev app code.
+- A dev deploy does not require committing. Commit, push, and merge only when
+  authorized by the user.
+- Keep S3 read-only and legacy model-backed API initialization disabled. Never
+  run or change pipelines, assemble data, or alter frozen forecasts as part of
+  an app deployment.
+- Deploy to `gestalt-dev.toplines.app` first and verify the relevant API coverage,
+  served frontend, and rendered page. Production requires separate approval.
+- Preserve protected collectors and the other agent's worktree and automation.
+
+## Production deployment and pipeline data publication
+
+The release requirements in this section apply to production and pipeline data
+publication, not to dev app code deployment. Do not change production deployment
+as part of dev app work.
+
 - Inspect the rendered dev page and validate the relevant API/data coverage
   before saying a change is ready.
 - Do not promote or deploy to production without the user's explicit approval.
 - Dev and production must use the same canonical artifact schemas and coverage
   checks; environment-specific pointers may differ.
-- Use the canonical daily release workflow for data publication. Code-only dev
-  API deployments use scripts/deploy_gestalt_code.py, which preserves all data
-  selections, tests the packaged API, and activates through the same fenced
-  publisher. Code deployment must not require running a forecasting/model job.
+- Use the canonical daily release workflow for pipeline data publication.
   Forecast-only data publication is the final step of `prepare_forecast_date`:
   it reuses deployed code and accepted model artifacts, validates all schedule
   coverage and the served forecasts, and uses the fenced publisher. An approved

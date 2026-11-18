@@ -301,6 +301,10 @@ nba-build-win-total-benchmark = "nba_lineup_model.rotation.win_total_benchmark:m
 nba-evaluate-forward-conditional-role-gate-roster-squash = "nba_lineup_model.rotation.forward_conditional_role_gate_roster_squash:main"
 
 [dependency-groups]
+web = [
+    "duckdb>=1.4,<2",
+]
+
 dev = [
     "pytest>=8.3.3",
     "ruff>=0.7.0",

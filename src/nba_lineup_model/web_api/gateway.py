@@ -11,6 +11,9 @@ from starlette.concurrency import run_in_threadpool
 
 from nba_lineup_model.web_api.market_performance import router
 from nba_lineup_model.web_api.player_discovery import router as discovery_router
+from nba_lineup_model.web_api.player_history import router as history_router
+from nba_lineup_model.web_api.player_rotation_history_api import router as rotation_history_router
+from nba_lineup_model.web_api.player_season_history import router as season_history_router
 from nba_lineup_model.web_api.player_summary import router as player_router
 from nba_lineup_model.web_api.schedule import router as schedule_router
 
@@ -21,6 +24,9 @@ class MarketGateway:
         self.market.include_router(router)
         self.market.include_router(schedule_router)
         self.market.include_router(player_router)
+        self.market.include_router(history_router)
+        self.market.include_router(season_history_router)
+        self.market.include_router(rotation_history_router)
         self.market.include_router(discovery_router)
         self.legacy_factory = legacy_factory
         self.legacy = None
@@ -47,6 +53,10 @@ class MarketGateway:
         if (
             scope["type"] == "lifespan"
             or is_player
+            or (
+                path.startswith("/api/players/")
+                and path.endswith(("/rating-history", "/season-history", "/rotation-history"))
+            )
             or (path.startswith("/api/headshots/") and path.endswith(".png"))
             or path
             in {

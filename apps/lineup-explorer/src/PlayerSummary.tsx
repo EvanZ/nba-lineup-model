@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { PlayerRatingHistory } from "./PlayerRatingHistory";
+import { PlayerRotationHistory } from "./PlayerRotationHistory";
+import { PlayerSeasonHistory } from "./PlayerSeasonHistory";
 
 export type SavedPlayerSummary = {
   kind: "saved_player_summary";
@@ -85,9 +88,8 @@ export function PlayerSummaryView({ player }: { player: SavedPlayerSummary }) {
       </dl> : <p className="player-rating-path-note" role="status">No saved current-season rating or minutes state is available for this player.</p>}
       <p className="player-rating-path-note">Conditional MPG estimates minutes when available. It is separate from injury-adjusted game projections. Starting values are the saved initialization for this player.</p>
     </section>
-    <section className="player-profile-section" aria-labelledby="player-history-status-title">
-      <div className="player-profile-heading"><h2 id="player-history-status-title">Player history.</h2></div>
-      <p className="player-rating-path-note">Career ratings, rotation history, game logs, and attribution are not available yet.</p>
-    </section>
+    <PlayerRatingHistory playerId={player.player_id} summaryThrough={player.observed_through} />
+    <PlayerSeasonHistory playerId={player.player_id} />
+    <PlayerRotationHistory playerId={player.player_id} />
   </article>;
 }
