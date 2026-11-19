@@ -688,6 +688,9 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .team-page-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 0; border-top: 2px solid #17201c; border-bottom: 1px solid #d9d6ce; }
 .team-page-toolbar > p { margin: 0; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
 .team-page-controls { display: flex; align-items: center; gap: 16px; }
+.team-navigation-controls { flex-wrap: wrap; max-width: 100%; }
+.team-navigation-controls .rankings-season { min-width: 0; max-width: 100%; }
+.team-navigation-controls select { min-width: 0; max-width: 100%; }
 .team-roster-section, .team-rotation-section, .team-lineups-section { padding: 32px 0 0; }
 .team-lineups-section { padding-bottom: 14px; }
 .team-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 17px; }

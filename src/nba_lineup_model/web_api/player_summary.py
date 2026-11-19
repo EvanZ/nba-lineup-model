@@ -166,19 +166,7 @@ def _biographies(client, season):
     )
 
 
-def read_player_inputs(client, *, season, cutoff):
-    """Load one shared pair of daily selections, never the full daily history."""
-    roots = {
-        kind: f"lake/artifacts/{kind}/season={season}/model_version={VERSION}/"
-        for kind in ("player_ratings", "player_minutes")
-    }
-    days = {kind: _latest_day(client, root, cutoff) for kind, root in roots.items()}
-    if len(set(days.values())) != 1:
-        raise ValueError("Latest completed ratings and minutes dates are not aligned")
-    day = days["player_ratings"]
-    ratings, rating_ref = _state(client, "player_ratings", season, day)
-    minutes, minutes_ref = _state(client, "player_minutes", season, day)
-    biographies, teams, biography_ref = _biographies(client, season)
+def _rating_players(ratings):
     rating_players = {}
     for player in ratings["players"]:
         pid = _id(player["player_id"])
@@ -199,6 +187,23 @@ def read_player_inputs(client, *, season, cutoff):
         if abs(player["nail"] - player["starting_nail"] - player["residual"]) > 1e-9:
             raise ValueError("Saved rating and delta disagree")
         rating_players[pid] = player
+    return rating_players
+
+
+def read_player_inputs(client, *, season, cutoff):
+    """Load one shared pair of daily selections, never the full daily history."""
+    roots = {
+        kind: f"lake/artifacts/{kind}/season={season}/model_version={VERSION}/"
+        for kind in ("player_ratings", "player_minutes")
+    }
+    days = {kind: _latest_day(client, root, cutoff) for kind, root in roots.items()}
+    if len(set(days.values())) != 1:
+        raise ValueError("Latest completed ratings and minutes dates are not aligned")
+    day = days["player_ratings"]
+    ratings, rating_ref = _state(client, "player_ratings", season, day)
+    minutes, minutes_ref = _state(client, "player_minutes", season, day)
+    biographies, teams, biography_ref = _biographies(client, season)
+    rating_players = _rating_players(ratings)
     minute_players = {}
     for key, player in minutes["players"].items():
         pid = _id(player["player_id"])

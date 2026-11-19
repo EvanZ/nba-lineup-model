@@ -1,3 +1,4 @@
+import { PlayerHeadshot } from "./PlayerHeadshot";
 import { releaseFetch as fetch } from "./releaseFetch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -7,6 +8,7 @@ import { RosterMovesPage } from "./RosterMovesPage";
 import { WinProjectionsPage } from "./WinProjectionsPage";
 import { ComparePage } from "./ComparePage";
 import { SchedulePage } from "./SchedulePage";
+import { TeamNavigationView, type TeamNavigationData } from "./TeamNavigation";
 import { PlayerAgingChart, PlayerRotationHistoryChart, PlayerRotationHistoryCards, inlineSvgImages } from "./PlayerHistoricalCharts";
 import { PlayerSummaryView, type SavedPlayerSummary } from "./PlayerSummary";
 import { teamLogoUrl } from "./teamLogos";
@@ -313,6 +315,7 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
   const [query, setQuery] = useState("");
   const [players, setPlayers] = useState<GlobalSearchPlayer[]>([]);
   const [teams, setTeams] = useState<GlobalSearchTeam[]>([]);
+  const [unavailableSections, setUnavailableSections] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -322,6 +325,7 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
     setPlayers([]);
     setTeams([]);
     setError(null);
+    setUnavailableSections([]);
     setIsLoading(false);
   }, [isOpen]);
 
@@ -346,6 +350,7 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
       setPlayers([]);
       setTeams([]);
       setError(null);
+      setUnavailableSections([]);
       setIsLoading(false);
       return;
     }
@@ -355,6 +360,7 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
         try {
           setIsLoading(true);
           setError(null);
+      setUnavailableSections([]);
           const response = await fetch(`/api/search?${new URLSearchParams({ q: trimmed }).toString()}`, {
             signal: controller.signal,
           });
@@ -362,9 +368,11 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
           const payload = (await response.json()) as {
             players: GlobalSearchPlayer[];
             teams: GlobalSearchTeam[];
+            unavailable_sections?: string[];
           };
           setPlayers(payload.players);
           setTeams(payload.teams);
+          setUnavailableSections(payload.unavailable_sections ?? []);
         } catch (searchError) {
           if ((searchError as Error).name !== "AbortError") {
             setPlayers([]);
@@ -410,12 +418,13 @@ function GlobalSearch({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
             ref={inputRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Player name or NBA ID"
+            placeholder="Player, team, or NBA ID"
           />
           {isLoading && <LoaderCircle className="spin" size={17} aria-label="Searching" />}
         </label>
         {error && <p className="error"><CircleAlert size={16} /> {error}</p>}
-        {!error && query.trim() && !isLoading && !hasResults && <p className="global-search-empty">No player matches that search.</p>}
+        {!error && !unavailableSections.length && query.trim() && !isLoading && !hasResults && <p className="global-search-empty">No players or teams match that search.</p>}
+        {!isLoading && unavailableSections.length > 0 && <p className="global-search-empty" role="status">{unavailableSections.map(section => section === "players" ? "Player search is temporarily unavailable." : "Team search is temporarily unavailable.").join(" ")}</p>}
         {teams.length > 0 && <section className="global-search-group" aria-labelledby="global-search-teams">
           <h3 id="global-search-teams">Teams</h3>
           <div className="global-search-results">
@@ -2580,31 +2589,30 @@ function TeamSeasonPage({
   onLoadInLab: (side: Side, lineup: RankedLineup, season: string) => void;
 }) {
   const isCompact = useMediaQuery("(max-width: 720px)");
-  const [payload, setPayload] = useState<TeamSeasonPayload | null>(null);
+  const [payload, setPayload] = useState<TeamSeasonPayload | TeamNavigationData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [minimumPossessions, setMinimumPossessions] = useState(50);
   const [lineupQuery, setLineupQuery] = useState("");
   const [lineupSort, setLineupSort] = useState<TeamLineupSort>("actual_net_rating");
   const [lineupSortDirection, setLineupSortDirection] = useState<"ascending" | "descending">("descending");
+  const legacyPayload = payload && !("kind" in payload) ? payload : null;
   const selectedSeason = season ?? payload?.season ?? "2026-27";
 
   useEffect(() => {
     const controller = new AbortController();
     void (async () => {
       try {
-        // Keep the existing sections in place while only the lineup threshold changes.
-        if (!payload) setIsLoading(true);
+        setPayload(null);
+        setIsLoading(true);
         setError(null);
-        const parameters = new URLSearchParams({
-          season: selectedSeason,
-          minimum_possessions: String(minimumPossessions),
-        });
+        const parameters = new URLSearchParams();
+        if (season) parameters.set("season", season);
         const response = await fetch(`/api/teams/${encodeURIComponent(team)}?${parameters.toString()}`, {
           signal: controller.signal,
         });
-        if (!response.ok) throw new Error("This team-season page is unavailable.");
-        setPayload((await response.json()) as TeamSeasonPayload);
+        if (!response.ok) { const error = await response.json(); throw new Error(error.detail ?? "Team navigation is unavailable."); }
+        setPayload((await response.json()) as TeamSeasonPayload | TeamNavigationData);
       } catch (teamError) {
         if ((teamError as Error).name !== "AbortError") setError((teamError as Error).message);
       } finally {
@@ -2612,18 +2620,18 @@ function TeamSeasonPage({
       }
     })();
     return () => controller.abort();
-  }, [minimumPossessions, selectedSeason, team]);
+  }, [season, team]);
 
   useEffect(() => {
     setLineupQuery("");
     setMinimumPossessions(selectedSeason === "2026-27" ? 10 : 50);
   }, [selectedSeason, team]);
 
-  const displayName = payload?.display_name ?? team;
-  const players = payload?.players ?? [];
-  const lineups = payload?.lineups ?? [];
-  const winHistory = payload?.win_history ?? [];
-  const isCurrentSeason = payload?.rating_state?.kind === "in_season_updated";
+  const displayName = legacyPayload?.display_name ?? team;
+  const players = legacyPayload?.players ?? [];
+  const lineups = legacyPayload?.lineups ?? [];
+  const winHistory = legacyPayload?.win_history ?? [];
+  const isCurrentSeason = legacyPayload?.rating_state?.kind === "in_season_updated";
   const visibleLineups = useMemo(() => {
     const tokens = lineupQuery.split(",").map((token) => token.trim().toLocaleLowerCase()).filter(Boolean);
     const matchingLineups = tokens.length
@@ -2665,6 +2673,12 @@ function TeamSeasonPage({
     return formatOptionalRating(value);
   }
 
+  if (!payload) return <article className="rankings-page team-page" aria-labelledby="team-navigation-title">
+    <section className="rankings-hero"><p className="eyebrow">Team navigation</p><h1 id="team-navigation-title">Teams.</h1></section>
+    {error ? <p className="error" role="alert"><CircleAlert size={16} /> {error}</p> : <p role="status"><LoaderCircle className="spin" size={17} /> Loading team navigation…</p>}
+  </article>;
+  if ("kind" in payload) return <TeamNavigationView navigation={payload} compact={isCompact} />;
+
   return (
     <article className="rankings-page team-page" aria-labelledby="team-page-title">
       <section className="rankings-hero team-page-hero">
@@ -2677,7 +2691,7 @@ function TeamSeasonPage({
                 <h1 id="team-page-title">{displayName}.</h1>
               </div>
             <p>{isCurrentSeason
-              ? `Current roster, updated predictive NAIL, and observed five-man units through ${payload?.rating_state?.evidence_through_date ?? "the latest promoted slate"}.`
+              ? `Current roster, updated predictive NAIL, and observed five-man units through ${legacyPayload?.rating_state?.evidence_through_date ?? "the latest promoted slate"}.`
               : "Season-end roster assignment, completed-fit player ratings, and observed five-man units ranked by actual net rating."}
             </p>
           </div>
@@ -2698,7 +2712,7 @@ function TeamSeasonPage({
                   window.location.hash = teamSeasonHref(team, event.target.value);
                 }}
               >
-                {(payload?.available_seasons ?? [selectedSeason]).map((availableSeason) => (
+                {(legacyPayload?.available_seasons ?? [selectedSeason]).map((availableSeason) => (
                   <option key={availableSeason} value={availableSeason}>{availableSeason}</option>
                 ))}
               </select>
@@ -4084,28 +4098,6 @@ function FourFactorSparkline({
   );
 }
 
-function PlayerHeadshot({ player }: { player: PlayerIdentity }) {
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => setFailed(false), [player.player_id]);
-
-  if (failed) {
-    return (
-      <span className="player-headshot player-headshot-fallback" aria-hidden="true">
-        {player.player_name.split(" ").map((part) => part[0]).join("").slice(0, 2)}
-      </span>
-    );
-  }
-
-  return (
-    <img
-      className="player-headshot"
-      src={playerHeadshotUrl(player.player_id)}
-      alt=""
-      onError={() => setFailed(true)}
-    />
-  );
-}
 
 function Results({ result }: {
   result: Matchup | null;

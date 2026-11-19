@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import unicodedata
 from functools import lru_cache
 from time import time
@@ -10,6 +11,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Path, Query, Response
 
 from . import player_summary as profiles
+from .team_navigation import search_teams
 
 router = APIRouter()
 
@@ -67,16 +69,32 @@ def player_search(
     q: str = Query(min_length=1, max_length=128),
     limit: int = Query(default=8, ge=1, le=25),
 ):
+    unavailable_sections = []
+    players, teams = [], []
+    cache_control = "no-store"
     try:
         inputs, cache_control = profiles.shared_inputs()
-    except profiles.SOURCE_ERRORS as error:
+        players = search_players(inputs, q, limit)
+    except profiles.SOURCE_ERRORS:
+        unavailable_sections.append("players")
+    try:
+        teams, _ = search_teams(q, limit)
+    except Exception as error:
+        logging.getLogger(__name__).error("Team search unavailable: %s", type(error).__name__)
+        unavailable_sections.append("teams")
+    if len(unavailable_sections) == 2:
         raise HTTPException(
             status_code=503,
-            detail="Saved player search is unavailable.",
+            detail="Saved search is unavailable.",
             headers={"Cache-Control": "no-store"},
-        ) from error
-    response.headers["Cache-Control"] = cache_control
-    return {"players": search_players(inputs, q, limit), "teams": [], "scope": "players"}
+        )
+    response.headers["Cache-Control"] = "no-store" if unavailable_sections else cache_control
+    return {
+        "players": players,
+        "teams": teams,
+        "scope": "players_and_teams",
+        "unavailable_sections": unavailable_sections,
+    }
 
 
 @lru_cache(maxsize=64)

@@ -70,7 +70,7 @@ def test_search_and_headshot_routes_bypass_legacy(inputs, monkeypatch):
     try:
         result = client.get("/api/search", params={"q": "curry"})
         assert result.status_code == 200 and result.json()["players"][0]["player_id"] == PID
-        assert result.json()["scope"] == "players" and result.json()["teams"] == []
+        assert result.json()["scope"] == "players_and_teams" and result.json()["teams"] == []
         assert result.headers["cache-control"] == "private, max-age=123"
         assert (
             client.get("/api/search", params={"q": "Retired"}).json()["players"][0]["player_id"]
@@ -123,4 +123,10 @@ def test_invalid_or_unavailable_photos_fail_cleanly(inputs, monkeypatch, damage)
 def test_search_does_not_hide_invalid_required_inputs(monkeypatch):
     monkeypatch.setattr(profiles, "shared_inputs", Mock(side_effect=ValueError("bad checksum")))
     response = TestClient(MarketGateway(None)).get("/api/search", params={"q": "curry"})
-    assert response.status_code == 503 and response.headers["cache-control"] == "no-store"
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    assert response.json()["unavailable_sections"] == ["players"]
+
+
+@pytest.fixture(autouse=True)
+def stub_team_search(monkeypatch):
+    monkeypatch.setattr(api, "search_teams", lambda q, limit: ([], "private, max-age=123"))
