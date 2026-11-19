@@ -441,6 +441,9 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .player-stat-grid dd { margin: 7px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 21px; font-weight: 700; }
 .current-rating-trajectory { width: 100%; max-width: none; margin: 26px 0 18px; padding: 18px 0 12px; overflow-x: auto; border-top: 1px solid #d9d6ce; border-bottom: 1px solid #d9d6ce; }
 .current-rating-trajectory svg { display: block; min-width: 100%; max-width: none; height: auto; overflow: visible; }
+.current-rating-grid-major { stroke: #c7cec6; stroke-width: 1; }
+.current-rating-grid-minor { stroke: #e4e8e1; stroke-width: 1; }
+.current-rating-axis-tick { stroke: #7f8780; stroke-width: 1; }
 .current-rating-baseline { stroke: #7f8780; stroke-width: 1; stroke-dasharray: 5 4; }
 .current-rating-line { fill: none; stroke: #245a47; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .current-rating-point { fill: #fffefa; stroke: #245a47; stroke-width: 2.2; }
@@ -685,6 +688,9 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .team-page-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 0; border-top: 2px solid #17201c; border-bottom: 1px solid #d9d6ce; }
 .team-page-toolbar > p { margin: 0; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; }
 .team-page-controls { display: flex; align-items: center; gap: 16px; }
+.team-navigation-controls { flex-wrap: wrap; max-width: 100%; }
+.team-navigation-controls .rankings-season { min-width: 0; max-width: 100%; }
+.team-navigation-controls select { min-width: 0; max-width: 100%; }
 .team-roster-section, .team-rotation-section, .team-lineups-section { padding: 32px 0 0; }
 .team-lineups-section { padding-bottom: 14px; }
 .team-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 17px; }
@@ -1513,4 +1519,35 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .schedule-rotation-table.has-attribution > div:not(.schedule-rotation-header) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .schedule-spread-ledger { margin-top: 18px; }
   .schedule-spread-ledger-heading { align-items: start; flex-direction: column; gap: 4px; }
+}
+
+.player-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 720px) {
+  .player-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 781px) {
+  .player-daily-history-table { min-width: 0; width: 100%; }
+  .player-daily-history-table th { padding: 8px 3px; font-size: 8px; }
+  .player-daily-history-table td { padding: 8px 3px; font-size: 11px; }
+  .player-daily-history-table .current-season-game-log-stat { min-width: 0; white-space: nowrap; }
+  .player-daily-history-table .current-season-game-log-date { width: 44px; white-space: nowrap; }
+  .player-daily-history-table .current-season-game-log-matchup { width: 112px; }
+  .player-daily-history-table .current-season-game-log-opponent { min-width: 0; gap: 5px; }
+  .player-daily-history-table .current-season-game-log-opponent img { width: 22px; height: 22px; }
+  .player-daily-history-table .current-season-game-log-opponent strong,
+  .player-daily-history-table .current-season-game-log-rating .rating-value { font-size: 11px; }
+}
+@media (min-width: 781px) and (max-width: 1000px) {
+  .player-daily-history-table th, .player-daily-history-table td { padding-left: 2px; padding-right: 2px; }
+}
+@media (max-width: 780px) {
+  .player-daily-history-table .current-season-game-log-rating { grid-column: 1 / -1; border-top: 1px solid #e2dfd7; border-bottom: 1px solid #e2dfd7; }
+}
+.player-daily-history-table td small { color: #68716a; font-size: 10px; }
+
+.player-history-game-status { display: block; }
+
+@media (max-width: 780px) {
+  .player-season-history-desktop, .player-rotation-history-desktop { display: none; }
 }
