@@ -281,16 +281,15 @@ export function PlayerAgingChart({ player }: { player: CareerChartPlayer }) {
     { key: "additiveProfile", label: "Additive profile", color: "#a64d67" },
   ];
   const contributionValues = points.map((point) => ({
-    complete: point.prior_rating !== null && point.season_update !== null && point.additive_profile_adjustment !== null,
-    prior: point.prior_rating ?? 0,
-    seasonUpdate: point.season_update ?? 0,
-    additiveProfile: point.additive_profile_adjustment ?? 0,
+    prior: point.prior_rating,
+    seasonUpdate: point.season_update,
+    additiveProfile: point.additive_profile_adjustment,
   }));
   const positiveTotals = contributionValues.map((values) => contributionLayers.reduce(
-    (total, layer) => total + Math.max(0, values[layer.key]), 0,
+    (total, layer) => total + Math.max(0, values[layer.key] ?? 0), 0,
   ));
   const negativeTotals = contributionValues.map((values) => contributionLayers.reduce(
-    (total, layer) => total + Math.min(0, values[layer.key]), 0,
+    (total, layer) => total + Math.min(0, values[layer.key] ?? 0), 0,
   ));
   const width = 720;
   const height = 266;
@@ -317,7 +316,10 @@ export function PlayerAgingChart({ player }: { player: CareerChartPlayer }) {
     let segment: Array<{ point: CareerPoint; lower: number; upper: number }> = [];
     for (let index = 0; index < points.length; index += 1) {
       const point = points[index];
-      if (!contributionValues[index].complete) {
+      // A band needs its own value and the lower layers that locate its baseline.
+      // Missing later layers must not hide earlier, fully known components.
+      const values = contributionValues[index];
+      if (contributionLayers.slice(0, layerIndex + 1).some((layer) => !Number.isFinite(values[layer.key]))) {
         if (segment.length) segments.push(segment);
         segment = [];
         continue;
@@ -327,14 +329,13 @@ export function PlayerAgingChart({ player }: { player: CareerChartPlayer }) {
         if (segment.length) segments.push(segment);
         segment = [];
       }
-      const values = contributionValues[index];
       const priorTotal = contributionLayers.slice(0, layerIndex).reduce(
-        (total, layer) => total + (polarity === "positive" ? Math.max(0, values[layer.key]) : Math.min(0, values[layer.key])),
+        (total, layer) => total + (polarity === "positive" ? Math.max(0, values[layer.key] ?? 0) : Math.min(0, values[layer.key] ?? 0)),
         0,
       );
       const layerValue = polarity === "positive"
-        ? Math.max(0, values[contributionLayers[layerIndex].key])
-        : Math.min(0, values[contributionLayers[layerIndex].key]);
+        ? Math.max(0, values[contributionLayers[layerIndex].key] ?? 0)
+        : Math.min(0, values[contributionLayers[layerIndex].key] ?? 0);
       segment.push({ point, lower: priorTotal, upper: priorTotal + layerValue });
     }
     if (segment.length) segments.push(segment);
@@ -584,8 +585,8 @@ export function PlayerAgingChart({ player }: { player: CareerChartPlayer }) {
         )}
       </svg>
       <figcaption>{showLeagueLeaders
-        ? `Completed-fit ${MODEL_LABEL} by age. The green line shows saved season NAIL; colored areas show complete saved rating components stacked around zero. Headshots mark each season's league leader.`
-        : `Completed-fit ${MODEL_LABEL} by age. The green line shows saved season NAIL; colored areas show complete saved rating components stacked around zero.`}
+        ? `Completed-fit ${MODEL_LABEL} by age. The green line shows saved season NAIL; colored areas show available saved rating components stacked around zero. Headshots mark each season's league leader.`
+        : `Completed-fit ${MODEL_LABEL} by age. The green line shows saved season NAIL; colored areas show available saved rating components stacked around zero.`}
       </figcaption>
     </figure>
   );
