@@ -2088,11 +2088,21 @@ type RankingStateMetadata = {
   bundle_sha256?: string;
 };
 
+type SavedRankingPlayer = Omit<RankedPlayer, "possessions" | "games" | "position"> & {
+  name_missing?: boolean;
+  possessions: number | null;
+  games: number | null;
+  position: string | null;
+};
+
 function RankingsPage() {
   const isCompact = useMediaQuery("(max-width: 720px)");
-  const [players, setPlayers] = useState<RankedPlayer[]>([]);
+  const [players, setPlayers] = useState<SavedRankingPlayer[]>([]);
   const [selectedSeason, setSelectedSeason] = useState("2026-27");
   const [availableSeasons, setAvailableSeasons] = useState<string[]>([]);
+  const [availableColumns, setAvailableColumns] = useState<RankingColumn[]>([]);
+  const [fieldLabels, setFieldLabels] = useState<Partial<Record<RankingColumn, string>>>({});
+  const [dataWarning, setDataWarning] = useState<string | null>(null);
   const [ratingState, setRatingState] = useState<RankingStateMetadata | null>(null);
   const [query, setQuery] = useState("");
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([]);
@@ -2117,6 +2127,9 @@ function RankingsPage() {
     const controller = new AbortController();
     setError(null);
     setPlayers([]);
+    setRatingState(null);
+    setAvailableColumns([]);
+    setDataWarning(null);
     void (async () => {
       try {
         setIsLoading(true);
@@ -2125,12 +2138,19 @@ function RankingsPage() {
         const payload = (await response.json()) as {
           available_seasons: string[];
           rating_state: RankingStateMetadata;
-          players: RankedPlayer[];
+          players: SavedRankingPlayer[];
+          available_columns: RankingColumn[];
+          field_labels: Partial<Record<RankingColumn, string>>;
+          metadata_warning: string | null;
+          navigation_warning: string | null;
         };
         if (!controller.signal.aborted) {
           setPlayers(payload.players);
           setAvailableSeasons(payload.available_seasons);
           setRatingState(payload.rating_state);
+          setAvailableColumns(payload.available_columns);
+          setFieldLabels(payload.field_labels);
+          setDataWarning([payload.metadata_warning, payload.navigation_warning].filter(Boolean).join(" ") || null);
         }
       } catch (rankingError) {
         if (!controller.signal.aborted) setError((rankingError as Error).message);
@@ -2149,8 +2169,13 @@ function RankingsPage() {
     setSelectedPlayerIds([]);
   }, [selectedSeason]);
 
-  const isCurrentSeason = selectedSeason === "2026-27" && ratingState?.kind === "in_season_updated";
-  const isPreseasonPreview = selectedSeason === "2026-27" && !isCurrentSeason;
+  const isCurrentSeason = selectedSeason === "2026-27";
+  useEffect(() => {
+    if (availableColumns.length && !availableColumns.includes(sortColumn)) {
+      setSortColumn("rapm");
+      setSortDirection("descending");
+    }
+  }, [availableColumns, sortColumn]);
 
   const draftClasses = useMemo(() => [...new Set(
     players.flatMap((player) => player.draft_class_year === null ? [] : [player.draft_class_year]),
@@ -2182,7 +2207,7 @@ function RankingsPage() {
       .filter((player) => selectedIds.size > 0
         ? selectedIds.has(player.player_id)
         : !normalized || player.player_name.toLocaleLowerCase().includes(normalized))
-      .filter((player) => player.possessions >= minimumPossessions)
+      .filter((player) => player.possessions === null ? minimumPossessions === 0 : player.possessions >= minimumPossessions)
       .filter((player) => teamFilter === "all" || player.team === teamFilter)
       .filter((player) => {
         if (draftClassFilter === "all") return true;
@@ -2247,7 +2272,7 @@ function RankingsPage() {
     return new Map(ranked.map(({ player }, index) => [player.player_id, index + 1]));
   }, [players, sortColumn]);
 
-  function addPlayerFilter(player: RankedPlayer) {
+  function addPlayerFilter(player: SavedRankingPlayer) {
     setSelectedPlayerIds((current) => current.includes(player.player_id) ? current : [...current, player.player_id]);
     setQuery("");
   }
@@ -2265,22 +2290,26 @@ function RankingsPage() {
     setSortDirection(column === "player_name" || column === "team" || column === "position" ? "ascending" : "descending");
   }
 
-  const columnByKey = new Map(RANKING_COLUMNS.map((column) => [column.key, column]));
+  const columnDefinitions = RANKING_COLUMNS
+    .filter(column => availableColumns.includes(column.key))
+    .map(column => ({ ...column, label: fieldLabels[column.key] ?? column.label }));
+  const columnByKey = new Map(columnDefinitions.map((column) => [column.key, column]));
   const columns = [...RANKING_FIXED_COLUMNS, ...movableColumnOrder]
     .map((key) => columnByKey.get(key))
     .filter((column): column is RankingColumnDefinition => column !== undefined);
 
-  function renderRankingCell(player: RankedPlayer, column: RankingColumnDefinition) {
+  function renderRankingCell(player: SavedRankingPlayer, column: RankingColumnDefinition) {
     switch (column.key) {
       case "player_name":
-        return <th key={column.key} scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)}>{player.player_name}</a></th>;
+        return <th key={column.key} scope="row"><PlayerHeadshot player={player} /><a className="player-name-link" href={playerProfileHref(player.player_id)} title={player.name_missing ? "Saved name unavailable; identified by NBA player ID." : undefined}>{player.player_name}</a></th>;
       case "team":
+        if (player.team === "-") return <td key={column.key}>—</td>;
         return <td key={column.key}><a className="lineup-team-mark" href={teamSeasonHref(player.team, selectedSeason)} aria-label={`View ${player.team} in ${selectedSeason}`} title={`View ${player.team} team page`}>
-          <img src={teamLogoUrl(player.team)} alt="" aria-hidden="true" loading="lazy" />
+          {teamLogoUrl(player.team) && <img src={teamLogoUrl(player.team)} alt="" aria-hidden="true" loading="lazy" />}
           <small>{player.team}</small>
         </a></td>;
       case "position":
-        return <td key={column.key}>{player.position}</td>;
+        return <td key={column.key}>{player.position || "—"}</td>;
       case "draft_number":
         return <td key={column.key} className="numeric quantity-cell">{formatDraftPick(player)}</td>;
       case "rapm":
@@ -2304,9 +2333,9 @@ function RankingsPage() {
       case "observed_context_exposure":
         return <td key={column.key} className={optionalRatingClass(player.observed_context_exposure)}>{formatOptionalRating(player.observed_context_exposure)}</td>;
       case "possessions":
-        return <td key={column.key} className="numeric quantity-cell">{wholeNumber.format(player.possessions)}</td>;
+        return <td key={column.key} className="numeric quantity-cell">{player.possessions === null ? "—" : wholeNumber.format(player.possessions)}</td>;
       case "games":
-        return <td key={column.key} className="numeric quantity-cell">{player.games}</td>;
+        return <td key={column.key} className="numeric quantity-cell">{player.games ?? "—"}</td>;
       default:
         return null;
     }
@@ -2315,25 +2344,15 @@ function RankingsPage() {
   return (
     <article className="rankings-page" aria-labelledby="rankings-title">
       <section className="rankings-hero">
-        <p className="eyebrow">{MODEL_LABEL} · {selectedSeason} {isCurrentSeason ? "in-season update" : isPreseasonPreview ? "preseason preview" : "completed fit"}</p>
+        <p className="eyebrow">{MODEL_LABEL} · {selectedSeason} {isCurrentSeason ? "in-season update" : "completed fit"}</p>
         <h1 id="rankings-title">Player rankings.</h1>
         {isCurrentSeason ? (
-          <p>
-            Current NAIL ratings, possessions, and games through {ratingState?.evidence_through_date ?? "the latest finalized games"}.
-            Select a player for rating history, model inputs, and updater details.
-          </p>
-        ) : isPreseasonPreview ? (
-          <p>
-            Frozen before 2026-27 play. Returning players receive a forward value-conditioned aging prior plus the
-            2025-26 additive profile adjustment; drafted and undrafted cold starts use their respective forward
-            priors. Season updates and non-additive lineup edges are unavailable until the season is played.
-          </p>
+          <p>Saved NAIL after the {ratingState?.evidence_through_date ?? "latest completed"} slate.
+            Starting NAIL is the accepted opening or introduced prior; change is measured from that starting point.</p>
         ) : (
-          <p>
-            Completed-fit {MODEL_LABEL} coefficients per 100 possessions for the selected season. Each table is intended
-            for within-season comparison, not an era-neutral all-time ranking.
-          </p>
+          <p>Completed-season NAIL and saved player-season statistics. Rankings compare players within the selected season.</p>
         )}
+        {dataWarning && <p className="player-rating-path-note" role="alert">{dataWarning}</p>}
       </section>
 
       <section className="rankings-table-section" aria-label={`${MODEL_LABEL} player rankings`}>
@@ -2433,7 +2452,7 @@ function RankingsPage() {
                     setSortDirection(column === "player_name" || column === "team" || column === "position" ? "ascending" : "descending");
                   }}
                 >
-                  {RANKING_COLUMNS.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
+                  {columnDefinitions.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
                 </select>
               </label>
               <button
@@ -2528,7 +2547,7 @@ function RankingsPage() {
                 <PlayerHeadshot player={player} />
                 <span>
                   <strong>{player.player_name}</strong>
-                  <small>{player.team} · {player.position} · Pick {formatDraftPick(player)}</small>
+                  <small>{player.team} · {player.position || "—"} · Pick {formatDraftPick(player)}</small>
                 </span>
               </a>
               <span className="mobile-primary-rating">
@@ -2537,15 +2556,15 @@ function RankingsPage() {
               </span>
             </div>
             <dl className="mobile-metric-grid mobile-player-metrics">
-              <div><dt>Offense</dt><dd>{player.offense_rating === null || player.offense_rating === undefined ? "-" : <Rating value={player.offense_rating} />}</dd></div>
-              <div><dt>Defense</dt><dd>{player.defense_rating === null || player.defense_rating === undefined ? "-" : <Rating value={player.defense_rating} />}</dd></div>
-              <div className="mobile-player-four-factor-ranks"><dt>Four Factors</dt><dd>{player.ffapr === null || player.ffapr === undefined ? "-" : `All ${formatRating(player.ffapr)} · Off ${formatOptionalRating(player.ffapr_offense)} · Def ${formatOptionalRating(player.ffapr_defense)}`}</dd></div>
-              <div><dt>Prior</dt><dd>{player.prior_rating === null || player.prior_rating === undefined ? "-" : <Rating value={player.prior_rating} />}</dd></div>
-              <div><dt>Season change</dt><dd>{player.season_update === null || player.season_update === undefined ? "-" : <Rating value={player.season_update} />}</dd></div>
-              <div><dt>Additive profile</dt><dd>{player.additive_profile_adjustment === null || player.additive_profile_adjustment === undefined ? "-" : <Rating value={player.additive_profile_adjustment} />}</dd></div>
-              <div><dt>Non-additive edge</dt><dd>{player.observed_context_exposure === null || player.observed_context_exposure === undefined ? "-" : <Rating value={player.observed_context_exposure} />}</dd></div>
+              {availableColumns.includes("offense_rating") && <div><dt>Offense</dt><dd>{player.offense_rating === null || player.offense_rating === undefined ? "-" : <Rating value={player.offense_rating} />}</dd></div>}
+              {availableColumns.includes("defense_rating") && <div><dt>Defense</dt><dd>{player.defense_rating === null || player.defense_rating === undefined ? "-" : <Rating value={player.defense_rating} />}</dd></div>}
+              {availableColumns.includes("ffapr") && <div className="mobile-player-four-factor-ranks"><dt>Four Factors</dt><dd>{player.ffapr === null || player.ffapr === undefined ? "-" : `All ${formatRating(player.ffapr)} · Off ${formatOptionalRating(player.ffapr_offense)} · Def ${formatOptionalRating(player.ffapr_defense)}`}</dd></div>}
+              {availableColumns.includes("prior_rating") && <div><dt>{fieldLabels.prior_rating ?? "Prior"}</dt><dd>{player.prior_rating === null || player.prior_rating === undefined ? "-" : <Rating value={player.prior_rating} />}</dd></div>}
+              {availableColumns.includes("season_update") && <div><dt>{fieldLabels.season_update ?? "Season change"}</dt><dd>{player.season_update === null || player.season_update === undefined ? "-" : <Rating value={player.season_update} />}</dd></div>}
+              {availableColumns.includes("additive_profile_adjustment") && <div><dt>Additive profile</dt><dd>{player.additive_profile_adjustment === null || player.additive_profile_adjustment === undefined ? "-" : <Rating value={player.additive_profile_adjustment} />}</dd></div>}
+              {availableColumns.includes("observed_context_exposure") && <div><dt>Non-additive edge</dt><dd>{player.observed_context_exposure === null || player.observed_context_exposure === undefined ? "-" : <Rating value={player.observed_context_exposure} />}</dd></div>}
             </dl>
-            <p className="mobile-card-meta">{wholeNumber.format(player.possessions)} possessions · {player.games} games</p>
+            <p className="mobile-card-meta">{player.possessions === null ? "—" : wholeNumber.format(player.possessions)} {isCurrentSeason ? "rating possessions" : "possessions"}{availableColumns.includes("games") && <> · {player.games ?? "—"} games</>}</p>
           </li>)}
         </ol>}
       </section>
@@ -3407,12 +3426,12 @@ function TeamWinHistoryChart({
   );
 }
 
-function draftPickGroup(player: Player): number {
+function draftPickGroup(player: Pick<Player, "draft_number" | "is_undrafted">): number {
   if (player.draft_number !== null) return 0;
   return player.is_undrafted === true ? 1 : 2;
 }
 
-function formatDraftPick(player: Player): string {
+function formatDraftPick(player: Pick<Player, "draft_number" | "is_undrafted">): string {
   if (player.is_undrafted === true) return "U";
   return player.draft_number === null ? "-" : String(player.draft_number);
 }

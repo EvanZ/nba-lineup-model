@@ -19,6 +19,7 @@ export function PlayerHeadshot({ player }: { player: PlayerIdentity }) {
   return (
     <img
       className="player-headshot"
+      loading="lazy"
       src={`/api/headshots/${player.player_id}.png`}
       alt=""
       onError={() => setFailed(true)}
