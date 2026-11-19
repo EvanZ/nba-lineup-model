@@ -861,6 +861,10 @@ export function WinProjectionsPage() {
   }, []);
 
   useEffect(() => {
+    if (!payload || payload.kind === "saved_preseason_win_projections") {
+      setCurrentRecords(null);
+      return;
+    }
     const controller = new AbortController();
     void fetch("/api/current-season-records", { signal: controller.signal })
       .then(async (response) => {
@@ -871,7 +875,7 @@ export function WinProjectionsPage() {
         if (requestError.name !== "AbortError") setCurrentRecords(null);
       });
     return () => controller.abort();
-  }, []);
+  }, [payload]);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
@@ -1044,6 +1048,7 @@ export function WinProjectionsPage() {
       <section className="win-projections-hero">
         <p className="eyebrow">{payload.season} {forecastMode === "current" && payload.state_kind === "in_season_updated" ? `current forecast${payload.as_of ? ` · through ${payload.as_of}` : ""}` : "preseason baseline"}</p>
         <h1 id="win-projections-title">Win projections.</h1>
+        {payload.kind === "saved_preseason_win_projections" && <p>Saved preseason baseline{payload.injury_availability?.as_of ? ` · injury assumptions as of ${payload.injury_availability.as_of}` : ""}. Edits create a browser-only scenario.</p>}
         <p>Adjust medical availability and conditional playing time, then recalculate. The top {activePayload?.initial_rotation_size ?? payload.initial_rotation_size} override-adjusted raw projections form the baseline rotation; pins can retain additional players.</p>
         {payload.preseason_minutes && <div className="team-rotation-toggle" role="radiogroup" aria-label="Win projection state">
           <button type="button" className={forecastMode === "current" ? "active" : ""} aria-pressed={forecastMode === "current"} onClick={() => { setForecastMode("current"); setCalculatedForecast(null); setForecastNeedsUpdate(false); }}>Current</button>
@@ -1063,7 +1068,7 @@ export function WinProjectionsPage() {
         {forecast && <section className="win-forecast" aria-labelledby="win-forecast-title">
           <div className="win-forecast-heading">
             <div><p className="eyebrow">{calculatedForecast && !forecastNeedsUpdate ? "Custom forecast" : "Baseline forecast"}</p><h2 id="win-forecast-title">Projected wins.</h2></div>
-            <p>{forecast.state_kind === "in_season_updated" ? `Actual results through ${forecast.as_of ?? "the latest completed slate"} plus the remaining schedule` : `${forecast.scheduled_games_per_team} scheduled games`} + {forecast.unassigned_regular_games_per_team} modeled NBA Cup games. {currentRecords?.as_of ? `Current W-L records as of ${currentRecords.as_of}. P(≥ Current W) remains the frozen preseason upper-tail comparison.` : "Current W-L records unavailable."}</p>
+            <p>{forecast.state_kind === "in_season_updated" ? `Actual results through ${forecast.as_of ?? "the latest completed slate"} plus the remaining schedule` : `${forecast.scheduled_games_per_team} scheduled games`} + {forecast.unassigned_regular_games_per_team} modeled NBA Cup games. {currentRecords?.as_of ? `Current W-L records as of ${currentRecords.as_of}. P(≥ Current W) remains the frozen preseason upper-tail comparison.` : ""}</p>
           </div>
           <div className="win-forecast-table-wrap"><table className="win-forecast-table">
             <thead><tr>
@@ -1075,7 +1080,7 @@ export function WinProjectionsPage() {
                 ["betmgm_win_total", "BetMGM"],
                 ["projected_wins", "Projected Wins"],
                 ["delta", "Delta"],
-              ] as Array<[ForecastSortColumn, string]>).map(([column, label]) => <th scope="col" key={column} aria-sort={forecastSortColumn === column ? forecastSortDirection : "none"}>
+              ] as Array<[ForecastSortColumn, string]>).filter(([column]) => currentRecords || !["current_record", "current_wins_upper_tail"].includes(column)).map(([column, label]) => <th scope="col" key={column} aria-sort={forecastSortColumn === column ? forecastSortDirection : "none"}>
                 <button className="win-forecast-sort" type="button" onClick={() => changeForecastSort(column)}>
                   {label}
                   {forecastSortColumn === column && (forecastSortDirection === "ascending" ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
@@ -1096,8 +1101,8 @@ export function WinProjectionsPage() {
               ].filter(Boolean).join(" ");
               return <tr key={item.team} className={rowClassName}>
                 <th><button className="win-forecast-team-link" type="button" aria-controls="team-minutes" aria-pressed={item.team === team} onClick={() => selectForecastTeam(item.team)} aria-label={`Select ${item.team}`} title={`Select ${item.team}`}><span className="lineup-team-mark"><img src={teamLogoUrl(item.team)} alt="" aria-hidden="true" loading="lazy" /><small>{item.team}</small></span></button></th>
-                <td className="win-forecast-current-record" title={currentRecord ? `Through ${currentRecord.last_game_date}` : "No completed games"}>{currentRecord ? `${currentRecord.wins}-${currentRecord.losses}` : "0-0"}</td>
-                <td className="win-forecast-upper-tail" title={currentRecord && currentWinsUpperTail !== undefined ? `${(currentWinsUpperTail * 100).toFixed(1)}% of ${ENVELOPE_TRIALS.toLocaleString()} frozen preseason paths had at least ${currentRecord.wins} ${currentRecord.wins === 1 ? "win" : "wins"} after ${currentRecord.games} games` : "No completed games"}>{currentWinsUpperTail === undefined ? "-" : `${(currentWinsUpperTail * 100).toFixed(1)}%`}</td>
+                {currentRecords && <td className="win-forecast-current-record" title={currentRecord ? `Through ${currentRecord.last_game_date}` : "No completed games"}>{currentRecord ? `${currentRecord.wins}-${currentRecord.losses}` : "—"}</td>}
+                {currentRecords && <td className="win-forecast-upper-tail" title={currentRecord && currentWinsUpperTail !== undefined ? `${(currentWinsUpperTail * 100).toFixed(1)}% of ${ENVELOPE_TRIALS.toLocaleString()} frozen preseason paths had at least ${currentRecord.wins} ${currentRecord.wins === 1 ? "win" : "wins"} after ${currentRecord.games} games` : "No completed games"}>{currentWinsUpperTail === undefined ? "-" : `${(currentWinsUpperTail * 100).toFixed(1)}%`}</td>}
                 <td className={item.team_strength < 0 ? "negative" : "positive"}>{formatRating(item.team_strength)}</td>
                 <td title={marketIntervalDescription(item)}>{item.betmgm_win_total?.toFixed(1) ?? "-"}</td>
                 <td className="win-forecast-wins">{item.projected_wins.toFixed(1)}</td>

@@ -365,6 +365,7 @@ export type IncumbentTeamStrength = {
 };
 
 export type MinutesProjectionPayload = {
+  kind?: "saved_preseason_win_projections";
   season: string;
   completed_season: string;
   model: string;
