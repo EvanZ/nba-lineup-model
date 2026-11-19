@@ -139,16 +139,18 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .win-projections-doc-link { display: inline-flex; align-items: center; gap: 5px; margin-top: 18px; color: #245a47; font-size: 14px; font-weight: 800; text-decoration-color: #e8502f; text-decoration-thickness: 1px; text-underline-offset: 4px; }
 .win-projections-doc-link:hover { color: #17201c; }
 .win-projections-doc-link:focus-visible { outline: 2px solid #e8502f; outline-offset: 4px; }
-.win-projections-workspace { display: grid; grid-template-columns: minmax(360px, 0.75fr) minmax(0, 1.25fr); align-items: start; gap: 32px; padding: 20px 0 32px; border-top: 2px solid #17201c; border-bottom: 1px solid #d9d6ce; }
-.win-forecast { min-width: 0; padding: 0 32px 0 0; border-right: 1px solid #d9d6ce; }
+.win-projections-workspace { display: grid; grid-template-columns: minmax(380px, 0.85fr) minmax(0, 1.15fr); align-items: start; gap: 24px; padding: 20px 0 32px; border-top: 2px solid #17201c; border-bottom: 1px solid #d9d6ce; }
+.win-forecast { min-width: 0; padding: 0 16px 0 0; border-right: 1px solid #d9d6ce; }
 .win-team-panel { container-name: win-team-panel; container-type: inline-size; min-width: 0; }
 .win-forecast-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
 .win-forecast-heading .eyebrow { margin: 0 0 7px; }
 .win-forecast h2 { margin: 0; color: #17201c; font-size: 25px; line-height: 1; }
 .win-forecast-heading > p { max-width: 350px; margin: 0; color: #69716b; font-size: 12px; line-height: 1.4; text-align: right; }
 .win-forecast-table-wrap { margin-top: 16px; overflow-x: auto; border-top: 1px solid #d9d6ce; }
-.win-forecast-table { width: 100%; border-collapse: collapse; }
-.win-forecast-table th, .win-forecast-table td { padding: 8px 10px; border-bottom: 1px solid #e2dfd7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; text-align: right; white-space: nowrap; }
+.win-forecast-table { width: 100%; table-layout: auto; border-collapse: collapse; }
+.win-forecast-team-link .lineup-team-mark { width: 24px; }
+.win-forecast-team-link .lineup-team-mark img { width: 22px; height: 22px; }
+.win-forecast-table th, .win-forecast-table td { padding: 7px 4px; border-bottom: 1px solid #e2dfd7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 700; text-align: right; white-space: nowrap; }
 .win-forecast-table thead th { position: sticky; top: 0; background: #f8f6ef; color: #69716b; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .win-forecast-table th:first-child, .win-forecast-table tbody th { text-align: left; }
 .win-forecast-table tr.selected-team { background: #edf2e9; }
@@ -157,7 +159,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .win-forecast-table tr.market-above-range,
 .win-forecast-table tr.market-above-range > * { background-color: #f5d4cb; }
 .win-forecast-interval { color: #4f5851; font-size: 11px !important; }
-.win-forecast-sort { display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; font-weight: inherit; text-transform: inherit; }
+.win-forecast-sort { display: inline-flex; align-items: center; justify-content: flex-end; max-width: 100%; gap: 1px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; font-weight: inherit; text-transform: inherit; }
 .win-forecast-sort:hover { color: #245a47; }
 .win-forecast-sort:focus-visible { outline: 2px solid #e8502f; outline-offset: 3px; }
 .win-forecast-team-link { display: grid; place-items: center; padding: 2px; border: 0; background: transparent; color: #17201c; cursor: pointer; font: inherit; font-weight: 900; text-decoration: none; }
@@ -1186,7 +1188,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .roster-moves-canvas { height: 400px; }
   .roster-moves-list { grid-template-columns: 1fr; }
   .win-projections-toolbar { display: grid; grid-template-columns: auto 1fr; gap: 14px; }
-  .win-forecast-table th, .win-forecast-table td { padding-right: 4px; padding-left: 4px; font-size: 10px; }
+  .win-forecast-table th, .win-forecast-table td { padding-right: 2px; padding-left: 2px; font-size: 10px; }
   .win-forecast-table thead th { font-size: 8px; }
   .win-forecast-wins { font-size: 12px !important; }
   .win-forecast-interval { font-size: 9px !important; }
@@ -1551,3 +1553,9 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 @media (max-width: 780px) {
   .player-season-history-desktop, .player-rotation-history-desktop { display: none; }
 }
+
+.team-rating-history { min-width: 0; }
+.team-rating-trajectory .current-rating-logo-halo { stroke-width: 1; }
+.team-rating-trajectory .team-rating-historical_replay { stroke-dasharray: 3 2; }
+.team-rating-trajectory .team-rating-upcoming { stroke-dasharray: 1 3; }
+.team-rating-trajectory a:focus-visible { outline: 2px solid #e8502f; }
