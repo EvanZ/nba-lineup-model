@@ -36,6 +36,7 @@ from nba_lineup_model.modeling.matchup_contextual import (
 )
 from nba_lineup_model.modeling.stints import read_rapm_stints
 from nba_lineup_model.season.schedule import SeasonScheduleCache
+from nba_lineup_model.web_api.rotation_ordering import _exposure_oriented_hclust_dendrogram
 from nba_lineup_model.web_api.current_season_lineups import (
     load_current_season_lineup_catalog,
 )
@@ -4811,60 +4812,6 @@ def _floor_time_correlation(stints: pd.DataFrame, player_ids: list[int]) -> np.n
     correlation = (correlation + correlation.T) / 2.0
     np.fill_diagonal(correlation, 1.0)
     return correlation
-
-
-def _exposure_oriented_hclust_dendrogram(
-    hierarchy: np.ndarray,
-    exposure: np.ndarray,
-) -> tuple[np.ndarray, list[dict[str, list[float]]]]:
-    """Render an unchanged linkage tree with its most-used branches first."""
-
-    player_count = len(exposure)
-    root = 2 * player_count - 2
-
-    def leaves_and_exposure(node: int) -> tuple[list[int], float]:
-        if node < player_count:
-            return [node], float(exposure[node])
-        left_node, right_node = hierarchy[node - player_count, :2].astype(int)
-        left_leaves, left_exposure = leaves_and_exposure(int(left_node))
-        right_leaves, right_exposure = leaves_and_exposure(int(right_node))
-        if right_exposure > left_exposure:
-            return right_leaves + left_leaves, right_exposure + left_exposure
-        return left_leaves + right_leaves, left_exposure + right_exposure
-
-    ordered_leaves, _ = leaves_and_exposure(root)
-    positions = {leaf: 5.0 + 10.0 * index for index, leaf in enumerate(ordered_leaves)}
-    maximum_height = float(hierarchy[-1, 2]) if len(hierarchy) else 0.0
-    leaf_span = 10.0 * max(player_count - 1, 1)
-    branches: list[dict[str, list[float]]] = []
-
-    def branch_geometry(node: int) -> tuple[float, float]:
-        if node < player_count:
-            return positions[node], 0.0
-        left_node, right_node = hierarchy[node - player_count, :2].astype(int)
-        left_x, left_height = branch_geometry(int(left_node))
-        right_x, right_height = branch_geometry(int(right_node))
-        height = float(hierarchy[node - player_count, 2])
-        branches.append(
-            {
-                "x": [
-                    (left_x - 5.0) / leaf_span,
-                    (left_x - 5.0) / leaf_span,
-                    (right_x - 5.0) / leaf_span,
-                    (right_x - 5.0) / leaf_span,
-                ],
-                "height": [
-                    left_height / maximum_height if maximum_height else 0.0,
-                    height / maximum_height if maximum_height else 0.0,
-                    height / maximum_height if maximum_height else 0.0,
-                    right_height / maximum_height if maximum_height else 0.0,
-                ],
-            }
-        )
-        return (left_x + right_x) / 2.0, height
-
-    branch_geometry(root)
-    return np.asarray(ordered_leaves, dtype=int), branches
 
 
 def _aggregate_observed_lineups(rows: pd.DataFrame, names: dict[int, str]) -> pd.DataFrame:

@@ -290,7 +290,7 @@ def team_navigation(
             "available_seasons": entries[code]["seasons"],
             "teams": [entries[t] for t in team_list(entries, chosen)],
             "roster_as_of": day if chosen == SEASON else None,
-            "deferred_sections": DEFERRED,
+            "deferred_sections": [section for section in DEFERRED if section != "rotation"],
             "sources": sources,
         }
     except HTTPException:
