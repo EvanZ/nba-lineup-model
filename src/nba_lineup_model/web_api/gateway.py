@@ -17,6 +17,7 @@ from nba_lineup_model.web_api.player_rotation_history_api import router as rotat
 from nba_lineup_model.web_api.player_season_history import router as season_history_router
 from nba_lineup_model.web_api.player_summary import router as player_router
 from nba_lineup_model.web_api.rankings import router as rankings_router
+from nba_lineup_model.web_api.recent_team_ratings import router as recent_ratings_router
 from nba_lineup_model.web_api.saved_win_projections import router as saved_wins_router
 from nba_lineup_model.web_api.schedule import router as schedule_router
 from nba_lineup_model.web_api.team_navigation import router as team_navigation_router
@@ -33,6 +34,7 @@ class MarketGateway:
         self.market.include_router(rankings_router)
         self.market.include_router(saved_wins_router)
         self.market.include_router(records_router)
+        self.market.include_router(recent_ratings_router)
         self.market.include_router(player_router)
         self.market.include_router(history_router)
         self.market.include_router(season_history_router)
@@ -69,6 +71,7 @@ class MarketGateway:
                 and path.endswith(("/rating-history", "/season-history", "/rotation-history"))
             )
             or (path.startswith("/api/teams/") and path.endswith("/rating-history"))
+            or (path.startswith("/api/team-logos/") and path.endswith(".svg"))
             or (path.startswith("/api/headshots/") and path.endswith(".png"))
             or path
             in {
@@ -78,6 +81,7 @@ class MarketGateway:
                 "/api/rankings",
                 "/api/win-projections",
                 "/api/current-season-records",
+                "/api/recent-team-ratings",
                 "/api/schedule-view",
                 "/api/schedule",
             }

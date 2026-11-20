@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from unittest.mock import Mock
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from test_saved_schedule_api import DAY, SEASON, encoded, fixtures, prediction
@@ -15,7 +16,12 @@ from nba_lineup_model.web_api.gateway import MarketGateway
 from nba_lineup_model.web_api.schedule import BUCKET, ScheduleReader
 
 
-def publish(s3, record):
+def publish(s3, record, *, consistent=True):
+    if consistent:
+        c = record["components"]
+        record["predicted_home_margin"] = (
+            c["home_player_total"] - c["away_player_total"] + c["hca"] + c["b2b_adjustment"]
+        )
     root = (
         f"lake/artifacts/game_predictions/season={SEASON}/model_version=v1/"
         f"game_date_pacific={record['game_date_pacific']}/game_id={record['game_id']}/"
@@ -70,6 +76,7 @@ def source(monkeypatch):
     previous["home"], previous["away"] = previous["away"], previous["home"]
     previous["components"]["away_player_total"] = -1.2345678912345
     publish(s3, previous)
+    publish(s3, prediction())
     reader = ScheduleReader(s3)
     monkeypatch.setattr(api, "_reader", lambda: reader)
     monkeypatch.setattr(api, "time", lambda: 3601)
@@ -81,9 +88,11 @@ def source(monkeypatch):
 
     monkeypatch.setattr(api, "datetime", Clock)
     api.cached_history.cache_clear()
+    api.cached_team_logo.cache_clear()
     legacy = Mock(side_effect=AssertionError("Legacy must not load"))
     yield s3, reader, TestClient(MarketGateway(legacy)), previous, legacy
     api.cached_history.cache_clear()
+    api.cached_team_logo.cache_clear()
 
 
 def test_exact_totals_order_opponents_and_explicit_missing_game(source):
@@ -186,3 +195,108 @@ def test_unknown_team_and_unpublished_season_do_not_use_legacy(source):
     assert response.status_code == 404 and response.headers["cache-control"] == "no-store"
     assert len(s3.calls) == calls
     legacy.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "home_b2b,away_b2b,b2b",
+    [(False, False, 0), (True, False, -1.2), (False, True, 1.2), (True, True, 0)],
+)
+def test_both_team_series_and_signed_saved_adjustments(source, home_b2b, away_b2b, b2b):
+    s3, _, client, _, _ = source
+    record = prediction()
+    record["components"].update(
+        hca=1.87654321, home_is_b2b=home_b2b, away_is_b2b=away_b2b, b2b_adjustment=b2b
+    )
+    publish(s3, record)
+    home = client.get("/api/teams/HOM/rating-history").json()["points"][-1]
+    away = client.get("/api/teams/AWY/rating-history").json()["points"][-1]
+    assert home["nail"] == away["opponent_nail"] == 3.25
+    assert away["nail"] == home["opponent_nail"] == 2.125
+    assert home["adjustments"] == {
+        "hca": 1.87654321,
+        "b2b": b2b,
+        "team_is_back_to_back": home_b2b,
+        "opponent_is_back_to_back": away_b2b,
+    }
+    assert away["adjustments"] == {
+        "hca": -1.87654321,
+        "b2b": -b2b,
+        "team_is_back_to_back": away_b2b,
+        "opponent_is_back_to_back": home_b2b,
+    }
+    assert home["predicted_margin"] == -away["predicted_margin"] == record["predicted_home_margin"]
+    for point in (home, away):
+        adjusted = point["nail"] + point["adjustments"]["hca"] + point["adjustments"]["b2b"]
+        assert adjusted - point["opponent_nail"] == pytest.approx(point["predicted_margin"])
+    assert home["source"] == away["source"]
+
+
+@pytest.mark.parametrize(
+    "field", ["hca", "b2b_adjustment", "away_player_total", "home_is_b2b", "predicted_home_margin"]
+)
+def test_missing_or_inconsistent_matchup_components_fail_explicitly(source, field):
+    s3, _, client, _, _ = source
+    record = prediction()
+    record["predicted_home_margin"] = 3.125
+    if field == "predicted_home_margin":
+        record[field] = 99
+    else:
+        del record["components"][field]
+    publish(s3, record, consistent=False)
+    response = client.get("/api/teams/HOM/rating-history")
+    assert response.status_code == 503 and response.headers["cache-control"] == "no-store"
+    assert api.cached_history.cache_info().currsize == 0
+
+
+def test_official_logo_delivery_is_cached_and_bounded(source, monkeypatch):
+    _, _, client, _, legacy = source
+    raw = b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>'
+    fetch = Mock(
+        return_value=httpx.Response(
+            200,
+            content=raw,
+            headers={"content-type": "image/svg+xml"},
+            request=httpx.Request("GET", "https://cdn.nba.com/logo.svg"),
+        )
+    )
+    monkeypatch.setattr(api.httpx, "get", fetch)
+    for _ in range(2):
+        response = client.get("/api/team-logos/1610612747.svg")
+        assert response.status_code == 200 and response.content == raw
+        assert response.headers["cache-control"] == "public, max-age=86400"
+    fetch.assert_called_once_with(
+        "https://cdn.nba.com/logos/nba/1610612747/global/L/logo.svg",
+        timeout=10.0,
+        follow_redirects=False,
+    )
+    assert client.get("/api/team-logos/123.svg").status_code == 422
+    assert client.get("/api/team-logos/1610612767.svg").status_code == 422
+    assert fetch.call_count == 1
+    legacy.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "raw,content_type",
+    [
+        (b"<html>bad</html>", "text/html"),
+        (b"bad", "image/svg+xml"),
+        (b"<svg" + b" " * 256_000, "image/svg+xml"),
+    ],
+)
+def test_invalid_logos_fail_without_empty_success_or_cache(source, monkeypatch, raw, content_type):
+    _, _, client, _, _ = source
+    monkeypatch.setattr(
+        api.httpx,
+        "get",
+        Mock(
+            return_value=httpx.Response(
+                200,
+                content=raw,
+                headers={"content-type": content_type},
+                request=httpx.Request("GET", "https://cdn.nba.com/logo.svg"),
+            )
+        ),
+    )
+    response = client.get("/api/team-logos/1610612747.svg")
+    assert response.status_code == 503 and response.headers["cache-control"] == "no-store"
+    assert api.cached_team_logo.cache_info().currsize == 0

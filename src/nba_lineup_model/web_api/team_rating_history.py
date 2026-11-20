@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import lru_cache
 from time import time
 
+import httpx
 from fastapi import APIRouter, HTTPException, Path, Query, Response
 
 from .schedule import PACIFIC, _instant, _number, _reader
@@ -47,6 +49,9 @@ def read_history(reader, team, season, now):
             "opponent": game[other + "_team"],
             "opponent_team_id": game[other + "_team_id"],
             "nail": None,
+            "opponent_nail": None,
+            "adjustments": None,
+            "predicted_margin": None,
             "availability": "missing",
             "purpose": None,
             "projection_state": None,
@@ -64,8 +69,27 @@ def read_history(reader, team, season, now):
         generated = _instant(record["generated_at_utc"])
         if record["purpose"] == "pregame_projection" and generated > start:
             raise ValueError("Pregame prediction was generated after tipoff")
+        components = record["components"]
+        nail = _number(components[side + "_player_total"])
+        opponent_nail = _number(components[other + "_player_total"])
+        sign = 1 if side == "home" else -1
+        hca = sign * _number(components["hca"])
+        b2b = sign * _number(components["b2b_adjustment"])
+        margin = sign * _number(record["predicted_home_margin"])
+        if not math.isclose(nail - opponent_nail + hca + b2b, margin, abs_tol=1e-9):
+            raise ValueError("Saved team strengths/adjustments differ from predicted margin")
+        if any(type(components[name + "_is_b2b"]) is not bool for name in (side, other)):
+            raise ValueError("Saved back-to-back flags are invalid")
         row.update(
-            nail=_number(record["components"][side + "_player_total"]),
+            nail=nail,
+            opponent_nail=opponent_nail,
+            predicted_margin=margin,
+            adjustments={
+                "hca": hca,
+                "b2b": b2b,
+                "team_is_back_to_back": components[side + "_is_b2b"],
+                "opponent_is_back_to_back": components[other + "_is_b2b"],
+            },
             availability="available",
             purpose=record["purpose"],
             projection_state=(
@@ -137,3 +161,34 @@ def team_rating_history(
             "Saved team NAIL history is unavailable or failed validation.",
             headers={"Cache-Control": "no-store"},
         ) from None
+
+
+@lru_cache(maxsize=30)
+def cached_team_logo(team_id, period):
+    response = httpx.get(
+        f"https://cdn.nba.com/logos/nba/{team_id}/global/L/logo.svg",
+        timeout=10.0,
+        follow_redirects=False,
+    )
+    response.raise_for_status()
+    raw = response.content
+    if (
+        response.headers.get("content-type", "").split(";", 1)[0] != "image/svg+xml"
+        or b"<svg" not in raw
+        or len(raw) > 256_000
+    ):
+        raise ValueError("Invalid official NBA logo response")
+    return raw
+
+
+@router.get("/api/team-logos/{team_id}.svg")
+def team_logo(team_id: int = Path(ge=1610612737, le=1610612766)):
+    try:
+        raw = cached_team_logo(team_id, int(time() // 86400))
+    except (httpx.HTTPError, ValueError) as error:
+        raise HTTPException(
+            503, "Team logo is temporarily unavailable.", headers={"Cache-Control": "no-store"}
+        ) from error
+    return Response(
+        content=raw, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"}
+    )

@@ -1188,8 +1188,9 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .roster-moves-canvas { height: 400px; }
   .roster-moves-list { grid-template-columns: 1fr; }
   .win-projections-toolbar { display: grid; grid-template-columns: auto 1fr; gap: 14px; }
-  .win-forecast-table th, .win-forecast-table td { padding-right: 2px; padding-left: 2px; font-size: 10px; }
+  .win-forecast-table th, .win-forecast-table td { padding-right: 1px; padding-left: 1px; font-size: 9.5px; }
   .win-forecast-table thead th { font-size: 8px; }
+  .win-forecast-team-link { padding: 0; }
   .win-forecast-wins { font-size: 12px !important; }
   .win-forecast-interval { font-size: 9px !important; }
   .win-projections-reset { grid-column: 2; grid-row: 1; justify-self: end; margin: 0; }
@@ -1559,3 +1560,16 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .team-rating-trajectory .team-rating-historical_replay { stroke-dasharray: 3 2; }
 .team-rating-trajectory .team-rating-upcoming { stroke-dasharray: 1 3; }
 .team-rating-trajectory a:focus-visible { outline: 2px solid #e8502f; }
+
+.team-rating-controls { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; }
+.team-rating-mode { display: inline-flex; border: 1px solid #a6aaa4; }
+.team-rating-mode button { padding: 6px 10px; border: 0; background: #fffefa; color: #4f5851; font-size: 11px; font-weight: 700; }
+.team-rating-mode button[aria-pressed="true"] { background: #245a47; color: #fffefa; }
+.team-rating-legend { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 15px; color: #4f5851; font-size: 11px; font-weight: 700; }
+.team-rating-legend span::before { display: inline-block; width: 22px; margin-right: 7px; border-top: 3px solid #245a47; vertical-align: middle; content: ""; }
+.team-rating-legend .team-rating-opponent-key::before { border-color: #5d7c9b; }
+.team-rating-trajectory .team-rating-opponent-line { stroke: #5d7c9b; stroke-width: 2; }
+.team-rating-trajectory .team-rating-opponent-halo { stroke: #5d7c9b; }
+.team-rating-gap { stroke: #c7cec6; stroke-width: 1; }
+
+.team-rating-trajectory .current-rating-grid-minor { opacity: 0.45; }
