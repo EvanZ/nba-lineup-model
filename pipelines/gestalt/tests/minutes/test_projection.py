@@ -384,3 +384,64 @@ def test_historical_correction_cannot_override_live_minutes(projection_job):
     with pytest.raises(MinutesError,match="past Pacific date"):
         a.save_game(record,expected_etag=etag,roster_archive=NBARosterArchive(),allow_historical_correction=True)
     assert all(objects[k] == v for k,v in original.items())
+
+
+def test_sensor_selection_survives_midnight_then_refreshes_after_morning_update(projection_job):
+    from gestalt_pipelines.utils import PACIFIC
+    job,a,objects,_,data,_,_=projection_job
+    target=DAY+timedelta(days=1)
+    game=data['game'];game['game_date']=target
+    game['game_time_utc']=datetime(target.year,target.month,target.day,19,tzinfo=PACIFIC).astimezone(UTC)
+    injuries=deepcopy(data['injuries']);injuries['game_date_pacific']=str(target)
+    injuries['games'][game['game_id']]['scheduled_start_utc']=game['game_time_utc'].isoformat()
+    raw=json_bytes(injuries);digest=sha256(raw).hexdigest()
+    prefix=f'lake/artifacts/injury_status_by_game_date/season={SEASON}/game_date_pacific={target}/'
+    key=prefix+f'selection_sha256={digest}/statuses.json';objects[key]=raw
+    objects[prefix+'latest.json']=json_bytes({'uri':'s3://nba-gestalt-data/'+key,'sha256':digest})
+    Clock.value=datetime(DAY.year,DAY.month,DAY.day,23,59,58,tzinfo=PACIFIC).astimezone(UTC)
+    sensor=defs.get_sensor_def('project_game_minutes_sensor')
+    with DagsterInstance.ephemeral() as instance:
+        def tick():
+            with build_sensor_context(instance=instance,repository_def=defs.get_repository_def(),
+                resources={'minutes_archive':a,'nba_roster_archive':NBARosterArchive(),'nba_schedule':NBAScheduleResource(season=SEASON)}) as context:
+                return sensor.evaluate_tick(context)
+        request,=tick().run_requests
+        assert request.partition_key==str(target)
+        assert request.tags['game_minutes/minutes_date']==str(FIRST_STATE)
+        Clock.value+=timedelta(seconds=5)
+        with pytest.raises(FileNotFoundError,match=str(DAY)):
+            a.projection_selections(str(target),today=target,roster_archive=NBARosterArchive())
+        assert job.execute_in_process(instance=instance,partition_key=request.partition_key,tags=request.tags).success
+        selected,_=a.game_selection(str(target),game['game_id'])
+        record=a.read_reference(selected,a.game_prefix)
+        assert record['baseline_through_date']==str(FIRST_STATE)
+        assert record['scheduled_start_utc']==game['game_time_utc'].isoformat()
+        parent,ref,_=a.state(str(FIRST_STATE));next_data=slate(DAY,'0022600011')
+        next_data['inputs']['parent']=ref
+        next_data['inputs']['priors']=parent['inputs']['priors']
+        updated=update_state(priors=data['priors'],parent=parent,**next_data)
+        # Arrange the completed morning updater output. Its source-publication
+        # checks have their own tests; this regression exercises the projection.
+        raw=json_bytes(updated);digest=sha256(raw).hexdigest()
+        prefix=a.prefix+f'game_date_pacific={DAY}/'
+        objects[prefix+digest+'.json']=raw
+        objects[prefix+'latest.json']=json_bytes({'uri':'s3://nba-gestalt-data/'+prefix+digest+'.json',
+            'sha256':digest,'schema_version':1,'season':SEASON,'model_version':'v1','game_date_pacific':str(DAY)})
+        Clock.value=datetime(target.year,target.month,target.day,4,1,tzinfo=PACIFIC).astimezone(UTC)
+        fresh,=tick().run_requests
+        assert fresh.tags['game_minutes/minutes_date']==str(DAY) and fresh.run_key!=request.run_key
+        assert job.execute_in_process(instance=instance,partition_key=fresh.partition_key,tags=fresh.tags).success
+        latest,_=a.game_selection(str(target),game['game_id'])
+        assert latest!=selected and a.read_reference(latest,a.game_prefix)['baseline_through_date']==str(DAY)
+        assert selected['uri'].removeprefix('s3://nba-gestalt-data/') in objects
+
+
+@pytest.mark.parametrize('target,today,selected',[
+    (DAY,DAY,DAY),
+    (DAY,DAY+timedelta(days=2),FIRST_STATE-timedelta(days=1)),
+    (DAY+timedelta(days=1),DAY+timedelta(days=1),FIRST_STATE-timedelta(days=1)),
+])
+def test_selected_minutes_date_cannot_use_future_or_wrong_historical_evidence(projection_job,target,today,selected):
+    _,a,*_=projection_job
+    with pytest.raises(MinutesError):
+        a.projection_selections(str(target),today=today,roster_archive=NBARosterArchive(),minutes_date=str(selected))

@@ -22,7 +22,7 @@ from ..utils import (
     RESOLVER_VERSION,
     identity_rows,
     read_extraction,
-    read_failed_run,
+    read_reconciliation_run,
     reconcile_games,
     select_extractions,
     select_prior_failures,
@@ -49,11 +49,11 @@ def _select_inputs(
 ) -> tuple[dict, list[dict]]:
     day = context.partition_key
     parent_run_id = context.run.parent_run_id
-    failed_run = read_failed_run(context.instance, parent_run_id, day) if parent_run_id else None
-    if failed_run is None:
+    prior_run = read_reconciliation_run(context.instance, parent_run_id, day) if parent_run_id else None
+    if prior_run is None:
         return selection.model_dump(exclude_none=True), []
 
-    reference, errors = failed_run
+    reference, errors = prior_run
     prefix = f"{STATUSES_PREFIX}/season={archive.season}/game_date_pacific={day}/"
     record = json.loads(archive.read_pinned(reference["uri"], reference["sha256"], prefix=prefix))
     if record["game_date_pacific"] != day or record["season"] != archive.season:
@@ -75,7 +75,7 @@ def _advance_latest(
     status_ref: dict,
     extraction_refs: dict,
 ) -> dict:
-    """Accept the full slate only while its pinned inputs are still selected."""
+    """Publish current inputs, retaining explicit per-game unresolved markers."""
     day = status_record["game_date_pacific"]
     inputs = status_record["inputs"]
     candidate = {**status_ref, "selection_sha256": status_record["selection_sha256"]}
@@ -200,7 +200,8 @@ def injury_status_by_game_date(
         teams = game_rosters[game["game_id"]]["teams"]
         rosters = {team: {pid: player_names[pid] for value in teams[str(team)] if (pid := int(value)) in player_names}
                    for team in (game["home_team_id"], game["away_team_id"])}
-        statuses.update(reconcile_games([game], rosters, report, repairs["entries"], player_names))
+        statuses.update(reconcile_games([game], rosters, report, repairs["entries"], player_names,
+                                        set(names_input.get("transaction_player_ids", []))))
     rows = identity_rows(statuses)
     for row in rows.values():
         name = row["player_name"]
@@ -231,11 +232,15 @@ def injury_status_by_game_date(
     selection = sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     roster_dates = [roster_record["game_date_pacific"]]
     complete_games = sum(game["complete"] for game in statuses.values())
+    unresolved_games = sorted(gid for gid, game in statuses.items()
+                              if any(team["unresolved_players"] for team in game["teams"].values()))
+    resolved_games = sorted(set(statuses)-set(unresolved_games))
     status_record = {
         **identity,
         "selection_sha256": selection,
         "complete": complete_games == len(statuses),
         "roster_dates_pacific": roster_dates,
+        "unresolved_game_ids": unresolved_games, "resolved_game_ids": resolved_games,
         "games": statuses,
     }
     status_ref = injury_report_archive.save_statuses(status_record)
@@ -252,7 +257,7 @@ def injury_status_by_game_date(
     for row in rows.values():
         if row.get("identity_warning"):
             context.log.warning(
-                f"{row['player_name']} ({row['player_id']}) resolved via PlayerIndex but absent "
+                f"{row['player_name']} ({row['player_id']}) resolved via {row['identity_source']} but absent "
                 f"from {row['team']}'s selected roster for game {row['game_id']}; "
                 "retained the report's team/status. See the warning artifact in run metadata."
             )
@@ -267,15 +272,19 @@ def injury_status_by_game_date(
         "open_failures": failures,
         "warnings": warnings,
         "roster_cutoff_warning": cutoff_warning,
-        "warning_count": len(warnings),
+        "warning_count": len(warnings)+len(failures),
+        "unresolved_identity_count": len(failures),
+        "unresolved_game_ids": unresolved_games, "resolved_game_ids": resolved_games,
         "recoveries": recoveries,
     }
     if failures:
-        raise Failure(
-            f"{len(failures)} injury player identities need reconciliation for {day}.",
-            metadata=metadata,
-            allow_retries=False,
-        )
+        for row in rows.values():
+            if row.get("identity_status"):
+                context.log.warning(
+                    f"Unresolved injury player {row['player_name']} ({row['team']}) for game {row['game_id']}. "
+                    "The game remains explicitly unresolved; other games can publish. "
+                    "See the saved open_failures artifact."
+                )
     if missing_reports and legacy_extraction is None:
         raise Failure(f"No eligible injury report for {len(missing_reports)} games on {day}.", metadata=metadata)
     if missing_reports:

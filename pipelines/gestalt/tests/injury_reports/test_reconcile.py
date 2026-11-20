@@ -146,7 +146,8 @@ def test_select_extractions_uses_latest_eligible_report_per_game(monkeypatch):
 
 
 @pytest.mark.parametrize("automatic", [False, True])
-def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypatch, automatic):
+@pytest.mark.parametrize("two_games", [False, True])
+def test_partial_reconciliation_succeeds_and_reexecution_recovers_errors(monkeypatch, automatic, two_games):
     from datetime import UTC, timedelta
     from io import BytesIO
 
@@ -191,28 +192,40 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
         "s3://nba-gestalt-data/lake/artifacts/injury_status_by_game_date/"
         "season=2026-27/player_repairs.json"
     )
+    if two_games:
+        report["game_team_reports"]["2026-11-08|CCC@DDD"] = {}
+    healthy = {**game, "game_id": "healthy", "away_team_id": 3, "home_team_id": 4,
+               "away_team_tricode": "CCC", "home_team_tricode": "DDD"}
+    selected_games = [game, healthy] if two_games else [game]
     put(repairs_uri, b"{}")
 
     def get_object(*, Bucket, Key):
         uri = f"s3://{Bucket}/{Key}"
         if uri not in objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
-        return {"Body": BytesIO(objects[uri])}
+        return {"Body": BytesIO(objects[uri]), "ETag": sha256(objects[uri]).hexdigest()}
 
-    monkeypatch.setattr(archive_module.boto3, "client", lambda _: SimpleNamespace(get_object=get_object))
+    def put_object(**kw):
+        uri=f"s3://{kw['Bucket']}/{kw['Key']}"
+        if ((kw.get('IfNoneMatch')=='*' and uri in objects)
+                or (kw.get('IfMatch') and (uri not in objects or sha256(objects[uri]).hexdigest()!=kw['IfMatch']))):
+            raise ClientError({'Error':{'Code':'PreconditionFailed'}},'PutObject')
+        objects[uri]=kw['Body']
+        return {'ETag':sha256(objects[uri]).hexdigest()}
+    monkeypatch.setattr(archive_module.boto3, "client", lambda _: SimpleNamespace(get_object=get_object,put_object=put_object))
     monkeypatch.setattr(asset.InjuryReportArchive, "read_pinned", read_pinned)
     monkeypatch.setattr(asset.InjuryReportArchive, "save_json", save_json)
     def games_for_date(resource, day, reference, *, allow_empty):
         payload, reference = resource.load(reference)
         assert day == DAY and payload == b"schedule"
-        return [game], reference
+        return selected_games, reference
 
     monkeypatch.setattr(asset.NBAScheduleResource, "games_for_date", games_for_date)
     monkeypatch.setattr(asset, "read_extraction", lambda *_: report)
 
     from gestalt_pipelines.resources import NBAPlayerNamesResource
     from gestalt_pipelines.rosters.resources import NBARosterArchive
-    roster_record = {"game_date_pacific": DAY.isoformat(), "teams": {"1": [101, 102], "2": [201]}}
+    roster_record = {"game_date_pacific": DAY.isoformat(), "teams": {"1": [101, 102], "2": [201], "3": [303], "4": [404]}}
     monkeypatch.setattr(NBARosterArchive, "load", lambda _, season, day: (roster_record, roster_ref))
     monkeypatch.setattr(NBARosterArchive, "latest_selection", lambda _, season, day: (DAY.isoformat(), roster_ref))
     def for_games(self, season, games, nba_schedule, **kwargs):
@@ -229,7 +242,7 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     monkeypatch.setattr(NBARosterArchive, "assert_game_selections_current", lambda *a: None)
 
     monkeypatch.setattr(NBAPlayerNamesResource, "load", lambda _: (
-        {101: "Original Name", 102: "Roster Spelling", 201: "Other Player", 301: "Known Waived Player"},
+        {101: "Original Name", 102: "Roster Spelling", 201: "Other Player", 301: "Known Waived Player", 303:"Healthy Three",404:"Healthy Four"},
         {"uri": "s3://fixture/playerindex", "sha256": "b"*64},
     ))
     job = defs.resolve_job_def("reconcile_injury_date").with_executor_def(in_process_executor)
@@ -244,12 +257,21 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     schedule_ref = put(f"{base}/sha256={digest}/schedule.json", b"schedule")
     put(latest_uri, json.dumps(schedule_ref).encode())
     extraction_ref = put("s3://fixture/extraction", b"report")
-    monkeypatch.setattr(asset, "select_extractions", lambda *_, **__: {"early": (report, extraction_ref)})
+    monkeypatch.setattr(asset, "select_extractions", lambda *_, **__: {g["game_id"]: (report, extraction_ref) for g in selected_games})
     with DagsterInstance.ephemeral() as instance:
         config = {} if automatic else {"extraction": extraction_ref}
-        failed = run(instance, config)
-        assert not failed.success
-        assert not any("injury_status_by_game_date" in uri and uri.endswith("/latest.json") for uri in objects)
+        partial = run(instance, config)
+        assert partial.success
+        metadata=partial.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
+        assert metadata["unresolved_identity_count"].value==2
+        assert metadata["unresolved_game_ids"].value==["early"]
+        assert metadata["resolved_game_ids"].value==(["healthy"] if two_games else [])
+        assert metadata["latest_update"].value=="published"
+        snapshot=json.loads(objects[metadata["statuses"].value["uri"]])
+        assert not snapshot["games"]["early"]["complete"]
+        if two_games:
+            assert snapshot["games"]["healthy"]["complete"]
+        assert any("Unresolved injury player" in log.message for log in instance.all_logs(partial.run_id))
         assert sum(uri.endswith(".failure.json") for uri in objects) == 2
         repairs = {"Original Name": 101, "Report Spelling": 102, "New Player": 202}
         repaired_ref = put(repairs_uri, json.dumps(repairs).encode())
@@ -257,7 +279,7 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
         newer = put(f"{base}/sha256={digest}/schedule.json", b"new schedule")
         put(latest_uri, json.dumps(newer).encode())
 
-        parent = instance.get_run_by_id(failed.run_id)
+        parent = instance.get_run_by_id(partial.run_id)
         child = instance.create_run_for_job(
             job, run_config=parent.run_config, tags=parent.tags,
             parent_run_id=parent.run_id, root_run_id=parent.run_id,
@@ -283,7 +305,7 @@ def test_operator_reexecutes_failed_partition_after_updating_s3_repairs(monkeypa
     assert corrected["roster_dates_pacific"] == [DAY.isoformat()]
     assert corrected["inputs"]["schedule"] == schedule_ref
     if automatic:
-        assert corrected["inputs"]["extractions"] == {"early": extraction_ref}
+        assert corrected["inputs"]["extractions"] == {g["game_id"]:extraction_ref for g in selected_games}
     else:
         assert corrected["inputs"]["extraction"] == extraction_ref
     assert corrected["inputs"]["player_repairs"] == {**repaired_ref, "entries": repairs}
