@@ -22,7 +22,9 @@ type PlayerInputOverride = {
 
 type Overrides = Record<string, PlayerInputOverride>;
 type NumericOverrideField = Exclude<keyof PlayerInputOverride, "rotationPinned">;
-type ForecastSortColumn = "team" | "current_record" | "current_wins_upper_tail" | "team_strength" | "betmgm_win_total" | "projected_wins" | "delta";
+type ForecastSortColumn = "team" | "current_record" | "current_wins_upper_tail" | "team_strength" | "recent_nail" | "betmgm_win_total" | "projected_wins" | "delta";
+type RecentTeamRating = { team: string; nail: number | null; availability: string; game_count: number; last_game_date: string | null; points: { purpose: string | null }[] };
+type RecentTeamRatings = { kind: "saved_recent_team_ratings"; season: string; window: number; complete: boolean; teams: RecentTeamRating[] };
 type SortDirection = "ascending" | "descending";
 
 type MinuteAllocation = {
@@ -424,11 +426,8 @@ function WinLossEnvelopeChart({
   const gameCoverageDescription = isConditionedOnActualResults
     ? `${observedGameCount} observed games + ${modeledGameCount} modeled remaining games`
     : `${envelope.gameCount} modeled games`;
-  const actualUpperTail = isConditionedOnActualResults
-    ? null
-    : actualWinsUpperTail(envelope, currentRecord);
   const actualDescription = currentRecord
-    ? `${currentRecord.wins}-${currentRecord.losses} actual through ${currentRecord.last_game_date}${actualUpperTail === null ? "" : ` · ${(actualUpperTail * 100).toFixed(1)}% of preseason model paths had ≥${currentRecord.wins} wins`}`
+    ? `${currentRecord.wins}-${currentRecord.losses} actual through ${currentRecord.last_game_date}`
     : null;
   const actualPoint = currentRecord && currentRecord.games <= envelope.gameCount
     ? {
@@ -843,6 +842,9 @@ export function WinProjectionsPage() {
   const [forecastSortColumn, setForecastSortColumn] = useState<ForecastSortColumn>("projected_wins");
   const [forecastSortDirection, setForecastSortDirection] = useState<SortDirection>("descending");
   const [error, setError] = useState<string | null>(null);
+  const [recordsError, setRecordsError] = useState<string | null>(null);
+  const [recentRatings, setRecentRatings] = useState<RecentTeamRatings | null>(null);
+  const [recentRatingsError, setRecentRatingsError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -861,17 +863,56 @@ export function WinProjectionsPage() {
   }, []);
 
   useEffect(() => {
+    if (!payload) return;
     const controller = new AbortController();
-    void fetch("/api/current-season-records", { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) return;
-        setCurrentRecords((await response.json()) as CurrentSeasonRecordsPayload);
-      })
-      .catch((requestError: Error) => {
-        if (requestError.name !== "AbortError") setCurrentRecords(null);
-      });
-    return () => controller.abort();
-  }, []);
+    async function refreshRecords() {
+      try {
+        const response = await fetch("/api/current-season-records", { signal: controller.signal });
+        if (!response.ok) throw new Error("Current W-L records are unavailable.");
+        const records = (await response.json()) as CurrentSeasonRecordsPayload;
+        if (records.season !== payload!.season || records.teams.length !== payload!.teams.length
+          || new Set(records.teams.map(record => record.team)).size !== payload!.teams.length
+          || records.teams.some(record => !payload!.teams.includes(record.team))) {
+          throw new Error("Current W-L records do not match the forecast season and teams.");
+        }
+        if (!controller.signal.aborted) {
+          setCurrentRecords(records);
+          setRecordsError(null);
+        }
+      } catch (requestError) {
+        if (!controller.signal.aborted) {
+          setCurrentRecords(null);
+          setRecordsError((requestError as Error).message);
+        }
+      }
+    }
+    void refreshRecords();
+    const interval = window.setInterval(() => void refreshRecords(), 10 * 60 * 1000);
+    return () => { controller.abort(); window.clearInterval(interval); };
+  }, [payload]);
+
+  useEffect(() => {
+    if (!payload) return;
+    const controller = new AbortController();
+    async function refreshRecentRatings() {
+      try {
+        const response = await fetch("/api/recent-team-ratings", { signal: controller.signal });
+        if (!response.ok) throw new Error("L5 NAIL is temporarily unavailable.");
+        const data = await response.json() as RecentTeamRatings;
+        if (data.kind !== "saved_recent_team_ratings" || data.season !== payload!.season || data.window !== 5
+          || data.teams.length !== payload!.teams.length || new Set(data.teams.map(row => row.team)).size !== payload!.teams.length
+          || data.teams.some(row => !payload!.teams.includes(row.team) || !Array.isArray(row.points) || (row.availability === "available" && (row.game_count !== 5 || !Number.isFinite(row.nail))))) {
+          throw new Error("L5 NAIL does not match the forecast season and teams.");
+        }
+        if (!controller.signal.aborted) { setRecentRatings(data); setRecentRatingsError(null); }
+      } catch (cause) {
+        if (!controller.signal.aborted) { setRecentRatings(null); setRecentRatingsError(cause instanceof Error ? cause.message : "L5 NAIL is temporarily unavailable."); }
+      }
+    }
+    void refreshRecentRatings();
+    const interval = window.setInterval(() => void refreshRecentRatings(), 600000);
+    return () => { controller.abort(); window.clearInterval(interval); };
+  }, [payload]);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
@@ -919,6 +960,10 @@ export function WinProjectionsPage() {
   const currentRecordByTeam = useMemo(() => new Map(
     currentRecords?.teams.map((record) => [record.team, record]) ?? [],
   ), [currentRecords]);
+  const psStrengthByTeam = useMemo(() => new Map(
+    (payload?.preseason_win_projection ?? payload?.win_projection)?.teams.map(row => [row.team, row.team_strength]) ?? [],
+  ), [payload]);
+  const recentRatingByTeam = useMemo(() => new Map(recentRatings?.teams.map(row => [row.team, row]) ?? []), [recentRatings]);
   const currentWinsUpperTailByTeam = useMemo(() => {
     const comparisonForecast = payload?.preseason_win_projection ?? forecast;
     if (!comparisonForecast || !currentRecords) return new Map<string, number>();
@@ -934,20 +979,29 @@ export function WinProjectionsPage() {
     return [...forecast.teams].sort((left, right) => {
       const leftRecord = currentRecordByTeam.get(left.team);
       const rightRecord = currentRecordByTeam.get(right.team);
-      const leftValue = forecastSortColumn === "delta"
+      const leftValue = forecastSortColumn === "team_strength"
+        ? psStrengthByTeam.get(left.team)
+        : forecastSortColumn === "recent_nail"
+          ? recentRatingByTeam.get(left.team)?.nail
+        : forecastSortColumn === "delta"
         ? marketDelta(left)
         : forecastSortColumn === "current_record"
           ? (leftRecord?.games ? leftRecord.wins / leftRecord.games : 0)
           : forecastSortColumn === "current_wins_upper_tail"
             ? currentWinsUpperTailByTeam.get(left.team)
           : left[forecastSortColumn];
-      const rightValue = forecastSortColumn === "delta"
+      const rightValue = forecastSortColumn === "team_strength"
+        ? psStrengthByTeam.get(right.team)
+        : forecastSortColumn === "recent_nail"
+          ? recentRatingByTeam.get(right.team)?.nail
+        : forecastSortColumn === "delta"
         ? marketDelta(right)
         : forecastSortColumn === "current_record"
           ? (rightRecord?.games ? rightRecord.wins / rightRecord.games : 0)
           : forecastSortColumn === "current_wins_upper_tail"
             ? currentWinsUpperTailByTeam.get(right.team)
           : right[forecastSortColumn];
+      if (leftValue == null && rightValue == null) return left.team.localeCompare(right.team);
       if (leftValue === null || leftValue === undefined) return 1;
       if (rightValue === null || rightValue === undefined) return -1;
       if (typeof leftValue === "number" && typeof rightValue === "number") {
@@ -955,7 +1009,7 @@ export function WinProjectionsPage() {
       }
       return direction * String(leftValue).localeCompare(String(rightValue)) || left.team.localeCompare(right.team);
     });
-  }, [currentRecordByTeam, currentWinsUpperTailByTeam, forecast, forecastSortColumn, forecastSortDirection]);
+  }, [currentRecordByTeam, currentWinsUpperTailByTeam, psStrengthByTeam, recentRatingByTeam, forecast, forecastSortColumn, forecastSortDirection]);
   const activeOverrides = players.filter((player) => (
     overrides[overrideKey(player.team, player.player_id)] !== undefined
   )).length;
@@ -1044,6 +1098,7 @@ export function WinProjectionsPage() {
       <section className="win-projections-hero">
         <p className="eyebrow">{payload.season} {forecastMode === "current" && payload.state_kind === "in_season_updated" ? `current forecast${payload.as_of ? ` · through ${payload.as_of}` : ""}` : "preseason baseline"}</p>
         <h1 id="win-projections-title">Win projections.</h1>
+        {payload.kind === "saved_preseason_win_projections" && <p>Saved preseason baseline{payload.injury_availability?.as_of ? ` · injury assumptions as of ${payload.injury_availability.as_of}` : ""}. Edits create a browser-only scenario.</p>}
         <p>Adjust medical availability and conditional playing time, then recalculate. The top {activePayload?.initial_rotation_size ?? payload.initial_rotation_size} override-adjusted raw projections form the baseline rotation; pins can retain additional players.</p>
         {payload.preseason_minutes && <div className="team-rotation-toggle" role="radiogroup" aria-label="Win projection state">
           <button type="button" className={forecastMode === "current" ? "active" : ""} aria-pressed={forecastMode === "current"} onClick={() => { setForecastMode("current"); setCalculatedForecast(null); setForecastNeedsUpdate(false); }}>Current</button>
@@ -1063,28 +1118,34 @@ export function WinProjectionsPage() {
         {forecast && <section className="win-forecast" aria-labelledby="win-forecast-title">
           <div className="win-forecast-heading">
             <div><p className="eyebrow">{calculatedForecast && !forecastNeedsUpdate ? "Custom forecast" : "Baseline forecast"}</p><h2 id="win-forecast-title">Projected wins.</h2></div>
-            <p>{forecast.state_kind === "in_season_updated" ? `Actual results through ${forecast.as_of ?? "the latest completed slate"} plus the remaining schedule` : `${forecast.scheduled_games_per_team} scheduled games`} + {forecast.unassigned_regular_games_per_team} modeled NBA Cup games. {currentRecords?.as_of ? `Current W-L records as of ${currentRecords.as_of}. P(≥ Current W) remains the frozen preseason upper-tail comparison.` : "Current W-L records unavailable."}</p>
+            <p>{forecast.state_kind === "in_season_updated" ? `Actual results through ${forecast.as_of ?? "the latest completed slate"} plus the remaining schedule` : `${forecast.scheduled_games_per_team} scheduled games`} + {forecast.unassigned_regular_games_per_team} modeled NBA Cup games. {currentRecords?.as_of ? `Current W-L records as of ${currentRecords.as_of}.` : ""}</p>
           </div>
+          {recordsError && <p className="win-projections-note" role="status">{recordsError} Preseason forecasts are unchanged.</p>}
+          {recentRatingsError && <p className="win-projections-note" role="status">{recentRatingsError} Preseason forecasts are unchanged.</p>}
+          {recentRatings && !recentRatings.complete && <p className="win-projections-note" role="status">L5 NAIL is unavailable for {recentRatings.teams.filter(row => row.availability !== "available").map(row => row.team).join(", ")}.</p>}
           <div className="win-forecast-table-wrap"><table className="win-forecast-table">
             <thead><tr>
               {([
-                ["team", "Team"],
-                ["current_record", "Current W-L"],
-                ["current_wins_upper_tail", "Preseason P(≥ W)"],
-                ["team_strength", "Strength"],
-                ["betmgm_win_total", "BetMGM"],
-                ["projected_wins", "Projected Wins"],
-                ["delta", "Delta"],
-              ] as Array<[ForecastSortColumn, string]>).map(([column, label]) => <th scope="col" key={column} aria-sort={forecastSortColumn === column ? forecastSortDirection : "none"}>
-                <button className="win-forecast-sort" type="button" onClick={() => changeForecastSort(column)}>
-                  {label}
-                  {forecastSortColumn === column && (forecastSortDirection === "ascending" ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+                ["team", "Team", "Team"],
+                ["current_record", "W-L", "Current W-L"],
+                ["current_wins_upper_tail", "P(≥W)", "Preseason probability of at least the current wins through this many games"],
+                ["team_strength", "PS NAIL", "Preseason team strength (NAIL)"],
+                ["recent_nail", "L5 NAIL", "Mean raw pregame NAIL over the last five started games, excluding HCA/B2B"],
+                ["betmgm_win_total", "BetMGM", "BetMGM win total"],
+                ["projected_wins", "Proj.", "Projected wins"],
+                ["delta", "Δ", "Projected wins minus BetMGM win total"],
+              ] as Array<[ForecastSortColumn, string, string]>).map(([column, label, description]) => <th scope="col" key={column} aria-sort={forecastSortColumn === column ? forecastSortDirection : "none"}>
+                <button className="win-forecast-sort" type="button" title={description} aria-label={description} onClick={() => changeForecastSort(column)}>
+                  {column === "team_strength" || column === "recent_nail" ? <span>{label.split(" ")[0]}<br />NAIL</span> : label}
+                  {forecastSortColumn === column && (forecastSortDirection === "ascending" ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
                 </button>
-              </th>)}<th scope="col">P5-P95</th>
+              </th>)}<th scope="col" title="5th–95th percentile projected wins">5–95%</th>
             </tr></thead>
             <tbody>{sortedForecastTeams.map((item) => {
               const delta = marketDelta(item);
               const currentRecord = currentRecordByTeam.get(item.team);
+              const psNail = psStrengthByTeam.get(item.team);
+              const recent = recentRatingByTeam.get(item.team);
               const currentWinsUpperTail = currentWinsUpperTailByTeam.get(item.team);
               const direction = marketDirection(item.projected_wins, item.betmgm_win_total);
               const directionClass = delta !== null && delta < 0 ? "negative" : "positive";
@@ -1096,9 +1157,10 @@ export function WinProjectionsPage() {
               ].filter(Boolean).join(" ");
               return <tr key={item.team} className={rowClassName}>
                 <th><button className="win-forecast-team-link" type="button" aria-controls="team-minutes" aria-pressed={item.team === team} onClick={() => selectForecastTeam(item.team)} aria-label={`Select ${item.team}`} title={`Select ${item.team}`}><span className="lineup-team-mark"><img src={teamLogoUrl(item.team)} alt="" aria-hidden="true" loading="lazy" /><small>{item.team}</small></span></button></th>
-                <td className="win-forecast-current-record" title={currentRecord ? `Through ${currentRecord.last_game_date}` : "No completed games"}>{currentRecord ? `${currentRecord.wins}-${currentRecord.losses}` : "0-0"}</td>
-                <td className="win-forecast-upper-tail" title={currentRecord && currentWinsUpperTail !== undefined ? `${(currentWinsUpperTail * 100).toFixed(1)}% of ${ENVELOPE_TRIALS.toLocaleString()} frozen preseason paths had at least ${currentRecord.wins} ${currentRecord.wins === 1 ? "win" : "wins"} after ${currentRecord.games} games` : "No completed games"}>{currentWinsUpperTail === undefined ? "-" : `${(currentWinsUpperTail * 100).toFixed(1)}%`}</td>
-                <td className={item.team_strength < 0 ? "negative" : "positive"}>{formatRating(item.team_strength)}</td>
+                <td className="win-forecast-current-record" title={currentRecord ? `Through ${currentRecord.last_game_date}` : recordsError ?? "Loading current W-L record"}>{currentRecord ? `${currentRecord.wins}-${currentRecord.losses}` : recordsError ? "—" : "…"}</td>
+                <td className="win-forecast-upper-tail" title={currentRecord && currentWinsUpperTail !== undefined ? `Frozen preseason probability of at least ${currentRecord.wins} wins through ${currentRecord.games} games` : recordsError ?? "Waiting for current W-L record"}>{currentWinsUpperTail === undefined ? "—" : `${(currentWinsUpperTail * 100).toFixed(1)}%`}</td>
+                <td className={`win-forecast-ps-nail ${psNail !== undefined && psNail < 0 ? "negative" : "positive"}`} title="Saved preseason team strength">{psNail === undefined ? "—" : formatRating(psNail)}</td>
+                <td className={`win-forecast-recent-nail ${recent?.nail != null && recent.nail < 0 ? "negative" : "positive"}`} title={recent?.nail != null ? `Mean raw pregame NAIL over five games through ${recent.last_game_date}; excludes HCA/B2B${recent.points.some(point => point.purpose === "historical_replay") ? "; includes historical replays" : ""}` : recent ? recent.game_count < 5 ? "Five started games are required for L5 NAIL." : "A prediction is missing from the last five games." : recentRatingsError ?? "Loading L5 NAIL"}>{recent?.nail != null ? formatRating(recent.nail) : recentRatings || recentRatingsError ? "—" : "…"}</td>
                 <td title={marketIntervalDescription(item)}>{item.betmgm_win_total?.toFixed(1) ?? "-"}</td>
                 <td className="win-forecast-wins">{item.projected_wins.toFixed(1)}</td>
                 <td className={directionClass}>{delta === null ? "-" : `${direction} ${formatRating(delta)}`}</td>

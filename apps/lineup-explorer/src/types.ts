@@ -270,6 +270,10 @@ export type TeamSeasonPayload = {
 };
 
 export type TeamRotationPayload = {
+  kind: "saved_team_rotation";
+  coverage: { complete: boolean; scope?: string; };
+  game_date_pacific: string;
+  last_team_game_date_pacific: string | null;
   team: string;
   season: string;
   game_count: number;
@@ -365,6 +369,7 @@ export type IncumbentTeamStrength = {
 };
 
 export type MinutesProjectionPayload = {
+  kind?: "saved_preseason_win_projections";
   season: string;
   completed_season: string;
   model: string;

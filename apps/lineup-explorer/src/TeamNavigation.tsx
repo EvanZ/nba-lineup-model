@@ -1,3 +1,5 @@
+import { TeamRotationMap } from "./TeamRotation";
+import { TeamRatingHistory } from "./TeamRatingHistory";
 import { TeamRosterView, type TeamRosterData } from "./TeamRoster";
 import { teamLogoUrl } from "./teamLogos";
 
@@ -54,9 +56,11 @@ export function TeamNavigationView({ navigation, compact = false }: { navigation
           </label>
         </div>
       </nav>
+      <TeamRatingHistory key={`${navigation.team}-${navigation.season}`} team={navigation.team} season={navigation.season} />
       <TeamRosterView roster={navigation.roster} compact={compact} />
+      <TeamRotationMap key={`rotation-${navigation.team}-${navigation.season}`} team={navigation.team} teamName={navigation.display_name} season={navigation.season} isCompact={compact} />
       <p className="player-rating-path-note" role="status">
-        Wins, rotation, and lineup sections are not available yet.
+        Wins and lineup sections are not available yet.
       </p>
     </article>
   );
