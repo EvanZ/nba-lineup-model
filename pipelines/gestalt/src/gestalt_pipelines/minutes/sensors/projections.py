@@ -1,6 +1,6 @@
 """Request date jobs when accepted inputs change for games still ahead."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 
 from dagster import (
@@ -8,7 +8,7 @@ from dagster import (
     SensorEvaluationContext, SensorResult, SkipReason, sensor,
 )
 
-from ...utils import PACIFIC
+from ...utils import PACIFIC, forecast_observed_date
 from ..utils import json_bytes, projection_fingerprint
 
 
@@ -64,7 +64,8 @@ def project_game_minutes_sensor(context: SensorEvaluationContext):
             key = sha256(json_bytes({"day":day,"games":identities})).hexdigest()
             requests.append(RunRequest(
                 run_key=key,partition_key=day,
-                tags={"dagster/priority":"-1","game_minutes/input_selection":key},
+                tags={"dagster/priority":"-1","game_minutes/input_selection":key,
+                      "game_minutes/minutes_date":str(forecast_observed_date(date.fromisoformat(day),today))},
             ))
     if not requests:
         return SkipReason("; ".join(waiting) or "Upcoming projections already use accepted inputs, or a date is running.")

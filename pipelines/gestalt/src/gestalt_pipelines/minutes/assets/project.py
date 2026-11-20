@@ -72,7 +72,10 @@ def game_minutes(
             context.log.warning("Started games have no saved pregame projection: %s",missing_started)
         saved = {}
         if upcoming:
-            inputs = archive.projection_selections(str(day),today=today,roster_archive=nba_roster_archive)
+            selections = {}
+            if "game_minutes/minutes_date" in context.run.tags:
+                selections["minutes_date"] = context.run.tags["game_minutes/minutes_date"]
+            inputs = archive.projection_selections(str(day),today=today,roster_archive=nba_roster_archive,**selections)
             inputs["schedule"] = schedule
             data = archive.projection_data(str(day),inputs)
             game_rosters = nba_roster_archive.for_games(archive.season, upcoming, nba_schedule, box_archive=nba_box_score_archive)

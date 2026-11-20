@@ -122,12 +122,12 @@ def test_source_date_is_not_shifted_to_previous_pacific_day():
 
 def test_hourly_schedule_selects_pacific_date_and_skips_missed_ticks(monkeypatch):
     schedule = defs.get_schedule_def("transactions_hourly")
-    assert schedule.cron_schedule == ["0 8-20 * * *", "59 23 * * *", "15 3 * * *"]
+    assert schedule.cron_schedule == ["0 8-20 * * *", "55 23 * * *", "15 3 * * *"]
     assert schedule.execution_timezone == "America/Los_Angeles"
     clock = SimpleNamespace(now=lambda _: None)
     monkeypatch.setattr(schedules, "datetime", clock)
     with DagsterInstance.local_temp() as instance:
-        for hour, minute in [(3, 15), (8, 0), (20, 0), (23, 59)]:
+        for hour, minute in [(3, 15), (8, 0), (20, 0), (23, 55)]:
             tick = datetime(2026, 11, 10, hour, minute, tzinfo=schedules.PACIFIC)
             clock.now = lambda _: tick.astimezone(UTC)
             with build_schedule_context(

@@ -4,7 +4,7 @@ import re
 import unicodedata
 from datetime import datetime
 
-RESOLVER_VERSION = "v7"
+RESOLVER_VERSION = "v8"
 
 
 def normalize_player_name(value: str) -> str:
@@ -23,10 +23,12 @@ def report_game_key(game: dict) -> str:
 def reconcile_games(
     games: list[dict], rosters: dict[int, dict[int, str]], report: dict | None,
     repairs: dict[str, int] | None = None, player_names: dict[int, str] | None = None,
+    transaction_player_ids: set[int] | None = None,
 ) -> dict:
     published_at = datetime.fromisoformat(report["published_at"]) if report is not None else None
     by_game = {}
     repairs = repairs or {}
+    transaction_player_ids = transaction_player_ids or set()
     index_candidates: dict[str, set[int]] = {}
     for player_id, name in (player_names or {}).items():
         index_candidates.setdefault(normalize_player_name(name), set()).add(player_id)
@@ -65,8 +67,11 @@ def reconcile_games(
                     continue
                 if len(matches) == 1:
                     player_id = str(next(iter(matches)))
+                    if identity_source == "player_index" and int(player_id) in transaction_player_ids:
+                        identity_source = "nba_transactions"
                     source["identity_source"] = identity_source
-                    if identity_source == "player_index":
+                    source["name_source"] = "nba_transactions" if int(player_id) in transaction_player_ids else "player_index"
+                    if identity_source in {"player_index", "nba_transactions"}:
                         source["identity_warning"] = "not_on_selected_roster"
                 elif repair is not None:
                     player_id = str(repair)

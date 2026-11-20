@@ -13,10 +13,10 @@ from ...utils import PACIFIC
 
 @schedule(
     job=capture_nba_transactions,
-    cron_schedule=["0 8-20 * * *", "59 23 * * *", "15 3 * * *"],
+    cron_schedule=["0 8-20 * * *", "55 23 * * *", "15 3 * * *"],
     execution_timezone=transaction_dates.timezone,
     default_status=DefaultScheduleStatus.STOPPED,
-    description="Poll transactions from 8 a.m. through 8 p.m., at 23:59, and check yesterday at 03:15 Pacific.",
+    description="Poll transactions from 8 a.m. through 8 p.m., at 23:55, and check yesterday at 03:15 Pacific.",
 )
 def transactions_hourly(context: ScheduleEvaluationContext):
     tick = context.scheduled_execution_time.astimezone(PACIFIC)
