@@ -23,6 +23,7 @@ from nba_lineup_model.web_api.schedule import router as schedule_router
 from nba_lineup_model.web_api.team_navigation import router as team_navigation_router
 from nba_lineup_model.web_api.team_rating_history import router as team_history_router
 from nba_lineup_model.web_api.team_rotation import router as team_rotation_router
+from nba_lineup_model.web_api.team_rotation_history import router as team_history_animation_router
 
 
 class MarketGateway:
@@ -33,6 +34,7 @@ class MarketGateway:
         self.market.include_router(team_navigation_router)
         self.market.include_router(team_history_router)
         self.market.include_router(team_rotation_router)
+        self.market.include_router(team_history_animation_router)
         self.market.include_router(rankings_router)
         self.market.include_router(saved_wins_router)
         self.market.include_router(records_router)
@@ -72,7 +74,10 @@ class MarketGateway:
                 path.startswith("/api/players/")
                 and path.endswith(("/rating-history", "/season-history", "/rotation-history"))
             )
-            or (path.startswith("/api/teams/") and path.endswith(("/rating-history", "/rotation")))
+            or (
+                path.startswith("/api/teams/")
+                and path.endswith(("/rating-history", "/rotation", "/rotation-history"))
+            )
             or (path.startswith("/api/team-logos/") and path.endswith(".svg"))
             or (path.startswith("/api/headshots/") and path.endswith(".png"))
             or path

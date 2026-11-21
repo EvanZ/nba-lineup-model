@@ -299,3 +299,78 @@ def test_published_summary_still_requires_its_pinned_box_coverage(source):
     doc["inputs"]["box_scores"].pop("0022600001")
     publish(s3, doc)
     assert client.get("/api/teams/HOM/rotation").status_code == 503
+
+
+@pytest.mark.parametrize("damage", [None, "missing-point", "corrupt-summary"])
+def test_history_reads_only_published_game_points_and_caches(source, monkeypatch, damage):
+    from nba_lineup_model.web_api import team_rotation_history as history
+
+    s3, reader, client, doc, legacy = source
+    monkeypatch.setattr(history, "_reader", lambda: reader)
+    monkeypatch.setattr(history, "catalog", api.catalog)
+    monkeypatch.setattr(history, "datetime", api.datetime)
+    monkeypatch.setattr(history, "time", lambda: 3601)
+    history.cached_history.cache_clear()
+    first_day, second_day = "2026-11-16", "2026-11-18"
+    first = deepcopy(doc)
+    first["game_date_pacific"] = first["last_team_game_date_pacific"] = first_day
+    first["coverage"]["game_ids"] = first["coverage"]["game_ids"][:1]
+    first["coverage"]["game_count"] = 1
+    first["inputs"]["box_scores"] = {first["coverage"]["game_ids"][0]: {}}
+    first["inputs"]["stints"] = {first_day: {}}
+    for player in first["players"]:
+        player["games"] = 1
+    first_key, first_ref = publish(s3, first)
+    second = deepcopy(doc)
+    second["game_date_pacific"] = second_day
+    second["inputs"]["stints"] = {first_day: {}, second_day: {}}
+    second_key, second_ref = publish(s3, second)
+    head = deepcopy(second)
+    head["game_date_pacific"] = DAY
+    head_key, head_ref = publish(s3, head)
+    points = [
+        {key: ref[key] for key in ("game_date_pacific", "uri", "sha256")}
+        for ref in (first_ref, second_ref, head_ref)
+    ]
+    if damage == "missing-point":
+        points.pop(0)
+    if damage == "corrupt-summary":
+        s3.put_fixture(first_key, {})
+    s3.put_fixture(
+        ROOT + "history.json",
+        {
+            "schema_version": 1,
+            "processing_version": "v1",
+            "artifact_kind": "team_rotation_history_index",
+            "season": "2026-27",
+            "team_id": 1,
+            "through_game_date_pacific": DAY,
+            "points": points,
+        },
+    )
+    try:
+        response = client.get("/api/teams/hom/rotation-history")
+        if damage:
+            assert response.status_code == 503
+            assert response.headers["Cache-Control"] == "no-store"
+            return
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["through_game_date_pacific"] == DAY
+        assert [frame["date"] for frame in data["frames"]] == [first_day, second_day]
+        assert data["frames"][1]["matrix"] == doc["floor_correlation"]
+        order, _ = api.rotation_order(
+            np.array(doc["floor_correlation"]),
+            np.array([p["on_court_possessions"] for p in doc["players"]]),
+            "hclust",
+        )
+        assert data["frames"][1]["order"] == order.tolist()
+        assert set(s3.calls) == {
+            ("get", key) for key in (ROOT + "history.json", first_key, second_key, head_key)
+        }
+        seen = len(s3.calls)
+        assert client.get("/api/teams/hom/rotation-history").json() == data
+        assert len(s3.calls) == seen
+        legacy.assert_not_called()
+    finally:
+        history.cached_history.cache_clear()

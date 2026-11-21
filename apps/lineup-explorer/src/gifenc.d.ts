@@ -4,7 +4,7 @@ declare module "gifenc" {
       index: Uint8Array,
       width: number,
       height: number,
-      options: { palette: unknown; delay: number },
+      options: { palette?: unknown; delay: number },
     ) => void;
     finish: () => void;
     bytesView: () => Uint8Array;

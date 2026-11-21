@@ -1573,3 +1573,17 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 .team-rating-gap { stroke: #c7cec6; stroke-width: 1; }
 
 .team-rating-trajectory .current-rating-grid-minor { opacity: 0.45; }
+
+.team-rotation-animation { max-width: 820px; min-width: 0; }
+.team-rotation-animation-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; color: #58635b; font-size: 13px; }
+.team-rotation-animation-date { color: #17201c; font-weight: 700; }
+.team-rotation-animation-timeline { display: flex; align-items: center; gap: 12px; margin: 12px 0 4px; color: #58635b; font-size: 13px; }
+.team-rotation-animation-timeline input { flex: 1; min-width: 0; accent-color: #0072b2; }
+.team-rotation-animation-chart { display: block; width: 100%; background: #f6f3ec; }
+.team-rotation-animation-chart text { fill: #58635b; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.team-rotation-animation .team-rotation-legend { flex-wrap: wrap; }
+.team-rotation-animation .team-rotation-legend i { background: linear-gradient(90deg, #0072b2, #fffefa, #e69f00); }
+.team-rotation-animation-missing::before { display: inline-block; width: 10px; height: 10px; margin-right: 4px; background: #d9d6ce; content: ""; }
+@media (max-width: 560px) {
+  .team-rotation-animation-chart text { font-size: 11px; }
+}
