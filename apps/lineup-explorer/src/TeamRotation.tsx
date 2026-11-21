@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Download } from "lucide-react";
+import { rotationPlayerLabel, rotationHeatColor, rotationCellLabelColor } from "./teamRotationColors";
 import { releaseFetch as fetch } from "./releaseFetch";
 import { inlineSvgImages } from "./PlayerHistoricalCharts";
 import type { TeamRotationPayload } from "./types";
+
+const TeamRotationAnimation = lazy(() => import("./TeamRotationAnimation"));
 
 const wholeNumber = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const playerProfileHref = (id: number) => `#player/${id}`;
@@ -11,43 +14,6 @@ const playerHeadshotUrl = (id: number) => `/api/headshots/${id}.png`;
 type RotationOrdering = "aoe" | "fpc" | "hclust";
 type RotationCellArea = "full" | "shared";
 
-function rotationPlayerLabel(playerName: string) {
-  const parts = playerName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length < 2) return playerName;
-  const suffix = parts.at(-1) === "Jr." || parts.at(-1) === "II" || parts.at(-1) === "III"
-    ? ` ${parts.slice(-2).join(" ")}`
-    : ` ${parts.at(-1)}`;
-  return `${parts[0].slice(0, 1)}.${suffix}`;
-}
-
-function blendedColor(
-  start: [number, number, number],
-  end: [number, number, number],
-  weight: number,
-) {
-  const bounded = Math.max(0, Math.min(1, weight));
-  return `rgb(${start.map((value, index) => Math.round(value + (end[index] - value) * bounded)).join(", ")})`;
-}
-
-function rotationHeatColor(value: number, midpoint: number, isDiagonal: boolean) {
-  if (isDiagonal) return "#17201c";
-  const boundedValue = Math.max(0, Math.min(1, value));
-  if (midpoint <= 0) return blendedColor([255, 254, 250], [230, 159, 0], boundedValue);
-  if (midpoint >= 1) return blendedColor([0, 114, 178], [255, 254, 250], boundedValue);
-  if (boundedValue <= midpoint) {
-    return blendedColor([0, 114, 178], [255, 254, 250], boundedValue / midpoint);
-  }
-  return blendedColor([255, 254, 250], [230, 159, 0], (boundedValue - midpoint) / (1 - midpoint));
-}
-
-function rotationCellLabelColor(value: number, midpoint: number) {
-  const boundedValue = Math.max(0, Math.min(1, value));
-  if (midpoint <= 0) return "#17201c";
-  const blueIntensity = boundedValue <= midpoint
-    ? 1 - boundedValue / midpoint
-    : 0;
-  return blueIntensity > 0.55 ? "#fffefa" : "#17201c";
-}
 
 export function TeamRotationMap({
   team,
@@ -64,6 +30,7 @@ export function TeamRotationMap({
   // The SVG can scale vertically on narrow screens; omitting low-exposure
   // players changes the clustering problem itself.
   const maxPlayers = 30;
+  const [animationOpen, setAnimationOpen] = useState(false);
   const [payload, setPayload] = useState<TeamRotationPayload | null>(null);
   const [ordering, setOrdering] = useState<RotationOrdering>("hclust");
   const [colorMidpoint, setColorMidpoint] = useState(0.5);
@@ -209,6 +176,12 @@ export function TeamRotationMap({
         <h2 id="team-rotation-title">Who played together.</h2>
       </div>
       <div className="team-rotation-actions">
+        {payload && !payload.coverage.scope && <div className="team-rotation-toggle">
+          <button type="button" aria-pressed={animationOpen} onClick={() => setAnimationOpen(!animationOpen)}>
+            {animationOpen ? "Show rotation chart" : "Animate by game"}
+          </button>
+        </div>}
+        {!animationOpen && <>
         <div className="team-rotation-legend" aria-label={`${selectedLabel} color scale`}>
           <span>Less together</span>
           <i
@@ -258,14 +231,18 @@ export function TeamRotationMap({
           title="Download rotation map as PNG"
           aria-label={`Download ${team} ${season} rotation map as PNG`}
         ><Download size={15} /></button>
+        </>}
       </div>
     </div>
-    {payload && <p className="team-rotation-note">
+    {animationOpen && <Suspense fallback={<p className="team-empty-state">Loading rotation history.</p>}>
+      <TeamRotationAnimation key={`${team}-${season}`} team={team} season={season} teamName={teamName} />
+    </Suspense>}
+    {!animationOpen && payload && <p className="team-rotation-note">
       {payload.coverage.scope === "saved_historical_regular_season_dataset" ? "Saved historical rotation. " : ""}{selectedLabel} across this team’s positive-possession stints through {payload.game_date_pacific}. {players.length} players across {payload.game_count} {payload.coverage.scope === "saved_historical_regular_season_dataset" ? "saved games" : "games"}. Ordered by corrplot-style {orderingLabel}{ordering === "hclust" ? "; the paired dendrograms show that hierarchy." : "."}
     </p>}
     {error && <p className="team-empty-state">{error}</p>}
     {!payload && !error && <p className="team-empty-state">Loading observed rotation structure.</p>}
-    {payload && <div className="team-rotation-content">
+    {!animationOpen && payload && <div className="team-rotation-content">
       <div className="team-rotation-chart-wrap">
         <svg
           ref={chartRef}
