@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -66,11 +67,23 @@ def canonical_events(payload: Mapping[str, Any]) -> list[Event]:
         actions.append(action)
 
     actions.sort(key=lambda action: _required_int(action, "orderNumber"))
-    order_numbers = [_required_int(action, "orderNumber") for action in actions]
-    if len(order_numbers) != len(set(order_numbers)):
-        raise ValueError(f"Duplicate orderNumber values in game {game_id}")
+    order_counts = Counter(_required_int(action, "orderNumber") for action in actions)
+    repeated_orders = {order for order, count in order_counts.items() if count > 1}
+    if repeated_orders:
+        action_ids: set[tuple[int, int]] = set()
+        game_times: set[tuple[int, int, float]] = set()
+        for action in actions:
+            order = _required_int(action, "orderNumber")
+            if order not in repeated_orders:
+                continue
+            identity = (order, _required_int(action, "actionNumber"))
+            game_time = (order, _required_int(action, "period"), parse_nba_clock(_required_str(action, "clock")))
+            if identity in action_ids or game_time in game_times:
+                raise ValueError(f"Ambiguous duplicate orderNumber {order} in game {game_id}")
+            action_ids.add(identity)
+            game_times.add(game_time)
 
-    source_order_repaired = _has_late_source_correction(actions)
+    source_order_repaired = bool(repeated_orders) or _has_late_source_correction(actions)
     if source_order_repaired:
         actions = sorted(actions, key=_semantic_action_sort_key)
 
@@ -113,13 +126,17 @@ def canonical_events(payload: Mapping[str, Any]) -> list[Event]:
             elapsed_game_seconds = previous_elapsed_game_seconds
 
         order_number = _required_int(action, "orderNumber")
+        action_number = _required_int(action, "actionNumber")
+        event_id = f"{game_id}:{order_number}"
+        if order_number in repeated_orders:
+            event_id += f":{action_number}"
         if source_order_repaired:
             flags.append("source_order_repaired")
         event = Event(
             game_id=game_id,
-            event_id=f"{game_id}:{order_number}",
+            event_id=event_id,
             event_index=event_index,
-            source_action_number=_required_int(action, "actionNumber"),
+            source_action_number=action_number,
             # A late CDN correction can carry an orderNumber allocated after
             # the game ended even though its period/clock belongs much earlier.
             # Lineup reconstruction requires this field to be monotonic, so an

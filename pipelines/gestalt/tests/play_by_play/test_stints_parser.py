@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from gestalt_pipelines.play_by_play.utils import StintsError, parse_stints
+from gestalt_pipelines.play_by_play.utils.reconstruction.events import canonical_events
 
 FIXTURES = Path(__file__).parent/"fixtures"
 
@@ -99,3 +100,27 @@ def test_overtime_keeps_the_additional_five_minutes():
     rows,_=parse_stints(json.dumps(pbp).encode(),json.dumps(box).encode(),game)
     assert sum(r["duration_seconds"] for r in rows)==3180
     assert any(r["period"]==5 for r in rows)
+
+
+@pytest.mark.parametrize("ambiguous", [None, "clock", "actionNumber"])
+def test_reused_order_number_preserves_distinct_events_in_game_clock_order(ambiguous):
+    period_start = {"period": 1, "clock": "PT12M00.00S", "actionType": "period",
+                    "subType": "start", "orderNumber": 1, "actionNumber": 2}
+    shot = {"period": 1, "clock": "PT11M45.00S", "actionType": "2pt",
+            "orderNumber": 30000, "actionNumber": 6}
+    turnover = {"period": 1, "clock": "PT11M27.00S", "actionType": "turnover",
+                "subType": "out-of-bounds", "orderNumber": 1, "actionNumber": 9}
+    if ambiguous:
+        turnover[ambiguous] = period_start[ambiguous]
+    payload = {"game": {"gameId": "0022600045", "actions": [period_start, shot, turnover]}}
+    if ambiguous:
+        with pytest.raises(ValueError, match="Ambiguous duplicate orderNumber 1"):
+            canonical_events(payload)
+        return
+
+    events = canonical_events(payload)
+    assert [e.source_action_number for e in events] == [2, 6, 9]
+    assert [e.elapsed_game_seconds for e in events] == [0, 15, 33]
+    assert [e.source_order_number for e in events] == [1, 2, 3]
+    assert [e.event_id for e in events] == ["0022600045:1:2", "0022600045:30000", "0022600045:1:9"]
+    assert all("source_order_repaired" in e.validation_flags for e in events)
