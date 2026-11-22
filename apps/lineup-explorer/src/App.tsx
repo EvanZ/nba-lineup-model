@@ -1527,7 +1527,7 @@ function App() {
 
       <GlobalSearch isOpen={isGlobalSearchOpen} onClose={() => setIsGlobalSearchOpen(false)} />
 
-      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "compare" ? <ComparePage /> : view === "lineups" ? <LineupRankingsPage onLoadInLab={loadObservedLineup} /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "schedule" ? <SchedulePage initialDate={route.date} /> : view === "team" && route.team ? <TeamSeasonPage team={route.team} season={route.season} onLoadInLab={loadObservedLineup} /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
+      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "compare" ? <ComparePage /> : view === "lineups" ? <LineupRankingsPage /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "schedule" ? <SchedulePage initialDate={route.date} /> : view === "team" && route.team ? <TeamSeasonPage team={route.team} season={route.season} onLoadInLab={loadObservedLineup} /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
         <section className="intro" aria-labelledby="page-title">
           <div className="gestalt-entry" aria-label="Definition of gestalt">
             <div className="gestalt-entry-heading">
@@ -3018,6 +3018,7 @@ type LineupRankingColumn =
   | "possessions"
   | "games"
   | "player_edge"
+  | "lineup_nail"
   | "offensive_edge"
   | "defensive_edge"
   | "context_edge"
@@ -3025,24 +3026,45 @@ type LineupRankingColumn =
   | "actual_net_rating";
 
 const LINEUP_MOVABLE_COLUMNS: readonly LineupRankingColumn[] = [
-  "gestalt_score", "offensive_edge", "defensive_edge", "player_edge", "context_edge",
+  "gestalt_score", "offensive_edge", "defensive_edge", "player_edge", "lineup_nail", "context_edge",
   "actual_net_rating", "possessions", "games",
 ];
 
-function LineupRankingsPage({
-  onLoadInLab,
-}: {
-  onLoadInLab: (side: Side, lineup: RankedLineup, season: string) => void;
-}) {
+const CURRENT_LINEUP_SEASON = "2026-27";
+
+type LineupTableRow = Pick<RankedLineup, "rank" | "team" | "team_id" | "player_ids" | "player_names" |
+  "actual_net_rating" | "possessions" | "games"> & {
+  player_edge?: number | null;
+  lineup_nail?: number | null;
+  offensive_edge?: number | null;
+  defensive_edge?: number | null;
+  gestalt_score?: number;
+  context_edge?: number;
+};
+
+type CurrentLineupCoverage = {
+  through_game_date_pacific: string;
+  games: number;
+  lineups: number;
+  rated_lineups: number;
+  pending_game_dates: string[];
+};
+
+function LineupRankingsPage() {
   const isCompact = useMediaQuery("(max-width: 720px)");
-  const [lineups, setLineups] = useState<RankedLineup[]>([]);
-  const [selectedSeason, setSelectedSeason] = useState("2026-27");
-  const [availableSeasons, setAvailableSeasons] = useState<string[]>([]);
+  const [visibleLimit, setVisibleLimit] = useState(100);
+  const [lineups, setLineups] = useState<LineupTableRow[]>([]);
+  const [selectedSeason, setSelectedSeason] = useState(CURRENT_LINEUP_SEASON);
+  const [availableSeasons, setAvailableSeasons] = useState([CURRENT_LINEUP_SEASON, "2025-26"]);
   const [minimumPossessions, setMinimumPossessions] = useState(10);
-  const [lineupAsOf, setLineupAsOf] = useState<string | null>(null);
+  const [currentStatus, setCurrentStatus] = useState<{
+    coverage: CurrentLineupCoverage;
+    effectiveDate: string;
+  }>();
+  const current = selectedSeason === CURRENT_LINEUP_SEASON;
   const [query, setQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState("all");
-  const [sortColumn, setSortColumn] = useState<LineupRankingColumn>("context_edge");
+  const [sortColumn, setSortColumn] = useState<LineupRankingColumn>("possessions");
   const [sortDirection, setSortDirection] = useState<"ascending" | "descending">("descending");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -3061,6 +3083,7 @@ function LineupRankingsPage({
     void (async () => {
       try {
         setIsLoading(true);
+        setLineups([]);
         setError(null);
         const parameters = new URLSearchParams({
           season: selectedSeason,
@@ -3070,12 +3093,22 @@ function LineupRankingsPage({
         if (!response.ok) throw new Error("Observed lineup rankings are unavailable.");
         const payload = (await response.json()) as {
           available_seasons: string[];
-          lineup_state?: { evidence_through_date?: string };
-          lineups: RankedLineup[];
+          kind: "saved_historical_lineups" | "saved_current_lineups";
+          coverage?: CurrentLineupCoverage;
+          rating_state?: { effective_from_date?: string };
+          season: string;
+          lineups: LineupTableRow[];
         };
+        if (controller.signal.aborted) return;
+        const kind = selectedSeason === CURRENT_LINEUP_SEASON ? "saved_current_lineups" : "saved_historical_lineups";
+        if (payload.kind !== kind || payload.season !== selectedSeason) {
+          throw new Error("The selected season’s lineup rankings are unavailable.");
+        }
         setAvailableSeasons(payload.available_seasons);
-        setLineupAsOf(payload.lineup_state?.evidence_through_date ?? null);
         setLineups(payload.lineups);
+        if (payload.coverage && payload.rating_state?.effective_from_date) {
+          setCurrentStatus({ coverage: payload.coverage, effectiveDate: payload.rating_state.effective_from_date });
+        }
       } catch (lineupError) {
         if ((lineupError as Error).name !== "AbortError") setError((lineupError as Error).message);
       } finally {
@@ -3088,7 +3121,6 @@ function LineupRankingsPage({
   useEffect(() => {
     setTeamFilter("all");
     setQuery("");
-    setMinimumPossessions(selectedSeason === "2026-27" ? 10 : 500);
   }, [selectedSeason]);
 
   const teams = useMemo(() => [...new Set(lineups.map((lineup) => lineup.team))].sort(), [lineups]);
@@ -3105,12 +3137,29 @@ function LineupRankingsPage({
     return [...filtered].sort((left, right) => {
       const leftValue = left[sortColumn];
       const rightValue = right[sortColumn];
+      if (leftValue == null) return rightValue == null ? left.rank - right.rank : 1;
+      if (rightValue == null) return -1;
       if (typeof leftValue === "number" && typeof rightValue === "number") {
         return direction * (leftValue - rightValue) || left.rank - right.rank;
       }
       return direction * String(leftValue).localeCompare(String(rightValue)) || left.rank - right.rank;
     });
   }, [lineups, query, sortColumn, sortDirection, teamFilter]);
+
+  useEffect(() => {
+    setVisibleLimit(100);
+  }, [minimumPossessions, query, selectedSeason, sortColumn, sortDirection, teamFilter]);
+
+  const displayedLineups = visibleLineups.slice(0, visibleLimit);
+
+  function changeSeason(season: string) {
+    const isCurrent = season === CURRENT_LINEUP_SEASON;
+    setSelectedSeason(season);
+    setMinimumPossessions(isCurrent ? 10 : 500);
+    setSortColumn(isCurrent ? "possessions" : "context_edge");
+    setSortDirection("descending");
+    setCurrentStatus(undefined);
+  }
 
   function changeSort(column: LineupRankingColumn) {
     if (column === sortColumn) {
@@ -3121,25 +3170,29 @@ function LineupRankingsPage({
     setSortDirection(column === "rank" ? "ascending" : "descending");
   }
 
-  const columns: Array<{
+  const allColumns: Array<{
     key: LineupRankingColumn;
     label: string;
     tooltip: string;
     numeric?: boolean;
   }> = [
-    { key: "rank", label: "Rank", tooltip: "Ranked by Context, then possessions. Sorting another column changes the display order, not this rank.", numeric: true },
+    { key: "rank", label: "Rank", tooltip: current ? "Ranked by possessions, then games." : "Ranked by Context, then possessions.", numeric: true },
     { key: "team", label: "Team", tooltip: "Team that used this five-man unit." },
     { key: "gestalt_score", label: "Edge", tooltip: "Expected edge per 100 possessions against the opponents this unit actually faced: NAIL plus Context.", numeric: true },
-    ...(selectedSeason === "2026-27" ? [] : [
-      { key: "offensive_edge" as const, label: "Off", tooltip: "Offensive allocation of Edge: this unit's offense minus the possession-weighted defense of the opponents it actually faced, including the corresponding non-additive lineup context. Off plus Def equals Edge.", numeric: true },
-      { key: "defensive_edge" as const, label: "Def", tooltip: "Defensive allocation of Edge: this unit's defense minus the possession-weighted offense of the opponents it actually faced, including the corresponding non-additive lineup context. Off plus Def equals Edge.", numeric: true },
-    ]),
+    { key: "offensive_edge", label: "Off", tooltip: "Offensive allocation of Edge: this unit's offense minus the possession-weighted defense of the opponents it actually faced, including the corresponding non-additive lineup context. Off plus Def equals Edge.", numeric: true },
+    { key: "defensive_edge", label: "Def", tooltip: "Defensive allocation of Edge: this unit's defense minus the possession-weighted offense of the opponents it actually faced, including the corresponding non-additive lineup context. Off plus Def equals Edge.", numeric: true },
     { key: "player_edge", label: "NAIL", tooltip: "Difference in the summed NAIL-RAPM ratings of this unit and its actual opponents, per 100 possessions.", numeric: true },
     { key: "context_edge", label: "Context", tooltip: "Residual non-additive lineup effect beyond the five players' NAIL ratings, against actual opponents, per 100 possessions.", numeric: true },
     { key: "actual_net_rating", label: "Net Rating", tooltip: "Observed points scored minus points allowed per 100 possessions while this unit played.", numeric: true },
     { key: "possessions", label: "Poss", tooltip: "Regular-season possessions played by this exact five-man unit." , numeric: true },
     { key: "games", label: "Games", tooltip: "Regular-season games in which this exact five-man unit appeared.", numeric: true },
   ];
+  const historicalMetrics = new Set<LineupRankingColumn>(["gestalt_score", "offensive_edge", "defensive_edge", "context_edge", "player_edge"]);
+  const columns = current ? allColumns.filter((column) => !historicalMetrics.has(column.key)) : allColumns;
+  if (current) columns.push({
+    key: "lineup_nail", label: "NAIL", numeric: true,
+    tooltip: "Sum of the five players’ latest published NAIL ratings.",
+  });
   const columnByKey = new Map(columns.map((column) => [column.key, column]));
   const displayedMetricColumns = movableColumnOrder
     .map((key) => columnByKey.get(key))
@@ -3148,13 +3201,22 @@ function LineupRankingsPage({
   return (
     <article className="rankings-page lineup-rankings-page" aria-labelledby="lineups-title">
       <section className="rankings-hero">
-        <p className="eyebrow">{MODEL_LABEL} · {selectedSeason} {selectedSeason === "2026-27" ? "current state" : "completed fit"}</p>
-        <h1 id="lineups-title">Lineup contexts.</h1>
-        <p>
-          Observed regular-season five-man units, scored against the opponents they actually faced. Edge combines
-          {selectedSeason === "2026-27" ? " updated predictive NAIL with the frozen preseason lineup-context model" : " NAIL player value with the residual lineup-context effect"}.
-          {selectedSeason === "2026-27" && ` Actual net rating is descriptive and remains separate from the model score${lineupAsOf ? `; data through ${lineupAsOf}` : ""}.`}
-        </p>
+        <p className="eyebrow">{MODEL_LABEL} · {selectedSeason} {current ? "regular season" : "completed fit"}</p>
+        <h1 id="lineups-title">{current ? "Lineups." : "Lineup contexts."}</h1>
+        {current ? <>
+          <p>Observed five-man units and their results. Lineup NAIL sums the five players’ latest published ratings.</p>
+          {currentStatus && <p className="lineup-coverage-note">
+            NAIL ratings effective {currentStatus.effectiveDate}. Observed stats cover {currentStatus.coverage.games} games
+            through {currentStatus.coverage.through_game_date_pacific} (Pacific).
+            {currentStatus.coverage.rated_lineups < currentStatus.coverage.lineups &&
+              ` Player ratings are missing for ${currentStatus.coverage.lineups - currentStatus.coverage.rated_lineups} lineups.`}
+            {currentStatus.coverage.pending_game_dates.length > 0 &&
+              ` Stints pending for ${currentStatus.coverage.pending_game_dates.join(", ")}.`}
+          </p>}
+        </> : <p>
+          Observed regular-season five-man units, scored against the opponents they actually faced.
+          Edge combines NAIL player value with the residual lineup-context effect.
+        </p>}
       </section>
 
       <section className="rankings-table-section" aria-label="Observed five-man lineup rankings">
@@ -3163,7 +3225,7 @@ function LineupRankingsPage({
           <div className="rankings-table-controls">
             <label className="rankings-season">
               <span>Season</span>
-              <select value={selectedSeason} onChange={(event) => setSelectedSeason(event.target.value)}>
+              <select value={selectedSeason} onChange={(event) => changeSeason(event.target.value)}>
                 {(availableSeasons.length ? availableSeasons : [selectedSeason]).map((season) => (
                   <option key={season} value={season}>{season}</option>
                 ))}
@@ -3174,7 +3236,7 @@ function LineupRankingsPage({
               <input
                 type="number"
                 min="0"
-                step="100"
+                step={current ? "10" : "100"}
                 value={minimumPossessions}
                 onChange={(event) => setMinimumPossessions(Math.max(0, Number(event.target.value) || 0))}
               />
@@ -3247,7 +3309,7 @@ function LineupRankingsPage({
                 <th scope="col">
                   <span className="lineup-column-heading">
                     Five-man unit
-                    <span className="column-info" role="img" aria-label="The exact five players grouped together in regular-season stints. Use the buttons below the names to load the unit into the Matchup Lab." data-tooltip="The exact five players grouped together in regular-season stints. Use the buttons below the names to load the unit into the Matchup Lab.">
+                    <span className="column-info" role="img" aria-label="The exact five players grouped together in regular-season stints." data-tooltip="The exact five players grouped together in regular-season stints.">
                       <Info size={12} aria-hidden="true" />
                     </span>
                   </span>
@@ -3309,7 +3371,7 @@ function LineupRankingsPage({
               </tr>
             </thead>
             <tbody>
-              {visibleLineups.map((lineup) => <tr key={`${lineup.team_id}-${lineup.player_ids.join("-")}`}>
+              {displayedLineups.map((lineup) => <tr key={`${lineup.team_id}-${lineup.player_ids.join("-")}`}>
                 <td className="rank-number">{lineup.rank}</td>
                 <td>
                   <a className="lineup-team-mark" href={teamSeasonHref(lineup.team, selectedSeason)} aria-label={`View ${lineup.team} in ${selectedSeason}`} title={`View ${lineup.team} team page`}>
@@ -3322,37 +3384,21 @@ function LineupRankingsPage({
                   <span className="lineup-roster-names">
                     {lineup.player_names.map((name, index) => <a key={lineup.player_ids[index]} className="player-name-link" href={playerProfileHref(lineup.player_ids[index])}>{name}</a>)}
                   </span>
-                  <span className="lineup-lab-actions">
-                    <button
-                      type="button"
-                      onClick={() => onLoadInLab("unit", lineup, selectedSeason)}
-                      aria-label={`Load ${lineup.lineup_label} as your unit in the Matchup Lab`}
-                      title="Load as your unit"
-                    >
-                      <ArrowLeft size={13} aria-hidden="true" /> Your
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onLoadInLab("opponent", lineup, selectedSeason)}
-                      aria-label={`Load ${lineup.lineup_label} as the opponent in the Matchup Lab`}
-                      title="Load as opponent"
-                    >
-                      Opponent <ArrowRight size={13} aria-hidden="true" />
-                    </button>
-                  </span>
                 </th>
                 {displayedMetricColumns.map((column) => {
                   switch (column.key) {
                     case "gestalt_score":
-                      return <td key={column.key} className={lineup.gestalt_score < 0 ? "negative numeric rating-cell edge-rating" : "positive numeric rating-cell edge-rating"}>{formatRating(lineup.gestalt_score)}</td>;
+                      return <td key={column.key} className={`${optionalRatingClass(lineup.gestalt_score)} edge-rating`}>{formatOptionalRating(lineup.gestalt_score)}</td>;
                     case "offensive_edge":
                       return <td key={column.key} className={optionalRatingClass(lineup.offensive_edge)}>{formatOptionalRating(lineup.offensive_edge)}</td>;
                     case "defensive_edge":
                       return <td key={column.key} className={optionalRatingClass(lineup.defensive_edge)}>{formatOptionalRating(lineup.defensive_edge)}</td>;
                     case "player_edge":
-                      return <td key={column.key} className={lineup.player_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.player_edge)}</td>;
+                      return <td key={column.key} className={optionalRatingClass(lineup.player_edge)}>{formatOptionalRating(lineup.player_edge)}</td>;
+                    case "lineup_nail":
+                      return <td key={column.key} className={optionalRatingClass(lineup.lineup_nail)}>{formatOptionalRating(lineup.lineup_nail)}</td>;
                     case "context_edge":
-                      return <td key={column.key} className={lineup.context_edge < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.context_edge)}</td>;
+                      return <td key={column.key} className={optionalRatingClass(lineup.context_edge)}>{formatOptionalRating(lineup.context_edge)}</td>;
                     case "actual_net_rating":
                       return <td key={column.key} className={lineup.actual_net_rating < 0 ? "negative numeric rating-cell" : "positive numeric rating-cell"}>{formatRating(lineup.actual_net_rating)}</td>;
                     case "possessions":
@@ -3368,7 +3414,7 @@ function LineupRankingsPage({
           </table>
         </div>}
         {!error && isCompact && <ol className="mobile-card-list mobile-lineup-rankings" aria-label="Observed five-man lineup rankings">
-          {visibleLineups.map((lineup) => <li className="mobile-lineup-card" key={`${lineup.team_id}-${lineup.player_ids.join("-")}`}>
+          {displayedLineups.map((lineup) => <li className="mobile-lineup-card" key={`${lineup.team_id}-${lineup.player_ids.join("-")}`}>
             <div className="mobile-card-heading lineup-card-heading">
               <span className="mobile-card-rank">#{lineup.rank}</span>
               <a className="lineup-team-mark" href={teamSeasonHref(lineup.team, selectedSeason)} aria-label={`View ${lineup.team} in ${selectedSeason}`} title={`View ${lineup.team} team page`}>
@@ -3376,8 +3422,8 @@ function LineupRankingsPage({
                 <small>{lineup.team}</small>
               </a>
               <span className="mobile-primary-rating">
-                <small>Edge</small>
-                <Rating value={lineup.gestalt_score} />
+                <small>{current ? "NAIL" : "Edge"}</small>
+                {formatOptionalRating(current ? lineup.lineup_nail : lineup.gestalt_score)}
               </span>
             </div>
             <div className="mobile-lineup-roster">
@@ -3385,35 +3431,27 @@ function LineupRankingsPage({
               {lineup.player_names.map((name, index) => <a key={lineup.player_ids[index]} className="player-name-link" href={playerProfileHref(lineup.player_ids[index])}>{name}</a>)}
             </div>
             <dl className="mobile-metric-grid mobile-lineup-metrics">
-              <div><dt>Off</dt><dd>{formatOptionalRating(lineup.offensive_edge)}</dd></div>
-              <div><dt>Def</dt><dd>{formatOptionalRating(lineup.defensive_edge)}</dd></div>
-              <div><dt>NAIL</dt><dd><Rating value={lineup.player_edge} /></dd></div>
-              <div><dt>Context</dt><dd><Rating value={lineup.context_edge} /></dd></div>
+              {!current && <>
+                <div><dt>Off</dt><dd>{formatOptionalRating(lineup.offensive_edge)}</dd></div>
+                <div><dt>Def</dt><dd>{formatOptionalRating(lineup.defensive_edge)}</dd></div>
+                <div><dt>NAIL</dt><dd>{formatOptionalRating(lineup.player_edge)}</dd></div>
+                <div><dt>Context</dt><dd>{formatOptionalRating(lineup.context_edge)}</dd></div>
+              </>}
               <div><dt>Net rating</dt><dd><Rating value={lineup.actual_net_rating} /></dd></div>
             </dl>
             <div className="mobile-lineup-footer">
               <p className="mobile-card-meta">{wholeNumber.format(lineup.possessions)} possessions · {lineup.games} games</p>
-              <span className="lineup-lab-actions">
-                <button
-                  type="button"
-                  onClick={() => onLoadInLab("unit", lineup, selectedSeason)}
-                  aria-label={`Load ${lineup.lineup_label} as your unit in the Matchup Lab`}
-                  title="Load as your unit"
-                >
-                  <ArrowLeft size={13} aria-hidden="true" /> Your
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onLoadInLab("opponent", lineup, selectedSeason)}
-                  aria-label={`Load ${lineup.lineup_label} as the opponent in the Matchup Lab`}
-                  title="Load as opponent"
-                >
-                  Opponent <ArrowRight size={13} aria-hidden="true" />
-                </button>
-              </span>
             </div>
           </li>)}
         </ol>}
+        {!isLoading && !error && visibleLineups.length === 0 && <p className="team-empty-state" role="status">
+          No lineups match these filters.
+        </p>}
+        {!isLoading && !error && visibleLineups.length > displayedLineups.length && <button
+          className="column-order-reset"
+          type="button"
+          onClick={() => setVisibleLimit((limit) => limit + 100)}
+        >Show more lineups ({displayedLineups.length} of {visibleLineups.length})</button>}
       </section>
     </article>
   );
