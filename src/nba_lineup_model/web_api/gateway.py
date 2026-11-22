@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from nba_lineup_model.web_api.compare import router as compare_router
 from nba_lineup_model.web_api.current_season_records import router as records_router
 from nba_lineup_model.web_api.historical_lineups import router as lineups_router
 from nba_lineup_model.web_api.market_performance import router
@@ -46,6 +47,7 @@ class MarketGateway:
         self.market.include_router(season_history_router)
         self.market.include_router(rotation_history_router)
         self.market.include_router(discovery_router)
+        self.market.include_router(compare_router)
         self.legacy_factory = legacy_factory
         self.legacy = None
         self.legacy_failed = False
@@ -86,6 +88,7 @@ class MarketGateway:
             in {
                 "/api/market-performance",
                 "/api/search",
+                "/api/compare/players",
                 "/api/teams",
                 "/api/rankings",
                 "/api/lineups",

@@ -344,7 +344,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .compare-player-suggestions strong { font-size: 14px; }
 .compare-player-suggestions span { color: #68716a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; }
 .compare-alignment-control { display: grid; justify-items: end; gap: 8px; }
-.compare-alignment-actions { display: inline-flex; gap: 7px; }
+.compare-alignment-actions { display: inline-flex; flex-wrap: wrap; gap: 7px; }
 .compare-alignment-actions > div { display: inline-flex; border: 1px solid #a6aaa4; background: #fffefa; }
 .compare-alignment-actions > div button { min-width: 80px; height: 44px; padding: 0 13px; border: 0; border-right: 1px solid #a6aaa4; background: transparent; color: #68716a; font: inherit; font-size: 13px; font-weight: 800; }
 .compare-alignment-actions > div button:last-child { border-right: 0; }
@@ -380,6 +380,15 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .compare-chart-legend-item img { width: 21px; height: 21px; flex: 0 0 21px; border-radius: 50%; object-fit: cover; background: #e9e7df; }
 .compare-chart-download { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid #a6aaa4; background: #fffefa; color: #245a47; }
 .compare-chart-download:hover { border-color: #245a47; background: #edf2e9; }
+.compare-search-message { margin: 8px 0; color: #68716a; font-size: 13px; }
+.compare-current-players { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 175px), 1fr)); gap: 12px; margin: 0 0 20px; padding: 0; list-style: none; }
+.compare-current-players li { display: grid; align-content: start; gap: 4px; padding: 10px 12px; border-left: 3px solid; background: #fffefa; }
+.compare-current-players a { color: #17201c; font-weight: 700; text-decoration: none; }
+.compare-current-players a:hover { text-decoration: underline; }
+.compare-current-players strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+.compare-current-players small { color: #68716a; font-size: 12px; }
+.compare-current-chart { overflow-x: auto; }
+.compare-current-chart > svg { min-width: 500px; }
 .compare-trajectory-chart > svg { display: block; width: 100%; height: auto; overflow: visible; }
 .compare-chart-grid { stroke: #dedbd3; stroke-width: 1; }
 .compare-chart-zero { stroke: #6d766f; stroke-width: 1.15; stroke-dasharray: 6 5; }
@@ -1222,7 +1231,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .compare-chart-heading h2 { font-size: 29px; }
   .compare-trajectory-chart { overflow-x: auto; }
   .compare-trajectory-chart > svg { width: 760px; max-width: none; }
-  .compare-trajectory-chart-compact > svg { width: 100%; max-width: 100%; }
+  .compare-trajectory-chart-compact > svg, .compare-current-chart > svg { width: 100%; max-width: 100%; }
   .gestalt-entry { padding-bottom: 28px; }
   .gestalt-entry-heading { gap: 10px; }
   .gestalt-pronunciation { margin-top: 18px; font-size: 13px; }

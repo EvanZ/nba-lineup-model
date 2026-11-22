@@ -3,25 +3,29 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Download, LoaderCircle, Search, X } from "lucide-react";
 
 import type { Player } from "./types";
+import type { RatingHistory } from "./PlayerRatingHistory";
 import { teamLogoUrl } from "./teamLogos";
 
+type SeasonView = "historical" | "current";
 type Alignment = "age" | "season";
 type RatingView = "total" | "offense" | "defense";
 
 type ComparisonCandidate = {
   player_id: number;
-  player_name: string;
+  player_name: string | null;
   latest_season: string;
-  latest_team: string;
+  latest_team: string | null;
   history_seasons: number;
 };
 
-type ChartPoint = Player["rating_history"][number];
+type ChartPoint = Pick<Player["rating_history"][number],
+  "season" | "age" | "rating" | "offense_rating" | "defense_rating" | "team" | "team_id" | "nail_rank">;
+type ComparePlayer = Pick<Player, "player_id" | "player_name"> & { rating_history: ChartPoint[] };
 type TrajectoryPoint = ChartPoint & { rating: number };
 type HoveredTrajectoryPoint = { playerId: number; season: string };
 type ChartRef = { current: SVGSVGElement | null };
-type ExportLegendItem = { player: Player; color: string };
-type ComparisonTooltipEntry = { player: Player; point: TrajectoryPoint; color: string };
+type ExportLegendItem = { player: ComparePlayer; color: string };
+type ComparisonTooltipEntry = { player: ComparePlayer; point: TrajectoryPoint; color: string };
 
 const RATING_VIEWS: Record<RatingView, {
   title: string;
@@ -98,13 +102,14 @@ function readCompareRoute() {
       .slice(0, MAX_PLAYERS);
   return {
     playerIds,
+    seasonView: parameters.get("view") === "current" ? "current" as const : "historical" as const,
     alignment: parameters.get("align") === "season" ? "season" as const : "age" as const,
   };
 }
 
-function compareHash(playerIds: number[], alignment: Alignment) {
-  const parameters = new URLSearchParams({ align: alignment });
-  if (playerIds.length) parameters.set("players", playerIds.join(","));
+function compareHash(playerIds: number[], alignment: Alignment, seasonView: SeasonView) {
+  const parameters = new URLSearchParams({ align: alignment, players: playerIds.join(",") });
+  if (seasonView === "current") parameters.set("view", "current");
   return `#compare?${parameters.toString()}`;
 }
 
@@ -128,12 +133,12 @@ function headshotUrl(playerId: number) {
   return `/api/headshots/${playerId}.png`;
 }
 
-function trajectoryPoints(player: Player, view: RatingView): TrajectoryPoint[] {
+function trajectoryPoints(player: ComparePlayer, view: RatingView, alignment: Alignment): TrajectoryPoint[] {
   const field = RATING_VIEWS[view].field;
   return player.rating_history
     .flatMap((point) => {
       const rating = point[field];
-      return point.age !== null && typeof rating === "number" && Number.isFinite(rating)
+      return (alignment === "season" || point.age !== null) && typeof rating === "number" && Number.isFinite(rating)
         ? [{ ...point, rating }]
         : [];
     })
@@ -286,7 +291,7 @@ async function downloadCombinedComparisonPng({
   alignment,
   chartRefs,
 }: {
-  players: Player[];
+  players: ComparePlayer[];
   alignment: Alignment;
   chartRefs: Record<RatingView, ChartRef>;
 }) {
@@ -352,7 +357,7 @@ function ComparisonTrajectoryChart({
   compact = false,
   showTeamLogos = true,
 }: {
-  players: Player[];
+  players: ComparePlayer[];
   alignment: Alignment;
   view: RatingView;
   focusedPlayerId: number | null;
@@ -371,8 +376,8 @@ function ComparisonTrajectoryChart({
   const series = useMemo(() => players.map((player, index) => ({
     player,
     color: SERIES_COLORS[index % SERIES_COLORS.length],
-    points: trajectoryPoints(player, view),
-  })).filter((entry) => entry.points.length > 0), [players, view]);
+    points: trajectoryPoints(player, view, alignment),
+  })).filter((entry) => entry.points.length > 0), [players, view, alignment]);
 
   if (!series.length) {
     return <p className="compare-empty-chart">Selected players need at least one completed-season {details.emptyLabel} estimate.</p>;
@@ -532,7 +537,7 @@ function ComparisonTrajectoryChart({
         {hovered && <g className="compare-chart-tooltip" data-export-exclude="true" transform={`translate(${tooltipX} ${tooltipY})`} pointerEvents="none">
           <rect width="188" height="70" rx="2" />
           <text x="10" y="18">{hovered.player.player_name}</text>
-          <text x="10" y="37">{hovered.point.team} · {hovered.point.season} · Age {hovered.point.age}</text>
+          <text x="10" y="37">{hovered.point.team} · {hovered.point.season}{hovered.point.age === null ? "" : ` · Age ${hovered.point.age}`}</text>
           <text x="10" y="56">{formatRating(hovered.point.rating)}{view === "total" ? ` · Rank #${hovered.point.nail_rank}` : ""}</text>
         </g>}
         {hoveredComparisonX !== null && <g className="compare-chart-comparison-tooltip" data-export-exclude="true" transform={`translate(${comparisonTooltipX} ${comparisonTooltipY})`} pointerEvents="none">
@@ -542,7 +547,7 @@ function ComparisonTrajectoryChart({
           {comparisonEntries.length > 0
             ? comparisonEntries.map(({ player, point, color }, index) => <text className="compare-chart-comparison-tooltip-row" key={player.player_id} x="10" y={47 + index * 15}>
               <tspan fill={color}>{`${index + 1}. ${player.player_name}`}</tspan>
-              <tspan>{`  ${formatRating(point.rating)} · #${point.nail_rank} · ${point.team} · ${point.age} · ${point.season}`}</tspan>
+              <tspan>{`  ${formatRating(point.rating)} · #${point.nail_rank} · ${point.team} · ${point.age ?? "—"} · ${point.season}`}</tspan>
             </text>)
             : <text className="compare-chart-comparison-tooltip-row" x="10" y="47">No completed fits at this point.</text>}
         </g>}
@@ -578,18 +583,198 @@ async function inlineSvgImages(svg: SVGSVGElement) {
   }));
 }
 
+type CurrentRankings = {
+  players: { player_id: number; player_name: string; rank: number; rapm: number }[];
+  rating_state: { evidence_through_date: string; effective_from_date: string };
+};
+
+type CurrentHistory =
+  | { data: RatingHistory }
+  | { message: string };
+
+function CurrentComparison({ playerIds, players }: {
+  playerIds: number[]; players: ComparePlayer[];
+}) {
+  const [rankings, setRankings] = useState<CurrentRankings | null>(null);
+  const [rankingError, setRankingError] = useState(false);
+  const [histories, setHistories] = useState<Record<number, CurrentHistory>>({});
+  const hasPlayers = playerIds.length > 0;
+
+  useEffect(() => {
+    if (!hasPlayers) return;
+    const controller = new AbortController();
+    const signal = controller.signal;
+    void (async () => {
+      try {
+        const response = await fetch("/api/rankings?season=2026-27", { signal });
+        if (!response.ok) throw new Error("No current rankings");
+        const data = await response.json() as CurrentRankings;
+        if (!signal.aborted) {
+          setRankings(data);
+          setRankingError(false);
+        }
+      } catch {
+        if (!signal.aborted) setRankingError(true);
+      }
+    })();
+    return () => controller.abort();
+  }, [hasPlayers]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    for (const id of playerIds) {
+      void (async () => {
+        let result: CurrentHistory;
+        try {
+          const response = await fetch(`/api/players/${id}/rating-history`, { signal });
+          if (response.status === 404) {
+            result = { message: "No saved 2026–27 history" };
+          } else {
+            if (!response.ok) throw new Error("Current history unavailable");
+            const data = await response.json() as RatingHistory;
+            if (data.kind !== "saved_player_game_history" || !data.complete || data.player_id !== id) {
+              throw new Error("Invalid current history");
+            }
+            result = { data };
+          }
+        } catch {
+          result = { message: "Saved history is temporarily unavailable" };
+        }
+        if (!signal.aborted) setHistories((previous) => ({ ...previous, [id]: result }));
+      })();
+    }
+    return () => controller.abort();
+  }, [playerIds]);
+
+  const rankedPlayers = new Map(rankings?.players.map((player) => [player.player_id, player]));
+  const series = players.flatMap((player, index) => {
+    const result = histories[player.player_id];
+    if (!result || !("data" in result)) return [];
+    const history = result.data;
+    return [{ history, color: SERIES_COLORS[index], name: history.player_name }];
+  });
+
+  return (
+    <section className="compare-chart-section" aria-labelledby="compare-current-title">
+      <div className="compare-chart-heading">
+        <div>
+          <p className="section-kicker">2026–27 season</p>
+          <h2 id="compare-current-title">In-season NAIL.</h2>
+        </div>
+        {rankings && hasPlayers && <p className="compare-search-message">
+          Rankings through {rankings.rating_state.evidence_through_date} · Effective {rankings.rating_state.effective_from_date}
+        </p>}
+      </div>
+      {!hasPlayers && <p className="compare-empty-chart">Add a player to compare current-season NAIL.</p>}
+      {rankingError && hasPlayers && <p role="status" className="error">Current NAIL rankings are temporarily unavailable.</p>}
+      {hasPlayers && <ul className="compare-current-players" aria-label="Latest NAIL and league rank">
+        {players.map((player, index) => {
+          const id = player.player_id;
+          const ranked = rankedPlayers.get(id);
+          const result = histories[id];
+          const history = result && "data" in result ? result.data : null;
+          const historyStatus = result && "message" in result ? result.message :
+            history ? `History through ${history.through_game_date_pacific} · ${history.points.length} game dates` : "Loading game history";
+          return <li key={id} style={{ borderColor: SERIES_COLORS[index] }}>
+            <a href={playerProfileHref(id)}>{ranked?.player_name ?? history?.player_name ?? player.player_name}</a>
+            <strong>{ranked ? `${formatRating(ranked.rapm)} · Rank #${ranked.rank}` :
+              rankings ? "No current rating" : rankingError ? "Ranking unavailable" : "Loading ranking"}</strong>
+            <small>{historyStatus}</small>
+          </li>;
+        })}
+      </ul>}
+      {series.length > 0 && <CurrentComparisonChart series={series} />}
+    </section>
+  );
+}
+
+const DAY_MS = 86_400_000;
+
+function CurrentComparisonChart({ series }: {
+  series: { history: RatingHistory; color: string; name: string }[];
+}) {
+  const lines = series.map(({ history, color, name }) => {
+    const prior = history.starting_point;
+    return {
+      id: history.player_id, color, name,
+      points: [
+        {
+          day: Date.parse(prior.first_state_date) / DAY_MS - 0.4,
+          date: prior.first_state_date, nail: prior.nail, prior: true,
+          label: prior.kind === "opening_prior" ? "Opening prior" : "Introduced prior",
+        },
+        ...history.points.map((point) => ({
+          day: Date.parse(point.game_date_pacific) / DAY_MS,
+          date: point.game_date_pacific, nail: point.nail, prior: false, label: "After slate",
+        })),
+      ],
+    };
+  });
+  const points = lines.flatMap((line) => line.points);
+  const days = points.map((point) => point.day);
+  const ratings = points.map((point) => point.nail);
+  const firstDay = Math.floor(Math.min(...days));
+  const lastDay = Math.max(firstDay + 1, Math.ceil(Math.max(...days)));
+  const low = Math.floor(Math.min(0, ...ratings));
+  const high = Math.max(low + 1, Math.ceil(Math.max(0, ...ratings)));
+  const width = 780;
+  const height = 310;
+  const { left, right, top, bottom } = CHART_MARGIN;
+  const x = (day: number) => left + (day - firstDay) * (width - left - right) / (lastDay - firstDay);
+  const y = (nail: number) => top + (high - nail) * (height - top - bottom) / (high - low);
+  const dateStep = Math.ceil((lastDay - firstDay) / 6);
+  const dateTicks = Array.from(
+    { length: Math.floor((lastDay - firstDay) / dateStep) + 1 },
+    (_, index) => firstDay + index * dateStep,
+  );
+  const formatDate = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+  return (
+    <figure className="compare-trajectory-chart compare-current-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Current-season NAIL comparison by game date">
+        <text className="compare-chart-axis-title" x={left} y={16}>NAIL / 100 possessions</text>
+        {axisTicks(low, high, 6).filter((tick) => tick <= high).map((tick) => <g key={tick}>
+          <line className={tick === 0 ? "compare-chart-zero" : "compare-chart-grid"} x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} />
+          <text className="compare-chart-y-label" x={left - 10} y={y(tick) + 4} textAnchor="end">{formatRating(tick)}</text>
+        </g>)}
+        {dateTicks.map((day) => <g key={day}>
+          <line className="compare-chart-tick" x1={x(day)} x2={x(day)} y1={height - bottom} y2={height - bottom + 5} />
+          <text className="compare-chart-x-label" x={x(day)} y={height - bottom + 22} textAnchor="middle">{formatDate.format(day * DAY_MS)}</text>
+        </g>)}
+        {lines.map((line) => <g className="compare-chart-series" key={line.id}>
+          <path stroke={line.color} d={line.points.map((point, index) =>
+            `${index ? "L" : "M"}${x(point.day)},${y(point.nail)}`,
+          ).join(" ")} />
+          {line.points.map((point) => <circle key={point.day} cx={x(point.day)} cy={y(point.nail)}
+            r={point.prior ? 5 : 4} fill={point.prior ? "#fffefa" : line.color} stroke={line.color} strokeWidth={2}>
+            <title>{`${line.name} · ${point.label} · ${point.date} · ${formatRating(point.nail)}`}</title>
+          </circle>)}
+        </g>)}
+      </svg>
+      <figcaption>Open circles mark starting priors. Each filled point is NAIL after the complete slate on a player’s game date.</figcaption>
+    </figure>
+  );
+}
+
 export function ComparePage() {
   const isMobile = useMediaQuery("(max-width: 580px)");
   const [selectedPlayerIds, setSelectedPlayerIds] = useState(() => readCompareRoute().playerIds);
-  const [players, setPlayers] = useState<Player[]>([]);
+  const [players, setPlayers] = useState<ComparePlayer[]>([]);
+  const [seasonView, setSeasonView] = useState<SeasonView>(() => readCompareRoute().seasonView);
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<ComparisonCandidate[]>([]);
+  const [searchMessage, setSearchMessage] = useState<string | null>(null);
+  const orderedPlayers = selectedPlayerIds.map((id) => players.find((player) => player.player_id === id) ?? {
+    player_id: id, player_name: `Player #${id}`, rating_history: [],
+  });
   const [alignment, setAlignment] = useState<Alignment>(() => readCompareRoute().alignment);
   const [focusedPlayerId, setFocusedPlayerId] = useState<number | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<HoveredTrajectoryPoint | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const totalChartRef = useRef<SVGSVGElement>(null);
   const offenseChartRef = useRef<SVGSVGElement>(null);
@@ -601,6 +786,7 @@ export function ComparePage() {
       const next = readCompareRoute();
       setSelectedPlayerIds(next.playerIds);
       setAlignment(next.alignment);
+      setSeasonView(next.seasonView);
       setFocusedPlayerId(null);
       setHoveredPoint(null);
     };
@@ -609,42 +795,50 @@ export function ComparePage() {
   }, []);
 
   useEffect(() => {
-    const nextHash = compareHash(selectedPlayerIds, alignment);
+    const nextHash = compareHash(selectedPlayerIds, alignment, seasonView);
     if (window.location.hash === nextHash) return;
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
-  }, [alignment, selectedPlayerIds]);
+  }, [alignment, selectedPlayerIds, seasonView]);
 
   useEffect(() => {
     const controller = new AbortController();
-    if (!selectedPlayerIds.length) {
-      setError(null);
-      setPlayers([]);
-      setIsLoading(false);
-      return () => controller.abort();
-    }
-    void (async () => {
-      try {
-        setError(null);
-        setIsLoading(true);
-        const responses = await Promise.all(selectedPlayerIds.map(async (playerId) => {
-          const response = await fetch(`/api/players/${playerId}`, { signal: controller.signal });
-          if (!response.ok) throw new Error("A selected player comparison is unavailable.");
-          return (await response.json()) as Player;
-        }));
-        setPlayers(responses);
-      } catch (loadError) {
-        if ((loadError as Error).name !== "AbortError") setError((loadError as Error).message);
-      } finally {
-        if (!controller.signal.aborted) setIsLoading(false);
+    const signal = controller.signal;
+    setHistoryError(null);
+    setIsLoading(selectedPlayerIds.length > 0);
+    void Promise.allSettled(selectedPlayerIds.map(async (playerId): Promise<ComparePlayer> => {
+      const response = await fetch(`/api/players/${playerId}/season-history`, { signal });
+      if (!response.ok) throw new Error("Season history unavailable.");
+      const data = await response.json() as {
+        kind: string; player_id: number; player_name: string | null; seasons: ChartPoint[];
+      };
+      if (data.kind !== "saved_player_season_history" || data.player_id !== playerId || !Array.isArray(data.seasons)) {
+        throw new Error("Invalid season history.");
       }
-    })();
+      let name = data.player_name;
+      if (!name) {
+        const summary = await fetch(`/api/players/${playerId}`, { signal });
+        if (summary.ok) name = (await summary.json()).player_name;
+      }
+      return { player_id: playerId, player_name: name ?? `Player #${playerId}`, rating_history: data.seasons };
+    })).then((results) => {
+      if (signal.aborted) return;
+      setPlayers((previous) => results.flatMap((result, index) =>
+        result.status === "fulfilled" ? [result.value] : previous.filter((p) => p.player_id === selectedPlayerIds[index]),
+      ));
+      const unavailable = results.flatMap((result, index) =>
+        result.status === "rejected" ? [selectedPlayerIds[index]] : [],
+      );
+      if (unavailable.length) setHistoryError(`Saved season history unavailable for player IDs ${unavailable.join(", ")}.`);
+      setIsLoading(false);
+    });
     return () => controller.abort();
   }, [selectedPlayerIds]);
 
   useEffect(() => {
     const normalized = query.trim();
+    setSearchMessage(null);
+    setSuggestions([]);
     if (normalized.length < 2) {
-      setSuggestions([]);
       setIsSearching(false);
       return;
     }
@@ -655,10 +849,14 @@ export function ComparePage() {
           setIsSearching(true);
           const response = await fetch(`/api/compare/players?q=${encodeURIComponent(normalized)}`, { signal: controller.signal });
           if (!response.ok) throw new Error("Player search is unavailable.");
-          const payload = (await response.json()) as { players: ComparisonCandidate[] };
-          setSuggestions(payload.players.filter((candidate) => !selectedPlayerIds.includes(candidate.player_id)));
+          const payload = (await response.json()) as { players: ComparisonCandidate[]; unavailable: string[] };
+          if (controller.signal.aborted) return;
+          const candidates = payload.players.filter((candidate) => !selectedPlayerIds.includes(candidate.player_id));
+          setSuggestions(candidates);
+          if (payload.unavailable.length) setSearchMessage(`Search is missing ${payload.unavailable.join(" and ")} players.`);
+          else if (!candidates.length) setSearchMessage("No matching players to add.");
         } catch (searchError) {
-          if ((searchError as Error).name !== "AbortError") setError((searchError as Error).message);
+          if (!controller.signal.aborted && (searchError as Error).name !== "AbortError") setSearchMessage((searchError as Error).message);
         } finally {
           if (!controller.signal.aborted) setIsSearching(false);
         }
@@ -673,6 +871,9 @@ export function ComparePage() {
   function addPlayer(candidate: ComparisonCandidate) {
     if (selectedPlayerIds.length >= MAX_PLAYERS || selectedPlayerIds.includes(candidate.player_id)) return;
     setSelectedPlayerIds((current) => [...current, candidate.player_id]);
+    setPlayers((current) => [...current, {
+      player_id: candidate.player_id, player_name: candidate.player_name ?? `Player #${candidate.player_id}`, rating_history: [],
+    }]);
     setQuery("");
     setSuggestions([]);
   }
@@ -685,7 +886,7 @@ export function ComparePage() {
 
   async function copyShareLink() {
     const url = new URL(window.location.href);
-    url.hash = compareHash(selectedPlayerIds, alignment);
+    url.hash = compareHash(selectedPlayerIds, alignment, seasonView);
     try {
       await navigator.clipboard.writeText(url.toString());
       setLinkCopied(true);
@@ -700,7 +901,7 @@ export function ComparePage() {
       <section className="compare-hero">
         <p className="eyebrow">Player comparison</p>
         <h1 id="compare-title">NAIL through time.</h1>
-        <p>Compare career trajectories on a shared NAIL-RAPM scale.</p>
+        <p>Compare completed seasons or follow current-season NAIL on each player’s game dates.</p>
       </section>
 
       <section className="compare-controls" aria-label="Comparison controls">
@@ -715,25 +916,33 @@ export function ComparePage() {
               placeholder="Add a player"
               disabled={selectedPlayerIds.length >= MAX_PLAYERS}
               autoComplete="off"
+              maxLength={128}
             />
             {isSearching && <LoaderCircle className="spin" size={16} aria-label="Searching players" />}
           </div>
           {suggestions.length > 0 && <div className="compare-player-suggestions" role="listbox" aria-label="Player suggestions">
             {suggestions.map((candidate) => (
               <button key={candidate.player_id} type="button" onClick={() => void addPlayer(candidate)}>
-                <strong>{candidate.player_name}</strong>
-                <span>{candidate.latest_team} · through {candidate.latest_season} · {candidate.history_seasons} seasons</span>
+                <strong>{candidate.player_name ?? `Player #${candidate.player_id}`}</strong>
+                <span>{[candidate.latest_team === "-" ? null : candidate.latest_team, candidate.latest_season,
+                  candidate.history_seasons ? `${candidate.history_seasons} completed seasons` : "Current season only",
+                ].filter(Boolean).join(" · ")}</span>
               </button>
             ))}
           </div>}
+          {searchMessage && <p className="compare-search-message" role="status">{searchMessage}</p>}
         </div>
         <div className="compare-alignment-control">
-          <span>Align by</span>
+          <span>View</span>
           <div className="compare-alignment-actions">
-            <div role="group" aria-label="Trajectory alignment">
+            <div role="group" aria-label="Comparison period">
+              <button type="button" aria-pressed={seasonView === "historical"} onClick={() => setSeasonView("historical")}>Career</button>
+              <button type="button" aria-pressed={seasonView === "current"} onClick={() => setSeasonView("current")}>2026–27</button>
+            </div>
+            {seasonView === "historical" && <div role="group" aria-label="Trajectory alignment">
               <button type="button" aria-pressed={alignment === "age"} onClick={() => setAlignment("age")}>Age</button>
               <button type="button" aria-pressed={alignment === "season"} onClick={() => setAlignment("season")}>Season</button>
-            </div>
+            </div>}
             <button className="compare-copy-link" type="button" onClick={() => void copyShareLink()} title={linkCopied ? "Comparison link copied" : "Copy comparison link"} aria-label={linkCopied ? "Comparison link copied" : "Copy comparison link"}>
               {linkCopied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
             </button>
@@ -743,7 +952,7 @@ export function ComparePage() {
 
       {selectedPlayerIds.length > 0 && <section className="compare-selected-players" aria-label="Selected players">
         <div className="compare-selected-player-list">
-          {players.map((player, index) => (
+          {orderedPlayers.map((player, index) => (
             <div className="compare-player-chip" key={player.player_id}>
               <i style={{ backgroundColor: SERIES_COLORS[index % SERIES_COLORS.length] }} />
               <img src={headshotUrl(player.player_id)} alt="" />
@@ -759,69 +968,79 @@ export function ComparePage() {
       </section>}
 
       {error && <p className="error compare-error">{error}</p>}
-      {isLoading ? <div className="compare-loading"><LoaderCircle className="spin" size={20} /> Loading trajectories</div> : <section className="compare-chart-section" aria-labelledby="compare-chart-title">
-        <div className="compare-chart-heading">
-          <div>
-            <p className="section-kicker">Completed fits</p>
-            <h2 id="compare-chart-title">NAIL-RAPM history.</h2>
+      {seasonView === "current" && <CurrentComparison playerIds={selectedPlayerIds} players={orderedPlayers} />}
+      {seasonView === "historical" && <>
+        {historyError && <p className="error compare-error" role="status">{historyError}</p>}
+        {isLoading ? <div className="compare-loading"><LoaderCircle className="spin" size={20} /> Loading trajectories</div> : <section className="compare-chart-section" aria-labelledby="compare-chart-title">
+          <div className="compare-chart-heading">
+            <div>
+              <p className="section-kicker">Completed fits</p>
+              <h2 id="compare-chart-title">NAIL-RAPM history.</h2>
+            </div>
+            <div className="compare-chart-heading-actions">
+              <p>{alignment === "age" ? "Careers aligned at the same age." : "Careers placed in their actual seasons."}</p>
+              <button
+                className="compare-combined-download"
+                type="button"
+                onClick={() => void downloadCombinedComparisonPng({
+                  players: orderedPlayers,
+                  alignment,
+                  chartRefs: { total: totalChartRef, offense: offenseChartRef, defense: defenseChartRef },
+                })}
+                disabled={orderedPlayers.every((player) => trajectoryPoints(player, "total", alignment).length === 0)}
+                title="Download total, offense, and defense charts as PNG"
+              >
+                <Download size={16} aria-hidden="true" />
+                Download comparison
+              </button>
+            </div>
           </div>
-          <div className="compare-chart-heading-actions">
-            <p>{alignment === "age" ? "Careers aligned at the same age." : "Careers placed in their actual seasons."}</p>
-            <button
-              className="compare-combined-download"
-              type="button"
-              onClick={() => void downloadCombinedComparisonPng({
-                players,
-                alignment,
-                chartRefs: { total: totalChartRef, offense: offenseChartRef, defense: defenseChartRef },
-              })}
-              title="Download total, offense, and defense charts as PNG"
-            >
-              <Download size={16} aria-hidden="true" />
-              Download comparison
-            </button>
+          {orderedPlayers.some((player) => player.rating_history.length === 0) && (
+            <p className="compare-search-message">No completed-season points shown for {orderedPlayers.filter((player) =>
+              player.rating_history.length === 0,
+            ).map((player) => player.player_name).join(", ")}.</p>
+          )}
+          <div className="compare-trajectory-layout">
+            <div className="compare-total-chart">
+              <ComparisonTrajectoryChart
+                players={orderedPlayers}
+                alignment={alignment}
+                view="total"
+                focusedPlayerId={focusedPlayerId}
+                setFocusedPlayerId={setFocusedPlayerId}
+                hoveredPoint={hoveredPoint}
+                setHoveredPoint={setHoveredPoint}
+                svgRef={totalChartRef}
+                showLegend
+                compact={isMobile}
+                showTeamLogos={!isMobile}
+              />
+            </div>
+            <div className="compare-split-charts">
+              {(["offense", "defense"] as const).map((view) => (
+                <section className="compare-split-chart" key={view} aria-labelledby={`compare-${view}-chart-title`}>
+                  <div className="compare-split-chart-heading">
+                    <p className="section-kicker">Constrained split</p>
+                    <h3 id={`compare-${view}-chart-title`}>{RATING_VIEWS[view].title}</h3>
+                  </div>
+                  <ComparisonTrajectoryChart
+                    players={orderedPlayers}
+                    alignment={alignment}
+                    view={view}
+                    focusedPlayerId={focusedPlayerId}
+                    setFocusedPlayerId={setFocusedPlayerId}
+                    hoveredPoint={hoveredPoint}
+                    setHoveredPoint={setHoveredPoint}
+                    svgRef={view === "offense" ? offenseChartRef : defenseChartRef}
+                    compact
+                    showTeamLogos={!isMobile}
+                  />
+                </section>
+              ))}
+            </div>
           </div>
-        </div>
-        <div className="compare-trajectory-layout">
-          <div className="compare-total-chart">
-            <ComparisonTrajectoryChart
-              players={players}
-              alignment={alignment}
-              view="total"
-              focusedPlayerId={focusedPlayerId}
-              setFocusedPlayerId={setFocusedPlayerId}
-              hoveredPoint={hoveredPoint}
-              setHoveredPoint={setHoveredPoint}
-              svgRef={totalChartRef}
-              showLegend
-              compact={isMobile}
-              showTeamLogos={!isMobile}
-            />
-          </div>
-          <div className="compare-split-charts">
-            {(["offense", "defense"] as const).map((view) => (
-              <section className="compare-split-chart" key={view} aria-labelledby={`compare-${view}-chart-title`}>
-                <div className="compare-split-chart-heading">
-                  <p className="section-kicker">Constrained split</p>
-                  <h3 id={`compare-${view}-chart-title`}>{RATING_VIEWS[view].title}</h3>
-                </div>
-                <ComparisonTrajectoryChart
-                  players={players}
-                  alignment={alignment}
-                  view={view}
-                  focusedPlayerId={focusedPlayerId}
-                  setFocusedPlayerId={setFocusedPlayerId}
-                  hoveredPoint={hoveredPoint}
-                  setHoveredPoint={setHoveredPoint}
-                  svgRef={view === "offense" ? offenseChartRef : defenseChartRef}
-                  compact
-                  showTeamLogos={!isMobile}
-                />
-              </section>
-            ))}
-          </div>
-        </div>
-      </section>}
+        </section>}
+      </>}
     </article>
   );
 }
