@@ -24,9 +24,11 @@ import {
 import "@xyflow/react/dist/style.css";
 import { CircleAlert, Copy, Download, Filter, Hand, LoaderCircle, MousePointer2, X } from "lucide-react";
 
-import type { ExternalRosterArrival, Player, RosterMove, RosterMovesPayload } from "./types";
+import type { ExternalRosterArrival, InSeasonMove, InSeasonMovesPayload, RosterMove, RosterMovesPayload } from "./types";
 import { teamLogoUrl } from "./teamLogos";
 
+type MovePeriod = "offseason" | "in-season";
+type MovesPayload = RosterMovesPayload | InSeasonMovesPayload;
 type MoveFilter = "all" | "external" | "rookies" | RosterMove["move_type"];
 type TeamNodeData = { team: string; conference: "East" | "West" };
 type MapNodeData = Record<string, never>;
@@ -37,10 +39,11 @@ type GraphMove = RosterMove & {
   externalOriginLabel?: string;
   externalOriginKind?: "college" | "country" | "fallback";
   isRookie?: boolean;
+  transaction?: InSeasonMove;
 };
 type MoveEdgeData = GraphMove & { showLabel: boolean; animateTeamSelection: boolean };
 type CanvasMode = "move" | "pan";
-type MoveRoute = { filter: MoveFilter; team: string; autoplay: boolean };
+type MoveRoute = { period: MovePeriod; filter: MoveFilter; team: string; autoplay: boolean };
 type UsaMapLocation = { id: string; name: string; path: string };
 type GraphPositions = Record<string, { x: number; y: number }>;
 type CurveGeometry = {
@@ -141,6 +144,7 @@ const MOVE_FILTERS: Array<{ value: MoveFilter; label: string }> = [
   { value: "trade", label: "Trades" },
   { value: "signing", label: "Signings" },
   { value: "waiver", label: "Waivers" },
+  { value: "other", label: "Other" },
 ];
 const MOVE_COLORS: Record<RosterMove["move_type"], string> = {
   trade: "#e8502f",
@@ -152,18 +156,21 @@ const MOVE_COLORS: Record<RosterMove["move_type"], string> = {
 function parseMoveRoute(): MoveRoute {
   const queryIndex = window.location.hash.indexOf("?");
   const parameters = new URLSearchParams(queryIndex >= 0 ? window.location.hash.slice(queryIndex + 1) : "");
+  const period = parameters.get("period") === "in-season" ? "in-season" : "offseason";
   const requestedFilter = parameters.get("filter") as MoveFilter | null;
   const filter = MOVE_FILTERS.some((candidate) => candidate.value === requestedFilter) ? requestedFilter! : "all";
   return {
-    filter,
+    period,
+    filter: period === "in-season" && (filter === "rookies" || filter === "external") ? "all" : filter,
     team: parameters.get("team")?.toUpperCase() ?? "all",
     autoplay: parameters.get("autoplay") === "1",
   };
 }
 
-function animationLink(team: string, filter: MoveFilter) {
+function animationLink(team: string, filter: MoveFilter, period: MovePeriod) {
   const parameters = new URLSearchParams({ team, autoplay: "1" });
   if (filter !== "all") parameters.set("filter", filter);
+  if (period === "in-season") parameters.set("period", period);
   return `${window.location.origin}${window.location.pathname}#moves?${parameters.toString()}`;
 }
 function curveGeometry(sourceX: number, sourceY: number, targetX: number, targetY: number, playerId: number): CurveGeometry {
@@ -216,11 +223,36 @@ function externalArrivalMove(arrival: ExternalRosterArrival): GraphMove {
   };
 }
 
-function graphMovesFromPayload(payload: RosterMovesPayload): GraphMove[] {
+function graphMovesFromPayload(payload: MovesPayload): GraphMove[] {
+  if ("transactions" in payload) return payload.transactions.map((transaction) => ({
+    ...transaction,
+    transaction,
+    source_team: transaction.source_team ?? "",
+    target_team: transaction.target_team ?? "",
+    prior_season_minutes: 0,
+    isExternalArrival: false,
+  }));
   return [
     ...payload.moves.map((move) => ({ ...move, isExternalArrival: false })),
     ...payload.external_arrivals.map(externalArrivalMove),
   ];
+}
+
+function moveKey(move: GraphMove) {
+  return move.transaction?.event_id ?? String(move.player_id);
+}
+
+function moveRoute(move: GraphMove) {
+  if (move.transaction && move.move_type !== "trade") {
+    const label = move.move_type === "signing" ? "Signed by" :
+      move.move_type === "waiver" ? "Waived by" : move.transaction.transaction_type;
+    return <span className="roster-transaction-team">{label} <b>{move.transaction.team}</b></span>;
+  }
+  return <>
+    <span>{move.isExternalArrival ? move.externalOriginLabel ?? "Outside prior roster" : move.source_team || "Origin unavailable"}</span>
+    <span className="roster-move-arrow">to</span>
+    <span>{move.target_team}</span>
+  </>;
 }
 
 function blobAsDataUrl(blob: Blob) {
@@ -595,14 +627,14 @@ function buildGraphNodes(teams: string[], moves: GraphMove[]): GraphNode[] {
 
 function moveEdge(
   move: GraphMove,
-  selectedMoveId: number | null,
+  selectedMoveId: string | null,
   showLabel: boolean,
   animateTeamSelection: boolean,
 ): Edge<MoveEdgeData> {
-  const isSelected = selectedMoveId === move.player_id;
+  const isSelected = selectedMoveId === moveKey(move);
   const width = move.isExternalArrival ? 1.8 : Math.min(4.6, 1.15 + Math.sqrt(move.prior_season_minutes) / 18);
   return {
-    id: `move-${move.player_id}`,
+    id: `move-${moveKey(move)}`,
     source: move.source_team,
     target: move.target_team,
     type: "move",
@@ -629,35 +661,54 @@ function formatRating(value: number | null | undefined) {
 
 export function RosterMovesPage() {
   const initialRoute = parseMoveRoute();
-  const [payload, setPayload] = useState<RosterMovesPayload | null>(null);
+  const [period, setPeriod] = useState<MovePeriod>(initialRoute.period);
+  const [result, setResult] = useState<{ period: MovePeriod; data: MovesPayload } | null>(null);
+  const payload = result?.period === period ? result.data : null;
+  const offseason = payload && "moves" in payload ? payload : null;
+  const inSeason = payload && "transactions" in payload ? payload : null;
   const [error, setError] = useState<string | null>(null);
   const [moveFilter, setMoveFilter] = useState<MoveFilter>(initialRoute.filter);
   const [teamFilter, setTeamFilter] = useState(initialRoute.team);
   const [autoplay, setAutoplay] = useState(initialRoute.autoplay);
   const [copiedAnimationLink, setCopiedAnimationLink] = useState(false);
-  const [selectedMoveId, setSelectedMoveId] = useState<number | null>(null);
+  const [selectedMoveId, setSelectedMoveId] = useState<string | null>(null);
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<GraphNode, Edge<MoveEdgeData>> | null>(null);
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("move");
   const [isExportingGif, setIsExportingGif] = useState(false);
-  const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
+  const [priorSeasonRating, setPriorSeasonRating] = useState<number | null>(null);
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      if (window.location.hash.split("?")[0] !== "#moves") return;
+      const route = parseMoveRoute();
+      setPeriod(route.period);
+      setMoveFilter(route.filter);
+      setTeamFilter(route.team);
+      setAutoplay(route.autoplay);
+      setSelectedMoveId(null);
+    };
+    window.addEventListener("hashchange", syncFromHash);
+    return () => window.removeEventListener("hashchange", syncFromHash);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     void (async () => {
       try {
         setError(null);
-        const response = await fetch("/api/roster-moves", { signal: controller.signal });
+        const response = await fetch(`/api/roster-moves?period=${period}`, { signal: controller.signal });
         if (!response.ok) throw new Error("Roster movement data is unavailable.");
-        const nextPayload = (await response.json()) as RosterMovesPayload;
-        setPayload(nextPayload);
+        const nextPayload = (await response.json()) as MovesPayload;
+        if (controller.signal.aborted) return;
+        setResult({ period, data: nextPayload });
         setNodes(buildGraphNodes(nextPayload.teams, graphMovesFromPayload(nextPayload)));
       } catch (fetchError) {
         if ((fetchError as Error).name !== "AbortError") setError((fetchError as Error).message);
       }
     })();
     return () => controller.abort();
-  }, []);
+  }, [period]);
 
   const allMoves = useMemo(
     () => (payload ? graphMovesFromPayload(payload) : []),
@@ -672,27 +723,40 @@ export function RosterMovesPage() {
     )
     && (teamFilter === "all" || move.source_team === teamFilter || move.target_team === teamFilter)
   )), [allMoves, moveFilter, teamFilter]);
-  const showEdgeLabels = visibleMoves.length <= 24;
+  const mapMoves = useMemo(() => visibleMoves.filter((move) => (
+    move.isExternalArrival || (move.source_team in TEAM_GEOGRAPHY && move.target_team in TEAM_GEOGRAPHY)
+  )), [visibleMoves]);
+  const showEdgeLabels = mapMoves.length <= 24;
   const animateTeamSelection = teamFilter !== "all" || autoplay;
-  const canExportGif = visibleMoves.length > 0 && visibleMoves.length <= 24;
-  const canShareAnimation = teamFilter !== "all" && visibleMoves.length > 0 && visibleMoves.length <= 24;
+  const canExportGif = mapMoves.length > 0 && mapMoves.length <= 24;
+  const canShareAnimation = teamFilter !== "all" && canExportGif;
   const edges = useMemo(
-    () => visibleMoves.map((move) => moveEdge(move, selectedMoveId, showEdgeLabels, animateTeamSelection)),
-    [animateTeamSelection, selectedMoveId, showEdgeLabels, visibleMoves],
+    () => mapMoves.map((move) => moveEdge(move, selectedMoveId, showEdgeLabels, animateTeamSelection)),
+    [animateTeamSelection, selectedMoveId, showEdgeLabels, mapMoves],
   );
   const selectedMove = useMemo(
-    () => visibleMoves.find((move) => move.player_id === selectedMoveId) ?? null,
+    () => visibleMoves.find((move) => moveKey(move) === selectedMoveId) ?? null,
     [selectedMoveId, visibleMoves],
   );
-  const priorSeasonRating = selectedPlayer?.rating_history.find(
-    (point) => point.season === payload?.prior_season,
-  ) ?? null;
+
+  function selectPeriod(next: MovePeriod) {
+    if (period === next) return;
+    setPeriod(next);
+    setError(null);
+    setMoveFilter("all");
+    setSelectedMoveId(null);
+    setAutoplay(false);
+    setResult(null);
+    window.history.replaceState(null, "", next === "in-season" ? "#moves?period=in-season" : "#moves");
+  }
+
   const onNodesChange = useCallback(
     (changes: NodeChange<GraphNode>[]) => setNodes((current) => applyNodeChanges(changes, current)),
     [],
   );
   const onEdgeClick = useCallback<EdgeMouseHandler>((_, edge) => {
-    setSelectedMoveId((edge.data as GraphMove | undefined)?.player_id ?? null);
+    const move = edge.data as GraphMove | undefined;
+    setSelectedMoveId(move ? moveKey(move) : null);
   }, []);
   const selectTeam = useCallback((team: string) => {
     setTeamFilter((current) => (current === team ? "all" : team));
@@ -706,10 +770,10 @@ export function RosterMovesPage() {
   }, []);
   const copyAnimationLink = useCallback(async () => {
     if (!canShareAnimation) return;
-    await navigator.clipboard.writeText(animationLink(teamFilter, moveFilter));
+    await navigator.clipboard.writeText(animationLink(teamFilter, moveFilter, period));
     setCopiedAnimationLink(true);
     window.setTimeout(() => setCopiedAnimationLink(false), 1800);
-  }, [canShareAnimation, moveFilter, teamFilter]);
+  }, [canShareAnimation, moveFilter, period, teamFilter]);
   const exportGif = useCallback(async () => {
     if (!payload || !canExportGif || isExportingGif) return;
     setIsExportingGif(true);
@@ -722,12 +786,12 @@ export function RosterMovesPage() {
       const title = teamFilter === "all" ? "Roster moves" : `${teamFilter} roster moves`;
       const [logoDataUrls, headshotDataUrls] = await Promise.all([
         loadTeamLogoDataUrls(payload.teams),
-        loadPlayerHeadshotDataUrls(visibleMoves),
+        loadPlayerHeadshotDataUrls(mapMoves),
       ]);
       for (let frame = 0; frame < GIF_FRAME_COUNT; frame += 1) {
         const svg = makeGifFrame(
           payload.teams,
-          visibleMoves,
+          mapMoves,
           positions,
           logoDataUrls,
           headshotDataUrls,
@@ -754,7 +818,7 @@ export function RosterMovesPage() {
     } finally {
       setIsExportingGif(false);
     }
-  }, [canExportGif, isExportingGif, nodes, payload, teamFilter, visibleMoves]);
+  }, [canExportGif, isExportingGif, mapMoves, nodes, payload, teamFilter]);
   const onNodeClick = useCallback<NodeMouseHandler>((_, node) => {
     if (node.type === "team") {
       selectTeam(node.id);
@@ -764,29 +828,28 @@ export function RosterMovesPage() {
   }, [clearGraphSelection, selectTeam]);
 
   useEffect(() => {
-    if (selectedMoveId !== null && !visibleMoves.some((move) => move.player_id === selectedMoveId)) {
+    if (selectedMoveId !== null && !visibleMoves.some((move) => moveKey(move) === selectedMoveId)) {
       setSelectedMoveId(null);
     }
   }, [selectedMoveId, visibleMoves]);
 
   useEffect(() => {
-    if (!selectedMove) {
-      setSelectedPlayer(null);
-      return;
-    }
+    setPriorSeasonRating(null);
+    if (!selectedMove || !payload) return;
     const controller = new AbortController();
-    setSelectedPlayer(null);
+    const season = payload.prior_season;
     void (async () => {
       try {
-        const response = await fetch(`/api/players/${selectedMove.player_id}`, { signal: controller.signal });
+        const response = await fetch(`/api/players/${selectedMove.player_id}/season-history`, { signal: controller.signal });
         if (!response.ok) return;
-        setSelectedPlayer((await response.json()) as Player);
+        const history = (await response.json()) as { seasons: { season: string; rating: number }[] };
+        if (!controller.signal.aborted) setPriorSeasonRating(history.seasons.find((point) => point.season === season)?.rating ?? null);
       } catch (fetchError) {
-        if ((fetchError as Error).name !== "AbortError") setSelectedPlayer(null);
+        if (!controller.signal.aborted && (fetchError as Error).name !== "AbortError") setPriorSeasonRating(null);
       }
     })();
     return () => controller.abort();
-  }, [selectedMove]);
+  }, [selectedMove, payload]);
 
   useEffect(() => {
     if (payload && teamFilter !== "all" && !payload.teams.includes(teamFilter)) {
@@ -801,176 +864,191 @@ export function RosterMovesPage() {
     return () => window.cancelAnimationFrame(frame);
   }, [flowInstance, nodes.length]);
 
-  if (error) return <p className="error roster-moves-error"><CircleAlert size={16} /> {error}</p>;
-  if (!payload) return <div className="profile-loading"><LoaderCircle className="spin" size={20} /> Loading roster movement graph</div>;
-
   return (
     <article className="roster-moves-page" aria-labelledby="roster-moves-title">
       <section className="roster-moves-hero">
-        <p className="eyebrow">{payload.prior_season} to {payload.current_season} offseason</p>
+        <p className="eyebrow">{period === "in-season" ? "2026–27 season" : "2026 offseason"}</p>
         <h1 id="roster-moves-title">Roster moves.</h1>
-        <p>
-          Each solid arrow follows a returning player from their {payload.source_definition} to their listed 2026-27 club.
-          Dashed arrows mark players entering from outside the prior NBA roster record.
-          Animated headshots scale with the 2026-27 preseason NAIL projection: non-positive ratings use the base size, while a +6.0 rating reaches the 3x cap.
-          Drag team nodes to inspect a path; filter the graph to reveal player labels, then select a path or a player below for transaction detail.
-        </p>
+        <div className="roster-move-filter-group roster-move-period" role="group" aria-label="Movement period">
+          <button type="button" className={period === "offseason" ? "active" : ""} aria-pressed={period === "offseason"} onClick={() => selectPeriod("offseason")}>Offseason</button>
+          <button type="button" className={period === "in-season" ? "active" : ""} aria-pressed={period === "in-season"} onClick={() => selectPeriod("in-season")}>In-season</button>
+        </div>
+        {offseason && <p>
+          Each solid arrow follows a returning player from their {offseason.source_definition} to their team in the {offseason.as_of_date} roster snapshot.
+          Dashed arrows mark players without a prior-season NBA roster record.
+        </p>}
+        {inSeason && <p>Official NBA transactions from {inSeason.from_date} through {inSeason.through_date}. The map shows trades with verified teams. The list includes signings and waivers.</p>}
       </section>
-
-      <section className="roster-moves-summary" aria-label="Roster movement summary">
-        <div><strong>{payload.returning_mover_count}</strong><span>returning movers</span></div>
-        <div><strong>{payload.current_roster_count}</strong><span>current rostered players</span></div>
-        <div><strong>{payload.new_or_unmatched_current_player_count}</strong><span>external arrivals</span></div>
-        <p>External arrivals begin just beyond the map boundary and end at their current team. They include rookies and players without a prior-season NBA roster record.</p>
-      </section>
-
-      <section className="roster-moves-workspace" aria-label="Interactive roster movement graph">
-        <div className="roster-moves-controls">
-          <div className="roster-move-filter-group" aria-label="Movement type filter">
-            {MOVE_FILTERS.map((filter) => (
+      {error && <p className="error roster-moves-error"><CircleAlert size={16} /> {error}</p>}
+      {!error && !payload && <div className="profile-loading"><LoaderCircle className="spin" size={20} /> Loading roster moves</div>}
+      {offseason && <section className="roster-moves-summary" aria-label="Roster movement summary">
+        <div><strong>{offseason.returning_mover_count}</strong><span>returning movers</span></div>
+        <div><strong>{offseason.current_roster_count}</strong><span>opening roster players</span></div>
+        <div><strong>{offseason.new_or_unmatched_current_player_count}</strong><span>external arrivals</span></div>
+      </section>}
+      {inSeason && <section className="roster-moves-summary" aria-label="In-season transaction summary">
+        <div><strong>{inSeason.transactions.length}</strong><span>transactions</span></div>
+        <div><strong>{inSeason.transactions.filter((move) => move.move_type === "trade").length}</strong><span>player trades</span></div>
+        <div><strong>{inSeason.transactions.filter((move) => move.move_type === "signing").length}</strong><span>signings</span></div>
+        {inSeason.missing_dates.length > 0 && <p role="status">Missing saved transaction dates {inSeason.missing_dates.join(", ")}</p>}
+      </section>}
+      {payload && <>
+        <section className="roster-moves-workspace" aria-label="Interactive roster movement graph">
+          <div className="roster-moves-controls">
+            <div className="roster-move-filter-group" aria-label="Movement type filter">
+              {MOVE_FILTERS.filter(({ value }) => (
+                (!inSeason || (value !== "external" && value !== "rookies")) &&
+                (value !== "other" || allMoves.some((move) => move.move_type === "other"))
+              )).map((filter) => (
+                <button
+                  className={moveFilter === filter.value ? "active" : ""}
+                  aria-pressed={moveFilter === filter.value}
+                  key={filter.value}
+                  onClick={() => setMoveFilter(filter.value)}
+                  type="button"
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+            <label className="roster-moves-team-filter">
+              <Filter size={14} aria-hidden="true" />
+              <span>Team</span>
+              <select value={teamFilter} onChange={(event) => selectTeam(event.target.value)}>
+                <option value="all">All teams</option>
+                {payload.teams.map((team) => <option key={team} value={team}>{team}</option>)}
+              </select>
+            </label>
+            <div className="roster-graph-mode" aria-label="Canvas interaction mode">
               <button
-                className={moveFilter === filter.value ? "active" : ""}
-                key={filter.value}
-                onClick={() => setMoveFilter(filter.value)}
+                aria-label="Move team nodes"
+                className={canvasMode === "move" ? "active" : ""}
+                onClick={() => setCanvasMode("move")}
+                title="Move team nodes"
                 type="button"
-              >
-                {filter.label}
-              </button>
+              ><MousePointer2 size={15} /><span>Move teams</span></button>
+              <button
+                aria-label="Pan canvas"
+                className={canvasMode === "pan" ? "active" : ""}
+                onClick={() => setCanvasMode("pan")}
+                title="Pan canvas"
+                type="button"
+              ><Hand size={15} /><span>Pan canvas</span></button>
+            </div>
+            <button
+              aria-label="Download animated roster movement GIF"
+              className="roster-gif-export"
+              disabled={!canExportGif || isExportingGif}
+              onClick={() => void exportGif()}
+              title={canExportGif ? "Download the visible player paths as an animated GIF" : "Filter to 24 or fewer player paths to export a readable GIF"}
+              type="button"
+            >
+              {isExportingGif ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
+              <span>{isExportingGif ? "Building GIF" : "Download GIF"}</span>
+            </button>
+            <button
+              aria-label="Copy a link that opens this team animation"
+              className="roster-gif-export"
+              disabled={!canShareAnimation}
+              onClick={() => void copyAnimationLink()}
+              title={canShareAnimation ? "Copy a link that opens and animates these player paths" : "Select one team with 1 to 24 paths on the map"}
+              type="button"
+            >
+              <Copy size={14} />
+              <span>{copiedAnimationLink ? "Link copied" : "Copy animation link"}</span>
+            </button>
+            <p>{mapMoves.length} paths on map</p>
+          </div>
+
+          <div className="roster-moves-canvas">
+            <ReactFlow<GraphNode, Edge<MoveEdgeData>>
+              edges={edges}
+              edgeTypes={edgeTypes}
+              maxZoom={1.55}
+              minZoom={0.28}
+              nodesDraggable={canvasMode === "move"}
+              nodeTypes={nodeTypes}
+              nodes={nodes}
+              onEdgeClick={onEdgeClick}
+              onInit={setFlowInstance}
+              onNodeClick={onNodeClick}
+              onNodesChange={onNodesChange}
+              onPaneClick={clearGraphSelection}
+              panOnDrag={canvasMode === "pan" ? true : [1, 2]}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </div>
+
+          <aside className="roster-moves-detail" aria-live="polite">
+            {selectedMove ? (
+              <>
+                <button
+                  className="roster-moves-dismiss"
+                  type="button"
+                  onClick={() => setSelectedMoveId(null)}
+                  aria-label="Clear selected movement"
+                  title="Clear selected movement"
+                ><X size={16} /></button>
+                <p className={`roster-move-kind ${selectedMove.move_type}`}>{selectedMove.transaction?.transaction_type ?? (selectedMove.isExternalArrival ? "external arrival" : selectedMove.move_type)}</p>
+                <a className="roster-move-player-link" href={`#player/${selectedMove.player_id}`}>
+                  <h2>{selectedMove.player_name}</h2>
+                </a>
+                <p className="roster-move-route">{moveRoute(selectedMove)}</p>
+                <dl className="roster-move-player-bio">
+                  <div>
+                    <dt>{payload.prior_season} NAIL</dt>
+                    <dd className={priorSeasonRating !== null && priorSeasonRating < 0 ? "negative" : ""}>{priorSeasonRating !== null ? formatRating(priorSeasonRating) : "No prior-season fit"}</dd>
+                  </div>
+                  <div>
+                    <dt>{payload.current_season} projection</dt>
+                    <dd className={selectedMove.projected_rating !== null && selectedMove.projected_rating < 0 ? "negative" : ""}>{formatRating(selectedMove.projected_rating)}</dd>
+                  </div>
+                </dl>
+                <p>{selectedMove.how_acquired ?? "Current roster acquisition detail unavailable."}</p>
+                <small>{selectedMove.transaction?.transaction_date ?? (selectedMove.isExternalArrival
+                  ? `No ${payload.prior_season} NBA roster record`
+                  : `${formatMinutes(selectedMove.prior_season_minutes)} regular-season minutes in ${payload.prior_season}`)}</small>
+              </>
+            ) : (
+              <>
+                <p className="section-kicker">Selected path</p>
+                <h2>Choose a move.</h2>
+                <p>Each colored arrow represents one player. Select an arrow in the network or a row in the list.</p>
+              </>
+            )}
+          </aside>
+        </section>
+
+        <section className="roster-moves-list-section" aria-labelledby="roster-moves-list-title">
+          <div className="roster-moves-list-heading">
+            <div>
+              <p className="section-kicker">All displayed movement</p>
+              <h2 id="roster-moves-list-title">{inSeason ? "Transactions." : "Player paths."}</h2>
+            </div>
+            <span>{visibleMoves.length} of {allMoves.length}</span>
+          </div>
+          <ol className="roster-moves-list">
+            {visibleMoves.map((move) => (
+              <li key={moveKey(move)}>
+                <button
+                  className={selectedMoveId === moveKey(move) ? "active" : ""}
+                  type="button"
+                  onClick={() => setSelectedMoveId(moveKey(move))}
+                >
+                  <span className={`roster-move-dot ${move.move_type}`} />
+                  <strong>{move.player_name}</strong>
+                  {moveRoute(move)}
+                  <small>{move.transaction?.transaction_date ?? (move.isExternalArrival
+                    ? "No prior roster record" : `${formatMinutes(move.prior_season_minutes)} min.`)}</small>
+                </button>
+              </li>
             ))}
-          </div>
-          <label className="roster-moves-team-filter">
-            <Filter size={14} aria-hidden="true" />
-            <span>Team</span>
-            <select value={teamFilter} onChange={(event) => selectTeam(event.target.value)}>
-              <option value="all">All teams</option>
-              {payload.teams.map((team) => <option key={team} value={team}>{team}</option>)}
-            </select>
-          </label>
-          <div className="roster-graph-mode" aria-label="Canvas interaction mode">
-            <button
-              aria-label="Move team nodes"
-              className={canvasMode === "move" ? "active" : ""}
-              onClick={() => setCanvasMode("move")}
-              title="Move team nodes"
-              type="button"
-            ><MousePointer2 size={15} /><span>Move teams</span></button>
-            <button
-              aria-label="Pan canvas"
-              className={canvasMode === "pan" ? "active" : ""}
-              onClick={() => setCanvasMode("pan")}
-              title="Pan canvas"
-              type="button"
-            ><Hand size={15} /><span>Pan canvas</span></button>
-          </div>
-          <button
-            aria-label="Download animated roster movement GIF"
-            className="roster-gif-export"
-            disabled={!canExportGif || isExportingGif}
-            onClick={() => void exportGif()}
-            title={canExportGif ? "Download the visible player paths as an animated GIF" : "Filter to 24 or fewer player paths to export a readable GIF"}
-            type="button"
-          >
-            {isExportingGif ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
-            <span>{isExportingGif ? "Building GIF" : "Download GIF"}</span>
-          </button>
-          <button
-            aria-label="Copy a link that opens this team animation"
-            className="roster-gif-export"
-            disabled={!canShareAnimation}
-            onClick={() => void copyAnimationLink()}
-            title={canShareAnimation ? "Copy a link that opens and animates these player paths" : "Select one team and filter to 24 or fewer player paths to create an animation link"}
-            type="button"
-          >
-            <Copy size={14} />
-            <span>{copiedAnimationLink ? "Link copied" : "Copy animation link"}</span>
-          </button>
-          <p>{visibleMoves.length} player paths shown</p>
-        </div>
-
-        <div className="roster-moves-canvas">
-          <ReactFlow<GraphNode, Edge<MoveEdgeData>>
-            edges={edges}
-            edgeTypes={edgeTypes}
-            maxZoom={1.55}
-            minZoom={0.28}
-            nodesDraggable={canvasMode === "move"}
-            nodeTypes={nodeTypes}
-            nodes={nodes}
-            onEdgeClick={onEdgeClick}
-            onInit={setFlowInstance}
-            onNodeClick={onNodeClick}
-            onNodesChange={onNodesChange}
-            onPaneClick={clearGraphSelection}
-            panOnDrag={canvasMode === "pan" ? true : [1, 2]}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Controls showInteractive={false} />
-          </ReactFlow>
-        </div>
-
-        <aside className="roster-moves-detail" aria-live="polite">
-          {selectedMove ? (
-            <>
-              <button
-                className="roster-moves-dismiss"
-                type="button"
-                onClick={() => setSelectedMoveId(null)}
-                aria-label="Clear selected movement"
-                title="Clear selected movement"
-              ><X size={16} /></button>
-              <p className={`roster-move-kind ${selectedMove.move_type}`}>{selectedMove.isExternalArrival ? "external arrival" : selectedMove.move_type}</p>
-              <a className="roster-move-player-link" href={`#player/${selectedMove.player_id}`}>
-                <h2>{selectedMove.player_name}</h2>
-              </a>
-              <p className="roster-move-route"><strong>{selectedMove.isExternalArrival ? selectedMove.externalOriginLabel ?? "Outside prior roster" : selectedMove.source_team}</strong><span>to</span><strong>{selectedMove.target_team}</strong></p>
-              <dl className="roster-move-player-bio">
-                <div>
-                  <dt>{payload.prior_season} NAIL</dt>
-                  <dd className={priorSeasonRating && priorSeasonRating.rating < 0 ? "negative" : ""}>{priorSeasonRating ? formatRating(priorSeasonRating.rating) : "No prior-season fit"}</dd>
-                </div>
-                <div>
-                  <dt>{payload.current_season} projection</dt>
-                  <dd className={selectedMove.projected_rating !== null && selectedMove.projected_rating < 0 ? "negative" : ""}>{formatRating(selectedMove.projected_rating)}</dd>
-                </div>
-              </dl>
-              <p>{selectedMove.how_acquired ?? "Current roster acquisition detail unavailable."}</p>
-              <small>{selectedMove.isExternalArrival ? `No ${payload.prior_season} NBA roster record` : `${formatMinutes(selectedMove.prior_season_minutes)} regular-season minutes in ${payload.prior_season}`}</small>
-            </>
-          ) : (
-            <>
-              <p className="section-kicker">Selected path</p>
-              <h2>Choose a move.</h2>
-              <p>Each colored arrow represents one player. Select an arrow in the network or a row in the list.</p>
-            </>
-          )}
-        </aside>
-      </section>
-
-      <section className="roster-moves-list-section" aria-labelledby="roster-moves-list-title">
-        <div className="roster-moves-list-heading">
-          <div>
-            <p className="section-kicker">All displayed movement</p>
-            <h2 id="roster-moves-list-title">Player paths.</h2>
-          </div>
-          <span>{visibleMoves.length} of {allMoves.length}</span>
-        </div>
-        <ol className="roster-moves-list">
-          {visibleMoves.map((move) => (
-            <li key={move.player_id}>
-              <button
-                className={selectedMoveId === move.player_id ? "active" : ""}
-                type="button"
-                onClick={() => setSelectedMoveId(move.player_id)}
-              >
-                <span className={`roster-move-dot ${move.move_type}`} />
-                <strong>{move.player_name}</strong>
-                <span>{move.isExternalArrival ? move.externalOriginLabel ?? "Outside" : move.source_team}</span><span className="roster-move-arrow">to</span><span>{move.target_team}</span>
-                <small>{move.isExternalArrival ? "No prior roster record" : `${formatMinutes(move.prior_season_minutes)} min.`}</small>
-              </button>
-            </li>
-          ))}
-        </ol>
-      </section>
+          </ol>
+          {visibleMoves.length === 0 && <p className="roster-moves-empty">No moves match these filters.</p>}
+        </section>
+      </>}
     </article>
   );
 }

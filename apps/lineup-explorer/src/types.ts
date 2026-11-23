@@ -321,6 +321,7 @@ export type ExternalRosterArrival = {
 };
 
 export type RosterMovesPayload = {
+  as_of_date: string;
   current_season: string;
   prior_season: string;
   source_definition: string;
@@ -330,6 +331,25 @@ export type RosterMovesPayload = {
   current_roster_count: number;
   returning_mover_count: number;
   new_or_unmatched_current_player_count: number;
+};
+
+export type InSeasonMove = Omit<RosterMove, "source_team" | "target_team" | "prior_season_minutes"> & {
+  event_id: string;
+  transaction_date: string;
+  transaction_type: string;
+  source_team: string | null;
+  target_team: string | null;
+  team: string;
+};
+
+export type InSeasonMovesPayload = {
+  current_season: string;
+  prior_season: string;
+  teams: string[];
+  from_date: string;
+  through_date: string;
+  missing_dates: string[];
+  transactions: InSeasonMove[];
 };
 
 export type MinutesProjectionPlayer = {

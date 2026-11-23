@@ -20,6 +20,7 @@ from nba_lineup_model.web_api.player_season_history import router as season_hist
 from nba_lineup_model.web_api.player_summary import router as player_router
 from nba_lineup_model.web_api.rankings import router as rankings_router
 from nba_lineup_model.web_api.recent_team_ratings import router as recent_ratings_router
+from nba_lineup_model.web_api.saved_roster_moves import router as moves_router
 from nba_lineup_model.web_api.saved_win_projections import router as saved_wins_router
 from nba_lineup_model.web_api.schedule import router as schedule_router
 from nba_lineup_model.web_api.team_navigation import router as team_navigation_router
@@ -39,6 +40,7 @@ class MarketGateway:
         self.market.include_router(team_history_animation_router)
         self.market.include_router(rankings_router)
         self.market.include_router(lineups_router)
+        self.market.include_router(moves_router)
         self.market.include_router(saved_wins_router)
         self.market.include_router(records_router)
         self.market.include_router(recent_ratings_router)
@@ -92,6 +94,7 @@ class MarketGateway:
                 "/api/teams",
                 "/api/rankings",
                 "/api/lineups",
+                "/api/roster-moves",
                 "/api/win-projections",
                 "/api/current-season-records",
                 "/api/recent-team-ratings",

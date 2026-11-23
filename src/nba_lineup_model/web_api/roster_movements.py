@@ -80,6 +80,11 @@ def build_roster_movement_payload(
     catalog["player_id"] = catalog["player_id"].astype(str)
     merged = current.merge(prior, on="player_id", how="left", validate="one_to_one")
     merged = merged.merge(catalog, on="player_id", how="left", validate="one_to_one")
+    return movement_payload(merged, projected_ratings, current_season, prior_season)
+
+
+def movement_payload(merged, projected_ratings, current_season, prior_season):
+    """Shape the joined roster rows for the map."""
     merged["target_team"] = merged["team_abbreviation"].astype(str)
     known_prior = merged["source_team"].notna()
     direct_moves = merged.loc[
@@ -127,7 +132,7 @@ def build_roster_movement_payload(
         }
         for row in external_arrivals.itertuples(index=False)
     ]
-    teams = sorted(current["team_abbreviation"].dropna().astype(str).unique().tolist())
+    teams = sorted(merged["team_abbreviation"].dropna().astype(str).unique().tolist())
     return {
         "current_season": current_season,
         "prior_season": prior_season,
@@ -135,7 +140,7 @@ def build_roster_movement_payload(
         "teams": teams,
         "moves": moves,
         "external_arrivals": arrivals,
-        "current_roster_count": int(len(current)),
+        "current_roster_count": int(len(merged)),
         "returning_mover_count": int(len(moves)),
         "new_or_unmatched_current_player_count": int(len(arrivals)),
     }
