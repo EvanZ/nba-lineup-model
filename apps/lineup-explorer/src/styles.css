@@ -67,6 +67,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .roster-moves-controls { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .roster-move-filter-group { display: flex; flex-wrap: wrap; gap: 6px; }
 .roster-move-filter-group button { height: 31px; padding: 0 10px; border: 1px solid #a6aaa4; border-radius: 0; background: transparent; color: #5d655f; font-size: 11px; font-weight: 800; }
+.roster-move-period { margin-top: 20px; }
 .roster-move-filter-group button:hover, .roster-move-filter-group button.active { border-color: #245a47; background: #dce8db; color: #17201c; }
 .roster-moves-team-filter { display: inline-flex; align-items: center; gap: 7px; color: #69716b; font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .roster-moves-team-filter select { height: 31px; min-width: 104px; padding: 0 28px 0 8px; border: 1px solid #a6aaa4; border-radius: 0; background: #fffefa; color: #17201c; font-size: 12px; font-weight: 800; }
@@ -130,6 +131,10 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .roster-moves-list strong { overflow: hidden; color: #17201c; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .roster-moves-list button > span:not(.roster-move-dot) { color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 800; }
 .roster-moves-list small { grid-column: 2 / -1; color: #69716b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; }
+.roster-moves-list .roster-transaction-team { grid-column: 3 / -1; }
+.roster-move-route > span, .roster-move-route b { color: #17201c; font-size: inherit; font-weight: 800; }
+.roster-move-route > .roster-move-arrow { font-size: 11px; }
+.roster-moves-empty { margin: 18px 0 0; color: #69716b; font-size: 13px; }
 .roster-move-arrow { color: #a6aaa4 !important; }.roster-move-dot { width: 8px; height: 8px; border-radius: 50%; }.roster-move-dot.trade { background: #e8502f; }.roster-move-dot.signing { background: #2563a8; }.roster-move-dot.waiver { background: #9a5f12; }.roster-move-dot.other { background: #69716b; }
 .roster-moves-error { margin-top: 44px; }
 .win-projections-page { padding-top: 72px; }
