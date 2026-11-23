@@ -755,7 +755,7 @@ export function SchedulePage({ initialDate }: { initialDate?: string }) {
   return (
     <section className="schedule-page">
       <div className="schedule-hero-row">
-        <div className="schedule-hero">
+        <div className="schedule-hero court-backdrop">
           <p className="eyebrow">2026–27 season</p>
           <h1>The slate.</h1>
           <p>Every game, our pregame projection, and the market on one timeline. Move backward to audit results or forward to scout the week.</p>

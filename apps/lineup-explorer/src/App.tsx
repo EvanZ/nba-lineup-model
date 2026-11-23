@@ -248,6 +248,7 @@ function Rating({ value, className }: { value: number; className?: string }) {
 function useAppView(): AppRoute {
   const getView = (): AppRoute => {
     const [pathname, queryString = ""] = window.location.hash.slice(1).split("?", 2);
+    if (!pathname) return { view: "schedule" };
     const parameters = new URLSearchParams(queryString);
     const playerMatch = pathname.match(/^player\/(\d+)$/);
     if (playerMatch) return { view: "player", playerId: Number(playerMatch[1]) };
@@ -1457,18 +1458,18 @@ function App() {
   return (
     <main>
       <header className="site-header">
-        <a className="wordmark" href="#lab" aria-label="NBA GESTALT Matchup Lab">
+        <a className="wordmark" href="#schedule" aria-label="NBA GESTALT Schedule">
           <span>NBA</span> GESTALT
         </a>
         <div className="header-meta">
           <nav className="header-navigation" aria-label="Primary navigation">
+            <a className={view === "schedule" ? "active" : ""} href="#schedule">Schedule</a>
             <a className={view === "lab" ? "active" : ""} href="#lab">Lab</a>
             <a className={view === "rankings" ? "active" : ""} href="#rankings">Rankings</a>
             <a className={view === "compare" ? "active" : ""} href="#compare">Compare</a>
             <a className={view === "lineups" ? "active" : ""} href="#lineups">Lineups</a>
             <a className={view === "moves" ? "active" : ""} href="#moves">Moves</a>
             <a className={view === "wins" ? "active" : ""} href="#wins">Wins</a>
-            <a className={view === "schedule" ? "active" : ""} href="#schedule">Schedule</a>
             <a className={view === "about" ? "active" : ""} href="#about">About</a>
           </nav>
           <span className="header-links">
@@ -1528,7 +1529,7 @@ function App() {
       <GlobalSearch isOpen={isGlobalSearchOpen} onClose={() => setIsGlobalSearchOpen(false)} />
 
       {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "compare" ? <ComparePage /> : view === "lineups" ? <LineupRankingsPage /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "schedule" ? <SchedulePage initialDate={route.date} /> : view === "team" && route.team ? <TeamSeasonPage team={route.team} season={route.season} onLoadInLab={loadObservedLineup} /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
-        <section className="intro" aria-labelledby="page-title">
+        <section className="intro court-backdrop" aria-labelledby="page-title">
           <div className="gestalt-entry" aria-label="Definition of gestalt">
             <div className="gestalt-entry-heading">
               <span className="gestalt-word">gestalt</span>
