@@ -29,12 +29,12 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
 .season-chip { padding: 5px 8px; background: #dce8db; color: #245a47; font-size: 12px; font-weight: 700; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .intro {
-  position: relative;
   margin: 0 -32px;
   padding: 62px 32px 42px;
   overflow: hidden;
 }
-.intro::before {
+.court-backdrop { position: relative; }
+.court-backdrop::before {
   position: absolute;
   z-index: 0;
   inset: 0;
@@ -43,7 +43,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 22px 32px 64px; }
   opacity: 0.16;
   pointer-events: none;
 }
-.intro > * { position: relative; z-index: 1; }
+.court-backdrop > * { position: relative; z-index: 1; }
 .gestalt-entry { max-width: 850px; padding: 0 0 34px; border-bottom: 1px solid #d9d6ce; }
 .gestalt-entry-heading { display: flex; align-items: baseline; gap: 14px; }
 .gestalt-word { color: #17201c; font-family: Georgia, "Times New Roman", serif; font-size: clamp(54px, 7vw, 82px); line-height: 0.86; }
@@ -1111,7 +1111,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .about-steps { grid-template-columns: 1fr; gap: 22px; }
   .about-steps.two-up, .model-lexicon, .feature-contract, .promotion-tests, .split-attribution-grid, .split-attribution-surface { grid-template-columns: 1fr; }
   .intro { margin: 0 -20px; padding: 52px 20px 32px; }
-  .intro::before { background-position: right top; background-size: auto 78%; opacity: 0.1; }
+  .court-backdrop::before { background-position: right top; background-size: auto 78%; opacity: 0.1; }
   .lab-grid { grid-template-columns: 1fr; }
   .builder-panel { padding: 24px 0 31px; border-right: 0; }
   .results-panel { min-height: 0; padding: 31px 0 0; border-top: 1px solid #d9d6ce; }
@@ -1238,7 +1238,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
   .gestalt-definition { font-size: 24px; }
   .gestalt-basketball-note { font-size: 13px; }
   .intro-prompt { padding-top: 28px; }
-  .intro::before { background-size: auto 68%; opacity: 0.08; }
+  .court-backdrop::before { background-size: auto 68%; opacity: 0.08; }
   .about-lede { font-size: 20px; }
   .rankings-hero > p:last-child { font-size: 19px; }
   .rankings-table-toolbar { align-items: stretch; flex-direction: column; }
@@ -1276,7 +1276,7 @@ h2 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: upper
 
 .schedule-page { padding-top: 72px; }
 .schedule-hero-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(430px, 0.72fr); align-items: end; gap: 48px; padding-bottom: 36px; }
-.schedule-hero { max-width: 760px; }
+.schedule-hero { display: flex; flex-direction: column; justify-content: end; align-self: stretch; max-width: 760px; }
 .schedule-hero h1 { margin: 0; color: #17201c; font-family: Georgia, "Times New Roman", serif; font-size: clamp(48px, 7vw, 78px); font-weight: 400; line-height: 0.9; }
 .schedule-hero > p:last-child { max-width: 760px; margin: 23px 0 0; color: #4f5851; font-family: Georgia, "Times New Roman", serif; font-size: 22px; line-height: 1.3; }
 .schedule-toolbar { min-height: 54px; display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 2px solid #17201c; border-bottom: 1px solid #d9d6ce; }
