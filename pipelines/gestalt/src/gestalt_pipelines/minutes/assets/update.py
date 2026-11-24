@@ -92,15 +92,20 @@ def player_minutes(
         if warning:
             metadata["roster_cutoff_warning"] = MetadataValue.json(warning)
             context.log.warning("Date-only roster timing uses D+1 assumptions: %s", warning["uri"])
+        starting_repairs, repair_ref = archive.load_repairs(str(day))
+        if repair_ref is not None:
+            inputs["prior_repairs"] = repair_ref
         record = update_state(
             day=day, first_date=minutes_dates.start.date(), season=archive.season,
             priors=priors, parent=parent, games=games, inputs=inputs,
-            version=archive.model_version, game_rosters=game_rosters, **data,
+            version=archive.model_version, game_rosters=game_rosters, starting_repairs=starting_repairs, **data,
         )
         _, current_schedule = nba_schedule.load()
         if current_schedule != inputs["schedule"]:
             raise MinutesError("The official schedule selection changed during this run.")
         nba_roster_archive.assert_game_selections_current(archive.season, game_rosters, nba_box_score_archive, games)
+        if archive.load_repairs(str(day))[1] != repair_ref:
+            raise MinutesError("Starting-minutes repairs changed during this run.")
         saved = archive.save_state(record, prior=prior, expected_etag=etag)
     except Exception as error:
         message = str(error)

@@ -14,7 +14,7 @@ from gestalt_pipelines.definitions import defs
 from gestalt_pipelines.minutes.assets import player_minutes
 from gestalt_pipelines.minutes.resources import MinutesArchive
 from gestalt_pipelines.minutes.resources import archive
-from gestalt_pipelines.minutes.utils import PRIOR_REFERENCES, json_bytes
+from gestalt_pipelines.minutes.utils import PRIOR_REFERENCES, initialize_player, json_bytes
 from gestalt_pipelines.resources import NBAScheduleResource
 from gestalt_pipelines.rosters.resources import NBARosterArchive
 
@@ -41,7 +41,11 @@ def minutes_job(monkeypatch):
         if kw["Key"] not in objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
         raw = objects[kw["Key"]]
-        return {"Body": BytesIO(raw), "ETag": sha256(raw).hexdigest(), "LastModified": times.get(kw["Key"], datetime(2026, 11, 12, tzinfo=UTC))}
+        result = {"Body": BytesIO(raw), "ETag": sha256(raw).hexdigest(),
+                  "LastModified": times.get(kw["Key"], datetime(2026, 11, 12, tzinfo=UTC))}
+        if kw["Key"].endswith("priors/repairs.json"):
+            result["VersionId"] = "test-repair-version"
+        return result
     def pages(**kw):
         return iter([{"Contents": [
             {"Key": key, "LastModified": times[key]} for key in objects if key.startswith(kw["Prefix"])
@@ -223,3 +227,38 @@ def test_roster_reader_uses_pointer_instead_of_a_newer_unselected_version(minute
     del objects[pointer]
     with pytest.raises(ValueError, match="Missing accepted upstream"):
         a._roster_ref(str(FIRST))
+
+
+def test_saved_minutes_repair_uses_exact_version_and_only_applies_from_effective_date(minutes_job):
+    _, archive, objects, _, _ = minutes_job
+    key = archive.prefix + "priors/repairs.json"
+    assert archive.load_repairs("2026-11-23") == ({}, None)
+    entry = {
+        "player_name": "Gabe Vincent", "eligible_from_game_date_pacific": "2026-11-23",
+        "starting_minutes": 21.27743468038848,
+        "source": {"season": "2025-26", "field": "predicted_minutes_per_available_game",
+                   "uri": "s3://nba-gestalt-data/test/minutes-history.parquet", "sha256": "b" * 64},
+    }
+    document = {"schema_version": 1, "season": SEASON, "model_version": "v1", "players": {"1629216": entry}}
+    objects[key] = json_bytes(document)
+    prior = priors()
+    prior["historical_roles"]["1629216"] = {
+        "name": "Gabe Vincent", "season": "2025-26", "starting_minutes": 15.422426900584796,
+    }
+    earlier, earlier_ref = archive.load_repairs("2026-11-22")
+    assert earlier_ref is None
+    before = initialize_player(1629216, prior, day="2026-11-22", starting_repairs=earlier)
+    assert before["starting_minutes"] == 15.422426900584796
+
+    repairs, ref = archive.load_repairs("2026-11-23")
+    player = initialize_player(1629216, prior, day="2026-11-23", starting_repairs=repairs)
+    assert ref == {"uri": f"s3://nba-gestalt-data/{key}", "sha256": sha256(objects[key]).hexdigest(),
+                   "version_id": "test-repair-version"}
+    assert player["estimate"] == player["starting_minutes"] == 21.27743468038848
+    assert player["initialization"]["historical_projection"] == entry["source"]
+    assert player["initialization"]["repair_input"] == ref
+
+    entry["starting_minutes"] = 49
+    objects[key] = json_bytes(document)
+    with pytest.raises(ValueError, match="Invalid starting value"):
+        archive.load_repairs("2026-11-23")

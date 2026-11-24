@@ -16,7 +16,7 @@ from ..utils import (
     validate_priors, validate_state, PROJECTION_VERSION, validate_game_projection,
 )
 
-from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC, forecast_observed_date
+from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC, forecast_observed_date, load_prior_repairs
 
 ROOT = "lake/artifacts/player_minutes"
 ERROR_ROOT = f"{ERRORS_PREFIX}/pipeline=minutes"
@@ -107,6 +107,11 @@ class MinutesArchive(ConfigurableResource):
         record = self.read_reference(reference, self.prefix+"priors/")
         validate_priors(record, self.season, self.model_version)
         return record, reference
+
+    def load_repairs(self, day: str) -> tuple[dict, dict | None]:
+        return load_prior_repairs(boto3.client("s3"), bucket=self.bucket, key=self.prefix+"priors/repairs.json",
+                                  season=self.season, model_version=self.model_version, day=day,
+                                  value_field="starting_minutes", maximum=48)
 
     def state_selection(self, day: str) -> tuple[dict | None, str | None]:
         prefix = self.prefix+f"game_date_pacific={day}/"

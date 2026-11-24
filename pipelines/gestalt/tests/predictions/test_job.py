@@ -96,18 +96,33 @@ def test_missing_source_fails_then_actual_parent_reexecution_records_recovery(jo
     assert len(recovery) == 1 and recovery[0]["original_failure"]["sha256"]
 
 
-def test_replacement_warning_is_nonfatal_and_uses_prediction_error_path(job, archive, data):
+def test_replacement_warning_is_written_once_for_the_same_player_and_game(job, archive, data):
     executable, _ = job
-    data["ratings"]["players"].pop(0)
+    store, s3 = archive
+    game_id = data["game"]["game_id"]
+    removed = data["ratings"]["players"].pop(0)
     data["priors"] = {"players": []}
     with DagsterInstance.ephemeral() as instance:
-        assert executable.execute_in_process(partition_key=DAY, instance=instance).success
-    _, s3 = archive
+        first = executable.execute_in_process(partition_key=DAY, instance=instance)
+        assert first.success
+        initial, _ = store.selection(DAY, game_id)
+        repeat = executable.execute_in_process(partition_key=DAY, instance=instance)
+        assert repeat.success
+        # A new input creates a new prediction, but this player's fallback persists.
+        data["inputs"]["player_ratings"] = {**data["inputs"]["player_ratings"], "sha256": "c" * 64}
+        refreshed = executable.execute_in_process(partition_key=DAY, instance=instance)
+        assert refreshed.success
+        updated, _ = store.selection(DAY, game_id)
+        assert updated["sha256"] != initial["sha256"]
+        for run in (repeat, refreshed):
+            metadata = run.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
+            assert metadata["warnings"].value == []
     warnings = [(k, json.loads(v)) for k, v in s3.objects.items() if k.endswith(".warning.json")]
     assert len(warnings) == 1
     key, warning = warnings[0]
     assert key.startswith("lake/artifacts/errors/pipeline=predictions/season=2026-27/occurred_date_pacific=")
-    assert warning["details"]["player_id"] and warning["status"] == "warning"
+    assert warning["details"]["player_id"] == removed["player_id"]
+    assert warning["status"] == "warning" and warning["dagster_run_id"] == first.run_id
 
 
 def test_historical_date_uses_that_days_ratings_and_labels_replay(job, archive, data, clock):

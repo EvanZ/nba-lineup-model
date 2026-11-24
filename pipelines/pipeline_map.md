@@ -629,7 +629,36 @@ In the JSON, `game_date_pacific` and `observed_through_game_date_pacific` are D,
 
 The JSON contains all retained player priors/ratings, current roster team IDs, exposure, uncertainty, initialization lineage, HCA, ordered player IDs, the full joint matrix and score/exposure vectors, cumulative game IDs, and exact parent/input references. No-game dates carry the evidence forward. An identical rerun reconstructs the date from the same predecessor and inputs; it does not add its games twice. Source changes, missing coverage, or concurrent publication fail visibly while preserving accepted selections. Repair failed inputs and use **Re-execute from failure** for a linked recovery. Earlier corrections requiring later model dates to be rebuilt remain a separately approved suffix replay.
 
-Player initialization follows the operator-approved rule: retain an existing season state; otherwise reuse an approved saved prior from the 524-player catalog; otherwise assign the fixed replacement starting NAIL **-5.109488431706889** with `forecast_source=in_season_replacement_cold_start_prior`. This is ID-based and has no named exceptions. Injury, delayed first appearance, absence and team changes do not discard a saved prior or reinitialize a retained player. Historical aging prediction and rookie-model generation are not applied to new arrivals under this decision.
+Player initialization follows the operator-approved rule: retain an existing season state; otherwise reuse an approved saved prior from the 524-player catalog; otherwise use a season- and date-scoped approved historical starting rating if one exists, then assign the fixed replacement starting NAIL **-5.109488431706889** with `forecast_source=in_season_replacement_cold_start_prior`. Injury, delayed first appearance, absence and team changes do not discard a saved prior or reinitialize a retained player. Historical aging prediction and rookie-model generation are not applied to new arrivals under this decision.
+
+Operator repairs live alongside the frozen priors in two independent S3 inputs:
+
+| Job input | Key in `s3://nba-gestalt-data/` |
+| --- | --- |
+| Starting NAIL | `lake/artifacts/player_ratings/season=<season>/model_version=<version>/priors/repairs.json` |
+| Starting conditional minutes | `lake/artifacts/player_minutes/season=<season>/model_version=<version>/priors/repairs.json` |
+
+Each JSON file has `schema_version`, `season`, `model_version`, and `players`
+keyed by NBA player ID. Each entry has `player_name`,
+`eligible_from_game_date_pacific`, `starting_nail` or `starting_minutes`, and a
+`source` with the historical season, original URI and checksum. The applied
+initialization records the repair object's URI and checksum, plus its S3 version
+ID when available. Bucket versioning is currently suspended, so accepted states
+retain the exact applied value, date, and historical source even if the operator
+later edits the repair file. A replay reads the currently selected repair file.
+Accepted states keep the starting value and its provenance on subsequent dates.
+Missing repair files leave normal initialization in place; invalid files fail
+visibly. The frozen catalog and its selection remain separate inputs.
+
+For Gabe Vincent (`1629216`), the repairs begin on the November 23, 2026 Pacific
+evidence date. Starting NAIL is `-2.7520598573850448` from the published 2025–26
+rankings. Starting minutes are `21.27743468038848` from the saved 2025–26
+`predicted_minutes_per_available_game` field. After accepted publication the
+ratings job logs the application at INFO and records
+`applied_starting_rating_repairs` in the Dagster materialization, including exact
+repair file and historical source references. Later dates carry the starting
+value forward. The completed November 23 states feed forecasts from November 24. An upcoming game allocation can also use the minutes repair when
+there is no daily minutes entry yet; earlier frozen forecasts remain intact.
 
 Each replacement introduction emits a Dagster warning and a `.warning.json` in the ratings error path before advancing the accepted date selection. The warning identifies the NBA player ID, official name when available, assigned starting rating, game date, run ID and exact inputs. The existing shared `NBAPlayerNamesResource` reads saved NBA PlayerIndex names only when new replacement IDs are present; a missing name is reported by ID. The warning itself does not fail the job. A failure to persist its warning record blocks publication visibly. The materialization metadata includes `new_replacement_players` and `ratings_warnings`. Later dates retain the state and do not generate another introduction warning; re-executing the introduction date can produce another run-linked warning.
 

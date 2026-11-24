@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 from dagster import AssetKey, ConfigurableResource, DagsterEventType
 from pydantic import PrivateAttr
 
-from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC
+from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC, load_prior_repairs
 from ..utils import MODEL_VERSION, json_bytes, source_references, validate_initialization
 
 
@@ -252,6 +252,11 @@ class RatingsArchive(ConfigurableResource):
         validate_initialization(record, self.season, self.model_version)
         return record
 
+    def load_repairs(self, day: str) -> tuple[dict, dict | None]:
+        return load_prior_repairs(self._s3(), bucket=self.bucket, key=self.prefix+"repairs.json",
+                                  season=self.season, model_version=self.model_version, day=day,
+                                  value_field="starting_nail")
+
     def day_inputs(self, day: str) -> tuple[dict, dict]:
         records, references = {}, {}
         for name, root in (("stints", "stints"), ("rosters", "rosters")):
@@ -268,6 +273,8 @@ class RatingsArchive(ConfigurableResource):
         _, reference = self.load_priors()
         if reference != inputs["priors"]:
             raise ValueError("Ratings initialization changed during this run.")
+        if self.load_repairs(day)[1] != inputs.get("prior_repairs"):
+            raise ValueError("Starting-rating repairs changed during this run.")
         observed_day = day
         for name in ("stints", "rosters"):
             if inputs[name] is None:
