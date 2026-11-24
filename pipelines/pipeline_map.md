@@ -66,6 +66,12 @@ flowchart LR
     boxArchive --> stints
     catalog --> stints
     stints --> stintsArchive["Date stints JSON versions and latest.json"]
+    stintsArchive --> teamRotation["team_rotation: build_team_rotation"]
+    catalog --> teamRotation
+    boxArchive -->|"Exact boxes pinned by stints: names"| teamRotation
+    teamRotation --> rotationFiles["All 30 team rotation summaries and team latest.json"]
+    teamRotation -->|"Successful producer run"| rotationHistory["team_rotation_history: publish_team_rotation_history"]
+    rotationHistory --> rotationHistoryFiles["Per-team accepted history.json for animation"]
     playByPlay -->|"Scheduled capture succeeds: same-date parsing"| stints
     nbaBoard["Official NBA CDN scoreboard"] --> scoreboard["nba_scoreboard"]
     catalog --> scoreboard
@@ -87,6 +93,10 @@ flowchart LR
     rosterVersions --> ratings
     catalog --> ratings
     ratings --> ratingsJSON["Joint player/HCA state and date latest.json"]
+    ratingsJSON --> ratingHistory["player_game_history: publish_player_game_history"]
+    ratingPriorsJSON --> ratingHistory
+    counterfactualFiles --> ratingHistory
+    ratingHistory --> playerHistoryFiles["Per-player game-day JSON, stats and current index"]
     priorMinutes["Frozen conditional priors and historical-role lookup"] --> minutes["player_minutes"]
     stintsArchive --> minutes
     rosterVersions --> minutes
@@ -136,6 +146,9 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | `predict_game_margins` | `predict_game_margins_sensor` | About every minute; seed or refresh open games today/tomorrow when accepted ratings, game minutes or schedule change |
 | `initialize_player_ratings` | On demand | Prepare approved frozen initialization |
 | `update_player_ratings` | `update_player_ratings_schedule`, 04:15 Pacific | Yesterday's completed ratings/HCA; first completed date starts from approved initialization |
+| `publish_player_game_history` | `publish_player_game_history_sensor` | Latest completed ratings head after successful ratings and postgame readiness; older corrections refresh that head |
+| `build_team_rotation` | `build_team_rotation_sensor` after successful `nba_stints`; also manual | All 30 teams through latest completed stints date; older corrections refresh that same head (#93) |
+| `publish_team_rotation_history` | `publish_team_rotation_history_sensor` after successful `team_rotation`; also manual | Verified accepted per-team history, including corrections and older dates; no upstream computation |
 | `capture_injury_pdfs` | `injury_pdf_poll` | Eastern :02, :17, :32, :47; checks the preceding hour |
 | `extract_injury_pdf` | `new_injury_pdf` | About every minute; new saved PDFs in today's/yesterday's Eastern partitions |
 | `reconcile_injury_date` | `injury_report_dates_ready` | About every minute; changed accepted inputs for open games today/tomorrow |
@@ -144,7 +157,7 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | `capture_nba_box_scores` | `box_score_poll`; `box_scores_morning_refresh` | Every five minutes during game windows, reusing saved finals; 02:45 Pacific re-fetches every final for yesterday |
 | `capture_nba_play_by_play` | `play_by_play_morning` | 03:00 for yesterday |
 | `parse_nba_games` | `play_by_play_ready_for_stints` | After that scheduled PBP capture succeeds, for the same date |
-| `capture_nba_transactions` | `transactions_hourly` | Hourly 08:00–20:00 and 23:59 for today; 03:15 explicitly checks yesterday; daytime polls also check yesterday |
+| `capture_nba_transactions` | `transactions_hourly` | Hourly 08:00–20:00 and 23:55 for today; 03:15 explicitly checks yesterday; daytime polls also check yesterday |
 | `build_nba_rosters` | `rosters_morning`; `roster_transactions_ready` | 03:30 finalizes yesterday and initializes today; new transaction rows still trigger affected dates |
 | `update_player_minutes` | `update_player_minutes_schedule` | 04:00 completes yesterday's learned state; requires successful same-date parser and roster runs that morning |
 | `project_game_minutes` | `project_game_minutes_sensor` | About every minute; eligible games today/tomorrow when accepted inputs differ |
@@ -470,11 +483,44 @@ Historical `project_game_minutes` date D reads completed minutes state D−1: No
 
 Historical files carry purpose=historical_replay and explicitly identify reconstructed game-date roster evidence. They are reconstructed results, not authenticated projections published before the game. Existing files with purpose=pregame_projection are preserved: backfilling a historical date never replaces its genuinely saved pregame selection. Historical runs do not retrain models, alter daily minutes states, or publish/replace website forecasts.
 
+### Queued projection runs crossing midnight
+
+`project_game_minutes_sensor` stores the exact completed minutes date it checked
+in the run tag `game_minutes/minutes_date`. `project_game_minutes` uses that date
+if the run starts after midnight; the required baseline cannot silently switch
+to a state that the 04:00 update has not produced yet. Tipoff checks and all other
+live inputs continue to use actual execution time. The next morning's sensor
+selects the newer accepted minutes normally. Manual launches without this tag
+keep the existing date selection. Future-data and historical D−1 checks remain;
+a run queued with a selection more than one daily preview behind must be selected
+afresh. The transaction poll at day's end is **23:55 Pacific**, while daytime
+polls, the 03:15 previous-date check and the 04:00 minutes update retain their times.
+
 ## Shared player names
 
 `NBAPlayerNamesResource` is a shared Dagster resource exported from `gestalt_pipelines.resources`. It reads `s3://nba-gestalt-data/lake/raw/playerindex/<configured-season>.json` and the matching `.meta.json` sidecar. `load()` returns an NBA player ID → official name dictionary plus exact raw/metadata references and SHA-256 checksums. No asset, job, schedule, generated lookup, or new S3 location is required.
 
 The resource verifies the official NBA PlayerIndex URL, season, historical/all-team request parameters, source checksum, and player identities. It reads S3 on each call, so a replacement upload is used by the next run once its metadata checksum is updated. The current-season upload includes historical names. Player identity is separate from dated team membership; the existing season-scoped injury repair dictionary continues to handle spelling/name-order exceptions such as Cenac and Yang. Repairs are not copied into PlayerIndex or a second alias file.
+
+### Transaction-backed identity updates (November 17, 2026 Pacific)
+
+The shared name resource supplements missing PlayerIndex IDs from the existing
+`lake/raw/nba/transactions/season=<season>/game_date_pacific=<date>/latest.json`
+files. It verifies season/date, the official NBA movement source, player IDs and
+observation timestamps. `PLAYER_SLUG` locates the player's actual name in the
+official transaction description; the resource does not invent display names by
+title-casing slugs. PlayerIndex names remain authoritative for IDs already present.
+Unextractable names remain explicitly listed as unresolved identities; existing
+known mappings still work. This changes name lookup, not dated roster membership
+or transaction/tipoff eligibility rules.
+
+`load()` retains its existing PlayerIndex raw/sidecar references and adds exact
+URI/hash references for transaction files actually used, `transaction_player_ids`
+and `unresolved_transaction_player_ids`. It reads saved S3 data on every call;
+no generated lookup artifact, new path, new job or external request is added.
+Reconciliation records `name_source=nba_transactions` when applicable. A known
+transaction-backed player absent from the selected roster retains the report's
+team/status with a warning that correctly names the transaction source.
 
 ### Manual PlayerIndex acquisition (November 12, 2026 Pacific)
 
@@ -502,7 +548,20 @@ Known PlayerIndex identities absent from the selected team roster do not fail re
 
 `lake/artifacts/errors/pipeline=injury_reports/season=<season>/occurred_date_pacific=<run-date>/<event-id>.warning.json`
 
-The event has `status=warning`, player/game/team/report details, exact roster/PlayerIndex/repair/extraction inputs, the status artifact path, and the Dagster run ID. Occurrence date is when processing ran, including during historical backfill. Dagster also emits a WARNING log and includes `warning_count` and warning artifact references in run materialization metadata. No email/push integration is added. Genuine unresolved or ambiguous identities continue to fail the run with `.failure.json`; a linked successful retry can emit both a recovery and a warning.
+The event has `status=warning`, player/game/team/report details, exact roster/PlayerIndex/repair/extraction inputs, the status artifact path, and the Dagster run ID. Occurrence date is when processing ran, including during historical backfill. Dagster also emits a WARNING log and includes `warning_count` and warning artifact references in run materialization metadata. No email/push integration is added. Unresolved or ambiguous individual identities retain their `.failure.json` row
+artifacts and WARNING logs, but no longer fail the entire reconciliation run.
+Resolver **v8** publishes the slate with explicit `resolved_game_ids` and
+`unresolved_game_ids`; affected teams retain `unresolved_players` and remain
+incomplete. No player is silently marked Available. Materialization metadata
+includes `open_failures`, `unresolved_identity_count` and the affected game IDs.
+Downstream identity checks remain intact. Missing required reports, invalid
+sources and other structural errors still fail visibly.
+
+An operator can edit the season repair dictionary and re-execute a successful
+partial run as well as a legacy failed run. Both preserve the selected report
+inputs and can emit linked recovery records after the identity is actually
+resolved. A fresh run selects current reports; a recovery using older pinned
+reports cannot replace a newer accepted selection.
 
 Examples are Blake Hinson (Utah, October 21) and Tristan Enaruna (Cleveland, November 7): the official injury report lists each player, while the date's reconstructed roster excludes him after a date-only waiver. PlayerIndex identifies them without adding repair-dictionary entries. Resolver code version v5 identifies this processing change; conditional-minutes model_version remains v1. Later approved minutes replays are recorded in the verification section below.
 
@@ -570,7 +629,36 @@ In the JSON, `game_date_pacific` and `observed_through_game_date_pacific` are D,
 
 The JSON contains all retained player priors/ratings, current roster team IDs, exposure, uncertainty, initialization lineage, HCA, ordered player IDs, the full joint matrix and score/exposure vectors, cumulative game IDs, and exact parent/input references. No-game dates carry the evidence forward. An identical rerun reconstructs the date from the same predecessor and inputs; it does not add its games twice. Source changes, missing coverage, or concurrent publication fail visibly while preserving accepted selections. Repair failed inputs and use **Re-execute from failure** for a linked recovery. Earlier corrections requiring later model dates to be rebuilt remain a separately approved suffix replay.
 
-Player initialization follows the operator-approved rule: retain an existing season state; otherwise reuse an approved saved prior from the 524-player catalog; otherwise assign the fixed replacement starting NAIL **-5.109488431706889** with `forecast_source=in_season_replacement_cold_start_prior`. This is ID-based and has no named exceptions. Injury, delayed first appearance, absence and team changes do not discard a saved prior or reinitialize a retained player. Historical aging prediction and rookie-model generation are not applied to new arrivals under this decision.
+Player initialization follows the operator-approved rule: retain an existing season state; otherwise reuse an approved saved prior from the 524-player catalog; otherwise use a season- and date-scoped approved historical starting rating if one exists, then assign the fixed replacement starting NAIL **-5.109488431706889** with `forecast_source=in_season_replacement_cold_start_prior`. Injury, delayed first appearance, absence and team changes do not discard a saved prior or reinitialize a retained player. Historical aging prediction and rookie-model generation are not applied to new arrivals under this decision.
+
+Operator repairs live alongside the frozen priors in two independent S3 inputs:
+
+| Job input | Key in `s3://nba-gestalt-data/` |
+| --- | --- |
+| Starting NAIL | `lake/artifacts/player_ratings/season=<season>/model_version=<version>/priors/repairs.json` |
+| Starting conditional minutes | `lake/artifacts/player_minutes/season=<season>/model_version=<version>/priors/repairs.json` |
+
+Each JSON file has `schema_version`, `season`, `model_version`, and `players`
+keyed by NBA player ID. Each entry has `player_name`,
+`eligible_from_game_date_pacific`, `starting_nail` or `starting_minutes`, and a
+`source` with the historical season, original URI and checksum. The applied
+initialization records the repair object's URI and checksum, plus its S3 version
+ID when available. Bucket versioning is currently suspended, so accepted states
+retain the exact applied value, date, and historical source even if the operator
+later edits the repair file. A replay reads the currently selected repair file.
+Accepted states keep the starting value and its provenance on subsequent dates.
+Missing repair files leave normal initialization in place; invalid files fail
+visibly. The frozen catalog and its selection remain separate inputs.
+
+For Gabe Vincent (`1629216`), the repairs begin on the November 23, 2026 Pacific
+evidence date. Starting NAIL is `-2.7520598573850448` from the published 2025–26
+rankings. Starting minutes are `21.27743468038848` from the saved 2025–26
+`predicted_minutes_per_available_game` field. After accepted publication the
+ratings job logs the application at INFO and records
+`applied_starting_rating_repairs` in the Dagster materialization, including exact
+repair file and historical source references. Later dates carry the starting
+value forward. The completed November 23 states feed forecasts from November 24. An upcoming game allocation can also use the minutes repair when
+there is no daily minutes entry yet; earlier frozen forecasts remain intact.
 
 Each replacement introduction emits a Dagster warning and a `.warning.json` in the ratings error path before advancing the accepted date selection. The warning identifies the NBA player ID, official name when available, assigned starting rating, game date, run ID and exact inputs. The existing shared `NBAPlayerNamesResource` reads saved NBA PlayerIndex names only when new replacement IDs are present; a missing name is reported by ID. The warning itself does not fail the job. A failure to persist its warning record blocks publication visibly. The materialization metadata includes `new_replacement_players` and `ratings_warnings`. Later dates retain the state and do not generate another introduction warning; re-executing the introduction date can produce another run-linked warning.
 
@@ -856,3 +944,303 @@ A failed warning write or verification fails the run visibly. Conditional writes
 preserve a same-run warning on retry and verify the saved bytes. The sensor still
 checks cutoff times when the raw season `latest.json` is absent. This does not
 add an external notification service or change odds selection/freeze rules.
+
+
+## Player game history (#88)
+
+Asset **`player_game_history`**, manual job **`publish_player_game_history`**, group
+`ratings`, in the existing `nba_gestalt_pipelines` code location. This replaces the
+initial sparse `player_rating_history` projection. Old published objects are
+retained; the new consumer contract uses **`player_game_history`** exclusively.
+
+The job reads an accepted completed-date ratings head and its exact immutable
+initialization/parent lineage. It copies saved scalar ratings and joins saved
+postgame artifacts with their pinned predictions/final boxes and the ratings'
+pinned schedule/stints. It never solves ratings, retrains, calls an external NBA
+endpoint, runs upstream producers or changes forecasts. Declared dependencies are
+`player_ratings`, `player_rating_priors` and `game_predictions_actual_minutes`.
+Only the new history asset is selected by its job. Existing shared resources read
+NBA schedules and accepted game predictions; no new code location/service is added.
+
+### Dates and player membership
+
+Partitions use the existing configured completed-Pacific-date range, season start
+through yesterday. A requested head D publishes the **complete game history through
+D**, so one run at the latest head can backfill the whole season without repeatedly
+building every prefix. Earlier partitions/ranges remain independently runnable.
+
+A dated record uses **`game_date_pacific`** for the date games were played. Its
+`nail` is NAIL **after that complete day's slate**, not an isolated game effect.
+Publish records only for player game days, including inactive and DNP players.
+**No off-day files or chart points.** Game membership uses the complete saved
+prediction/final-box player union in the accepted postgame artifact. A missing
+box row does not erase the matchup or saved pregame injury evidence. Historical
+team/opponent identity comes from the game evidence, not the player's current team.
+
+All accepted ratings players retain an index, including players with no game
+points. `starting_point` preserves first saved state/initialization identity and
+distinguishes `opening_prior` versus `introduced_prior`; it is not dated using the
+first game. The separate `current` object copies the latest accepted scalar,
+cumulative possessions, team ID and exact source state/date, even on an off day.
+The last game point and current rating therefore need not share a date or value.
+
+### Authoritative S3 layout
+
+Bucket: `s3://nba-gestalt-data/`.
+
+| Output | Key |
+| --- | --- |
+| Immutable player/game-date record | `lake/artifacts/player_game_history/season=<season>/model_version=v1/player_id=<NBA-id>/game_date_pacific=<D>/<sha256>.json` |
+| Accepted per-player index | `lake/artifacts/player_game_history/season=<season>/model_version=v1/player_id=<NBA-id>/latest.json` |
+| Failure/recovery | Existing `lake/artifacts/errors/pipeline=ratings/season=<season>/occurred_date_pacific=<processing-date>/<event-id>.{failure,recovery}.json`, stage `player_game_history` |
+
+Schema version 1, artifact kinds `player_game_history` and
+`player_game_history_index`; model version remains `v1` because ratings do not change.
+
+### Dated records and index
+
+Dated records retain model/calculation identity, player identity, `nail`,
+`starting_nail`, `initialized_on`, initialization/forecast provenance, saved team ID
+and exact ratings `inputs` (state, parent, priors, schedule, stints and rosters).
+`cumulative_possessions` copies the source's cumulative `on_court_possessions`.
+
+`games` contains each associated game's NBA ID, team/opponent IDs and tricodes,
+home/away, final scores/result, participation evidence, pregame projection/injury
+information, saved actual minutes, on-court game possessions, final-box stats and
+exact source references. `prediction_purpose` preserves genuine pregame versus
+historical replay. Pregame NAIL stays separate from the top-level after-slate NAIL.
+The `pregame` object is null for an actual-only player absent from the baseline.
+
+`participation` contains `status`, `reason` and `box_score_row_present`. Statuses are
+`played`, `inactive`, `did_not_play`, `not_listed`, or `unknown`. Nonparticipants
+have `stats: null`; missing box rows retain saved counterfactual minutes and injury
+context without inventing a stat line. Game `possessions` uses the existing
+stint definition: sum possessions over that player's on-court stints for the game.
+
+`stats` contains points, rebounds (total/offensive/defensive), assists, steals,
+blocks, turnovers, personal fouls, FG/3P/FT makes/attempts/percentages and official
+`plus_minus`. Copy official values; absent individual stats stay null. Percentages
+remain 0–1. No numerical rounding or new statistical estimator is introduced.
+
+Each game's `inputs` pins `actual_minutes`, `prediction` and `box_score` (including
+its sidecar URI/hash). Accepted postgame references are authoritative: a newer
+unselected box or baseline must not invalidate these verified immutable inputs.
+
+Indexes retain chronological `points` (date/URI/hash/source ratings), `last_game`,
+`starting_point`, a separate scalar `current`, `through_game_date_pacific`, model
+identity, initialization reference and exact ratings head. `last_game` is null
+when the point list is empty. Consumers revalidate the per-player index and cache
+immutable point files by URI/hash; no S3 listing or all-player model-state load is
+needed. The app should not require every daily rating state to be a game point.
+
+### Publication, automation and recovery
+
+Validate full accepted ratings lineage, official slate coverage and all required
+postgame/pinned inputs before publishing. Stage immutable records and verify
+readback before conditional index writes. Reuse unchanged records and preserve
+identical index timestamps. Older manual partitions cannot regress newer indexes.
+Corrections create new immutable records and replace coherent indexes; old files
+remain. Indexes are independent per player, not a global atomic transaction.
+Source-selection races fail visibly and are recoverable by rerunning the head.
+
+`publish_player_game_history_sensor` follows successful ratings **or** postgame
+materializations in this repository, including native asset-backfill jobs. It
+waits for successful ratings and postgame outputs at the latest completed ratings
+head. An older-date correction refreshes that current full-history head, keeping
+newer indexes from retaining stale game detail. Source identities deduplicate
+unchanged requests. Failed/unrelated/foreign/future materializations do not launch.
+The trigger uses Dagster run history, not a season-wide S3 polling scan. It defaults
+STOPPED and is enabled after full output validation. History runs use priority −2,
+below raw collection and live odds/minutes publication; the single-worker limit
+is preserved. The normal morning sequence is existing final-box/postgame refresh
+and 04:15 ratings update, followed by the ready history job, with no extra timer.
+
+In the UI choose **`publish_player_game_history`**, select a completed-date head,
+and launch without YAML. Materialization metadata reports date/game/player/record
+counts, reused/verified records, index publication, source head and history root.
+Fix failed upstream evidence in its owning pipeline, then rerun this job; use
+**Re-execute from failure** to produce a linked recovery artifact. History repair
+never initiates a model replay or modifies frozen projections.
+
+
+## Team rotation summaries (#93)
+
+Asset **`team_rotation`**, manual job **`build_team_rotation`**, group
+**`team_rotation`**. This is an observed-data summary, independent of ratings,
+projections, and model versions. It imports no legacy evaluator or PlayerIndex.
+The job selects only this asset; upstream dependencies appear in the graph but
+are never run by this job.
+
+**Date convention:** partition D includes completed regular-season games from
+`GESTALT_NBA_SEASON_START_DATE` through Pacific game date D, inclusive. Available
+partitions end yesterday. Select one completed-date partition in the Dagster UI;
+no custom run configuration is needed. One run builds all 30 teams. A later date
+includes the earlier dates again, so publishing the latest completed date is
+sufficient for the current chart; historical date partitions can also be backfilled.
+No backfill or real S3 publication was run during manual implementation. The
+subsequently approved trigger follows successful new/corrected stints and does
+not replay old source runs when first enabled.
+
+**Inputs:** the exact accepted official schedule; accepted stints `latest.json`
+and immutable checksum-verified JSON for each scheduled regular-season date;
+the final NBA boxes and metadata already pinned in those stints. Names are read
+from those boxes, never from a fresh/latest box or ranking catalog. Each team's
+output records its schedule reference, relevant stint date references, and exact
+pinned box and sidecar references. All required games must be present before any
+team output is published. NBA game IDs beginning `002` define regular season;
+preseason and the separate Cup final are excluded. Zero-game dates need no
+invented upstream materialization.
+
+**Math:** only that team's positive-possession stints contribute. Full stint
+seconds, including overtime, supply minutes. Exposure is possessions on court;
+shared possessions sum where both players are on court. Similarity is Jaccard:
+`shared / (exposure_i + exposure_j - shared)`. The ordinary Pearson correlation
+uses one row per selected stint and a player's signal is that stint's possessions
+when on court, zero otherwise. It is not a separately weighted correlation.
+Undefined off-diagonal correlations become 0; diagonals are 1; fewer than two
+observations use identity. Empty teams have empty matrices. Games counts include
+only games with positive accumulated stint duration for that player.
+
+All appeared players remain, including departed players' appearances for this
+club. Player ordering is exposure descending, then official name, then NBA ID.
+The app may select a player limit, calculate Dice cell area from shared/exposure
+values, and compute AOE/FPC/complete-linkage ordering on its selected submatrix.
+The producer publishes full precision and full matrices; it does not apply a UI
+player limit or precompute chart ordering. Unrelated teams' stints cannot alter
+numeric values. Off days advance evidence metadata without changing numbers.
+
+| Output | S3 key within `s3://nba-gestalt-data/` |
+| --- | --- |
+| Immutable summary | `lake/artifacts/team_rotation/season=<season>/team_id=<NBA-id>/game_date_pacific=<D>/<sha256>.json` |
+| Accepted team selection | `lake/artifacts/team_rotation/season=<season>/team_id=<NBA-id>/latest.json` |
+| Failure/recovery | `lake/artifacts/errors/pipeline=team_rotation/season=<season>/occurred_date_pacific=<processing-date>/<event-id>.{failure,recovery}.json` |
+
+Schema version 1, processing version `v1`. Summary fields: `artifact_kind`,
+`season`, `team_id`, `team`, `game_date_pacific`, `last_team_game_date_pacific`,
+`calculation`, `player_order`, `players` (ID/name, on-court possessions/minutes,
+games), `shared_possessions`, `shared_court_similarity`, `floor_correlation`,
+`coverage` (complete, game IDs/count, stint count), and `inputs`. All matrices use
+`player_order` for both axes. Pointer fields are schema/processing versions,
+season, team ID, evidence date, immutable `uri`, and `sha256`.
+
+Publication validates all teams first, verifies immutable readback, checks that
+accepted inputs have not changed, and conditionally advances each team's pointer.
+A correction creates new immutable objects and preserves previous objects.
+Repeating identical inputs reuses bytes and leaves pointers unchanged. Older
+backfills do not replace newer pointers. Since stints are date-wide, an unrelated
+club correction can change a shared input checksum and therefore output identity,
+while the team's numbers remain identical. There is no cross-team atomic pointer;
+a conflict fails visibly and rerunning converges the remaining team selections.
+
+Failures leave a Dagster failure and an immutable error event; rerunning the
+failed run links a successful recovery to that exact failure. Missing or damaged
+inputs cannot produce partial-coverage summaries. A failed run can leave verified
+immutable staged objects; consumers follow accepted pointers only.
+
+**Automation:** `build_team_rotation_sensor` follows successful `nba_stints`
+materializations, including manual corrections and native partition backfills.
+It requests `build_team_rotation` for the newest completed stints date, using
+all official regular-season game dates from season start through that head.
+It waits if any required date lacks a successful complete source materialization.
+No-game gaps need no invented stints. A successful empty head advances evidence
+metadata without altering numbers. An older correction refreshes the same newest
+head. Failed, unrelated, foreign-season, and uncompleted source events do not
+launch the job. Invalid checksum/path metadata produces a visible sensor error.
+
+The stable run key includes the season, processing version, cumulative head,
+schedule reference, and exact stints references for all required dates. Identical
+saved inputs deduplicate even if the source run ID changes. Rotation runs have
+priority -2 and use the existing one-run limit, allowing collectors to retain
+priority. The sensor checks successful run history at a minimum 60-second
+interval; it reads the saved official schedule for coverage but does not download
+provider data or recompute upstream work. The asset independently verifies actual
+S3 source bytes and accepted pointers before publication.
+
+The existing manual job remains available. Enabling the run-status sensor starts
+with new successful source events; it does not launch an initial historical
+backfill. There is no new schedule, service, or HTTP source. App integration
+belongs to the Gestalt app agent and follows this ticket's producer contract.
+
+Implementation validation: 39 isolated tests cover team-only Pearson,
+co-playing/alternating players, zero exposure/degenerate values, trades, off days,
+regular-season filtering, names, coverage, corrupt/missing inputs, corrections,
+immutable readback, publication races, readiness/correction/deduplication triggers, and real failed-parent recovery using a
+temporary test instance. A read-only in-memory check assembled all 30 teams for
+226 regular-season games through November 19 from 7,922 positive-possession
+stints, with at most 18 players on a team. It took about 50 seconds and wrote no
+S3 objects. This is input/math validation, not manual UI publication acceptance.
+
+Operational verification November 20: `build_team_rotation_sensor` is enabled in
+`nba_gestalt_pipelines`; its first checked tick was error-free and skipped an
+unrelated successful run. A read-only evaluation against real saved Dagster
+history produced a request for the November 19 cumulative head without launching
+it. The full affected regression suite passed 337 tests. Collector schedules
+remain enabled and the run limit remains one.
+
+
+### Accepted rotation history index
+
+Asset **`team_rotation_history`**, job **`publish_team_rotation_history`**, sensor
+**`publish_team_rotation_history_sensor`**. The job is unpartitioned: each run
+merges successful saved rotation publications for the configured season. The
+sensor follows successful `team_rotation` materializations, including native
+backfills and corrections. It does not respond to failures or to its own index
+materializations. Repeated identical publication references deduplicate; priority
+is -2 under the existing one-run limit. The manual job needs no custom YAML and
+selects only the history asset. It does not build summaries or run upstream work.
+
+The source of initial acceptance is the permanent Dagster instance's successful
+rotation materializations and their exact 30-team `selections` references.
+Publication ordering uses materialization storage IDs, selecting the newest
+successful publication for a date. Failed/missing source runs and foreign code
+locations/seasons are excluded. Malformed or incomplete successful publication
+evidence fails the job. S3 object existence and folder listings never establish
+acceptance. Subsequent maintenance preserves already accepted history points,
+merges newly accepted dates, and replaces a corrected date's reference.
+
+Authoritative path, within `s3://nba-gestalt-data/`:
+`lake/artifacts/team_rotation/season=<season>/team_id=<NBA-id>/history.json`.
+
+The exact JSON fields are `schema_version: 1`, `processing_version: "v1"`,
+`artifact_kind: "team_rotation_history_index"`, `season`, `team_id`,
+`through_game_date_pacific`, and `points`. Each point contains only
+`game_date_pacific`, immutable `uri`, and `sha256`. Points are chronological and
+unique by date; through-date is the last point. Empty/off-day snapshots remain;
+the app selects animation frames where cumulative team game coverage increases.
+No matrices, stats, or source tables are duplicated into the index. `latest.json`
+continues working unchanged as the current-summary selection.
+
+Before any index is updated, all 30 proposed indexes are checked. This verifies
+original summary bytes/checksums and season/team/date/schema/processing identity,
+full scheduled team-game coverage, and checksum-verified pinned schedule, stints,
+final boxes and sidecars. It checks the pinned inputs against each other without
+requiring any current upstream latest pointer to match them. No rotations,
+ratings, minutes, forecasts, or upstream datasets are recalculated or rewritten.
+The materialization records the source run IDs/storage IDs and index hashes.
+
+Each history object is updated atomically with `IfMatch` or `IfNoneMatch` and
+verified by readback. A conflict rereads both history and successful publication
+evidence before retrying, so an older writer cannot blindly restore its previous
+selection. Three repeated conflicts fail visibly. Historical dates never remove
+newer points or lower the through-date. All immutable summary versions remain.
+Atomicity is per team, not a transaction spanning 30 S3 objects. An index-job
+failure can leave some teams temporarily behind; every written point still comes
+from a successful source publication, and rerunning completes the remaining
+indexes. A failed rotation-producer run never contributes accepted points.
+
+The initial approved population reuses accepted October 20–November 19
+publications (31 dates, 930 verified summaries) plus any newer accepted dates.
+The prior read-only audit found no acceptance gaps and verified 483 unique pinned
+objects. Initial publication writes the 30 `history.json` indexes only; it leaves
+summary bytes, `latest.json` pointers, collectors, and existing automation intact.
+
+Population verified November 20 Pacific: permanent Dagster run
+`f8352ce6-bcd0-4ec7-aa3c-89fc91d7b3e5` succeeded. It verified 930 accepted
+summary objects and 483 unique pinned input objects, then wrote 30 history
+indexes. All 30 indexes were read back and matched their recorded output hashes
+and exact accepted references: 31 points per team, October 20–November 19,
+through-date November 19. All 30 preexisting `latest.json` files remained
+byte-for-byte unchanged. `publish_team_rotation_history_sensor` is enabled for
+future successful rotation publications. The affected regression suite passed
+364 tests. No rotations, forecasts, ratings, raw captures, or upstream pipelines
+were rerun by this population.

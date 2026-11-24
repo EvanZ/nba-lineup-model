@@ -11,7 +11,7 @@ from ...resources import NBAPlayerNamesResource, NBAScheduleResource
 from ...utils import PACIFIC
 from ..partitions import ratings_dates
 from ..resources import RatingsArchive
-from ..utils import implementation_identity, update_state
+from ..utils import HISTORICAL_INITIALIZATION_KIND, implementation_identity, update_state
 
 
 def _require_morning_inputs(context: AssetExecutionContext, day: str) -> None:
@@ -72,9 +72,12 @@ def player_ratings(context: AssetExecutionContext, nba_schedule: NBAScheduleReso
         games = [g for g in selected if g["game_time_utc"].astimezone(PACIFIC).date() == day]
         previous = [g for g in selected if g["game_time_utc"].astimezone(PACIFIC).date() == day-timedelta(days=1)]
         data, references = archive.day_inputs(str(day)); inputs.update(references)
+        starting_repairs, repair_ref = archive.load_repairs(str(day))
+        if repair_ref is not None:
+            inputs["prior_repairs"] = repair_ref
         record = update_state(
             day=day, first_date=ratings_dates.start.date(), season=archive.season,
-            priors=priors, parent=parent, games=games, previous_games=previous, inputs=inputs, **data,
+            priors=priors, parent=parent, games=games, previous_games=previous, inputs=inputs, starting_repairs=starting_repairs, **data,
         )
         new_ids = set(record["new_replacement_player_ids"])
         new_players = [player for player in record["players"] if player["player_id"] in new_ids]
@@ -92,13 +95,13 @@ def player_ratings(context: AssetExecutionContext, nba_schedule: NBAScheduleReso
         warnings = []
         for player in new_players:
             label = player.get("player_name") or f"NBA player {player['player_id']}"
+            warnings.append(archive.save_replacement_warning(
+                day=str(day), run_id=context.run.run_id, player=player, inputs=inputs,
+            ))
             context.log.warning(
                 f"{label} (NBA ID {player['player_id']}) assigned replacement starting NAIL "
                 f"{player['starting_nail']}; review this new player."
             )
-            warnings.append(archive.save_replacement_warning(
-                day=str(day), run_id=context.run.run_id, player=player, inputs=inputs,
-            ))
         saved = archive.save_state(record, prior=prior, expected_etag=etag)
     except Exception as error:
         message = str(error)
@@ -131,4 +134,21 @@ def player_ratings(context: AssetExecutionContext, nba_schedule: NBAScheduleReso
             metadata["ratings_recovery"] = MetadataValue.json(recovery)
     except Exception as error:
         raise Failure(f"Ratings are saved, but linked recovery logging failed: {error}", metadata=metadata) from error
+    applied_repairs = []
+    for player in record["players"]:
+        initialization = player["initialization"]
+        if player["initialized_on"] != str(day) or initialization["kind"] != HISTORICAL_INITIALIZATION_KIND:
+            continue
+        effective = initialization["eligible_from_game_date_pacific"]
+        applied_repairs.append({
+            "player_id": player["player_id"], "player_name": player["player_name"],
+            "repair_effective_date_pacific": effective, "initialized_on": player["initialized_on"],
+            "starting_nail": player["starting_nail"], "repair_input": initialization["repair_input"],
+            "historical_rating": initialization["historical_rating"],
+        })
+        context.log.info(
+            f"Applied approved starting NAIL of {player['starting_nail']} for {player['player_name']} "
+            f"(NBA ID {player['player_id']}) on {day}. Repair effective {effective}."
+        )
+    metadata["applied_starting_rating_repairs"] = MetadataValue.json(applied_repairs)
     return MaterializeResult(metadata=metadata)

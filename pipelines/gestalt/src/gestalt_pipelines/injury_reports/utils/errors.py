@@ -58,8 +58,9 @@ def _save_event(
     identity = [run_id, row_key(row), status, original]
     event_id = sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     if warning:
+        source = "official NBA transactions" if row.get("identity_source") == "nba_transactions" else "PlayerIndex"
         message = (
-            f"Resolved {row['player_name']} to NBA player ID {row['player_id']} using PlayerIndex, "
+            f"Resolved {row['player_name']} to NBA player ID {row['player_id']} using {source}, "
             f"but the player is absent from {row['team']}'s selected roster. "
             "Retained the injury report's team and status."
         )
@@ -160,25 +161,26 @@ def write_identity_warnings(
     ]
 
 
-def read_failed_run(instance, run_id: str, game_date: str) -> tuple[dict, list[dict]] | None:
-    """Read the selected partition's pinned diagnostic status and open errors."""
+def read_reconciliation_run(instance, run_id: str, game_date: str) -> tuple[dict, list[dict]] | None:
+    """Read open row errors from a failed run or a successful partial reconciliation."""
     run = instance.get_run_by_id(run_id)
-    if (
-        run is None or run.job_name != "reconcile_injury_date"
-        or run.status != DagsterRunStatus.FAILURE
-        or run.tags.get("dagster/partition") != game_date
-    ):
-        raise ValueError("Select a failed reconciliation run for this Pacific game date.")
-
-    records = instance.get_records_for_run(run_id, of_type=DagsterEventType.STEP_FAILURE).records
+    if (run is None or run.job_name != "reconcile_injury_date"
+            or run.status not in {DagsterRunStatus.FAILURE, DagsterRunStatus.SUCCESS}
+            or run.tags.get("dagster/partition") != game_date):
+        raise ValueError("Select a completed reconciliation run for this Pacific game date.")
+    kind = DagsterEventType.STEP_FAILURE if run.status == DagsterRunStatus.FAILURE else DagsterEventType.ASSET_MATERIALIZATION
+    records = instance.get_records_for_run(run_id, of_type=kind).records
     for record in reversed(records):
         event = record.event_log_entry.dagster_event
         if event.step_key != STAGE:
             continue
-        data = event.step_failure_data.user_failure_data
-        if data and "statuses" in data.metadata and "open_failures" in data.metadata:
-            if failures := data.metadata["open_failures"].value:
-                return data.metadata["statuses"].value, failures
+        if run.status == DagsterRunStatus.FAILURE:
+            data = event.step_failure_data.user_failure_data
+            metadata = data.metadata if data else {}
+        else:
+            metadata = event.event_specific_data.materialization.metadata
+        if "statuses" in metadata and "open_failures" in metadata and metadata["open_failures"].value:
+            return metadata["statuses"].value, metadata["open_failures"].value
     return None
 
 

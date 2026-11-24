@@ -4,7 +4,7 @@ import math
 from datetime import date, timedelta
 
 from .initialization import check_source_policy, implementation_identity, json_bytes
-from .sources import MODEL_VERSION
+from .sources import HISTORICAL_INITIALIZATION_KIND, MODEL_VERSION
 from ...utils import COMPLETED_GAME_DATE_CONTRACT, PACIFIC
 
 CALCULATION_CONTRACT = "frozen_priors_stints_joint_hca_fixed_b2b_v1"
@@ -91,7 +91,7 @@ def solve_joint(gram, score, settings: dict) -> dict:
 
 def update_state(*, day: date, first_date: date, season: str, priors: dict, parent: dict | None,
                  games: list[dict], previous_games: list[dict], stints: dict | None, rosters: dict | None,
-                 inputs: dict) -> dict:
+                 inputs: dict, starting_repairs: dict | None = None) -> dict:
     import numpy as np
 
     if day < first_date:
@@ -135,12 +135,14 @@ def update_state(*, day: date, first_date: date, season: str, priors: dict, pare
         raise ValueError("A selected roster assigns a player to multiple teams.")
     played = {int(i) for row in rows for side in ("home_player_ids", "away_player_ids") for i in row[side]}
     ids = sorted((prior_players.keys() if parent else catalog.keys()) | team_by_player.keys() | played)
-    new_replacements = sorted(set(ids)-prior_players.keys()-catalog.keys())
-    starting = {
-        i: (prior_players[i]["starting_nail"] if i in prior_players else
-            catalog[i]["rapm"] if i in catalog else priors["settings"]["replacement_prior"])
-        for i in ids
-    }
+    newcomers = set(ids) - prior_players.keys() - catalog.keys()
+    historical = {int(pid): entry for pid, entry in (starting_repairs or {}).items()
+                  if int(pid) in newcomers}
+    new_replacements = sorted(newcomers - historical.keys())
+    starting = {player_id: priors["settings"]["replacement_prior"] for player_id in new_replacements}
+    starting.update({player_id: entry["starting_nail"] for player_id, entry in historical.items()})
+    starting.update({player_id: catalog[player_id]["rapm"] for player_id in ids if player_id in catalog})
+    starting.update({player_id: player["starting_nail"] for player_id, player in prior_players.items()})
     n = len(ids)
     gram, score, exposure = np.zeros((n+1, n+1)), np.zeros(n+1), np.zeros(n+1)
     included = list(parent["included_game_ids"]) if parent else []
@@ -173,15 +175,29 @@ def update_state(*, day: date, first_date: date, season: str, priors: dict, pare
     for index, player_id in enumerate(ids):
         original = prior_players.get(player_id)
         source = original or catalog.get(player_id)
+        name = source.get("player_name") if source else None
+        forecast_source = source["forecast_source"] if source else "in_season_replacement_cold_start_prior"
+        initialization = original["initialization"] if original else {
+            "kind": "frozen_catalog" if player_id in catalog else "replacement",
+            "input": inputs["priors"],
+        }
+        if player_id in historical:
+            entry = historical[player_id]
+            name = entry["player_name"]
+            forecast_source = "in_season_approved_historical_starting_rating"
+            # Keep the model's frozen initialization link and record the exact player-specific source.
+            initialization.update(
+                kind=HISTORICAL_INITIALIZATION_KIND,
+                historical_rating=entry["source"],
+                repair_input=entry["repair_input"],
+                eligible_from_game_date_pacific=entry["eligible_from_game_date_pacific"],
+            )
         player = {
-            "player_id": player_id, "player_name": source.get("player_name") if source else None,
+            "player_id": player_id, "player_name": name,
             "team_id": team_by_player.get(player_id), "starting_nail": float(starting[player_id]),
-            "forecast_source": source["forecast_source"] if source else "in_season_replacement_cold_start_prior",
+            "forecast_source": forecast_source,
             "initialized_on": original["initialized_on"] if original else day.isoformat(),
-            "initialization": original["initialization"] if original else {
-                "kind": "frozen_catalog" if player_id in catalog else "replacement",
-                "input": inputs["priors"],
-            },
+            "initialization": initialization,
             "residual": float(solution["estimates"][index]),
             "nail": float(starting[player_id]+solution["estimates"][index]),
             "on_court_possessions": float(exposure[index]), "information": float(gram[index, index]),
@@ -198,7 +214,7 @@ def update_state(*, day: date, first_date: date, season: str, priors: dict, pare
         "model_id": priors["model_id"], "model_run_id": priors["model_run_id"],
         "implementation": implementation_identity(), "inputs": inputs, "settings": priors["settings"],
         "players": players, "included_game_ids": included,
-        "player_initialization_policy": "retain_state_then_frozen_catalog_else_replacement",
+        "player_initialization_policy": "retain_state_then_frozen_catalog_then_approved_historical_else_replacement",
         "new_replacement_player_ids": new_replacements,
         "hca": {"estimate": float(solution["estimates"][-1]),
                 "standard_error": float(solution["standard_errors"][-1]),

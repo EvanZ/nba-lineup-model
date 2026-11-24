@@ -1,7 +1,7 @@
 """Helpers specific to injury reports."""
 
 from .errors import (
-    identity_rows, read_failed_extraction, read_failed_run, select_prior_failures,
+    identity_rows, read_failed_extraction, read_reconciliation_run, select_prior_failures,
     write_extraction_event, write_identity_events, write_identity_warnings,
 )
 from .parse_pdf import PARSER_VERSION, parse_pdf
@@ -15,7 +15,7 @@ __all__ = [
     "parse_pdf",
     "read_extraction",
     "read_failed_extraction",
-    "read_failed_run",
+    "read_reconciliation_run",
     "reconcile_games",
     "report_game_key",
     "select_extractions",

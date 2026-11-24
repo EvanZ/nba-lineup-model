@@ -42,7 +42,7 @@ def projection_fingerprint(game: dict, inputs: dict, version=PROJECTION_VERSION,
 
 def build_game_projection(
     *, game: dict, day: str, season: str, baseline: dict, rosters: dict,
-    injuries: dict, priors: dict, inputs: dict, version=PROJECTION_VERSION,
+    injuries: dict, priors: dict, inputs: dict, version=PROJECTION_VERSION, starting_repairs: dict | None = None,
 ) -> dict:
     gid = game["game_id"]
     if (
@@ -77,7 +77,7 @@ def build_game_projection(
             player = baseline["players"].get(str(pid)) if baseline is not None else None
             initialized = player is None
             if initialized:
-                player = initialize_player(pid, priors, day=day)
+                player = initialize_player(pid, priors, day=day, starting_repairs=starting_repairs)
             minutes = number(player["estimate"], label="baseline minutes", maximum=48)
             r = reports.get(pid)
             status = r["status"] if r else ("Available" if state == "submitted" else "Report pending")

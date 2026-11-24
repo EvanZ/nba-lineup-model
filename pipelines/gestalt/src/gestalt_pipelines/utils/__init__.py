@@ -3,13 +3,15 @@
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
+from .prior_repairs import load_prior_repairs
+
 NBA_TEAM_IDS = tuple(range(1610612737, 1610612767))
 PACIFIC = ZoneInfo("America/Los_Angeles")
 EASTERN = ZoneInfo("America/New_York")
 DATA_BUCKET = "nba-gestalt-data"
 ERRORS_PREFIX = "lake/artifacts/errors"
 
-__all__ = ["NBA_TEAM_IDS", "PACIFIC", "EASTERN", "DATA_BUCKET", "ERRORS_PREFIX"]
+__all__ = ["NBA_TEAM_IDS", "PACIFIC", "EASTERN", "DATA_BUCKET", "ERRORS_PREFIX", "load_prior_repairs"]
 
 
 COMPLETED_GAME_DATE_CONTRACT = "completed_game_date_v1"

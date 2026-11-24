@@ -84,11 +84,22 @@ def validate_priors(record: dict, season: str, version: str = MODEL_VERSION) -> 
     number(record["cold_start_minutes"], label="cold-start minutes", maximum=48)
 
 
-def initialize_player(pid: int, priors: dict, *, day: str) -> dict:
+def initialize_player(pid: int, priors: dict, *, day: str, starting_repairs: dict | None = None) -> dict:
     key = str(player_id(pid))
     row = priors["players"].get(key)
+    approved = (starting_repairs or {}).get(key)
+    initialization = {"prior_player_id": key}
     if row is not None:
         minutes, branch, name = row["starting_minutes"], row["branch"], row["name"]
+    elif approved is not None:
+        minutes = approved["starting_minutes"]
+        branch = "approved_historical_minutes_projection"
+        name = approved["player_name"]
+        initialization.update(
+            historical_projection=approved["source"],
+            repair_input=approved["repair_input"],
+            eligible_from_game_date_pacific=approved["eligible_from_game_date_pacific"],
+        )
     else:
         history = priors["historical_roles"].get(key)
         if history is not None and history["starting_minutes"] is not None:
@@ -99,7 +110,7 @@ def initialize_player(pid: int, priors: dict, *, day: str) -> dict:
     return {
         "player_id": pid, "name": name, "introduced_on": day,
         "current_team_id": None, "starting_minutes": minutes,
-        "initialization": {"branch": branch, "prior_player_id": key},
+        "initialization": {"branch": branch, **initialization},
         "history": [], "estimate": minutes,
     }
 

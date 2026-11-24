@@ -16,7 +16,7 @@ from ..utils import (
     validate_priors, validate_state, PROJECTION_VERSION, validate_game_projection,
 )
 
-from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC, forecast_observed_date
+from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC, forecast_observed_date, load_prior_repairs
 
 ROOT = "lake/artifacts/player_minutes"
 ERROR_ROOT = f"{ERRORS_PREFIX}/pipeline=minutes"
@@ -107,6 +107,11 @@ class MinutesArchive(ConfigurableResource):
         record = self.read_reference(reference, self.prefix+"priors/")
         validate_priors(record, self.season, self.model_version)
         return record, reference
+
+    def load_repairs(self, day: str) -> tuple[dict, dict | None]:
+        return load_prior_repairs(boto3.client("s3"), bucket=self.bucket, key=self.prefix+"priors/repairs.json",
+                                  season=self.season, model_version=self.model_version, day=day,
+                                  value_field="starting_minutes", maximum=48)
 
     def state_selection(self, day: str) -> tuple[dict | None, str | None]:
         prefix = self.prefix+f"game_date_pacific={day}/"
@@ -304,10 +309,16 @@ class MinutesArchive(ConfigurableResource):
             raise MinutesError("Invalid game-minutes version.")
         return f"lake/artifacts/game_minutes/season={self.season}/model_version={self.projection_version}/"
 
-    def projection_selections(self, day: str, *, today: date, roster_archive) -> dict:
+    def projection_selections(self, day: str, *, today: date, roster_archive, minutes_date: str | None = None) -> dict:
         target = date.fromisoformat(day)
         historical = target < today
-        baseline_day = str(forecast_observed_date(target, today))
+        expected = forecast_observed_date(target, today)
+        selected = date.fromisoformat(minutes_date) if minutes_date is not None else expected
+        if selected > expected or (historical and selected != expected):
+            raise MinutesError("Selected minutes date would violate the game's completed-date cutoff.")
+        if selected < expected-timedelta(days=1):
+            raise MinutesError("Queued minutes selection is too old; let the sensor select current inputs again.")
+        baseline_day = str(selected)
         first_date = date.fromisoformat(os.environ["GESTALT_NBA_SEASON_START_DATE"])
         baseline = None
         if date.fromisoformat(baseline_day) >= first_date:
@@ -404,7 +415,9 @@ class MinutesArchive(ConfigurableResource):
                 return {"frozen":True}
         if etag != expected_etag:
             raise MinutesError("Game projection selection changed during this run.")
-        refs = self.projection_selections(day,today=datetime.now(UTC).astimezone(PACIFIC).date(),roster_archive=roster_archive)
+        selected_minutes_date = record["baseline_through_date"] or str(date.fromisoformat(os.environ["GESTALT_NBA_SEASON_START_DATE"])-timedelta(days=1))
+        refs = self.projection_selections(day,today=datetime.now(UTC).astimezone(PACIFIC).date(),
+            roster_archive=roster_archive,minutes_date=selected_minutes_date)
         if any(record["inputs"].get(k) != v for k,v in refs.items()):
             raise MinutesError("Accepted projection inputs changed during this run.")
         raw = json_bytes(record)

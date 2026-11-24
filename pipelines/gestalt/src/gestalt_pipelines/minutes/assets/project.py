@@ -72,8 +72,14 @@ def game_minutes(
             context.log.warning("Started games have no saved pregame projection: %s",missing_started)
         saved = {}
         if upcoming:
-            inputs = archive.projection_selections(str(day),today=today,roster_archive=nba_roster_archive)
+            selections = {}
+            if "game_minutes/minutes_date" in context.run.tags:
+                selections["minutes_date"] = context.run.tags["game_minutes/minutes_date"]
+            inputs = archive.projection_selections(str(day),today=today,roster_archive=nba_roster_archive,**selections)
             inputs["schedule"] = schedule
+            starting_repairs, repair_ref = archive.load_repairs(str(day))
+            if repair_ref is not None:
+                inputs["prior_repairs"] = repair_ref
             data = archive.projection_data(str(day),inputs)
             game_rosters = nba_roster_archive.for_games(archive.season, upcoming, nba_schedule, box_archive=nba_box_score_archive)
             warning = nba_roster_archive.save_cutoff_warning(season=archive.season, day=str(day), selections=game_rosters,
@@ -88,10 +94,13 @@ def game_minutes(
                 record = build_game_projection(
                     game=game,day=str(day),season=archive.season,
                     inputs={**inputs, "roster_cutoff": game_rosters[current_gid]["cutoff_selection"]},
-                    version=archive.projection_version,**{**data, "rosters": game_rosters[current_gid]},
+                    version=archive.projection_version, starting_repairs=starting_repairs,
+                    **{**data, "rosters": game_rosters[current_gid]},
                 )
                 records.append((record,etag))
             nba_roster_archive.assert_game_selections_current(archive.season, game_rosters, nba_box_score_archive, upcoming)
+            if archive.load_repairs(str(day))[1] != repair_ref:
+                raise MinutesError("Starting-minutes repairs changed during this run.")
             for record,etag in records:
                 current_gid = record["game_id"]
                 _,current_schedule = nba_schedule.load()

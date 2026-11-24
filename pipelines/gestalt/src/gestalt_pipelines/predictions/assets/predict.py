@@ -129,9 +129,15 @@ def game_predictions(
                         inputs=game_inputs, generated_at=now, version=archive.model_version,
                         purpose="historical_replay" if historical else "pregame_projection",
                     )
-                records.append((record, etag))
+                existing_replacements = {
+                    player["player_id"]
+                    for side in ("home", "away")
+                    for player in accepted[side]["players"]
+                    if player["rating_source"] == "replacement"
+                } if accepted else set()
+                records.append((record, etag, existing_replacements))
             # Validate the whole slate before publishing any new selections.
-            for record, etag in records:
+            for record, etag, existing_replacements in records:
                 current_gid = record["game_id"]
                 inputs = record["inputs"]
                 current_ratings = ratings_archive.selection()[0] if bootstrap else ratings_archive.state_selection(ratings_day)[0]
@@ -144,7 +150,8 @@ def game_predictions(
                     raise PredictionError("Fallback initialization changed during prediction.")
                 for side in ("home", "away"):
                     for player in record[side]["players"]:
-                        if player["rating_source"] == "replacement":
+                        if (player["rating_source"] == "replacement"
+                                and player["player_id"] not in existing_replacements):
                             message = f"Player {player['player_id']} ({player['name']}) has no saved rating; using the approved replacement rating."
                             warning = archive.save_event(day=str(day), run_id=context.run.run_id,
                                 message=message, inputs=inputs, status="warning", game_id=current_gid,

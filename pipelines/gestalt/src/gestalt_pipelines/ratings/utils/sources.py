@@ -20,6 +20,9 @@ SOURCES = {
 }
 
 
+HISTORICAL_INITIALIZATION_KIND = "approved_historical_rating"
+
+
 def source_references(season: str, version: str) -> dict:
     if (season, version) != ("2026-27", MODEL_VERSION):
         raise ValueError("No approved ratings initialization exists for this season/model version.")

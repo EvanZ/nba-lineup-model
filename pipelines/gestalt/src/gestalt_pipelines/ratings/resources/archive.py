@@ -9,8 +9,9 @@ from hashlib import sha256
 import boto3
 from botocore.exceptions import ClientError
 from dagster import AssetKey, ConfigurableResource, DagsterEventType
+from pydantic import PrivateAttr
 
-from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC
+from ...utils import DATA_BUCKET, ERRORS_PREFIX, PACIFIC, load_prior_repairs
 from ..utils import MODEL_VERSION, json_bytes, source_references, validate_initialization
 
 
@@ -18,6 +19,13 @@ class RatingsArchive(ConfigurableResource):
     season: str
     model_version: str = MODEL_VERSION
     bucket: str = DATA_BUCKET
+    _client: object = PrivateAttr(default=None)
+
+    def setup_for_execution(self, context) -> None:
+        self._client = boto3.client("s3")
+
+    def _s3(self):
+        return self._client if self._client is not None else boto3.client("s3")
 
     @property
     def prefix(self) -> str:
@@ -25,13 +33,13 @@ class RatingsArchive(ConfigurableResource):
         return f"lake/artifacts/player_ratings/season={self.season}/model_version={self.model_version}/priors/"
 
     def _read(self, key: str) -> tuple[bytes, str]:
-        response = boto3.client("s3").get_object(Bucket=self.bucket, Key=key)
+        response = self._s3().get_object(Bucket=self.bucket, Key=key)
         with closing(response["Body"]) as stream:
             return stream.read(), response["ETag"]
 
     def read_sources(self) -> dict[str, bytes]:
         blobs = {}
-        client = boto3.client("s3")
+        client = self._s3()
         for name, reference in source_references(self.season, self.model_version).items():
             bucket, key = reference["uri"].removeprefix("s3://").split("/", 1)
             with closing(client.get_object(Bucket=bucket, Key=key)["Body"]) as stream:
@@ -59,7 +67,7 @@ class RatingsArchive(ConfigurableResource):
 
     def _immutable(self, key: str, raw: bytes) -> None:
         try:
-            boto3.client("s3").put_object(
+            self._s3().put_object(
                 Bucket=self.bucket, Key=key, Body=raw, ContentType="application/json", IfNoneMatch="*",
             )
         except ClientError as error:
@@ -89,7 +97,7 @@ class RatingsArchive(ConfigurableResource):
             raise ValueError("Invalid initialization publication state.")
         pointer = {"schema_version": 1, "season": self.season, "model_version": self.model_version, **reference}
         try:
-            boto3.client("s3").put_object(
+            self._s3().put_object(
                 Bucket=self.bucket, Key=self.prefix+"latest.json", Body=json_bytes(pointer),
                 ContentType="application/json", IfNoneMatch="*",
             )
@@ -104,7 +112,7 @@ class RatingsArchive(ConfigurableResource):
 
     def save_event(self, *, run_id: str, message: str, inputs: dict, original: dict | None = None,
                    stage: str = "player_rating_priors", day: str | None = None) -> dict:
-        if stage not in {"player_rating_priors", "player_ratings"}:
+        if stage not in {"player_rating_priors", "player_ratings", "player_game_history"}:
             raise ValueError("Unknown ratings stage.")
         now = datetime.now(UTC)
         status = "recovered" if original else "failed"
@@ -132,7 +140,8 @@ class RatingsArchive(ConfigurableResource):
         parent_id = context.run.parent_run_id
         if not parent_id:
             return None
-        job = {"player_rating_priors": "initialize_player_ratings", "player_ratings": "update_player_ratings"}[stage]
+        job = {"player_rating_priors": "initialize_player_ratings", "player_ratings": "update_player_ratings",
+               "player_game_history": "publish_player_game_history"}[stage]
         parent = context.instance.get_run_by_id(parent_id)
         if (parent is None or (parent.job_name != job and AssetKey(stage) not in (parent.asset_selection or set()))
                 or parent.status.value != "FAILURE"):
@@ -243,6 +252,11 @@ class RatingsArchive(ConfigurableResource):
         validate_initialization(record, self.season, self.model_version)
         return record
 
+    def load_repairs(self, day: str) -> tuple[dict, dict | None]:
+        return load_prior_repairs(self._s3(), bucket=self.bucket, key=self.prefix+"repairs.json",
+                                  season=self.season, model_version=self.model_version, day=day,
+                                  value_field="starting_nail")
+
     def day_inputs(self, day: str) -> tuple[dict, dict]:
         records, references = {}, {}
         for name, root in (("stints", "stints"), ("rosters", "rosters")):
@@ -259,6 +273,8 @@ class RatingsArchive(ConfigurableResource):
         _, reference = self.load_priors()
         if reference != inputs["priors"]:
             raise ValueError("Ratings initialization changed during this run.")
+        if self.load_repairs(day)[1] != inputs.get("prior_repairs"):
+            raise ValueError("Starting-rating repairs changed during this run.")
         observed_day = day
         for name in ("stints", "rosters"):
             if inputs[name] is None:
@@ -288,7 +304,7 @@ class RatingsArchive(ConfigurableResource):
                    "game_date_pacific": record["game_date_pacific"], **reference}
         condition = {"IfMatch": expected_etag} if expected_etag else {"IfNoneMatch": "*"}
         try:
-            boto3.client("s3").put_object(Bucket=self.bucket, Key=prefix+"latest.json",
+            self._s3().put_object(Bucket=self.bucket, Key=prefix+"latest.json",
                                          Body=json_bytes(pointer), ContentType="application/json", **condition)
         except ClientError as error:
             if error.response["Error"]["Code"] in {"412", "PreconditionFailed"}:
@@ -320,3 +336,201 @@ class RatingsArchive(ConfigurableResource):
                f"occurred_date_pacific={now.astimezone(PACIFIC).date()}/{event_id}.warning.json")
         raw = json_bytes(event); self._immutable(key, raw)
         return {"uri": f"s3://{self.bucket}/{key}", "sha256": sha256(raw).hexdigest()}
+
+    @property
+    def history_root(self) -> str:
+        return f"lake/artifacts/player_game_history/season={self.season}/model_version={self.model_version}/"
+
+    def history_prefix(self, player_id: int) -> str:
+        if isinstance(player_id, bool) or not isinstance(player_id, int) or player_id <= 0:
+            raise ValueError("Invalid history NBA player ID.")
+        return self.history_root+f"player_id={player_id}/"
+
+    def history_games(self, state, games, predictions):
+        """Read accepted postgame selections and their exact pinned inputs only."""
+        from ..utils import game_history_details
+        day = state["game_date_pacific"]
+        if {g["game_id"] for g in games} != set(state["validation"]["expected_game_ids"]):
+            raise ValueError("Official game coverage differs from the saved ratings slate.")
+        stints = self._reference_json(state["inputs"]["stints"], f"lake/artifacts/stints/season={self.season}/game_date_pacific={day}/")
+        if stints.get("season") != self.season or stints.get("game_date_pacific") != day:
+            raise ValueError("Pinned stints have a different season/date.")
+        from math import isfinite
+        scheduled = {g["game_id"]: g for g in games}
+        exposure = {gid: {} for gid in scheduled}
+        observed = set()
+        for row in stints["rows"]:
+            gid = row["game_id"]
+            if gid not in scheduled:
+                raise ValueError("Pinned stints include a game outside the official slate.")
+            observed.add(gid)
+            weight = row["possessions"]
+            if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not isfinite(weight) or weight < 0:
+                raise ValueError("Invalid pinned stint possession exposure.")
+            ids = row["home_player_ids"]+row["away_player_ids"]
+            if len(ids) != 10 or len(set(ids)) != 10:
+                raise ValueError("Invalid pinned five-player stint lineups.")
+            for side in ("home", "away"):
+                if row[side+"_team_id"] != scheduled[gid][side+"_team_id"]:
+                    raise ValueError("Pinned stint team differs from the official schedule.")
+                for pid in row[side+"_player_ids"]:
+                    exposure[gid][pid] = exposure[gid].get(pid, 0)+weight
+        if observed != set(scheduled):
+            raise ValueError("Pinned stints do not cover the complete ratings slate.")
+        details, selections = {}, {}
+        for game in games:
+            gid = game["game_id"]
+            pointer, _ = predictions.selection(day, gid, actual_minutes=True)
+            if pointer is None:
+                raise FileNotFoundError(f"Missing accepted postgame details for {day}/{gid}.")
+            actual = predictions.load(pointer, actual_minutes=True)
+            prediction_ref = actual["inputs"]["prediction"]
+            prediction = predictions.load(prediction_ref)
+            box_ref = actual["inputs"]["box_score"]
+            prefix = f"lake/raw/cdn/boxscore/season={self.season}/game_id={gid}/"
+            box = self._reference_json(box_ref, prefix)["game"]
+            if box_ref["metadata_uri"] != f"s3://{self.bucket}/{prefix}{box_ref['sha256']}.meta.json":
+                raise ValueError("Pinned box sidecar escapes its canonical game path.")
+            raw, _ = self._read(box_ref["metadata_uri"].removeprefix(f"s3://{self.bucket}/"))
+            if sha256(raw).hexdigest() != box_ref["metadata_sha256"]:
+                raise ValueError("Pinned box sidecar failed checksum verification.")
+            reference = {k: pointer[k] for k in ("uri", "sha256")}
+            selections[(day, gid)] = reference
+            inputs = {"actual_minutes": reference, "prediction": prediction_ref, "box_score": box_ref}
+            for pid, value in game_history_details(game, actual, prediction, box, exposure[gid], inputs).items():
+                details.setdefault(pid, []).append(value)
+        return details, selections
+
+    def assert_history_games_current(self, references, predictions):
+        for (day, gid), reference in references.items():
+            selected, _ = predictions.selection(day, gid, actual_minutes=True)
+            if selected is None or {k: selected[k] for k in ("uri", "sha256")} != reference:
+                raise ValueError("Accepted postgame selection changed during history publication; rerun the latest history head.")
+
+    def history_chain(self, day: str, *, first_date: str) -> list[tuple[dict, dict]]:
+        """Load only the head's exact parent chain; no rating calculations."""
+        from ..utils import validate_state
+        current, reference, _ = self.state(day)
+        if current is None:
+            raise FileNotFoundError(f"No accepted completed-date player_ratings for {day}.")
+        priors_ref = current["inputs"]["priors"]
+        if self.selection()[0] != priors_ref:
+            raise ValueError("Ratings head does not use the accepted initialization.")
+        priors = self._reference_json(priors_ref, self.prefix)
+        validate_initialization(priors, self.season, self.model_version)
+        first, expected = date.fromisoformat(first_date), date.fromisoformat(day)
+        chain = []
+        while expected >= first:
+            validate_state(current, self.season)
+            if (current["game_date_pacific"] != str(expected)
+                    or current["model_version"] != self.model_version
+                    or current["inputs"]["priors"] != priors_ref
+                    or current["settings"] != priors["settings"]
+                    or any(current[k] != priors[k] for k in ("model_id", "model_run_id"))):
+                raise ValueError("Ratings lineage has incompatible dates, model or initialization.")
+            if self.state_selection(str(expected))[0] != reference:
+                raise ValueError(f"The {expected} parent differs from its accepted selection; finish the ratings correction first.")
+            # Discard regression matrices after validation; the history contains
+            # copied player scalars and provenance, not another model state.
+            compact = {k: current[k] for k in (
+                "season", "model_version", "model_id", "model_run_id", "game_date_pacific",
+                "observed_through_game_date_pacific", "effective_from_game_date_pacific",
+                "date_contract", "calculation_contract", "players", "inputs",
+            )}
+            compact["validation"] = {"expected_game_ids": current["validation"]["expected_game_ids"]}
+            chain.append((compact, reference))
+            parent = current["inputs"]["parent"]
+            if expected == first:
+                if parent is not None:
+                    raise ValueError("The opening ratings state has an unexpected predecessor.")
+                chain.reverse()
+                return chain
+            if parent is None:
+                raise ValueError("Ratings lineage is missing a predecessor before season start.")
+            expected -= timedelta(days=1)
+            reference = parent
+            current = self._reference_json(parent, self.state_prefix+f"game_date_pacific={expected}/")
+        raise ValueError("History date is before the configured season start.")
+
+    def assert_history_sources_current(self, chain: list[tuple[dict, dict]]) -> None:
+        if self.selection()[0] != chain[0][0]["inputs"]["priors"]:
+            raise ValueError("Ratings initialization changed during history publication.")
+        for record, reference in chain:
+            if self.state_selection(record["game_date_pacific"])[0] != reference:
+                raise ValueError("Ratings selection changed during history publication; rerun this date.")
+
+    def history_selection(self, player_id: int) -> tuple[dict | None, str | None]:
+        prefix = self.history_prefix(player_id)
+        try:
+            raw, etag = self._read(prefix+"latest.json")
+        except ClientError as error:
+            if error.response["Error"]["Code"] in {"404", "NoSuchKey", "NotFound"}:
+                return None, None
+            raise
+        index = json.loads(raw)
+        if (index.get("schema_version") != 1 or index.get("artifact_kind") != "player_game_history_index"
+                or index.get("season") != self.season or index.get("model_version") != self.model_version
+                or index.get("player_id") != player_id):
+            raise ValueError("Invalid accepted player-history index identity.")
+        points = index["points"]
+        days = [point["game_date_pacific"] for point in points]
+        if days != sorted(set(days)) or any(day > index["through_game_date_pacific"] for day in days):
+            raise ValueError("Invalid accepted game-history chronology.")
+        if index["last_game"] != (points[-1] if points else None):
+            raise ValueError("Invalid accepted last-game reference.")
+        for point in points:
+            day, digest = point["game_date_pacific"], point["sha256"]
+            if (date.fromisoformat(day).isoformat() != day or not re.fullmatch("[a-f0-9]{64}", digest)
+                    or point["uri"] != f"s3://{self.bucket}/{prefix}game_date_pacific={day}/{digest}.json"):
+                raise ValueError("Accepted game point is outside its canonical player/date path.")
+            source = point["source_ratings"]
+            if (not re.fullmatch("[a-f0-9]{64}", source["sha256"])
+                    or source["uri"] != f"s3://{self.bucket}/{self.state_prefix}game_date_pacific={day}/{source['sha256']}.json"):
+                raise ValueError("Accepted game point has an invalid ratings source.")
+        starting, current = index["starting_point"], index["current"]
+        if (starting["kind"] not in {"opening_prior", "introduced_prior"}
+                or starting["initialization"]["input"] != index["initialization_input"]
+                or starting["first_state_date"] > index["through_game_date_pacific"]
+                or any(day < starting["first_state_date"] for day in days)):
+            raise ValueError("Invalid accepted game-history initialization.")
+        if (current["source_ratings"] != index["source_ratings"]
+                or current["game_date_pacific"] != index["through_game_date_pacific"]):
+            raise ValueError("Current game-history scalar differs from its exact ratings head.")
+        return index, etag
+
+    def history_inventory(self) -> set[str]:
+        keys = set()
+        for page in self._s3().get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=self.history_root):
+            keys.update(row["Key"] for row in page.get("Contents", []) if row["Key"].endswith(".json"))
+        return keys
+
+    def history_record_reference(self, record: dict) -> dict:
+        digest = sha256(json_bytes(record)).hexdigest()
+        key = self.history_prefix(record["player_id"])+f"game_date_pacific={record['game_date_pacific']}/{digest}.json"
+        return {"uri": f"s3://{self.bucket}/{key}", "sha256": digest}
+
+    def save_history_record(self, record: dict, *, accepted: dict | None = None, known_keys: set[str] | None = None) -> tuple[dict, bool]:
+        reference = self.history_record_reference(record)
+        key = reference["uri"].removeprefix(f"s3://{self.bucket}/")
+        if (accepted is not None and known_keys is not None and key in known_keys
+                and {k: accepted[k] for k in ("uri", "sha256")} == reference):
+            # A verified accepted index already seals this immutable record. Reuse
+            # its exact reference rather than rewriting/rereading the whole season.
+            return reference, True
+        self._immutable(key, json_bytes(record))
+        return reference, False
+
+    def save_history_index(self, index: dict, *, prior: dict | None, expected_etag: str | None) -> dict:
+        key = self.history_prefix(index["player_id"])+"latest.json"
+        if prior is not None and prior["through_game_date_pacific"] > index["through_game_date_pacific"]:
+            raw = json_bytes(prior)
+            return {"uri": f"s3://{self.bucket}/{key}", "sha256": sha256(raw).hexdigest(), "status": "preserved_newer"}
+        raw = json_bytes(index)
+        if prior == index:
+            return {"uri": f"s3://{self.bucket}/{key}", "sha256": sha256(raw).hexdigest(), "status": "reused"}
+        condition = {"IfMatch": expected_etag} if expected_etag is not None else {"IfNoneMatch": "*"}
+        self._s3().put_object(Bucket=self.bucket, Key=key, Body=raw, ContentType="application/json", **condition)
+        actual, _ = self._read(key)
+        if actual != raw:
+            raise ValueError("Player history index failed read-back verification.")
+        return {"uri": f"s3://{self.bucket}/{key}", "sha256": sha256(raw).hexdigest(), "status": "published"}

@@ -70,7 +70,7 @@ def validate_state(record: dict, season: str, version: str = MODEL_VERSION) -> N
 def update_state(
     *, day: date, first_date: date, season: str, priors: dict, parent: dict | None,
     rosters: dict, injuries: dict, stints: dict, games: list[dict], game_rosters: dict,
-    inputs: dict, version: str = MODEL_VERSION,
+    inputs: dict, version: str = MODEL_VERSION, starting_repairs: dict | None = None,
 ) -> dict:
     validate_priors(priors, season, version)
     observed_day = day
@@ -111,7 +111,7 @@ def update_state(
     def ensure(pid):
         key = str(pid)
         if key not in players:
-            players[key] = initialize_player(pid, priors, day=observed_day.isoformat())
+            players[key] = initialize_player(pid, priors, day=observed_day.isoformat(), starting_repairs=starting_repairs)
         return players[key]
 
     for pid, tid in owners.items():

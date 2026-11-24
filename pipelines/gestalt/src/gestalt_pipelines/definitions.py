@@ -35,10 +35,11 @@ from .predictions.assets import game_predictions, game_predictions_actual_minute
 from .predictions.jobs import predict_game_margins, predict_game_margins_actual_minutes
 from .predictions.resources import GamePredictionArchive
 from .predictions.sensors import predict_game_margins_sensor, predict_game_margins_actual_minutes_sensor
-from .ratings.assets import player_rating_priors, player_ratings
-from .ratings.jobs import initialize_player_ratings, update_player_ratings
+from .ratings.assets import player_game_history, player_rating_priors, player_ratings
+from .ratings.jobs import initialize_player_ratings, publish_player_game_history, update_player_ratings
 from .ratings.resources import RatingsArchive
 from .ratings.schedules import update_player_ratings_schedule
+from .ratings.sensors import publish_player_game_history_sensor
 from .resources import NBAPlayerNamesResource, NBAScheduleResource
 from .rosters.assets import rosters_by_date
 from .rosters.jobs import build_nba_rosters
@@ -51,6 +52,10 @@ from .scoreboard.resources import NBAScoreboardArchive
 from .scoreboard.schedules import scoreboard_poll
 from .season_preparation.assets import nba_season_schedule
 from .season_preparation.jobs import capture_nba_season_schedule
+from .team_rotation.assets import team_rotation, team_rotation_history
+from .team_rotation.jobs import build_team_rotation, publish_team_rotation_history
+from .team_rotation.resources import TeamRotationArchive
+from .team_rotation.sensors import build_team_rotation_sensor, publish_team_rotation_history_sensor
 from .transactions.assets import transactions_by_date
 from .transactions.jobs import capture_nba_transactions
 from .transactions.resources import NBATransactions
@@ -58,19 +63,22 @@ from .transactions.schedules import transactions_hourly
 
 defs = Definitions(
     assets=[
+        team_rotation, team_rotation_history,
         injury_pdf_archive, injury_report_extractions, injury_status_by_game_date, player_minutes, game_minutes,
-        player_rating_priors, player_ratings, game_predictions, game_predictions_actual_minutes, market_performance_by_date,
+        player_rating_priors, player_ratings, player_game_history, game_predictions, game_predictions_actual_minutes, market_performance_by_date,
         nba_season_schedule, nba_market_odds, game_odds, nba_box_scores, nba_scoreboard, transactions_by_date, nba_play_by_play, nba_stints, rosters_by_date,
     ],
     jobs=[
+        build_team_rotation, publish_team_rotation_history,
         capture_injury_pdfs, extract_injury_pdf, reconcile_injury_date, update_player_minutes, project_game_minutes,
-        initialize_player_ratings, update_player_ratings, predict_game_margins, predict_game_margins_actual_minutes, evaluate_market_performance,
+        initialize_player_ratings, update_player_ratings, publish_player_game_history, predict_game_margins, predict_game_margins_actual_minutes, evaluate_market_performance,
         capture_nba_season_schedule, archive_nba_market_odds, publish_game_odds, capture_nba_box_scores, capture_nba_scoreboard,
         capture_nba_transactions, capture_nba_play_by_play, parse_nba_games, build_nba_rosters,
     ],
     schedules=[injury_pdf_poll, nba_market_odds_game_day, box_score_poll, box_scores_morning_refresh, scoreboard_poll, transactions_hourly, play_by_play_morning, rosters_morning, update_player_minutes_schedule, update_player_ratings_schedule],
-    sensors=[publish_game_odds_sensor, new_injury_pdf, injury_report_dates_ready, roster_transactions_ready, play_by_play_ready_for_stints, project_game_minutes_sensor, predict_game_margins_sensor, predict_game_margins_actual_minutes_sensor, evaluate_market_performance_sensor],
+    sensors=[publish_team_rotation_history_sensor, build_team_rotation_sensor, publish_player_game_history_sensor, publish_game_odds_sensor, new_injury_pdf, injury_report_dates_ready, roster_transactions_ready, play_by_play_ready_for_stints, project_game_minutes_sensor, predict_game_margins_sensor, predict_game_margins_actual_minutes_sensor, evaluate_market_performance_sensor],
     resources={
+        "team_rotation_archive": TeamRotationArchive(),
         "official_injury_reports": OfficialInjuryReports(),
         "injury_report_archive": InjuryReportArchive(season=INJURY_REPORT_SEASON),
         "nba_box_score_archive": NBABoxScoreArchive(),

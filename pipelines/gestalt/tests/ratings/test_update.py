@@ -295,13 +295,13 @@ def test_replacement_state_survives_absence_and_return(daily):
     assert second["new_replacement_player_ids"] == third["new_replacement_player_ids"] == []
 
 
-def add_new_player_to_saved_test_roster(s3):
+def add_new_player_to_saved_test_roster(s3, player_id=9999):
     import json
     from hashlib import sha256
     prefix = f"lake/artifacts/rosters/season=2026-27/game_date_pacific={OBSERVED_DAY}/"
     pointer = json.loads(s3.objects[prefix+"latest.json"])
     record = json.loads(s3.objects[prefix+pointer["sha256"]+".json"])
-    record["teams"]["1610612737"].append(9999)
+    record["teams"]["1610612737"].append(player_id)
     raw = json_bytes(record); digest = sha256(raw).hexdigest()
     s3.objects[prefix+digest+".json"] = raw
     s3.objects[prefix+"latest.json"] = json_bytes({
@@ -526,3 +526,86 @@ def test_saved_forecast_can_read_exact_old_state_after_date_migration(daily, arc
     s3.objects[key] = raw+b' '
     with pytest.raises(ValueError, match='checksum'):
         resource.read_state(reference, effective_date=str(DAY+timedelta(days=1)), observed_through=str(DAY))
+
+
+def save_test_rating_repair(resource, s3, day):
+    entry = {
+        "player_name": "Gabe Vincent",
+        "eligible_from_game_date_pacific": str(day),
+        "starting_nail": -2.7520598573850448,
+        "source": {"season": "2025-26", "uri": "s3://nba-gestalt-data/test/historical-ratings.parquet",
+                   "sha256": "823b3fc7a5cee5355fc4886fcf4d9b81d958b8adde179a18a8992bf98256c3c7"},
+    }
+    s3.objects[resource.prefix + "repairs.json"] = json_bytes({
+        "schema_version": 1, "season": "2026-27", "model_version": "v1", "players": {"1629216": entry},
+    })
+    return entry
+
+
+def test_vincent_historical_start_uses_november_23_evidence_and_carries_forward(daily, archive):
+    resource, s3 = archive
+    effective = date(2026, 11, 23)
+    entry = save_test_rating_repair(resource, s3, effective)
+    preceding = deepcopy(daily)
+    previous = effective - timedelta(days=1)
+    preceding["day"] = preceding["first_date"] = previous
+    preceding["games"][0]["game_time_utc"] += previous - DAY
+    for key in ("stints", "rosters"):
+        preceding[key]["game_date_pacific"] = str(previous)
+    assert resource.load_repairs(str(previous)) == ({}, None)
+    before = update_state(**preceding)
+    assert all(p["player_id"] != 1629216 for p in before["players"])
+    data = next_date(preceding, before)
+    data["rosters"]["teams"]["1610612737"].extend([1629216, 9999])
+    data["stints"]["rows"][0]["home_player_ids"][-1] = 1629216
+    repairs, ref = resource.load_repairs(str(effective))
+    on_date = update_state(**data, starting_repairs=repairs)
+    player = next(p for p in on_date["players"] if p["player_id"] == 1629216)
+    assert player["starting_nail"] == -2.7520598573850448
+    assert player["initialized_on"] == "2026-11-23"
+    assert player["initialization"]["historical_rating"] == entry["source"]
+    assert player["initialization"]["repair_input"] == ref
+    assert player["on_court_possessions"] == 12.5
+    assert on_date["effective_from_game_date_pacific"] == "2026-11-24"
+    assert on_date["new_replacement_player_ids"] == [9999]
+    after = update_state(**next_date(data, on_date, no_games=True))
+    assert next(p for p in after["players"] if p["player_id"] == 1629216) == player
+
+
+@pytest.mark.parametrize("publication_succeeds", [True, False])
+def test_ratings_report_applied_repair_only_after_successful_publication(manual_job, monkeypatch, publication_succeeds):
+    from logging import INFO
+    from dagster import DagsterInstance
+
+    job, resource, s3 = manual_job
+    entry = save_test_rating_repair(resource, s3, DAY)
+    _, ref = resource.load_repairs(str(DAY))
+    add_new_player_to_saved_test_roster(s3, player_id=1629216)
+    if not publication_succeeds:
+        def reject_publication(*args, **kwargs):
+            raise ValueError("simulated rating publication failure")
+        monkeypatch.setattr(type(resource), "save_state", reject_publication)
+
+    with DagsterInstance.ephemeral() as instance:
+        result = job.execute_in_process(instance=instance, partition_key=str(DAY), raise_on_error=False)
+        messages = [event for event in instance.all_logs(result.run_id) if "Applied approved starting NAIL" in event.message]
+    assert not any(key.endswith(".warning.json") for key in s3.objects)
+    assert result.success is publication_succeeds
+    if not publication_succeeds:
+        assert not messages and not result.get_asset_materialization_events()
+        assert resource.state_selection(str(DAY))[0] is None
+        return
+
+    assert len(messages) == 1 and messages[0].level == INFO
+    assert "Gabe Vincent" in messages[0].message
+    metadata = result.get_asset_materialization_events()[0].event_specific_data.materialization.metadata
+    assert metadata["ratings_warnings"].value == []
+    assert metadata["applied_starting_rating_repairs"].value == [{
+        "player_id": 1629216, "player_name": "Gabe Vincent", "starting_nail": -2.7520598573850448,
+        "repair_effective_date_pacific": str(DAY), "initialized_on": str(DAY),
+        "repair_input": ref, "historical_rating": entry["source"],
+    }]
+    saved, _, _ = resource.state(str(DAY))
+    player = next(p for p in saved["players"] if p["player_id"] == 1629216)
+    assert player["initialization"]["repair_input"] == ref
+    assert saved["inputs"]["prior_repairs"] == ref and saved["new_replacement_player_ids"] == []

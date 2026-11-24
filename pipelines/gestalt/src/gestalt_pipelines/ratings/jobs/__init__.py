@@ -2,7 +2,7 @@
 
 from dagster import AssetSelection, define_asset_job, in_process_executor
 
-from ..assets import player_rating_priors, player_ratings
+from ..assets import player_game_history, player_rating_priors, player_ratings
 
 initialize_player_ratings = define_asset_job(
     "initialize_player_ratings", selection=AssetSelection.assets(player_rating_priors),
@@ -16,4 +16,11 @@ update_player_ratings = define_asset_job(
     description="Publish ratings for the selected Pacific date using games through the previous date.",
 )
 
-__all__ = ["initialize_player_ratings", "update_player_ratings"]
+publish_player_game_history = define_asset_job(
+    "publish_player_game_history", selection=AssetSelection.assets(player_game_history),
+    tags={"dagster/priority": "-2"},
+    executor_def=in_process_executor,
+    description="Publish per-player history through the selected completed Pacific date from saved ratings.",
+)
+
+__all__ = ["initialize_player_ratings", "update_player_ratings", "publish_player_game_history"]
