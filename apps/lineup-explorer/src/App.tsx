@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { BlockMath } from "react-katex";
 import { trackPageView } from "./analytics";
+import { DataQualityPage, useDataQuality } from "./DataQualityPage";
 import { RosterMovesPage } from "./RosterMovesPage";
 import { WinProjectionsPage } from "./WinProjectionsPage";
 import { ComparePage } from "./ComparePage";
@@ -49,7 +50,7 @@ import type {
 } from "./types";
 
 type Side = "unit" | "opponent";
-type AppView = "lab" | "rankings" | "compare" | "lineups" | "moves" | "wins" | "schedule" | "about" | "player" | "team";
+type AppView = "lab" | "rankings" | "compare" | "lineups" | "moves" | "wins" | "schedule" | "about" | "data-quality" | "player" | "team";
 type AppRoute = { view: AppView; playerId?: number; team?: string; season?: string; date?: string };
 type Environment = "unit" | "neutral" | "opponent";
 type Court = "neutral" | "unit_home" | "opponent_home";
@@ -261,6 +262,7 @@ function useAppView(): AppRoute {
       };
     }
     if (pathname === "about") return { view: "about" };
+    if (pathname === "data-quality") return { view: "data-quality" };
     if (pathname === "rankings") return { view: "rankings" };
     if (pathname === "compare") return { view: "compare" };
     if (pathname === "lineups") return { view: "lineups" };
@@ -1281,11 +1283,13 @@ function App() {
   const [isLoadingUnit, setIsLoadingUnit] = useState(false);
   const [isLoadingOpponent, setIsLoadingOpponent] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dataQualityAlert, setDataQualityAlert] = useState({
-    urgent: false,
-    open_incident_count: 0,
-    status: "loading",
-  });
+  const { report: qualityReport, unavailable: qualityUnavailable } = useDataQuality(view === "data-quality");
+  const qualityFailuresToday = qualityReport?.failures_today_without_recovery ?? 0;
+  const qualityLabel = qualityUnavailable
+    ? "Data quality events unavailable"
+    : qualityFailuresToday > 0
+      ? `${qualityFailuresToday} failure${qualityFailuresToday === 1 ? "" : "s"} today without a recorded recovery`
+      : "View saved pipeline events";
 
   const canEvaluate = unit.length === 5 && opponent.length === 5;
   useEffect(() => {
@@ -1313,37 +1317,6 @@ function App() {
     return () => controller.abort();
   }, []);
 
-  useEffect(() => {
-    let disposed = false;
-    const refresh = async () => {
-      try {
-        const response = await fetch("/api/reports/data-quality-status");
-        if (!response.ok) throw new Error("Data-quality status is unavailable.");
-        const payload = (await response.json()) as {
-          urgent?: boolean;
-          open_incident_count?: number;
-          status?: string;
-        };
-        if (!disposed) {
-          setDataQualityAlert({
-            urgent: Boolean(payload.urgent),
-            open_incident_count: Number(payload.open_incident_count ?? 0),
-            status: String(payload.status ?? "unavailable"),
-          });
-        }
-      } catch {
-        if (!disposed) {
-          setDataQualityAlert({ urgent: true, open_incident_count: 1, status: "unavailable" });
-        }
-      }
-    };
-    void refresh();
-    const interval = window.setInterval(refresh, 60_000);
-    return () => {
-      disposed = true;
-      window.clearInterval(interval);
-    };
-  }, []);
 
   async function loadRandomLineup(side: Side) {
     try {
@@ -1485,20 +1458,15 @@ function App() {
             </button>
             <a
               className="header-link data-quality-link"
-              href="/api/reports/current-season"
-              target="_blank"
-              rel="noreferrer"
-              aria-label={
-                dataQualityAlert.urgent
-                  ? `Open the daily data quality report; ${dataQualityAlert.open_incident_count} urgent incident${dataQualityAlert.open_incident_count === 1 ? "" : "s"}`
-                  : "Open the daily data quality report"
-              }
-              title={dataQualityAlert.urgent ? "Urgent data-quality incident" : "Data quality is clean"}
+              href="#data-quality"
+              aria-current={view === "data-quality" ? "page" : undefined}
+              aria-label={`Data quality. ${qualityLabel}`}
+              title={qualityLabel}
             >
               <ClipboardCheck size={15} aria-hidden="true" />
               <span>Data quality</span>
-              {dataQualityAlert.urgent && (
-                <i className="data-quality-alert-dot" aria-hidden="true" />
+              {(qualityUnavailable || qualityFailuresToday > 0) && (
+                <i className={`data-quality-alert-dot${qualityUnavailable ? " unavailable" : ""}`} aria-hidden="true" />
               )}
             </a>
             <a
@@ -1528,7 +1496,7 @@ function App() {
 
       <GlobalSearch isOpen={isGlobalSearchOpen} onClose={() => setIsGlobalSearchOpen(false)} />
 
-      {view === "about" ? <AboutPage /> : view === "rankings" ? <RankingsPage /> : view === "compare" ? <ComparePage /> : view === "lineups" ? <LineupRankingsPage /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "schedule" ? <SchedulePage initialDate={route.date} /> : view === "team" && route.team ? <TeamSeasonPage team={route.team} season={route.season} onLoadInLab={loadObservedLineup} /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
+      {view === "about" ? <AboutPage /> : view === "data-quality" ? <DataQualityPage report={qualityReport} unavailable={qualityUnavailable} /> : view === "rankings" ? <RankingsPage /> : view === "compare" ? <ComparePage /> : view === "lineups" ? <LineupRankingsPage /> : view === "moves" ? <RosterMovesPage /> : view === "wins" ? <WinProjectionsPage /> : view === "schedule" ? <SchedulePage initialDate={route.date} /> : view === "team" && route.team ? <TeamSeasonPage team={route.team} season={route.season} onLoadInLab={loadObservedLineup} /> : view === "player" && route.playerId ? <PlayerProfilePage playerId={route.playerId} /> : <>
         <section className="intro court-backdrop" aria-labelledby="page-title">
           <div className="gestalt-entry" aria-label="Definition of gestalt">
             <div className="gestalt-entry-heading">
