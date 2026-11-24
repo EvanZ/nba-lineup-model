@@ -70,6 +70,8 @@ flowchart LR
     catalog --> teamRotation
     boxArchive -->|"Exact boxes pinned by stints: names"| teamRotation
     teamRotation --> rotationFiles["All 30 team rotation summaries and team latest.json"]
+    teamRotation -->|"Successful producer run"| rotationHistory["team_rotation_history: publish_team_rotation_history"]
+    rotationHistory --> rotationHistoryFiles["Per-team accepted history.json for animation"]
     playByPlay -->|"Scheduled capture succeeds: same-date parsing"| stints
     nbaBoard["Official NBA CDN scoreboard"] --> scoreboard["nba_scoreboard"]
     catalog --> scoreboard
@@ -146,6 +148,7 @@ Times are Pacific (`America/Los_Angeles`) except the injury publication schedule
 | `update_player_ratings` | `update_player_ratings_schedule`, 04:15 Pacific | Yesterday's completed ratings/HCA; first completed date starts from approved initialization |
 | `publish_player_game_history` | `publish_player_game_history_sensor` | Latest completed ratings head after successful ratings and postgame readiness; older corrections refresh that head |
 | `build_team_rotation` | `build_team_rotation_sensor` after successful `nba_stints`; also manual | All 30 teams through latest completed stints date; older corrections refresh that same head (#93) |
+| `publish_team_rotation_history` | `publish_team_rotation_history_sensor` after successful `team_rotation`; also manual | Verified accepted per-team history, including corrections and older dates; no upstream computation |
 | `capture_injury_pdfs` | `injury_pdf_poll` | Eastern :02, :17, :32, :47; checks the preceding hour |
 | `extract_injury_pdf` | `new_injury_pdf` | About every minute; new saved PDFs in today's/yesterday's Eastern partitions |
 | `reconcile_injury_date` | `injury_report_dates_ready` | About every minute; changed accepted inputs for open games today/tomorrow |
@@ -1143,5 +1146,72 @@ Operational verification November 20: `build_team_rotation_sensor` is enabled in
 unrelated successful run. A read-only evaluation against real saved Dagster
 history produced a request for the November 19 cumulative head without launching
 it. The full affected regression suite passed 337 tests. Collector schedules
-remain enabled; the run limit remains one. Pushing awaits the agreed app-agent
-merge and rebase onto `origin/main`.
+remain enabled and the run limit remains one.
+
+
+### Accepted rotation history index
+
+Asset **`team_rotation_history`**, job **`publish_team_rotation_history`**, sensor
+**`publish_team_rotation_history_sensor`**. The job is unpartitioned: each run
+merges successful saved rotation publications for the configured season. The
+sensor follows successful `team_rotation` materializations, including native
+backfills and corrections. It does not respond to failures or to its own index
+materializations. Repeated identical publication references deduplicate; priority
+is -2 under the existing one-run limit. The manual job needs no custom YAML and
+selects only the history asset. It does not build summaries or run upstream work.
+
+The source of initial acceptance is the permanent Dagster instance's successful
+rotation materializations and their exact 30-team `selections` references.
+Publication ordering uses materialization storage IDs, selecting the newest
+successful publication for a date. Failed/missing source runs and foreign code
+locations/seasons are excluded. Malformed or incomplete successful publication
+evidence fails the job. S3 object existence and folder listings never establish
+acceptance. Subsequent maintenance preserves already accepted history points,
+merges newly accepted dates, and replaces a corrected date's reference.
+
+Authoritative path, within `s3://nba-gestalt-data/`:
+`lake/artifacts/team_rotation/season=<season>/team_id=<NBA-id>/history.json`.
+
+The exact JSON fields are `schema_version: 1`, `processing_version: "v1"`,
+`artifact_kind: "team_rotation_history_index"`, `season`, `team_id`,
+`through_game_date_pacific`, and `points`. Each point contains only
+`game_date_pacific`, immutable `uri`, and `sha256`. Points are chronological and
+unique by date; through-date is the last point. Empty/off-day snapshots remain;
+the app selects animation frames where cumulative team game coverage increases.
+No matrices, stats, or source tables are duplicated into the index. `latest.json`
+continues working unchanged as the current-summary selection.
+
+Before any index is updated, all 30 proposed indexes are checked. This verifies
+original summary bytes/checksums and season/team/date/schema/processing identity,
+full scheduled team-game coverage, and checksum-verified pinned schedule, stints,
+final boxes and sidecars. It checks the pinned inputs against each other without
+requiring any current upstream latest pointer to match them. No rotations,
+ratings, minutes, forecasts, or upstream datasets are recalculated or rewritten.
+The materialization records the source run IDs/storage IDs and index hashes.
+
+Each history object is updated atomically with `IfMatch` or `IfNoneMatch` and
+verified by readback. A conflict rereads both history and successful publication
+evidence before retrying, so an older writer cannot blindly restore its previous
+selection. Three repeated conflicts fail visibly. Historical dates never remove
+newer points or lower the through-date. All immutable summary versions remain.
+Atomicity is per team, not a transaction spanning 30 S3 objects. An index-job
+failure can leave some teams temporarily behind; every written point still comes
+from a successful source publication, and rerunning completes the remaining
+indexes. A failed rotation-producer run never contributes accepted points.
+
+The initial approved population reuses accepted October 20–November 19
+publications (31 dates, 930 verified summaries) plus any newer accepted dates.
+The prior read-only audit found no acceptance gaps and verified 483 unique pinned
+objects. Initial publication writes the 30 `history.json` indexes only; it leaves
+summary bytes, `latest.json` pointers, collectors, and existing automation intact.
+
+Population verified November 20 Pacific: permanent Dagster run
+`f8352ce6-bcd0-4ec7-aa3c-89fc91d7b3e5` succeeded. It verified 930 accepted
+summary objects and 483 unique pinned input objects, then wrote 30 history
+indexes. All 30 indexes were read back and matched their recorded output hashes
+and exact accepted references: 31 points per team, October 20–November 19,
+through-date November 19. All 30 preexisting `latest.json` files remained
+byte-for-byte unchanged. `publish_team_rotation_history_sensor` is enabled for
+future successful rotation publications. The affected regression suite passed
+364 tests. No rotations, forecasts, ratings, raw captures, or upstream pipelines
+were rerun by this population.

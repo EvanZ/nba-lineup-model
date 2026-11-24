@@ -1,6 +1,8 @@
 """Verified saved inputs and immutable team rotation publication."""
 import re
+import os
 import json
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -10,7 +12,7 @@ from botocore.exceptions import ClientError
 from dagster import ConfigurableResource
 
 from ...utils import DATA_BUCKET, ERRORS_PREFIX, NBA_TEAM_IDS, PACIFIC
-from ..utils import json_bytes, official_json, summarize_team, validate_rows
+from ..utils import PROCESSING_VERSION, json_bytes, official_json, summarize_team, validate_rows, validate_history, validate_point
 
 
 class TeamRotationArchive(ConfigurableResource):
@@ -216,3 +218,163 @@ class TeamRotationArchive(ConfigurableResource):
             or doc["game_date_pacific"] != day or doc["stage"] != "team_rotation" or doc["status"] != "failed"):
             raise ValueError("Rotation failure differs from the selected failed run.")
         return ref
+
+    def _verify_history_points(self, indexes):
+        """Check immutable bytes and pinned originals, never upstream latest pointers."""
+        client = boto3.client("s3")
+        references = {}
+
+        def add(ref, key, *, schedule=False):
+            digest = ref.get("sha256")
+            if (not isinstance(digest, str) or not re.fullmatch("[a-f0-9]{64}", digest)
+                or ref.get("uri") != f"s3://{self.bucket}/{key}"):
+                raise ValueError("Invalid pinned rotation input identity/path.")
+            prior = references.get(ref["uri"])
+            if prior and prior[0]["sha256"] != digest:
+                raise ValueError("Conflicting checksums for a pinned rotation input.")
+            references[ref["uri"]] = (ref, key, schedule)
+
+        def fetch(item):
+            ref, key, schedule = item
+            response = client.get_object(Bucket=self.bucket, Key=key)
+            with closing(response["Body"]) as body:
+                raw = body.read()
+            if sha256(raw).hexdigest() != ref["sha256"]:
+                raise ValueError(f"Pinned rotation bytes failed checksum: {ref['uri']}.")
+            return ref["uri"], json.loads(raw) if schedule else official_json(raw)
+
+        for index in indexes:
+            validate_history(index, index["season"], index["team_id"], bucket=self.bucket)
+            for point in index["points"]:
+                add(point, point["uri"].removeprefix(f"s3://{self.bucket}/"))
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            summaries = dict(pool.map(fetch, references.values()))
+            references.clear()
+            for index in indexes:
+                season, tid = index["season"], index["team_id"]
+                for point in index["points"]:
+                    record = summaries[point["uri"]]
+                    if (record.get("schema_version") != 1 or record.get("artifact_kind") != "team_rotation"
+                        or record.get("processing_version") != PROCESSING_VERSION
+                        or record.get("season") != season or record.get("team_id") != tid
+                        or record.get("game_date_pacific") != point["game_date_pacific"]
+                        or record.get("coverage", {}).get("complete") is not True):
+                        raise ValueError("Accepted rotation summary has inconsistent identity or coverage.")
+                    inputs = record["inputs"]
+                    ref = inputs["schedule"]
+                    add(ref, f"lake/raw/scheduleleaguev2/season={season}/sha256={ref['sha256']}/schedule.json", schedule=True)
+                    for day, ref in inputs["stints"].items():
+                        add(ref, f"lake/artifacts/stints/season={season}/game_date_pacific={day}/{ref['sha256']}.json")
+                    for gid, ref in inputs["box_scores"].items():
+                        base = f"lake/raw/cdn/boxscore/season={season}/game_id={gid}/{ref['sha256']}"
+                        add(ref, base+".json")
+                        add({"uri":ref["metadata_uri"], "sha256":ref["metadata_sha256"]}, base+".meta.json")
+            originals = dict(pool.map(fetch, references.values()))
+        for index in indexes:
+            season, tid = index["season"], index["team_id"]
+            for point in index["points"]:
+                record = summaries[point["uri"]]
+                inputs, day = record["inputs"], point["game_date_pacific"]
+                schedule = originals[inputs["schedule"]["uri"]]["leagueSchedule"]
+                if str(schedule["seasonYear"]) != season or str(schedule["leagueId"]) != "00":
+                    raise ValueError("Pinned rotation schedule has a different season/league.")
+                expected, dates = set(), set()
+                for group in schedule["gameDates"]:
+                    for game in group["games"]:
+                        if not str(game["gameId"]).startswith("002"):
+                            continue
+                        if tid not in (int(game["homeTeam"]["teamId"]), int(game["awayTeam"]["teamId"])):
+                            continue
+                        timestamp = game.get("gameDateTimeUTC")
+                        if not timestamp or timestamp.upper() in {"TBD", "TBA"}:
+                            continue
+                        stamp = datetime.fromisoformat(timestamp)
+                        if stamp.tzinfo is None:
+                            raise ValueError("Pinned schedule has an ambiguous UTC game time.")
+                        gd = stamp.astimezone(PACIFIC).date().isoformat()
+                        if os.environ["GESTALT_NBA_SEASON_START_DATE"] <= gd <= day:
+                            expected.add(game["gameId"]); dates.add(gd)
+                if (set(record["coverage"]["game_ids"]) != expected
+                    or record["coverage"]["game_count"] != len(expected)
+                    or set(inputs["box_scores"]) != expected or set(inputs["stints"]) != dates):
+                    raise ValueError("Pinned rotation inputs do not cover the team's scheduled games.")
+                accounted = set()
+                for date_key, ref in inputs["stints"].items():
+                    stint = originals[ref["uri"]]
+                    if (stint.get("season") != season or stint.get("game_date_pacific") != date_key
+                        or stint.get("validation", {}).get("complete") is not True
+                        or stint.get("processing_version") != ref.get("processing_version")):
+                        raise ValueError("Pinned stints have inconsistent identity/processing/coverage.")
+                    for gid in expected & set(stint["inputs"]["games"]):
+                        if stint["inputs"]["games"][gid]["box_score"] != inputs["box_scores"][gid]:
+                            raise ValueError("Pinned stints and summary disagree on the box-score input.")
+                        accounted.add(gid)
+                if accounted != expected:
+                    raise ValueError("Pinned stints do not account for all team games.")
+                for gid, ref in inputs["box_scores"].items():
+                    box = originals[ref["uri"]]["game"]
+                    if (box["gameId"] != gid or int(box["gameStatus"]) != 3
+                        or tid not in (int(box["homeTeam"]["teamId"]), int(box["awayTeam"]["teamId"]))):
+                        raise ValueError("Pinned final box identity differs from the rotation summary.")
+        return {"summary_count":len(summaries), "pinned_input_count":len(originals)}
+
+    def publish_history(self, season, publications):
+        """Merge successful source publications, conditionally replacing each team index."""
+        for _ in range(3):
+            accepted = publications()
+            if not accepted:
+                raise FileNotFoundError("No successful rotation publications are available.")
+            staged = []
+            for tid in NBA_TEAM_IDS:
+                key = f"lake/artifacts/team_rotation/season={season}/team_id={tid}/history.json"
+                prior, etag = self._optional(key)
+                points = {}
+                if prior is not None:
+                    validate_history(prior, season, tid, bucket=self.bucket)
+                    points.update((p["game_date_pacific"], p) for p in prior["points"])
+                for day, publication in sorted(accepted.items()):
+                    refs = publication["selections"]
+                    if len(refs) != 30 or {r["team_id"] for r in refs} != set(NBA_TEAM_IDS):
+                        raise ValueError("History requires a complete successful 30-team publication.")
+                    ref = next(r for r in refs if r["team_id"] == tid)
+                    point = {k:ref[k] for k in ("game_date_pacific", "uri", "sha256")}
+                    validate_point(point, season, tid, bucket=self.bucket)
+                    if (day != point["game_date_pacific"] or ref.get("season") != season
+                        or ref.get("schema_version") != 1 or ref.get("processing_version") != PROCESSING_VERSION):
+                        raise ValueError("History source selection has inconsistent publication identity.")
+                    points[day] = point
+                record = {"schema_version":1, "processing_version":PROCESSING_VERSION,
+                          "artifact_kind":"team_rotation_history_index", "season":season, "team_id":tid,
+                          "through_game_date_pacific":max(points),
+                          "points":[points[day] for day in sorted(points)]}
+                staged.append((key, record, prior, etag))
+            quality = self._verify_history_points([r for _,r,_,_ in staged])
+            # A stale event/snapshot cannot win a correction after validation or a retry.
+            if accepted != publications():
+                continue
+            conflict, written = False, 0
+            client = boto3.client("s3")
+            for key, record, prior, etag in staged:
+                if record != prior:
+                    condition = {"IfMatch":etag} if etag else {"IfNoneMatch":"*"}
+                    try:
+                        client.put_object(Bucket=self.bucket, Key=key, Body=json_bytes(record),
+                                          ContentType="application/json", **condition)
+                        written += 1
+                    except ClientError as error:
+                        if error.response["Error"]["Code"] not in {"412", "PreconditionFailed"}:
+                            raise
+                        conflict = True
+                        break
+                if self._optional(key)[0] != record:
+                    conflict = True
+                    break
+            if conflict:
+                continue
+            return {**quality, "team_count":30, "written_count":written,
+                    "source_publications":{d:{k:v for k,v in p.items() if k != "selections"} for d,p in accepted.items()},
+                    "indexes":[{"uri":f"s3://{self.bucket}/{key}", "sha256":sha256(json_bytes(record)).hexdigest(),
+                                "team_id":record["team_id"], "point_count":len(record["points"]),
+                                "through_game_date_pacific":record["through_game_date_pacific"]}
+                               for key,record,_,_ in staged]}
+        raise ValueError("Rotation publications or history indexes changed repeatedly; rerun the index job.")

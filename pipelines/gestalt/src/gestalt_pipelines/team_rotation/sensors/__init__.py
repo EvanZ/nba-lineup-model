@@ -92,3 +92,6 @@ def build_team_rotation_sensor(context: RunStatusSensorContext, nba_schedule: NB
 
 
 __all__ = ["build_team_rotation_sensor"]
+
+from .history import publish_team_rotation_history_sensor
+__all__ += ["publish_team_rotation_history_sensor"]
