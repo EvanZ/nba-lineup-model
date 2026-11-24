@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from nba_lineup_model.web_api.compare import router as compare_router
 from nba_lineup_model.web_api.current_season_records import router as records_router
 from nba_lineup_model.web_api.historical_lineups import router as lineups_router
+from nba_lineup_model.web_api.lab import router as lab_router
 from nba_lineup_model.web_api.market_performance import router
 from nba_lineup_model.web_api.player_discovery import router as discovery_router
 from nba_lineup_model.web_api.player_history import router as history_router
@@ -43,6 +44,7 @@ class MarketGateway:
         self.market.include_router(lineups_router)
         self.market.include_router(moves_router)
         self.market.include_router(quality_router)
+        self.market.include_router(lab_router)
         self.market.include_router(saved_wins_router)
         self.market.include_router(records_router)
         self.market.include_router(recent_ratings_router)
@@ -76,6 +78,7 @@ class MarketGateway:
         )
         if (
             scope["type"] == "lifespan"
+            or path.startswith("/api/lab/")
             or is_player
             or (path.startswith("/api/teams/") and path.removeprefix("/api/teams/").isalnum())
             or (

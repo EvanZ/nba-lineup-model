@@ -1303,20 +1303,22 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
   useEffect(() => {
+    if (view !== "lab") return;
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch("/api/health", { signal: controller.signal });
-        if (!response.ok) throw new Error("Historical seasons are unavailable.");
-        const payload = (await response.json()) as { lab_seasons?: string[] };
-        if (payload.lab_seasons?.length) setAvailableLabSeasons(payload.lab_seasons);
+        const response = await fetch("/api/lab/seasons", { signal: controller.signal });
+        if (!response.ok) throw new Error("Lab seasons are unavailable.");
+        const payload = (await response.json()) as { seasons: string[] };
+        if (!controller.signal.aborted) setAvailableLabSeasons(payload.seasons);
       } catch (healthError) {
-        if ((healthError as Error).name !== "AbortError") setError((healthError as Error).message);
+        if (!controller.signal.aborted && (healthError as Error).name !== "AbortError") {
+          setError((healthError as Error).message);
+        }
       }
     })();
     return () => controller.abort();
-  }, []);
-
+  }, [view]);
 
   async function loadRandomLineup(side: Side) {
     try {
@@ -1329,17 +1331,18 @@ function App() {
       const selectedTeam = side === "unit" ? unitTeam : opponentTeam;
       if (selectedTeam !== "all") parameters.set("team", selectedTeam);
       parameters.set("count", String(5 - currentPlayers.length));
-      currentPlayers.forEach((player) => {
+      [...unit, ...opponent].forEach((player) => {
         parameters.append("exclude_player_id", String(player.player_id));
       });
-      const response = await fetch(`/api/default-opponent?${parameters.toString()}`);
+      const response = await fetch(`/api/lab/random-lineup?${parameters.toString()}`);
       if (!response.ok) throw new Error("Random lineup is unavailable.");
       const payload = (await response.json()) as { players: Player[] };
-      if (side === "unit") {
-        setUnit((current) => [...current, ...payload.players].slice(0, 5));
-      } else {
-        setOpponent((current) => [...current, ...payload.players].slice(0, 5));
-      }
+      const setPlayers = side === "unit" ? setUnit : setOpponent;
+      setPlayers((current) => {
+        const selectedIds = new Set(current.map((player) => player.player_id));
+        const additions = payload.players.filter((player) => !selectedIds.has(player.player_id));
+        return [...current, ...additions].slice(0, 5);
+      });
       setResult(null);
     } catch (opponentError) {
       setError((opponentError as Error).message);
@@ -1402,7 +1405,7 @@ function App() {
     try {
       setError(null);
       setIsEvaluating(true);
-      const response = await fetch("/api/matchups", {
+      const response = await fetch("/api/lab/matchup", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -1414,7 +1417,6 @@ function App() {
           court,
           unit_back_to_back: unitBackToBack,
           opponent_back_to_back: opponentBackToBack,
-          include_response_curves: true,
         }),
       });
       const payload = (await response.json()) as Matchup | { detail: string };
@@ -1511,6 +1513,7 @@ function App() {
             <p className="eyebrow">Matchup Lab</p>
             <h1 id="page-title">Build the five.</h1>
           </div>
+          <p className="builder-note">Historical player ratings match Rankings. The selected era supplies the lineup context.</p>
         </section>
 
         <section className="lab-grid" aria-label="Lineup builder">
@@ -3493,7 +3496,7 @@ function LineupSelector({
         setIsSearching(true);
         const parameters = new URLSearchParams({ q: query, season, limit: "10" });
         if (team !== "all") parameters.set("team", team);
-        const response = await fetch(`/api/players?${parameters.toString()}`, {
+        const response = await fetch(`/api/lab/players?${parameters.toString()}`, {
           signal: controller.signal,
         });
         if (!response.ok) throw new Error("Player search is unavailable.");
@@ -3550,7 +3553,9 @@ function LineupSelector({
           <label className="lineup-season">
             <span>Season</span>
             <select value={season} onChange={(event) => onSeasonChange(event.target.value)} disabled={isLoading}>
-              {availableSeasons.map((availableSeason) => <option key={availableSeason} value={availableSeason}>{availableSeason}</option>)}
+              {availableSeasons.map((availableSeason) => <option key={availableSeason} value={availableSeason}>
+                {availableSeason === "2026-27" ? "2026-27 preseason" : availableSeason}
+              </option>)}
             </select>
           </label>
           <label className="lineup-team">
